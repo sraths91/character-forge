@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>character-forge — pose debug</title>
+  <link rel="stylesheet" href="/src/styles.css" />
+  <style>
+    body { padding: 24px; }
+    .grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 12px; }
+    .cell { background: var(--surface); border: 1px solid var(--border);
+            border-radius: var(--radius-sm); padding: 12px; text-align: center; }
+    .cell canvas { image-rendering: pixelated; background:
+      repeating-conic-gradient(#1f1f23 0 25%, #18181b 0 50%) 0 0 / 16px 16px; }
+    .cell .label { font-size: 0.78rem; color: var(--text-dim); margin-top: 6px; line-height: 1.4; }
+    h2 { margin: 24px 0 12px; }
+    #direction-bar button { padding: 6px 14px; background: var(--surface);
+      color: var(--text); border: 1px solid var(--border); border-radius: var(--radius-sm);
+      cursor: pointer; font-family: inherit; }
+    #direction-bar button[data-active] { background: var(--accent, #3b82f6); color: white; border-color: transparent; }
+  </style>
+</head>
+<body>
+  <h1>Pose debug</h1>
+  <p class="hint">Renders every weapon × slot combination using current
+    BACK_DERIVED_POSES and WAIST_DERIVED_POSES. Use this to eyeball anchor
+    positions; commit values back to lpc-config.js.</p>
+
+  <div id="direction-bar" style="display:flex;gap:8px;margin:12px 0;">
+    <strong style="align-self:center;">Direction:</strong>
+    <button data-dir="north">North</button>
+    <button data-dir="west">West</button>
+    <button data-dir="south" data-active>South</button>
+    <button data-dir="east">East</button>
+  </div>
+
+  <h2>Mainhand frames (raw)</h2>
+  <p class="hint">Each weapon's native south-row frame 0. Use to verify FRAME_OVERRIDES for non-standard sheets.</p>
+  <div class="grid" id="main-grid"></div>
+
+  <h2>Back poses</h2>
+  <div class="grid" id="back-grid"></div>
+
+  <h2>Waist poses</h2>
+  <div class="grid" id="waist-grid"></div>
+
+  <h2>Torso armor (Phase B)</h2>
+  <div class="grid" id="torso-grid"></div>
+
+  <h2>Shields (Phase B)</h2>
+  <div class="grid" id="shield-grid"></div>
+
+  <h2>Helms (Phase B)</h2>
+  <div class="grid" id="helm-grid"></div>
+
+  <h2>Capes (Phase C)</h2>
+  <div class="grid" id="cape-grid"></div>
+
+  <h2>Backpacks (Phase C)</h2>
+  <div class="grid" id="backpack-grid"></div>
+
+  <h2>Neck variants (Phase C)</h2>
+  <div class="grid" id="neck-grid"></div>
+
+  <h2>Hair (Phase D3)</h2>
+  <div class="grid" id="hair-grid"></div>
+
+  <h2>Beards &amp; mustache (Phase D3)</h2>
+  <div class="grid" id="beard-grid"></div>
+
+  <h2>Facial accessories (Phase D3)</h2>
+  <div class="grid" id="facial-grid"></div>
+
+  <h2>Eyes (Phase D3)</h2>
+  <div class="grid" id="eyes-grid"></div>
+
+  <script type="module" src="/src/js/debug.js"></script>
+</body>
+</html>

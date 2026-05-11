@@ -1,0 +1,32 @@
+{
+  "name": "character-forge",
+  "version": "0.1.0",
+  "description": "Render a 2D paper-doll sprite from a D&D Beyond character",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev": "vite",
+    "dev:api": "node api/server.js",
+    "dev:all": "concurrently \"npm:dev\" \"npm:dev:api\"",
+    "build": "vite build",
+    "preview": "vite preview",
+    "start": "NODE_ENV=production node api/server.js",
+    "lint": "eslint . --max-warnings 20",
+    "test": "node --test 'src/tests/**/*.test.js' 'api/tests/**/*.test.js'"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.5.0",
+    "cookie-parser": "^1.4.7",
+    "cors": "^2.8.5",
+    "express": "^4.21.1",
+    "express-rate-limit": "^7.4.1"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0",
+    "eslint": "^9.15.0",
+    "vite": "^6.0.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

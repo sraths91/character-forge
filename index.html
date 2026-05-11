@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>character-forge</title>
+  <link rel="stylesheet" href="/src/styles.css" />
+</head>
+<body>
+  <header class="app-header">
+    <h1>character-forge</h1>
+    <p class="subtitle">Render your D&amp;D Beyond character as a 2D sprite.</p>
+  </header>
+
+  <main class="app">
+    <section class="import-card" id="import-card">
+      <h2>Import a character</h2>
+      <p class="hint">
+        Paste a public D&amp;D Beyond share URL, a numeric character id, or paste raw character JSON for private characters.
+        We use D&amp;D Beyond's undocumented public endpoint &mdash; it may break without notice.
+      </p>
+
+      <div class="tabs">
+        <button class="tab active" data-tab="url">Share URL</button>
+        <button class="tab" data-tab="json">JSON paste</button>
+      </div>
+
+      <div class="tab-panel" data-panel="url">
+        <input id="url-input" type="text" placeholder="https://www.dndbeyond.com/characters/123456789 or 123456789" />
+        <button id="url-submit" class="primary">Import</button>
+      </div>
+
+      <div class="tab-panel hidden" data-panel="json">
+        <textarea id="json-input" rows="8" placeholder='Paste the JSON returned by https://character-service.dndbeyond.com/character/v5/character/&lt;id&gt;'></textarea>
+        <button id="json-submit" class="primary">Render from JSON</button>
+      </div>
+
+      <p id="status" class="status"></p>
+    </section>
+
+    <section class="result hidden" id="result">
+      <div class="sprite-stage">
+        <canvas id="sprite-canvas" width="384" height="384"></canvas>
+        <div class="sprite-controls">
+          <label for="skin-select">Skin tone</label>
+          <select id="skin-select">
+            <option value="light">Light</option>
+            <option value="pale">Pale</option>
+            <option value="tan">Tan</option>
+            <option value="olive">Olive</option>
+            <option value="dark">Dark</option>
+            <option value="ashen">Ashen (drow / duergar)</option>
+            <option value="green">Green (orc / goblin)</option>
+            <option value="red">Red (tiefling)</option>
+            <option value="blue">Blue (triton)</option>
+          </select>
+        </div>
+        <div class="slot-picker" id="slot-picker" hidden>
+          <details>
+            <summary>Slot assignments</summary>
+            <div class="slot-picker-grid">
+              <label><span>Main hand</span><select data-slot="mainhand"></select></label>
+              <label><span>Off hand</span><select data-slot="offhand"></select></label>
+              <label><span>Back</span><select data-slot="back"></select></label>
+              <label><span>Waist</span><select data-slot="waist"></select></label>
+            </div>
+          </details>
+        </div>
+
+        <details class="appearance-picker" id="appearance-picker" hidden>
+          <summary>Customize appearance</summary>
+          <div class="appearance-direction">
+            <span>Facing</span>
+            <button class="dir-btn" data-dir="north">N</button>
+            <button class="dir-btn" data-dir="west">W</button>
+            <button class="dir-btn active" data-dir="south">S</button>
+            <button class="dir-btn" data-dir="east">E</button>
+          </div>
+          <div class="appearance-grid">
+            <label>
+              <span>Hair style</span>
+              <select data-app="hairStyle">
+                <option value="">(default)</option>
+                <option value="buzzcut">Buzzcut</option>
+                <option value="long">Long</option>
+                <option value="spiked">Spiked</option>
+                <option value="bedhead">Bedhead</option>
+                <option value="balding">Balding</option>
+                <option value="bob">Bob</option>
+                <option value="afro">Afro</option>
+              </select>
+            </label>
+            <label>
+              <span>Hair color</span>
+              <select data-app="hairColor">
+                <option value="">(default)</option>
+                <option value="brown">Brown</option>
+                <option value="black">Black</option>
+                <option value="blonde">Blonde</option>
+                <option value="red">Red</option>
+                <option value="gray">Gray</option>
+                <option value="white">White</option>
+              </select>
+            </label>
+            <label>
+              <span>Eye color</span>
+              <select data-app="eyeColor">
+                <option value="">(default)</option>
+                <option value="blue">Blue</option>
+                <option value="brown">Brown</option>
+                <option value="green">Green</option>
+                <option value="gray">Gray</option>
+              </select>
+            </label>
+            <label>
+              <span>Beard</span>
+              <select data-app="beardStyle">
+                <option value="">(default)</option>
+                <option value="none">None</option>
+                <option value="basic">Basic</option>
+                <option value="medium">Medium</option>
+                <option value="winter">Full (winter)</option>
+                <option value="mustache">Mustache</option>
+              </select>
+            </label>
+            <label>
+              <span>Facial</span>
+              <select data-app="facial">
+                <option value="">(default)</option>
+                <option value="none">None</option>
+                <option value="glasses">Glasses</option>
+                <option value="eyepatch">Eyepatch</option>
+              </select>
+            </label>
+            <label>
+              <span>Build</span>
+              <select data-app="bodyWidth">
+                <option value="">(default)</option>
+                <option value="thin">Thin</option>
+                <option value="normal">Normal</option>
+                <option value="broad">Broad</option>
+              </select>
+            </label>
+            <label class="appearance-toggle">
+              <input type="checkbox" data-app="inspiration" />
+              <span>Inspiration (star above head)</span>
+            </label>
+          </div>
+
+          <fieldset class="live-state">
+            <legend>Live state</legend>
+            <label class="hp-slider">
+              <span>HP <span id="hp-display">—</span></span>
+              <input type="range" id="hp-range" min="0" max="100" value="100" />
+            </label>
+            <label>
+              <span>Concentration</span>
+              <select data-app="concentration">
+                <option value="">None</option>
+                <option value="Bless">Bless</option>
+                <option value="Mage Armor">Mage Armor</option>
+                <option value="Haste">Haste</option>
+                <option value="Hex">Hex</option>
+                <option value="Bane">Bane</option>
+                <option value="Hunter's Mark">Hunter's Mark</option>
+                <option value="Hold Person">Hold Person</option>
+                <option value="Shield of Faith">Shield of Faith</option>
+              </select>
+            </label>
+            <div class="conditions-grid">
+              <span class="conditions-label">Conditions</span>
+              <label><input type="checkbox" data-condition="poisoned" /><span>Poisoned</span></label>
+              <label><input type="checkbox" data-condition="frightened" /><span>Frightened</span></label>
+              <label><input type="checkbox" data-condition="charmed" /><span>Charmed</span></label>
+              <label><input type="checkbox" data-condition="paralyzed" /><span>Paralyzed</span></label>
+              <label><input type="checkbox" data-condition="stunned" /><span>Stunned</span></label>
+              <label><input type="checkbox" data-condition="petrified" /><span>Petrified</span></label>
+              <label><input type="checkbox" data-condition="invisible" /><span>Invisible</span></label>
+              <label><input type="checkbox" data-condition="unconscious" /><span>Unconscious</span></label>
+            </div>
+          </fieldset>
+        </details>
+      </div>
+
+      <div class="sheet">
+        <h2 id="char-name">&mdash;</h2>
+        <p id="char-meta" class="meta"></p>
+
+        <div class="ability-grid" id="ability-grid"></div>
+
+        <h3>Equipment</h3>
+        <ul id="equipment-list" class="equipment-list"></ul>
+
+        <h3>Feats</h3>
+        <ul id="feat-list" class="feat-list"></ul>
+
+        <details class="raw-json">
+          <summary>Raw parsed character (debug)</summary>
+          <pre id="raw-json"></pre>
+        </details>
+      </div>
+    </section>
+  </main>
+
+  <footer class="app-footer">
+    <p>
+      Not affiliated with Wizards of the Coast or D&amp;D Beyond.
+      Sprite art derived from the
+      <a href="https://opengameart.org/content/lpc-collection" target="_blank" rel="noopener">Liberated Pixel Cup</a>
+      asset library (CC-BY-SA 3.0 / GPL 3.0).
+    </p>
+  </footer>
+
+  <script type="module" src="/src/js/main.js"></script>
+</body>
+</html>
