@@ -12,7 +12,7 @@
     "preview": "vite preview",
     "start": "NODE_ENV=production node api/server.js",
     "lint": "eslint . --max-warnings 20",
-    "test": "node --test 'src/tests/**/*.test.js' 'api/tests/**/*.test.js'"
+    "test": "node --test src/tests/*.test.js api/tests/*.test.js"
   },
   "dependencies": {
     "better-sqlite3": "^11.5.0",
