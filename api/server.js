@@ -17,6 +17,14 @@ const PORT = Number(process.env.PORT) || 3101;
 const PROD = process.env.NODE_ENV === 'production';
 
 const app = express();
+// Railway (and most PaaS hosts) put one HTTPS-terminating proxy in front of
+// the app, so req.ip would be the proxy's loopback address without this.
+// express-rate-limit also refuses to start when it sees X-Forwarded-For
+// without trust proxy configured, so this both enables correct IP-based
+// rate limiting AND lets the rate limiter middleware run cleanly.
+// '1' = trust one hop (the Railway edge); avoid 'true' which trusts
+// arbitrarily-spoofed chains.
+if (PROD) app.set('trust proxy', 1);
 app.use(cors({ origin: true, credentials: true }));
 app.use(express.json({ limit: '2mb' }));
 app.use(cookieParser());
