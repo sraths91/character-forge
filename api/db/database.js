@@ -21,6 +21,20 @@ db.exec(schema);
 // of (0,128,64,64). Pre-v3 bow-derived PNGs are stale and must be re-synthesised.
 export const ITEM_GENERATOR_VERSION = 3;
 
+/**
+ * Close the SQLite connection cleanly. Called from the server's SIGTERM
+ * handler so WAL checkpoints flush and the WAL/SHM sidecars are released
+ * before the container exits. Safe to call multiple times.
+ */
+export function closeDb() {
+  if (db.open) {
+    try {
+      db.pragma('wal_checkpoint(TRUNCATE)');
+    } catch { /* DB already partially closed; ignore */ }
+    db.close();
+  }
+}
+
 export function upsertCharacter({ ddbId, name, rawJson, parsedJson, source }) {
   const now = Date.now();
   const stmt = db.prepare(`

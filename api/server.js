@@ -7,7 +7,8 @@ import { dirname, join } from 'node:path';
 
 import {
   upsertCharacter, getCharacterByDdbId, listRecent,
-  getItemSprite, putItemSprite, ITEM_GENERATOR_VERSION
+  getItemSprite, putItemSprite, ITEM_GENERATOR_VERSION,
+  closeDb
 } from './db/database.js';
 import { extractCharacterId, fetchDdbCharacter } from './lib/ddb-fetch.js';
 import { parseCharacter } from './lib/ddb-parser.js';
@@ -25,7 +26,19 @@ const app = express();
 // '1' = trust one hop (the Railway edge); avoid 'true' which trusts
 // arbitrarily-spoofed chains.
 if (PROD) app.set('trust proxy', 1);
-app.use(cors({ origin: true, credentials: true }));
+
+// CORS: in production, restrict to the explicit allow-list passed via
+// ALLOWED_ORIGINS (comma-separated). In dev, reflect any origin to keep
+// the Vite proxy + cross-port calls frictionless.
+const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || '')
+  .split(',').map(s => s.trim()).filter(Boolean);
+if (PROD && ALLOWED_ORIGINS.length === 0) {
+  console.warn('[startup] PROD with no ALLOWED_ORIGINS set — falling back to "no origin" (same-origin only)');
+}
+app.use(cors({
+  origin: PROD ? (ALLOWED_ORIGINS.length ? ALLOWED_ORIGINS : false) : true,
+  credentials: true
+}));
 app.use(express.json({ limit: '2mb' }));
 app.use(cookieParser());
 
@@ -141,6 +154,32 @@ if (PROD) {
   app.get('*', (_req, res) => res.sendFile(join(distPath, 'index.html')));
 }
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`character-forge API listening on http://localhost:${PORT}`);
 });
+
+// Graceful shutdown: Railway sends SIGTERM when redeploying. Stop accepting
+// new connections, let in-flight requests finish, checkpoint+close the
+// SQLite WAL, then exit. Hard-exit after 20s if anything hangs — Railway's
+// drainingSeconds budget is 30s so we leave a 10s margin for the platform.
+let shuttingDown = false;
+function shutdown(signal) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(JSON.stringify({ level: 'info', msg: `${signal} received — graceful shutdown` }));
+  // Stop accepting new connections; existing ones drain
+  server.close((err) => {
+    if (err) console.error('server.close error', err);
+    try { closeDb(); } catch (e) { console.error('closeDb error', e); }
+    console.log(JSON.stringify({ level: 'info', msg: 'shutdown complete' }));
+    process.exit(0);
+  });
+  // Safety net — if a long-lived connection refuses to close, force exit
+  // before Railway delivers SIGKILL at drainingSeconds=30.
+  setTimeout(() => {
+    console.error(JSON.stringify({ level: 'error', msg: 'shutdown timed out after 20s, forcing exit' }));
+    process.exit(1);
+  }, 20_000).unref();
+}
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT',  () => shutdown('SIGINT'));
