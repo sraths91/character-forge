@@ -264,7 +264,9 @@ function drawStar(ctx, cx, cy, outerR, innerR, fill) {
   ctx.closePath();
   ctx.fillStyle = fill;
   ctx.strokeStyle = '#7c2d12';
-  ctx.lineWidth = Math.max(1, scale / 4);
+  // Stroke width scales with the star's outer radius (drawStar isn't passed
+  // the compositor scale directly). Min 1px so outlines render crisply.
+  ctx.lineWidth = Math.max(1, outerR / 6);
   ctx.fill();
   ctx.stroke();
   ctx.restore();
