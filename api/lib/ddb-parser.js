@@ -21,7 +21,7 @@ export function parseCharacter(raw) {
   const abilityScores = parseAbilityScores(raw);
   const { slots: equipment, carried } = parseEquipment(raw);
   const feats = parseFeats(raw);
-  const hp = parseHitPoints(raw);
+  const hp = parseHitPoints(raw, abilityScores, level);
   const deathSaves = parseDeathSaves(raw);
 
   return {
@@ -172,19 +172,63 @@ function parseClasses(raw) {
   }));
 }
 
+// D&DB stores ability-score adjustments in two places:
+//   1. raw.bonusStats[]      — point-buy/manual bonuses (recorded per-stat)
+//   2. raw.modifiers.*[]     — race/class/feat/background/item modifiers,
+//      where each entry with type='bonus' and subType='<stat>-score'
+//      adds to the corresponding ability. type='set' with the same
+//      subType replaces the score entirely.
+//
+// Stat names in the modifier subType match D&DB's lowercase convention:
+//   strength-score, dexterity-score, constitution-score, intelligence-score,
+//   wisdom-score, charisma-score.
+const STAT_SUBTYPE_TO_KEY = {
+  'strength-score':     'STR',
+  'dexterity-score':    'DEX',
+  'constitution-score': 'CON',
+  'intelligence-score': 'INT',
+  'wisdom-score':       'WIS',
+  'charisma-score':     'CHA'
+};
+
+function collectAllModifiers(raw) {
+  const m = raw.modifiers || {};
+  return [
+    ...(Array.isArray(m.race)       ? m.race       : []),
+    ...(Array.isArray(m.class)      ? m.class      : []),
+    ...(Array.isArray(m.feat)       ? m.feat       : []),
+    ...(Array.isArray(m.background) ? m.background : []),
+    ...(Array.isArray(m.item)       ? m.item       : []),
+    ...(Array.isArray(m.condition)  ? m.condition  : [])
+  ];
+}
+
 function parseAbilityScores(raw) {
   const stats = Array.isArray(raw.stats) ? raw.stats : [];
   const bonus = Array.isArray(raw.bonusStats) ? raw.bonusStats : [];
   const override = Array.isArray(raw.overrideStats) ? raw.overrideStats : [];
   const out = { STR: 10, DEX: 10, CON: 10, INT: 10, WIS: 10, CHA: 10 };
+  // Base scores
   for (const s of stats) {
     const key = STAT_NAMES[s.id];
     if (key && Number.isFinite(s.value)) out[key] = s.value;
   }
+  // Bonus stats array (point-buy bonuses, negative for racial penalties etc.)
   for (const s of bonus) {
     const key = STAT_NAMES[s.id];
     if (key && Number.isFinite(s.value)) out[key] += s.value;
   }
+  // Modifier-section bonuses (race/feat/etc.) — this is where Resilient's
+  // +1 CON, Custom Lineage's +2 ability bonus, and many magic items live.
+  for (const mod of collectAllModifiers(raw)) {
+    const key = STAT_SUBTYPE_TO_KEY[mod.subType];
+    if (!key) continue;
+    const v = Number(mod.value ?? mod.fixedValue);
+    if (!Number.isFinite(v)) continue;
+    if (mod.type === 'bonus') out[key] += v;
+    else if (mod.type === 'set' && v > out[key]) out[key] = v;   // 'set' floors the score
+  }
+  // Manual overrides (per-stat) — last to win
   for (const s of override) {
     const key = STAT_NAMES[s.id];
     if (key && Number.isFinite(s.value)) out[key] = s.value;
@@ -200,16 +244,26 @@ function deriveModifiers(scores) {
   return mods;
 }
 
-function parseHitPoints(raw) {
+/**
+ * Hit points. D&DB's `baseHitPoints` is the dice-sum component only — the
+ * CON-modifier-per-level contribution is NOT included and must be added
+ * here. Formula (when no manual override is set):
+ *
+ *   max = baseHitPoints + bonusHitPoints + (CON_mod × totalLevel)
+ *
+ * If `overrideHitPoints` is set (rare — only when the user manually pins
+ * the value), it wins over the derived max. `bonusHitPoints` covers feats
+ * like Tough that ADD to HP without going through CON.
+ */
+function parseHitPoints(raw, abilityScores, totalLevel) {
   const base = Number(raw.baseHitPoints) || 0;
   const bonus = Number(raw.bonusHitPoints) || 0;
   const override = raw.overrideHitPoints ?? null;
   const temp = Number(raw.temporaryHitPoints) || 0;
   const removed = Number(raw.removedHitPoints) || 0;
-  // Phase E2 — convenience: precompute current/max so the renderer doesn't
-  // re-derive every frame. max honors override (e.g., aasimar feature);
-  // current is max minus damage taken, clamped at 0.
-  const max = (typeof override === 'number' ? override : base + bonus) || 0;
+  const conMod = abilityScores ? Math.floor(((abilityScores.CON ?? 10) - 10) / 2) : 0;
+  const derived = base + bonus + (conMod * (totalLevel || 0));
+  const max = (typeof override === 'number' ? override : derived) || 0;
   const current = Math.max(0, max - removed);
   return { base, bonus, override, temp, removed, max, current };
 }

@@ -144,3 +144,96 @@ test('ddb-parser: end-to-end appearance → sprite renderer (full pipeline)', as
   assert.ok(glyph, 'inspiration=true → glyph layer');
   assert.strictEqual(glyph.glyph, 'star');
 });
+
+// --- HP calculation regression tests (Saris bug, May 2026) ---
+
+test('ddb-parser: max HP includes CON modifier × total level', () => {
+  // Mock Saris: Cleric L3, baseHP=18, CON 15 + 1 from Resilient feat → CON 16 → +3 mod
+  // Expected: 18 + (3 × 3) = 27 max
+  const raw = rawFixture({
+    classes: [{ definition: { name: 'Cleric' }, level: 3, subclassDefinition: { name: 'Twilight Domain' } }],
+    baseHitPoints: 18,
+    bonusHitPoints: null,
+    stats: [
+      { id: 1, value: 15 }, { id: 2, value: 8 }, { id: 3, value: 15 },
+      { id: 4, value: 8 },  { id: 5, value: 15 }, { id: 6, value: 8 }
+    ],
+    modifiers: {
+      feat: [
+        { type: 'bonus', subType: 'constitution-score', value: 1, fixedValue: 1 }
+      ]
+    }
+  });
+  const parsed = parseCharacter(raw);
+  assert.strictEqual(parsed.level, 3);
+  assert.strictEqual(parsed.abilityScores.CON, 16,
+    'Resilient feat must push CON from 15 to 16');
+  assert.strictEqual(parsed.abilityModifiers.CON, 3);
+  assert.strictEqual(parsed.hp.max, 27,
+    'max HP must be baseHP (18) + CON_mod (+3) × level (3) = 27');
+  assert.strictEqual(parsed.hp.current, 27);
+});
+
+test('ddb-parser: ability score bonuses from modifiers section apply', () => {
+  const raw = rawFixture({
+    stats: [
+      { id: 1, value: 10 }, { id: 2, value: 10 }, { id: 3, value: 10 },
+      { id: 4, value: 10 }, { id: 5, value: 10 }, { id: 6, value: 10 }
+    ],
+    modifiers: {
+      race:   [{ type: 'bonus', subType: 'wisdom-score',     value: 2, fixedValue: 2 }],
+      feat:   [{ type: 'bonus', subType: 'constitution-score', value: 1, fixedValue: 1 }],
+      item:   [{ type: 'bonus', subType: 'strength-score',   value: 1, fixedValue: 1 }],
+      background: [],
+      class: []
+    }
+  });
+  const parsed = parseCharacter(raw);
+  assert.strictEqual(parsed.abilityScores.WIS, 12, 'race +2 WIS');
+  assert.strictEqual(parsed.abilityScores.CON, 11, 'feat +1 CON');
+  assert.strictEqual(parsed.abilityScores.STR, 11, 'item +1 STR');
+  assert.strictEqual(parsed.abilityScores.DEX, 10, 'no DEX bonus');
+});
+
+test('ddb-parser: modifier type "set" floors the score (does not add)', () => {
+  // type='set' for a stat replaces the score IF the new value is higher
+  // (mirrors D&DB behavior where racial floors don't lower an already-good score).
+  const raw = rawFixture({
+    stats: [
+      { id: 1, value: 18 }, { id: 2, value: 10 }, { id: 3, value: 10 },
+      { id: 4, value: 10 }, { id: 5, value: 10 }, { id: 6, value: 10 }
+    ],
+    modifiers: { race: [{ type: 'set', subType: 'strength-score', value: 15, fixedValue: 15 }] }
+  });
+  const parsed = parseCharacter(raw);
+  // STR was 18, racial floor of 15 should NOT lower it
+  assert.strictEqual(parsed.abilityScores.STR, 18);
+});
+
+test('ddb-parser: overrideHitPoints wins over derived max', () => {
+  const raw = rawFixture({
+    baseHitPoints: 18,
+    overrideHitPoints: 50,    // manual override
+    stats: [
+      { id: 1, value: 10 }, { id: 2, value: 10 }, { id: 3, value: 20 },  // CON 20 → +5
+      { id: 4, value: 10 }, { id: 5, value: 10 }, { id: 6, value: 10 }
+    ]
+  });
+  const parsed = parseCharacter(raw);
+  // Without override, derived would be 18 + (5 × 5) = 43. Override forces 50.
+  assert.strictEqual(parsed.hp.max, 50);
+});
+
+test('ddb-parser: HP at level 0 uses baseHitPoints only (defensive)', () => {
+  const raw = rawFixture({
+    baseHitPoints: 10,
+    classes: [],   // no classes → level 0
+    stats: [
+      { id: 1, value: 10 }, { id: 2, value: 10 }, { id: 3, value: 20 },
+      { id: 4, value: 10 }, { id: 5, value: 10 }, { id: 6, value: 10 }
+    ]
+  });
+  const parsed = parseCharacter(raw);
+  assert.strictEqual(parsed.level, 0);
+  assert.strictEqual(parsed.hp.max, 10, 'CON × 0 contributes nothing');
+});
