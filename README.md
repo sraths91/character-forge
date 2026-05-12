@@ -1,6 +1,10 @@
 # character-forge
 
+[![CI](https://github.com/sraths91/character-forge/actions/workflows/ci.yml/badge.svg)](https://github.com/sraths91/character-forge/actions/workflows/ci.yml)
+
 Render a 2D paper-doll sprite from a D&D Beyond character sheet.
+
+**Live**: https://character-forge-gh-production.up.railway.app
 
 > Not affiliated with Wizards of the Coast or D&D Beyond. The site uses an
 > undocumented public character endpoint that may change without notice.
