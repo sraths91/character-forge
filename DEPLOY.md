@@ -42,7 +42,7 @@ Railway auto-restarts the service if this stops responding.
 Push to `main` → Railway picks up the change, runs `npm ci && npm run build`, then `NODE_ENV=production node api/server.js`. First build takes ~2 minutes; subsequent builds reuse the npm cache.
 
 ### 6. Verify
-- `GET https://<app>.up.railway.app/api/health` → `{"ok":true,...}`
+- `GET https://character-forge-gh-production.up.railway.app/api/health` → `{"ok":true,...}`
 - Open the root URL → import UI loads
 - Paste a public D&D Beyond character URL → sprite renders
 

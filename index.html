@@ -21,9 +21,9 @@
         We use D&amp;D Beyond's undocumented public endpoint &mdash; it may break without notice.
       </p>
 
-      <div class="tabs">
-        <button class="tab active" data-tab="url">Share URL</button>
-        <button class="tab" data-tab="json">JSON paste</button>
+      <div class="tabs" role="tablist" aria-label="Import method">
+        <button class="tab active" data-tab="url" role="tab" aria-selected="true">Share URL</button>
+        <button class="tab" data-tab="json" role="tab" aria-selected="false">JSON paste</button>
       </div>
 
       <div class="tab-panel" data-panel="url">
@@ -41,12 +41,12 @@
         <button id="json-submit" class="primary">Render from JSON</button>
       </div>
 
-      <p id="status" class="status"></p>
+      <p id="status" class="status" role="status" aria-live="polite"></p>
     </section>
 
     <section class="result hidden" id="result">
       <div class="sprite-stage">
-        <canvas id="sprite-canvas" width="384" height="384"></canvas>
+        <canvas id="sprite-canvas" width="384" height="384" role="img" aria-label="Composed character sprite. Use the controls below to customize."></canvas>
 
         <div class="export-bar">
           <label class="export-scale">
@@ -64,20 +64,6 @@
           <button id="share-link" class="secondary" title="Copy a sharable URL with your customizations">🔗 Share link</button>
         </div>
 
-        <div class="sprite-controls">
-          <label for="skin-select">Skin tone</label>
-          <select id="skin-select">
-            <option value="light">Light</option>
-            <option value="pale">Pale</option>
-            <option value="tan">Tan</option>
-            <option value="olive">Olive</option>
-            <option value="dark">Dark</option>
-            <option value="ashen">Ashen (drow / duergar)</option>
-            <option value="green">Green (orc / goblin)</option>
-            <option value="red">Red (tiefling)</option>
-            <option value="blue">Blue (triton)</option>
-          </select>
-        </div>
         <div class="slot-picker" id="slot-picker" hidden>
           <details>
             <summary>Slot assignments</summary>
@@ -162,6 +148,21 @@
                 <option value="thin">Thin</option>
                 <option value="normal">Normal</option>
                 <option value="broad">Broad</option>
+              </select>
+            </label>
+            <label>
+              <span>Skin tone</span>
+              <select data-app="skinTone">
+                <option value="">(default)</option>
+                <option value="light">Light</option>
+                <option value="pale">Pale</option>
+                <option value="tan">Tan</option>
+                <option value="olive">Olive</option>
+                <option value="dark">Dark</option>
+                <option value="ashen">Ashen</option>
+                <option value="green">Green</option>
+                <option value="red">Red</option>
+                <option value="blue">Blue</option>
               </select>
             </label>
             <label class="appearance-toggle">

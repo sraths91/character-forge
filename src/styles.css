@@ -365,6 +365,31 @@ button.primary:disabled { opacity: 0.6; cursor: not-allowed; }
 
 .equipment-list .empty { opacity: 0.45; }
 
+/* Tier 2 — equipment list rarity colors + magical sparkle */
+.equipment-list .item-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.equipment-list .item-name { font-weight: 500; }
+.equipment-list .item-name.rarity-uncommon  { color: #60a5fa; }   /* blue */
+.equipment-list .item-name.rarity-rare      { color: #3b82f6; }
+.equipment-list .item-name.rarity-very_rare { color: #a855f7; }   /* purple */
+.equipment-list .item-name.rarity-legendary { color: #f59e0b; }   /* gold */
+.equipment-list .item-name.rarity-artifact  { color: #dc2626; }   /* red */
+.equipment-list .sparkle {
+  font-size: 0.85rem;
+  filter: drop-shadow(0 0 4px rgba(250, 204, 21, 0.55));
+}
+.equipment-list .attuned-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  display: inline-block;
+  box-shadow: 0 0 6px var(--accent);
+}
+
 .raw-json {
   margin-top: 24px;
   border-top: 1px solid var(--border);
@@ -603,4 +628,82 @@ button.primary:disabled { opacity: 0.6; cursor: not-allowed; }
   gap: 6px;
   font-size: 0.8rem;
   color: var(--text);
+}
+
+/* ===================================================================== */
+/* Tier 2 — Mobile responsive (T2.1)                                     */
+/* ===================================================================== */
+
+@media (max-width: 768px) {
+  .app { padding: 0 12px; }
+  .app-header { padding: 24px 16px 12px; }
+  .app-header h1 { font-size: 1.5rem; }
+  .theme-toggle { top: 16px; right: 16px; }
+
+  /* Stack the import + sprite + sheet vertically */
+  .result {
+    grid-template-columns: 1fr;
+  }
+
+  /* Canvas scales down with viewport but stays pixelated */
+  .sprite-stage {
+    padding: 12px;
+    min-height: 0;
+  }
+  #sprite-canvas {
+    max-width: 100%;
+    height: auto;
+  }
+
+  /* Export bar wraps cleanly */
+  .export-bar {
+    gap: 8px;
+  }
+  .export-scale { flex: 1 1 100%; min-width: 0; }
+  .export-bar > button { flex: 1 1 calc(50% - 4px); }
+
+  /* Customize panel grid collapses to single column */
+  .appearance-grid,
+  .conditions-grid,
+  .slot-picker-grid {
+    grid-template-columns: 1fr;
+  }
+
+  /* Recent characters chips wrap tighter */
+  .recent-chips { gap: 4px; }
+  .recent-chip { padding: 3px 8px; font-size: 0.75rem; }
+
+  /* Tab buttons can be smaller */
+  .tabs { flex-wrap: wrap; gap: 4px; }
+
+  /* Direction picker buttons sized for touch */
+  .dir-btn { min-width: 44px; min-height: 36px; }
+
+  /* Status hint line on small screens */
+  .status .hint-line { font-size: 0.78rem; line-height: 1.4; }
+
+  /* Sheet panel padding tighter */
+  .sheet { padding: 12px; }
+  .ability-grid { gap: 4px; }
+  .ability { padding: 6px 8px; }
+}
+
+@media (max-width: 380px) {
+  /* Phone-portrait: drop tabs to vertical, hide a few hint texts */
+  .tabs { flex-direction: column; }
+  .recent-label { width: 100%; }
+}
+
+/* Tier 2 — Accessibility (T2.4): visible focus rings on interactive elements */
+button:focus-visible,
+select:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+[role="tab"]:focus-visible,
+details > summary:focus-visible,
+.recent-chip:focus-visible,
+.dir-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
 }

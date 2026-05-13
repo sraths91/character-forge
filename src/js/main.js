@@ -12,7 +12,11 @@ const panels = document.querySelectorAll('.tab-panel');
 
 tabs.forEach(t => {
   t.addEventListener('click', () => {
-    tabs.forEach(x => x.classList.toggle('active', x === t));
+    tabs.forEach(x => {
+      const on = x === t;
+      x.classList.toggle('active', on);
+      x.setAttribute('aria-selected', String(on));
+    });
     panels.forEach(p => p.classList.toggle('hidden', p.dataset.panel !== t.dataset.tab));
   });
 });
@@ -24,12 +28,9 @@ $('url-input').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') importByUrl();
 });
 
-$('skin-select').addEventListener('change', () => {
-  const newTone = $('skin-select').value;
-  currentAppearance = { ...currentAppearance, skinTone: newTone };
-  if (originalCharacter?.id) saveAppearance(originalCharacter.id, currentAppearance);
-  rerender();
-});
+// Phase J: skin tone is now in the appearance-picker as data-app="skinTone".
+// The legacy #skin-select element was removed; the generic data-app change
+// handler below picks up the value.
 
 document.addEventListener('change', (e) => {
   if (!e.target.matches('#slot-picker select[data-slot]')) return;
@@ -307,7 +308,7 @@ async function render(character) {
   const classes = (effective.classes || []).map(c => `${c.name} ${c.level}`).join(' / ');
   $('char-meta').textContent = `${effective.race?.name || ''} · ${classes || `Level ${effective.level}`}`;
 
-  if (effective.skinTone) $('skin-select').value = effective.skinTone;
+  // (Skin tone is initialized below via the appearance picker controls)
 
   // Phase J — populate appearance-picker controls from saved state
   syncAppearanceControls(currentAppearance);
@@ -414,6 +415,28 @@ function renderAbilities(character) {
   }
 }
 
+// Rarity → CSS class used on the equipment list (matches color tier of the
+// in-canvas backdrop aura so the sheet's name color subtly hints at it).
+function rarityClass(rarity) {
+  const k = String(rarity || '').toLowerCase().replace(/\s+/g, '_');
+  if (['uncommon','rare','very_rare','legendary','artifact'].includes(k)) return `rarity-${k}`;
+  return '';
+}
+
+function renderItemLi(slot, item) {
+  const li = document.createElement('li');
+  if (!item) {
+    li.className = 'empty';
+    li.innerHTML = `<span class="slot">${escapeHtml(slot)}</span><span>&mdash;</span>`;
+    return li;
+  }
+  const nameSpan = `<span class="item-name ${rarityClass(item.rarity)}">${escapeHtml(item.name)}</span>`;
+  const sparkle = item.magical ? '<span class="sparkle" title="Magical" aria-hidden="true">✨</span>' : '';
+  const attuned = item.attuned ? '<span class="attuned-dot" title="Attuned" aria-hidden="true"></span>' : '';
+  li.innerHTML = `<span class="slot">${escapeHtml(slot)}</span><span class="item-cell">${nameSpan}${sparkle}${attuned}</span>`;
+  return li;
+}
+
 function renderEquipment(eq, carried) {
   const list = $('equipment-list');
   list.innerHTML = '';
@@ -429,22 +452,11 @@ function renderEquipment(eq, carried) {
     ['amulet', 'Amulet']
   ];
   for (const [key, label] of slots) {
-    const item = eq?.[key];
-    const li = document.createElement('li');
-    if (!item) {
-      li.className = 'empty';
-      li.innerHTML = `<span class="slot">${label}</span><span>&mdash;</span>`;
-    } else {
-      const tag = item.magical ? ' ✨' : '';
-      li.innerHTML = `<span class="slot">${label}</span><span>${item.name}${tag}</span>`;
-    }
-    list.appendChild(li);
+    list.appendChild(renderItemLi(label, eq?.[key]));
   }
   if (eq?.rings?.length) {
     for (const ring of eq.rings) {
-      const li = document.createElement('li');
-      li.innerHTML = `<span class="slot">Ring</span><span>${ring.name}${ring.magical ? ' ✨' : ''}</span>`;
-      list.appendChild(li);
+      list.appendChild(renderItemLi('Ring', ring));
     }
   }
 
@@ -455,10 +467,8 @@ function renderEquipment(eq, carried) {
     heading.innerHTML = `<span class="slot">Overflow (carried, not drawn)</span>`;
     list.appendChild(heading);
     for (const c of overflow) {
-      const li = document.createElement('li');
-      li.className = 'overflow';
-      const tag = c.magical ? ' ✨' : '';
-      li.innerHTML = `<span class="slot">${c.inferredSlot}</span><span>${c.name}${tag}</span>`;
+      const li = renderItemLi(c.inferredSlot, c);
+      li.classList.add('overflow');
       list.appendChild(li);
     }
   }
