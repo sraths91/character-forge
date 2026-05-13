@@ -101,8 +101,123 @@ function rerender() {
   const c = JSON.parse(JSON.stringify(slotEffective));
   applyAppearanceOverrides(c, currentAppearance);
   currentCharacter = c;
-  renderSprite(canvas, c, { scale: 6, direction: currentDirection });
+  renderSprite(canvas, c, { scale: 6, direction: currentDirection, frameIdx: animFrame });
 }
+
+// ---------- Tier 3.1: Walk-cycle animation ----------
+let animating = false;
+let animFrame = 0;
+let animTimer = null;
+const FRAME_INTERVAL_MS = 130;
+
+function startAnimation() {
+  if (animating) return;
+  animating = true;
+  const btn = $('animate-toggle');
+  if (btn) btn.textContent = '⏸ Animating';
+  animTimer = setInterval(() => {
+    animFrame = (animFrame + 1) & 0xFFFF;   // never overflow; renderer mods per-layer
+    rerender();
+  }, FRAME_INTERVAL_MS);
+}
+
+function stopAnimation() {
+  if (!animating) return;
+  animating = false;
+  clearInterval(animTimer);
+  animTimer = null;
+  animFrame = 0;
+  const btn = $('animate-toggle');
+  if (btn) btn.textContent = '▶ Animate';
+  rerender();   // snap back to frame 0
+}
+
+document.addEventListener('click', (e) => {
+  if (e.target.id !== 'animate-toggle') return;
+  if (animating) stopAnimation(); else startAnimation();
+});
+
+// ---------- Tier 3.2: Share-link encoding ----------
+//
+// We encode the full reproduction recipe into the URL hash:
+//   { id: <ddbId>, ov: <slotOverrides>, ap: <appearance>, d: <direction> }
+// JSON → base64url → fragment. On page load, if a payload is present we
+// auto-import that character and apply the saved customizations before
+// rendering, so anyone visiting the URL sees the same composed sprite.
+
+function b64urlEncode(str) {
+  return btoa(unescape(encodeURIComponent(str))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+function b64urlDecode(str) {
+  const padded = str.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice(0, (4 - str.length % 4) % 4);
+  return decodeURIComponent(escape(atob(padded)));
+}
+
+function buildSharePayload() {
+  if (!originalCharacter?.id) return null;
+  return {
+    id: String(originalCharacter.id),
+    ov: currentOverrides,
+    ap: currentAppearance,
+    d:  currentDirection !== 'south' ? currentDirection : undefined
+  };
+}
+
+function buildShareUrl() {
+  const payload = buildSharePayload();
+  if (!payload) return null;
+  // Drop empty objects to keep URL short
+  const slim = {
+    id: payload.id,
+    ...(Object.keys(payload.ov || {}).length ? { ov: payload.ov } : {}),
+    ...(Object.keys(payload.ap || {}).length ? { ap: payload.ap } : {}),
+    ...(payload.d ? { d: payload.d } : {})
+  };
+  const encoded = b64urlEncode(JSON.stringify(slim));
+  const url = new URL(window.location.href);
+  url.hash = `s=${encoded}`;
+  return url.toString();
+}
+
+async function consumeShareLink() {
+  if (!window.location.hash.startsWith('#s=')) return false;
+  try {
+    const payload = JSON.parse(b64urlDecode(window.location.hash.slice(3)));
+    if (!payload?.id) return false;
+    // Import the character — render() will pick up our queued overrides
+    pendingShareOverrides = { ov: payload.ov || {}, ap: payload.ap || {}, d: payload.d || 'south' };
+    setStatus(`Loading shared character ${payload.id}…`, 'loading');
+    await postImport({ url: payload.id });
+    return true;
+  } catch (err) {
+    setStatus(`Could not load shared character: ${err.message}`, 'error');
+    return false;
+  }
+}
+
+// Queued by consumeShareLink() and consumed inside render() so the shared
+// customizations beat localStorage's saved state for this session only.
+let pendingShareOverrides = null;
+
+document.addEventListener('click', async (e) => {
+  if (e.target.id !== 'share-link') return;
+  const btn = e.target;
+  const url = buildShareUrl();
+  if (!url) { setStatus('Load a character first.', 'error'); return; }
+  if (!navigator.clipboard?.writeText) {
+    setStatus('Clipboard not available — copy the URL from your address bar.', 'error');
+    return;
+  }
+  const prev = btn.textContent;
+  try {
+    await navigator.clipboard.writeText(url);
+    btn.textContent = '✓ Link copied';
+    history.replaceState(null, '', url);
+    setTimeout(() => { btn.textContent = prev; }, 2200);
+  } catch (err) {
+    setStatus(`Could not copy: ${err.message}`, 'error');
+  }
+});
 
 async function importByUrl() {
   const value = $('url-input').value.trim();
@@ -167,9 +282,19 @@ function makeImportError(status, data) {
 
 async function render(character) {
   originalCharacter = character;
-  currentOverrides = loadOverrides(character.id);
-  currentAppearance = loadAppearance(character.id);
-  currentDirection = 'south';
+  // Share-link payload wins over localStorage for this session. Once
+  // applied, it's cleared — subsequent re-renders use the persisted
+  // state like normal.
+  if (pendingShareOverrides) {
+    currentOverrides  = pendingShareOverrides.ov || {};
+    currentAppearance = pendingShareOverrides.ap || {};
+    currentDirection  = pendingShareOverrides.d  || 'south';
+    pendingShareOverrides = null;
+  } else {
+    currentOverrides = loadOverrides(character.id);
+    currentAppearance = loadAppearance(character.id);
+    currentDirection = 'south';
+  }
 
   const slotEffective = assignCarriedSlots(character, currentOverrides);
   // Clone before applying appearance overrides — preserve original for re-render
@@ -194,7 +319,8 @@ async function render(character) {
   populateSlotPicker(effective);
   $('raw-json').textContent = JSON.stringify(effective, null, 2);
 
-  const r = await renderSprite(canvas, effective, { scale: 6, direction: currentDirection });
+  stopAnimation();   // reset animation state when loading a new character
+  const r = await renderSprite(canvas, effective, { scale: 6, direction: currentDirection, frameIdx: 0 });
   return r.generatedCount;
 }
 
@@ -471,5 +597,28 @@ document.addEventListener('click', async (e) => {
   }
 });
 
+// ---------- Tier 3.4: Light/dark theme toggle ----------
+const THEME_KEY = 'cf_theme';
+function applyTheme(theme) {
+  document.documentElement.setAttribute('data-theme', theme);
+  const btn = $('theme-toggle');
+  if (btn) btn.textContent = theme === 'light' ? '☀' : '🌙';
+}
+try {
+  const saved = localStorage.getItem(THEME_KEY);
+  applyTheme(saved === 'light' ? 'light' : 'dark');
+} catch { applyTheme('dark'); }
+
+document.addEventListener('click', (e) => {
+  if (e.target.id !== 'theme-toggle') return;
+  const next = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+  applyTheme(next);
+  try { localStorage.setItem(THEME_KEY, next); } catch { /* private mode */ }
+});
+
 // Fetch the recent-characters list once on page load
 refreshRecentCharacters();
+
+// If the URL carries a share-link payload, consume it and auto-import.
+// Done after render bindings are set up so status messages display.
+consumeShareLink();

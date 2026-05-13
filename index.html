@@ -8,6 +8,7 @@
 </head>
 <body>
   <header class="app-header">
+    <button id="theme-toggle" class="theme-toggle" title="Toggle light/dark theme" aria-label="Toggle theme">🌗</button>
     <h1>character-forge</h1>
     <p class="subtitle">Render your D&amp;D Beyond character as a 2D sprite.</p>
   </header>
@@ -57,8 +58,10 @@
               <option value="16">Huge (1024×1024)</option>
             </select>
           </label>
+          <button id="animate-toggle" class="secondary" title="Toggle walk-cycle animation">▶ Animate</button>
           <button id="download-png" class="primary" title="Download as PNG">Download PNG</button>
           <button id="copy-png" class="secondary" title="Copy to clipboard">Copy</button>
+          <button id="share-link" class="secondary" title="Copy a sharable URL with your customizations">🔗 Share link</button>
         </div>
 
         <div class="sprite-controls">

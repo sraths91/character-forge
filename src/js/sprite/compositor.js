@@ -16,7 +16,15 @@ const RARITY_RANK = {
  * (front-facing) to preserve all pre-D1 callers without changes. Derived-
  * item poses are tuned for south only — non-south directions skip them.
  */
-export async function renderSprite(canvas, character, { scale = 6, direction = 'south' } = {}) {
+/**
+ * `frameIdx` (Phase L — animation): when non-zero, samples that frame
+ * from each layer's south-row strip. Per-layer frame count is computed
+ * from the loaded image dimensions (img.width / sw), so a 2-frame idle
+ * sheet bobs 0→1, a 9-frame walk strides 0→8, etc. Each layer wraps
+ * independently — they desync slightly because sheets have different
+ * frame counts, which reads as "alive" rather than "marching in step".
+ */
+export async function renderSprite(canvas, character, { scale = 6, direction = 'south', frameIdx = 0 } = {}) {
   const plan = buildRenderPlan(character, { direction });
   const ctx = canvas.getContext('2d');
   const outW = FRAME * scale;
@@ -82,7 +90,9 @@ export async function renderSprite(canvas, character, { scale = 6, direction = '
     if (layer.kind === 'lpc') {
       try {
         const img = await loadImage(layer.src);
-        const f = getFrame(layer.src, direction);
+        const f0 = getFrame(layer.src, direction, 0);
+        const frameCount = Math.max(1, Math.floor(img.width / f0.sw));
+        const f = getFrame(layer.src, direction, frameIdx % frameCount);
         const prevFilter = ctx.filter;
         if (layer.filter) ctx.filter = layer.filter;
         ctx.drawImage(img, f.sx, f.sy, f.sw, f.sh, 0, 0, outW, outH);
@@ -101,7 +111,9 @@ export async function renderSprite(canvas, character, { scale = 6, direction = '
         } else {
           // Fall through to base asset (mutated:false or no result)
           const img = await loadImage(layer.src);
-          const f = getFrame(layer.src, direction);
+          const f0 = getFrame(layer.src, direction, 0);
+          const frameCount = Math.max(1, Math.floor(img.width / f0.sw));
+          const f = getFrame(layer.src, direction, frameIdx % frameCount);
           ctx.drawImage(img, f.sx, f.sy, f.sw, f.sh, 0, 0, outW, outH);
         }
       } catch {

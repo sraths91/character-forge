@@ -56,14 +56,22 @@ export const FRAME_OVERRIDES = {
 
 /**
  * Resolve the source-frame coords for an asset URL at the requested
- * direction. Defaults to 'south' to preserve legacy single-direction
- * behavior in callers that haven't been updated.
+ * direction and frame index. frameIdx shifts sx by frameIdx*sw — the
+ * caller is responsible for clamping to the asset's actual frame count
+ * (img.width / sw). Defaults: south, frame 0.
+ *
+ * Static overrides (the club, drawn from a hand-picked cell) ignore
+ * frameIdx — those are permanently non-animated.
  */
-export function getFrame(src, direction = 'south') {
+export function getFrame(src, direction = 'south', frameIdx = 0) {
   const override = FRAME_OVERRIDES[src];
-  if (typeof override === 'function') return override(direction);
+  if (typeof override === 'function') {
+    const base = override(direction);
+    return { ...base, sx: base.sx + frameIdx * base.sw };
+  }
   if (override) return override;
-  return defaultFrame(direction);
+  const base = defaultFrame(direction);
+  return { ...base, sx: base.sx + frameIdx * base.sw };
 }
 
 // Legacy POSE export kept for backward compat (any external code that imported it).

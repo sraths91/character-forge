@@ -17,7 +17,8 @@ const browserGlobals = {
   clearTimeout: 'readonly', clearInterval: 'readonly', alert: 'readonly',
   confirm: 'readonly', performance: 'readonly', crypto: 'readonly',
   TextEncoder: 'readonly', TextDecoder: 'readonly', AbortController: 'readonly',
-  ClipboardItem: 'readonly'
+  ClipboardItem: 'readonly',
+  btoa: 'readonly', atob: 'readonly', history: 'readonly'
 };
 
 const nodeGlobals = {
