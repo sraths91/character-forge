@@ -256,6 +256,7 @@ async function postImport(body) {
       : '';
     setStatus(`Loaded ${data.character.name} (${data.source})${suffix}.`, 'ok');
     refreshRecentCharacters();  // re-pull after a successful import
+    refreshParty();              // re-mark the active card in the party strip
   } catch (err) {
     setStatus(err.message, 'error', err.hint);
   }
@@ -607,6 +608,138 @@ document.addEventListener('click', async (e) => {
   }
 });
 
+// ---------- Tier 3.3: Party / multi-character grid ----------
+//
+// A party is just an ordered list of D&DB ids in localStorage. For each
+// member we re-fetch the parsed character from /api/characters/:id,
+// apply that character's saved appearance/slot overrides (so each
+// member shows their own customizations, independent of the main view),
+// and render a small sprite into a card.
+//
+// Click a card → load that character into the main view.
+// ✕ button → remove from party.
+
+const PARTY_KEY = 'cf_party';
+const PARTY_CARD_SCALE = 2;   // 64×64 frame × 2 = 128px card sprite
+
+function loadParty() {
+  try { return JSON.parse(localStorage.getItem(PARTY_KEY) || '[]'); } catch { return []; }
+}
+function saveParty(ids) {
+  try { localStorage.setItem(PARTY_KEY, JSON.stringify(ids)); } catch { /* private mode */ }
+}
+
+function addCurrentToParty() {
+  if (!originalCharacter?.id) return;
+  const ids = loadParty();
+  if (ids.includes(String(originalCharacter.id))) return;   // already in party
+  ids.push(String(originalCharacter.id));
+  saveParty(ids);
+  refreshParty();
+}
+
+function removeFromParty(id) {
+  const ids = loadParty().filter(x => x !== String(id));
+  saveParty(ids);
+  refreshParty();
+}
+
+async function refreshParty() {
+  const ids = loadParty();
+  const wrap = $('party');
+  const strip = $('party-strip');
+  if (ids.length === 0) {
+    if (wrap) wrap.classList.add('hidden');
+    return;
+  }
+  if (!wrap || !strip) return;
+  wrap.classList.remove('hidden');
+  strip.innerHTML = '';
+
+  // Render all members in parallel so a slow fetch doesn't block the rest
+  await Promise.all(ids.map(async (id) => {
+    try {
+      const res = await fetch(`/api/characters/${encodeURIComponent(id)}`);
+      if (!res.ok) {
+        // Stale id (e.g. character cleared from DB) — silently drop the card
+        // so the strip doesn't show broken state. The id stays in storage so
+        // a re-import would restore it.
+        return;
+      }
+      const data = await res.json();
+      const ch = data.character;
+      // Apply this party member's own saved overrides
+      const slotEff = assignCarriedSlots(ch, loadOverrides(ch.id));
+      const cloned = JSON.parse(JSON.stringify(slotEff));
+      applyAppearanceOverrides(cloned, loadAppearance(ch.id));
+
+      strip.appendChild(renderPartyCard(cloned, id));
+    } catch { /* network blip — leave gap */ }
+  }));
+}
+
+function renderPartyCard(character, ddbId) {
+  const card = document.createElement('div');
+  card.className = 'party-card';
+  if (originalCharacter && String(originalCharacter.id) === String(ddbId)) {
+    card.classList.add('active');
+  }
+
+  const canvas = document.createElement('canvas');
+  canvas.className = 'party-canvas';
+  card.appendChild(canvas);
+
+  const nameEl = document.createElement('div');
+  nameEl.className = 'party-name';
+  nameEl.textContent = character.name || 'Unnamed';
+  card.appendChild(nameEl);
+
+  const classes = (character.classes || []).map(c => `${c.name} ${c.level}`).join(' / ');
+  const metaEl = document.createElement('div');
+  metaEl.className = 'party-meta';
+  metaEl.textContent = classes || `Level ${character.level || 1}`;
+  card.appendChild(metaEl);
+
+  const removeBtn = document.createElement('button');
+  removeBtn.type = 'button';
+  removeBtn.className = 'party-remove';
+  removeBtn.setAttribute('aria-label', `Remove ${character.name} from party`);
+  removeBtn.textContent = '✕';
+  removeBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    removeFromParty(ddbId);
+  });
+  card.appendChild(removeBtn);
+
+  // Click the card body (not the remove button) → switch to this character
+  card.addEventListener('click', () => switchToMember(ddbId));
+
+  // Render the mini sprite (south-facing, frame 0). Fire-and-forget.
+  renderSprite(canvas, character, { scale: PARTY_CARD_SCALE, direction: 'south', frameIdx: 0 })
+    .catch(() => { /* render failure is non-fatal; card still shows name */ });
+
+  return card;
+}
+
+async function switchToMember(ddbId) {
+  try {
+    setStatus('Loading party member…', 'loading');
+    const res = await fetch(`/api/characters/${encodeURIComponent(ddbId)}`);
+    if (!res.ok) throw new Error('Not found');
+    const data = await res.json();
+    stopAnimation();
+    await render(data.character);
+    setStatus(`Loaded ${data.character.name}.`, 'ok');
+    refreshParty();   // re-mark the active card
+  } catch (err) {
+    setStatus(err.message, 'error');
+  }
+}
+
+document.addEventListener('click', (e) => {
+  if (e.target.id === 'add-to-party') addCurrentToParty();
+});
+
 // ---------- Tier 3.4: Light/dark theme toggle ----------
 const THEME_KEY = 'cf_theme';
 function applyTheme(theme) {
@@ -628,6 +761,9 @@ document.addEventListener('click', (e) => {
 
 // Fetch the recent-characters list once on page load
 refreshRecentCharacters();
+
+// Restore the party panel (each member is re-fetched from /api/characters/:id)
+refreshParty();
 
 // If the URL carries a share-link payload, consume it and auto-import.
 // Done after render bindings are set up so status messages display.

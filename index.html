@@ -44,6 +44,14 @@
       <p id="status" class="status" role="status" aria-live="polite"></p>
     </section>
 
+    <section class="party hidden" id="party" aria-label="Your party">
+      <div class="party-header">
+        <h3>Party</h3>
+        <button id="add-to-party" class="secondary" type="button" title="Add current character to party">+ Add current</button>
+      </div>
+      <div id="party-strip" class="party-strip"></div>
+    </section>
+
     <section class="result hidden" id="result">
       <div class="sprite-stage">
         <canvas id="sprite-canvas" width="384" height="384" role="img" aria-label="Composed character sprite. Use the controls below to customize."></canvas>

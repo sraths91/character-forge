@@ -707,3 +707,120 @@ details > summary:focus-visible,
   outline-offset: 2px;
   border-radius: var(--radius-sm);
 }
+
+/* ===================================================================== */
+/* Tier 3.3 — Party / multi-character grid                               */
+/* ===================================================================== */
+
+.party {
+  margin: 16px auto;
+  max-width: 1100px;
+  padding: 0 24px;
+}
+.party.hidden { display: none; }
+.party-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+.party-header h3 {
+  margin: 0;
+  font-size: 0.95rem;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 600;
+}
+.party-strip {
+  display: flex;
+  gap: 12px;
+  overflow-x: auto;
+  padding-bottom: 8px;        /* room for the scrollbar */
+  scrollbar-width: thin;
+}
+.party-card {
+  position: relative;
+  flex: 0 0 auto;
+  width: 144px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  transition: border-color 120ms ease, transform 120ms ease;
+}
+.party-card:hover {
+  border-color: var(--accent);
+  transform: translateY(-2px);
+}
+.party-card.active {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent) inset;
+}
+.party-canvas {
+  width: 128px;
+  height: 128px;
+  background:
+    repeating-conic-gradient(rgba(255,255,255,0.04) 0 25%, transparent 0 50%) 0 0 / 16px 16px,
+    var(--surface);
+  border-radius: var(--radius-sm);
+  image-rendering: pixelated;
+  flex: 0 0 auto;
+}
+.party-name {
+  font-size: 0.85rem;
+  font-weight: 600;
+  text-align: center;
+  width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.party-meta {
+  font-size: 0.7rem;
+  color: var(--text-dim);
+  text-align: center;
+  width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.party-remove {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--surface);
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  padding: 0;
+  font-size: 0.75rem;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+.party-card:hover .party-remove,
+.party-remove:focus-visible {
+  opacity: 1;
+}
+.party-remove:hover {
+  background: var(--danger);
+  color: white;
+  border-color: var(--danger);
+}
+
+@media (max-width: 768px) {
+  .party { padding: 0 12px; }
+  .party-card { width: 124px; }
+  .party-canvas { width: 108px; height: 108px; }
+}
