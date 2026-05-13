@@ -129,10 +129,114 @@ button.primary:hover { filter: brightness(1.1); }
   margin: 12px 0 0;
   font-size: 0.875rem;
   min-height: 1.2em;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.status .hint-line {
+  font-size: 0.8rem;
+  color: var(--text-dim);
+}
+.status.loading {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-dim);
 }
 
 .status.error { color: var(--danger); }
 .status.ok    { color: var(--accent-2); }
+
+/* Tier 1 — Spinner used in status loading state */
+.spinner {
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+  display: inline-block;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+button.secondary {
+  background: var(--surface-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  padding: 10px 14px;
+  border-radius: var(--radius-sm);
+  font-weight: 500;
+  cursor: pointer;
+  font-family: inherit;
+}
+button.secondary:hover { filter: brightness(1.15); }
+button.secondary:disabled,
+button.primary:disabled { opacity: 0.6; cursor: not-allowed; }
+
+/* Tier 1 — Recent characters chips */
+.recent-characters {
+  margin-top: 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.recent-label {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+}
+.recent-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.recent-chip {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  cursor: pointer;
+  font-family: inherit;
+}
+.recent-chip:hover { background: var(--surface); border-color: var(--accent); }
+
+/* Tier 1 — Export bar (download/copy + scale) */
+.export-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 12px;
+  flex-wrap: wrap;
+}
+.export-scale {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1 1 160px;
+  min-width: 160px;
+}
+.export-scale > span {
+  font-size: 0.7rem;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.export-scale select {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: var(--radius-sm);
+  padding: 6px 10px;
+  font-size: 0.85rem;
+  font-family: inherit;
+}
+.export-bar > button {
+  align-self: flex-end;
+}
 
 .result {
   display: grid;

@@ -30,6 +30,11 @@
         <button id="url-submit" class="primary">Import</button>
       </div>
 
+      <div id="recent-characters" class="recent-characters" hidden>
+        <span class="recent-label">Recent:</span>
+        <div id="recent-chips" class="recent-chips"></div>
+      </div>
+
       <div class="tab-panel hidden" data-panel="json">
         <textarea id="json-input" rows="8" placeholder='Paste the JSON returned by https://character-service.dndbeyond.com/character/v5/character/&lt;id&gt;'></textarea>
         <button id="json-submit" class="primary">Render from JSON</button>
@@ -41,6 +46,21 @@
     <section class="result hidden" id="result">
       <div class="sprite-stage">
         <canvas id="sprite-canvas" width="384" height="384"></canvas>
+
+        <div class="export-bar">
+          <label class="export-scale">
+            <span>Export size</span>
+            <select id="export-scale">
+              <option value="6">Standard (384×384)</option>
+              <option value="8">Large (512×512)</option>
+              <option value="12">Extra large (768×768)</option>
+              <option value="16">Huge (1024×1024)</option>
+            </select>
+          </label>
+          <button id="download-png" class="primary" title="Download as PNG">Download PNG</button>
+          <button id="copy-png" class="secondary" title="Copy to clipboard">Copy</button>
+        </div>
+
         <div class="sprite-controls">
           <label for="skin-select">Skin tone</label>
           <select id="skin-select">

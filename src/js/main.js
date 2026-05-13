@@ -123,7 +123,7 @@ async function importByJson() {
 }
 
 async function postImport(body) {
-  setStatus('Importing…', 'ok');
+  setStatus('Importing', 'loading');
   try {
     const res = await fetch('/api/import', {
       method: 'POST',
@@ -131,15 +131,38 @@ async function postImport(body) {
       body: JSON.stringify(body)
     });
     const data = await res.json();
-    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    if (!res.ok) {
+      throw makeImportError(res.status, data);
+    }
     const generatedCount = await render(data.character);
     const suffix = generatedCount > 0
       ? ` — generated ${generatedCount} item sprite${generatedCount === 1 ? '' : 's'}`
       : '';
     setStatus(`Loaded ${data.character.name} (${data.source})${suffix}.`, 'ok');
+    refreshRecentCharacters();  // re-pull after a successful import
   } catch (err) {
-    setStatus(err.message, 'error');
+    setStatus(err.message, 'error', err.hint);
   }
+}
+
+/**
+ * Wrap a non-2xx /api/import response into an actionable Error. Most
+ * D&DB import failures are 404 (private character) — surface the privacy
+ * fix as a hint instead of the raw HTTP code.
+ */
+function makeImportError(status, data) {
+  const base = data?.error || `HTTP ${status}`;
+  if (status === 404 || /not.found|private/i.test(base)) {
+    const err = new Error('Character not found or not public on D&D Beyond.');
+    err.hint = 'On dndbeyond.com, open the character → "..." menu → set Privacy to "Public" → re-import.';
+    return err;
+  }
+  if (status === 429) {
+    const err = new Error('Rate limited — too many imports in a short window.');
+    err.hint = 'Try again in a minute.';
+    return err;
+  }
+  return new Error(base);
 }
 
 async function render(character) {
@@ -332,7 +355,121 @@ function renderFeats(feats) {
   }
 }
 
-function setStatus(msg, kind) {
-  status.textContent = msg;
+function setStatus(msg, kind, hint) {
   status.className = `status ${kind || ''}`;
+  if (kind === 'loading') {
+    status.innerHTML = `<span class="spinner" aria-hidden="true"></span><span>${escapeHtml(msg)}</span>`;
+  } else if (hint) {
+    status.innerHTML = `<span>${escapeHtml(msg)}</span><span class="hint-line">${escapeHtml(hint)}</span>`;
+  } else {
+    status.textContent = msg;
+  }
 }
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => (
+    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+  ));
+}
+
+// ---------- Tier 1: Recent characters (T1.3) ----------
+
+async function refreshRecentCharacters() {
+  const wrap = $('recent-characters');
+  const chips = $('recent-chips');
+  try {
+    const res = await fetch('/api/characters');
+    if (!res.ok) return;
+    const data = await res.json();
+    const list = (data.characters || []).slice(0, 8);
+    if (list.length === 0) { wrap.hidden = true; return; }
+    chips.innerHTML = '';
+    for (const c of list) {
+      const btn = document.createElement('button');
+      btn.className = 'recent-chip';
+      btn.type = 'button';
+      btn.textContent = c.name;
+      btn.title = `Re-import ${c.name} (${c.ddbId})`;
+      btn.addEventListener('click', () => {
+        $('url-input').value = String(c.ddbId);
+        importByUrl();
+      });
+      chips.appendChild(btn);
+    }
+    wrap.hidden = false;
+  } catch { /* network/parse issue — silently keep panel hidden */ }
+}
+
+// ---------- Tier 1: PNG download + copy (T1.1, T1.2, T1.6) ----------
+
+/**
+ * Render the current character into a fresh canvas at the requested scale
+ * and return a PNG blob. Reuses the same renderSprite() pipeline so the
+ * downloaded image matches what's on screen, just larger.
+ */
+async function exportCurrentSprite(scale = 6) {
+  if (!currentCharacter) throw new Error('No character loaded');
+  const off = document.createElement('canvas');
+  await renderSprite(off, currentCharacter, { scale, direction: currentDirection });
+  return new Promise((resolve, reject) => {
+    off.toBlob(b => b ? resolve(b) : reject(new Error('canvas.toBlob returned null')), 'image/png');
+  });
+}
+
+function exportFilename() {
+  const name  = (currentCharacter?.name  || 'character').replace(/\s+/g, '_');
+  const cls   = currentCharacter?.classes?.[0]?.name?.toLowerCase() || 'adventurer';
+  const level = currentCharacter?.level   || 1;
+  return `${name}-${cls}-L${level}.png`;
+}
+
+document.addEventListener('click', async (e) => {
+  if (e.target.id === 'download-png') {
+    const btn = e.target;
+    if (btn.disabled) return;
+    btn.disabled = true;
+    btn.textContent = 'Rendering…';
+    try {
+      const scale = Number($('export-scale')?.value) || 6;
+      const blob = await exportCurrentSprite(scale);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = exportFilename();
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setStatus(err.message, 'error');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Download PNG';
+    }
+  }
+  if (e.target.id === 'copy-png') {
+    const btn = e.target;
+    if (!navigator.clipboard?.write || typeof ClipboardItem === 'undefined') {
+      setStatus('Clipboard image copy not supported in this browser — use Download instead.', 'error');
+      return;
+    }
+    btn.disabled = true;
+    const prev = btn.textContent;
+    btn.textContent = 'Copying…';
+    try {
+      const scale = Number($('export-scale')?.value) || 6;
+      const blob = await exportCurrentSprite(scale);
+      await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+      btn.textContent = 'Copied ✓';
+      setTimeout(() => { btn.textContent = prev; }, 1800);
+    } catch (err) {
+      setStatus(`Copy failed: ${err.message}`, 'error');
+      btn.textContent = prev;
+    } finally {
+      btn.disabled = false;
+    }
+  }
+});
+
+// Fetch the recent-characters list once on page load
+refreshRecentCharacters();

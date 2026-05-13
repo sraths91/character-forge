@@ -16,7 +16,8 @@ const browserGlobals = {
   cancelAnimationFrame: 'readonly', setTimeout: 'readonly', setInterval: 'readonly',
   clearTimeout: 'readonly', clearInterval: 'readonly', alert: 'readonly',
   confirm: 'readonly', performance: 'readonly', crypto: 'readonly',
-  TextEncoder: 'readonly', TextDecoder: 'readonly', AbortController: 'readonly'
+  TextEncoder: 'readonly', TextDecoder: 'readonly', AbortController: 'readonly',
+  ClipboardItem: 'readonly'
 };
 
 const nodeGlobals = {
