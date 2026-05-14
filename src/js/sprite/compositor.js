@@ -25,21 +25,64 @@ const RARITY_RANK = {
  * frame counts, which reads as "alive" rather than "marching in step".
  */
 export async function renderSprite(canvas, character, { scale = 6, direction = 'south', frameIdx = 0 } = {}) {
-  const plan = buildRenderPlan(character, { direction });
-  const ctx = canvas.getContext('2d');
   const outW = FRAME * scale;
   const outH = FRAME * scale;
   canvas.width = outW;
   canvas.height = outH;
+  const ctx = canvas.getContext('2d');
   ctx.imageSmoothingEnabled = false;
   ctx.clearRect(0, 0, outW, outH);
+  const result = await drawCharacterAt(ctx, character, { x: 0, y: 0, scale, direction, frameIdx });
+  return { canvas, plan: result.plan, generatedCount: result.generatedCount };
+}
 
-  let generatedCount = 0;
+/**
+ * M1 (Party Canvas) — render multiple characters horizontally on one
+ * canvas. Each character keeps its own customizations / overrides /
+ * subclass aura etc. — auras and silhouette transforms are bounded to
+ * the cell so they don't bleed into neighbours.
+ *
+ * Canvas auto-resizes to (FRAME × N + gap × (N-1)) × scale by FRAME × scale.
+ */
+export async function renderPartyCanvas(canvas, characters, opts = {}) {
+  const { scale = 6, direction = 'south', frameIdx = 0, cellGap = 8 } = opts;
+  const list = (characters || []).filter(Boolean);
+  const cellW = FRAME * scale;
+  const cellH = FRAME * scale;
+  const gapPx = cellGap * scale;
+  const N = list.length;
+  const totalW = N === 0 ? cellW : (cellW * N + gapPx * Math.max(0, N - 1));
+  canvas.width = totalW;
+  canvas.height = cellH;
+  const ctx = canvas.getContext('2d');
+  ctx.imageSmoothingEnabled = false;
+  ctx.clearRect(0, 0, totalW, cellH);
+  let totalGenerated = 0;
+  let x = 0;
+  for (const ch of list) {
+    const r = await drawCharacterAt(ctx, ch, { x, y: 0, scale, direction, frameIdx });
+    totalGenerated += r.generatedCount;
+    x += cellW + gapPx;
+  }
+  return { canvas, generatedCount: totalGenerated, cellCount: N };
+}
+
+/**
+ * Draw a single character at canvas position (x, y). Used by both
+ * renderSprite (single, x=y=0) and renderPartyCanvas (offset per slot).
+ *
+ * Doesn't clear or resize the canvas — the caller owns that. Per-character
+ * auras and the body-silhouette scale transform are bounded to a single
+ * cell so multi-character canvases compose cleanly.
+ */
+async function drawCharacterAt(ctx, character, opts) {
+  const { x, y, scale, direction, frameIdx } = opts;
+  const plan = buildRenderPlan(character, { direction });
+  const cellW = FRAME * scale;
+  const cellH = FRAME * scale;
 
   // Pre-pass: kick off item-generator calls in parallel so the main loop
-  // doesn't serialise N HTTP round-trips. Both 'item' and 'derived-item'
-  // layers route through the same generator pipeline so material/glow/aura
-  // mutations apply to derived sheathed sprites too.
+  // doesn't serialise N HTTP round-trips.
   const itemResults = new Map();
   const itemPromises = [];
   plan.layers.forEach((layer, idx) => {
@@ -53,37 +96,23 @@ export async function renderSprite(canvas, character, { scale = 6, direction = '
   });
   await Promise.all(itemPromises);
 
-  // Phase F1 — Subclass backdrop aura. Drawn FIRST so the rarity aura
-  // (drawn second) sits on top when both apply. Mid-strength alpha keeps
-  // it readable but not overwhelming.
-  if (plan.subclassAura) {
-    drawSolidAura(ctx, plan.subclassAura, 0.30, outW, outH);
-  }
+  // Phase F1/H/E2 — backdrop auras, drawn into THIS cell only
+  if (plan.subclassAura)      drawSolidAuraInBox(ctx, plan.subclassAura, 0.30, x, y, cellW, cellH);
+  if (plan.concentrationAura) drawSolidAuraInBox(ctx, plan.concentrationAura, 0.45, x, y, cellW, cellH);
+  if (plan.tempHpAura)        drawSolidAuraInBox(ctx, plan.tempHpAura, 0.25, x, y, cellW, cellH);
 
-  // Phase H — concentration aura overlays the subclass aura at higher
-  // alpha so it reads as "this spell is currently active".
-  if (plan.concentrationAura) {
-    drawSolidAura(ctx, plan.concentrationAura, 0.45, outW, outH);
-  }
+  // Rarity aura — bound to this character's cell
+  drawBackdropAuraInBox(ctx, plan.layers, x, y, cellW, cellH);
 
-  // Phase E2 — temp HP shimmer (blue halo) drawn before the rarity aura
-  // so high-rarity items can still dominate visually.
-  if (plan.tempHpAura) {
-    drawSolidAura(ctx, plan.tempHpAura, 0.25, outW, outH);
-  }
-
-  // Backdrop aura — pick the highest-rarity item, draw a single radial
-  // gradient behind everything. Avoids the per-item-aura stacking problem
-  // where 3 magical items produced 3 overlapping glows.
-  drawBackdropAura(ctx, plan.layers, outW, outH);
-
-  // Phase E1 — bodyWidth comes from the plan (parsed appearance / visualHints).
-  // Falls back to legacy character.visualHints for callers not yet emitting it.
+  // Phase E1 — bodyWidth scale transform, pivoted on THIS cell's centre.
   const hints = {
     ...(character.visualHints || {}),
     bodyWidth: plan.bodyWidth || character.visualHints?.bodyWidth || 'normal'
   };
-  applyBodySilhouette(ctx, hints, outW, outH);
+  ctx.save();   // pop after layer loop
+  applyBodySilhouetteAt(ctx, hints, x, y, cellW, cellH);
+
+  let generatedCount = 0;
 
   for (let idx = 0; idx < plan.layers.length; idx++) {
     const layer = plan.layers[idx];
@@ -95,10 +124,10 @@ export async function renderSprite(canvas, character, { scale = 6, direction = '
         const f = getFrame(layer.src, direction, frameIdx % frameCount);
         const prevFilter = ctx.filter;
         if (layer.filter) ctx.filter = layer.filter;
-        ctx.drawImage(img, f.sx, f.sy, f.sw, f.sh, 0, 0, outW, outH);
+        ctx.drawImage(img, f.sx, f.sy, f.sw, f.sh, x, y, cellW, cellH);
         if (layer.filter) ctx.filter = prevFilter || 'none';
       } catch {
-        drawProceduralSlot(ctx, layer.slot, scale);
+        drawProceduralSlotAt(ctx, layer.slot, scale, x, y);
       }
     } else if (layer.kind === 'item') {
       const result = itemResults.get(idx);
@@ -106,18 +135,17 @@ export async function renderSprite(canvas, character, { scale = 6, direction = '
       ctx.filter = 'none';
       try {
         if (result && result.mutated && result.canvas) {
-          ctx.drawImage(result.canvas, 0, 0, outW, outH);
+          ctx.drawImage(result.canvas, x, y, cellW, cellH);
           generatedCount++;
         } else {
-          // Fall through to base asset (mutated:false or no result)
           const img = await loadImage(layer.src);
           const f0 = getFrame(layer.src, direction, 0);
           const frameCount = Math.max(1, Math.floor(img.width / f0.sw));
           const f = getFrame(layer.src, direction, frameIdx % frameCount);
-          ctx.drawImage(img, f.sx, f.sy, f.sw, f.sh, 0, 0, outW, outH);
+          ctx.drawImage(img, f.sx, f.sy, f.sw, f.sh, x, y, cellW, cellH);
         }
       } catch {
-        drawProceduralSlot(ctx, layer.slot, scale);
+        drawProceduralSlotAt(ctx, layer.slot, scale, x, y);
       } finally {
         ctx.filter = prevFilter;
       }
@@ -126,8 +154,6 @@ export async function renderSprite(canvas, character, { scale = 6, direction = '
       const prevFilter = ctx.filter;
       ctx.filter = 'none';
       try {
-        // Use the mutated canvas if the item-generator produced one,
-        // otherwise extract the south-idle frame from the source PNG.
         let sourceCanvas;
         if (result && result.mutated && result.canvas) {
           sourceCanvas = result.canvas;
@@ -135,49 +161,48 @@ export async function renderSprite(canvas, character, { scale = 6, direction = '
         } else {
           sourceCanvas = await extractIdleFrame(layer.src, direction);
         }
-        drawDerivedItem(ctx, sourceCanvas, layer.pose, scale);
+        drawDerivedItemAt(ctx, sourceCanvas, layer.pose, scale, x, y);
       } catch {
-        drawProceduralSlot(ctx, layer.slot, scale);
+        drawProceduralSlotAt(ctx, layer.slot, scale, x, y);
       } finally {
         ctx.filter = prevFilter;
       }
     } else if (layer.kind === 'rect') {
-      drawProceduralSlot(ctx, layer.slot, scale, layer.overrideColor);
+      drawProceduralSlotAt(ctx, layer.slot, scale, x, y, layer.overrideColor);
     } else if (layer.kind === 'effect') {
-      drawGlow(ctx, layer.tint, scale);
+      drawGlowAt(ctx, layer.tint, scale, x, y);
     } else if (layer.kind === 'glyph') {
-      // Phase E4 — small symbolic overlay (inspiration star, etc.)
-      drawGlyph(ctx, layer.glyph, layer.color, layer.position, scale);
+      drawGlyphAt(ctx, layer.glyph, layer.color, layer.position, scale, x, y);
     }
   }
 
-  ctx.restore();
+  ctx.restore();   // pop body-silhouette transform
 
   if (hints.palette === 'saturated') {
-    applySaturationBoost(ctx, outW, outH);
+    applySaturationBoostAt(ctx, x, y, cellW, cellH);
   }
-  return { canvas, plan, generatedCount };
+  return { plan, generatedCount };
 }
 
 /**
- * Phase F1 — solid radial aura at a given color and alpha. Used by the
- * subclass-accent system to tint the backdrop based on the character's
- * subclass (paladin oath, wizard school, warlock patron, etc.).
+ * Phase F1 — solid radial aura at a given color and alpha, bounded to
+ * a character cell. The cell is anchored at (x,y) with size (w,h).
+ * Used by the subclass-accent / concentration / temp-HP systems.
  */
-function drawSolidAura(ctx, color, alpha, outW, outH) {
-  const cx = outW / 2;
-  const cy = outH * 0.55;
-  const r  = outW * 0.55;
+function drawSolidAuraInBox(ctx, color, alpha, x, y, w, h) {
+  const cx = x + w / 2;
+  const cy = y + h * 0.55;
+  const r  = w * 0.55;
   const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
   grad.addColorStop(0, hexWithAlpha(color, alpha));
   grad.addColorStop(1, 'rgba(0,0,0,0)');
   ctx.save();
   ctx.fillStyle = grad;
-  ctx.fillRect(0, 0, outW, outH);
+  ctx.fillRect(x, y, w, h);
   ctx.restore();
 }
 
-function drawBackdropAura(ctx, layers, outW, outH) {
+function drawBackdropAuraInBox(ctx, layers, x, y, w, h) {
   let bestRank = -1;
   let bestTier = null;
   for (const layer of layers) {
@@ -189,16 +214,7 @@ function drawBackdropAura(ctx, layers, outW, outH) {
     if (rank > bestRank) { bestRank = rank; bestTier = tier; }
   }
   if (!bestTier) return;
-  const cx = outW / 2;
-  const cy = outH * 0.55;       // slightly below centre — figure's centre of mass
-  const r  = outW * 0.55;
-  const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
-  grad.addColorStop(0, hexWithAlpha(bestTier.color, bestTier.alpha));
-  grad.addColorStop(1, 'rgba(0,0,0,0)');
-  ctx.save();
-  ctx.fillStyle = grad;
-  ctx.fillRect(0, 0, outW, outH);
-  ctx.restore();
+  drawSolidAuraInBox(ctx, bestTier.color, bestTier.alpha, x, y, w, h);
 }
 
 function hexWithAlpha(hex, alpha) {
@@ -208,28 +224,30 @@ function hexWithAlpha(hex, alpha) {
   return `rgba(${r},${g},${b},${alpha})`;
 }
 
-function applyBodySilhouette(ctx, hints, outW, outH) {
-  ctx.save();
-  if (hints.bodyWidth === 'broad') {
-    ctx.translate(outW / 2, 0);
-    ctx.scale(1.06, 1);
-    ctx.translate(-outW / 2, 0);
-  } else if (hints.bodyWidth === 'thin') {
-    ctx.translate(outW / 2, 0);
-    ctx.scale(0.94, 1);
-    ctx.translate(-outW / 2, 0);
-  }
+/**
+ * Apply the bodyWidth scale transform (broad/thin) pivoted on the cell's
+ * centre. Caller MUST have ctx.save()'d before calling and ctx.restore()
+ * after the layer draws — the transform is left active so subsequent
+ * drawImage() destination params (in cell-relative coords) are scaled.
+ */
+function applyBodySilhouetteAt(ctx, hints, x, y, w, h) {
+  if (hints.bodyWidth !== 'broad' && hints.bodyWidth !== 'thin') return;
+  const cx = x + w / 2;
+  const factor = hints.bodyWidth === 'broad' ? 1.06 : 0.94;
+  ctx.translate(cx, 0);
+  ctx.scale(factor, 1);
+  ctx.translate(-cx, 0);
 }
 
-function drawProceduralSlot(ctx, slot, scale, overrideColor) {
+function drawProceduralSlotAt(ctx, slot, scale, x, y, overrideColor) {
   const box = SLOT_BOXES[slot];
   if (!box) return;
   const color = overrideColor || SLOT_COLORS[slot] || '#94a3b8';
   ctx.fillStyle = color;
-  ctx.fillRect(box.x * scale, box.y * scale, box.w * scale, box.h * scale);
+  ctx.fillRect(x + box.x * scale, y + box.y * scale, box.w * scale, box.h * scale);
   ctx.strokeStyle = 'rgba(0,0,0,0.45)';
   ctx.lineWidth = Math.max(1, scale / 3);
-  ctx.strokeRect(box.x * scale + 0.5, box.y * scale + 0.5, box.w * scale - 1, box.h * scale - 1);
+  ctx.strokeRect(x + box.x * scale + 0.5, y + box.y * scale + 0.5, box.w * scale - 1, box.h * scale - 1);
 }
 
 /**
@@ -246,9 +264,9 @@ function drawProceduralSlot(ctx, slot, scale, overrideColor) {
  *   cross_x  — unconscious (E3)
  * Position is in 64×64 frame coords; scale is the outer compositor scale.
  */
-function drawGlyph(ctx, glyph, color, position, scale) {
-  const cx = (position?.x ?? 32) * scale;
-  const cy = (position?.y ?? 4) * scale;
+function drawGlyphAt(ctx, glyph, color, position, scale, x, y) {
+  const cx = x + (position?.x ?? 32) * scale;
+  const cy = y + (position?.y ?? 4) * scale;
   switch (glyph) {
     case 'star':    drawStar(ctx, cx, cy, 3.5 * scale, 1.5 * scale, color || '#fbbf24'); break;
     case 'skull':   drawSkull(ctx, cx, cy, scale, color || '#dc2626'); break;
@@ -397,22 +415,22 @@ function drawCrossX(ctx, cx, cy, scale, fill) {
   ctx.restore();
 }
 
-function drawGlow(ctx, tint, scale) {
+function drawGlowAt(ctx, tint, scale, ox, oy) {
   ctx.save();
   ctx.globalCompositeOperation = 'screen';
-  const x = 16 * scale;
-  const y = 30 * scale;
+  const cx = ox + 16 * scale;
+  const cy = oy + 30 * scale;
   const r = 12 * scale;
-  const grad = ctx.createRadialGradient(x, y, 0, x, y, r);
+  const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
   grad.addColorStop(0, tint);
   grad.addColorStop(1, 'rgba(0,0,0,0)');
   ctx.fillStyle = grad;
-  ctx.fillRect(x - r, y - r, r * 2, r * 2);
+  ctx.fillRect(cx - r, cy - r, r * 2, r * 2);
   ctx.restore();
 }
 
-function applySaturationBoost(ctx, w, h) {
-  const data = ctx.getImageData(0, 0, w, h);
+function applySaturationBoostAt(ctx, x, y, w, h) {
+  const data = ctx.getImageData(x, y, w, h);
   const px = data.data;
   for (let i = 0; i < px.length; i += 4) {
     if (px[i + 3] === 0) continue;
@@ -425,7 +443,7 @@ function applySaturationBoost(ctx, w, h) {
     px[i + 1] = clamp(avg + (px[i + 1] - avg) * factor);
     px[i + 2] = clamp(avg + (px[i + 2] - avg) * factor);
   }
-  ctx.putImageData(data, 0, 0);
+  ctx.putImageData(data, x, y);
 }
 
 function clamp(v) { return v < 0 ? 0 : v > 255 ? 255 : v; }
@@ -556,6 +574,10 @@ export function rotateImageNearestNeighbor(srcCanvas, srcBbox, angleDeg) {
  *   scale       — outer compositor scale (frame-coord pixels → output pixels)
  */
 export function drawDerivedItem(ctx, sourceCanvas, pose, scale) {
+  return drawDerivedItemAt(ctx, sourceCanvas, pose, scale, 0, 0);
+}
+
+function drawDerivedItemAt(ctx, sourceCanvas, pose, scale, ox, oy) {
   const bbox = findOpaqueBoundingBox(sourceCanvas);
   if (!bbox) return;
 
@@ -563,8 +585,8 @@ export function drawDerivedItem(ctx, sourceCanvas, pose, scale) {
 
   const targetW = rotated.width * pose.scale * scale;
   const targetH = rotated.height * pose.scale * scale;
-  const anchorX = pose.anchor.x * scale;
-  const anchorY = pose.anchor.y * scale;
+  const anchorX = ox + pose.anchor.x * scale;
+  const anchorY = oy + pose.anchor.y * scale;
 
   ctx.save();
   ctx.imageSmoothingEnabled = false;

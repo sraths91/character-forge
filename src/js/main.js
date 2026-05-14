@@ -1,4 +1,4 @@
-import { renderSprite } from './sprite/compositor.js';
+import { renderSprite, renderPartyCanvas } from './sprite/compositor.js';
 import { loadOverrides, saveOverrides, assignCarriedSlots } from './sprite/slot-overrides.js';
 import { loadAppearance, saveAppearance, applyAppearanceOverrides } from './sprite/appearance-overrides.js';
 
@@ -96,6 +96,12 @@ document.addEventListener('input', (e) => {
 });
 
 function rerender() {
+  if (viewMode === 'party') {
+    renderPartyCanvas(canvas, partyComposedCharacters, {
+      scale: 6, direction: currentDirection, frameIdx: animFrame, cellGap: 8
+    });
+    return;
+  }
   if (!originalCharacter) return;
   const slotEffective = assignCarriedSlots(originalCharacter, currentOverrides);
   // Clone before applying appearance overrides so we don't mutate the source
@@ -104,6 +110,71 @@ function rerender() {
   currentCharacter = c;
   renderSprite(canvas, c, { scale: 6, direction: currentDirection, frameIdx: animFrame });
 }
+
+// ---------- M1: Party Canvas (multi-character view) ----------
+//
+// In 'party' viewMode, the main #sprite-canvas is filled with the whole
+// party on a single canvas via renderPartyCanvas(). All shared controls
+// (direction toggle, animation, export, copy, share-link) keep working
+// — they now operate on whichever mode is active. Per-character controls
+// (skin tone, hair, beard etc.) are hidden while in party view since
+// each member already carries its own customizations.
+
+let viewMode = 'solo';            // 'solo' | 'party'
+let partyComposedCharacters = []; // characters w/ their own overrides applied
+
+async function enterPartyView() {
+  const ids = loadParty();
+  if (ids.length === 0) {
+    setStatus('Add at least one character to your party first.', 'error');
+    return;
+  }
+  setStatus('Composing party scene…', 'loading');
+  // Fetch every party member in parallel and apply their saved customizations
+  const settled = await Promise.allSettled(ids.map(async (id) => {
+    const res = await fetch(`/api/characters/${encodeURIComponent(id)}`);
+    if (!res.ok) throw new Error(`fetch ${id}`);
+    const data = await res.json();
+    const ch = data.character;
+    const slotEff = assignCarriedSlots(ch, loadOverrides(ch.id));
+    const cloned = JSON.parse(JSON.stringify(slotEff));
+    applyAppearanceOverrides(cloned, loadAppearance(ch.id));
+    return cloned;
+  }));
+  partyComposedCharacters = settled
+    .filter(s => s.status === 'fulfilled')
+    .map(s => s.value);
+  if (partyComposedCharacters.length === 0) {
+    setStatus('Could not load any party member.', 'error');
+    return;
+  }
+  viewMode = 'party';
+  result.classList.remove('hidden');     // ensure stage is visible even without a focused character
+  document.body.classList.add('party-view-mode');
+  const btn = $('party-view-toggle');
+  if (btn) btn.textContent = '◉ Single view';
+  setStatus(`Party view: ${partyComposedCharacters.length} character${partyComposedCharacters.length === 1 ? '' : 's'}.`, 'ok');
+  rerender();
+}
+
+function exitPartyView() {
+  viewMode = 'solo';
+  partyComposedCharacters = [];
+  document.body.classList.remove('party-view-mode');
+  const btn = $('party-view-toggle');
+  if (btn) btn.textContent = '▦ Party view';
+  setStatus('Single character view.', 'ok');
+  // If a character was loaded before party view, re-render them.
+  // Otherwise the canvas just clears.
+  if (originalCharacter) rerender();
+  else { const ctx = canvas.getContext('2d'); ctx.clearRect(0, 0, canvas.width, canvas.height); }
+}
+
+document.addEventListener('click', (e) => {
+  if (e.target.id !== 'party-view-toggle') return;
+  if (viewMode === 'party') exitPartyView();
+  else enterPartyView();
+});
 
 // ---------- Tier 3.1: Walk-cycle animation ----------
 let animating = false;
@@ -155,6 +226,18 @@ function b64urlDecode(str) {
 }
 
 function buildSharePayload() {
+  // M1 — party-mode share encodes the whole scene as a list of ddbIds.
+  // Each member is then loaded server-side via /api/characters/:id and
+  // their localStorage customizations are applied on the recipient side
+  // (if they happen to have them) OR the recipient sees defaults.
+  if (viewMode === 'party') {
+    const ids = (partyComposedCharacters || []).map(c => String(c.id)).filter(Boolean);
+    if (ids.length === 0) return null;
+    return {
+      party: ids,
+      d: currentDirection !== 'south' ? currentDirection : undefined
+    };
+  }
   if (!originalCharacter?.id) return null;
   return {
     id: String(originalCharacter.id),
@@ -168,12 +251,14 @@ function buildShareUrl() {
   const payload = buildSharePayload();
   if (!payload) return null;
   // Drop empty objects to keep URL short
-  const slim = {
-    id: payload.id,
-    ...(Object.keys(payload.ov || {}).length ? { ov: payload.ov } : {}),
-    ...(Object.keys(payload.ap || {}).length ? { ap: payload.ap } : {}),
-    ...(payload.d ? { d: payload.d } : {})
-  };
+  const slim = payload.party
+    ? { party: payload.party, ...(payload.d ? { d: payload.d } : {}) }
+    : {
+        id: payload.id,
+        ...(Object.keys(payload.ov || {}).length ? { ov: payload.ov } : {}),
+        ...(Object.keys(payload.ap || {}).length ? { ap: payload.ap } : {}),
+        ...(payload.d ? { d: payload.d } : {})
+      };
   const encoded = b64urlEncode(JSON.stringify(slim));
   const url = new URL(window.location.href);
   url.hash = `s=${encoded}`;
@@ -184,14 +269,35 @@ async function consumeShareLink() {
   if (!window.location.hash.startsWith('#s=')) return false;
   try {
     const payload = JSON.parse(b64urlDecode(window.location.hash.slice(3)));
+    if (Array.isArray(payload?.party)) {
+      // M1 — party share: import each (in case the recipient hasn't seen
+      // them before) and then enter party view.
+      setStatus(`Loading shared party (${payload.party.length} characters)…`, 'loading');
+      for (const id of payload.party) {
+        try {
+          // Use server-side import which also caches the character so
+          // /api/characters/:id will return it when enterPartyView runs.
+          await fetch('/api/import', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ url: id })
+          });
+        } catch { /* one bad id shouldn't break the rest */ }
+      }
+      // Adopt the party for this session
+      saveParty(payload.party.map(String));
+      refreshParty();
+      if (payload.d) currentDirection = payload.d;
+      await enterPartyView();
+      return true;
+    }
     if (!payload?.id) return false;
-    // Import the character — render() will pick up our queued overrides
     pendingShareOverrides = { ov: payload.ov || {}, ap: payload.ap || {}, d: payload.d || 'south' };
     setStatus(`Loading shared character ${payload.id}…`, 'loading');
     await postImport({ url: payload.id });
     return true;
   } catch (err) {
-    setStatus(`Could not load shared character: ${err.message}`, 'error');
+    setStatus(`Could not load shared content: ${err.message}`, 'error');
     return false;
   }
 }
@@ -545,15 +651,26 @@ async function refreshRecentCharacters() {
  * downloaded image matches what's on screen, just larger.
  */
 async function exportCurrentSprite(scale = 6) {
-  if (!currentCharacter) throw new Error('No character loaded');
   const off = document.createElement('canvas');
-  await renderSprite(off, currentCharacter, { scale, direction: currentDirection });
+  if (viewMode === 'party') {
+    if (partyComposedCharacters.length === 0) throw new Error('Party is empty');
+    await renderPartyCanvas(off, partyComposedCharacters, {
+      scale, direction: currentDirection, cellGap: 8
+    });
+  } else {
+    if (!currentCharacter) throw new Error('No character loaded');
+    await renderSprite(off, currentCharacter, { scale, direction: currentDirection });
+  }
   return new Promise((resolve, reject) => {
     off.toBlob(b => b ? resolve(b) : reject(new Error('canvas.toBlob returned null')), 'image/png');
   });
 }
 
 function exportFilename() {
+  if (viewMode === 'party') {
+    const stamp = new Date().toISOString().slice(0, 10);
+    return `party-scene-${stamp}.png`;
+  }
   const name  = (currentCharacter?.name  || 'character').replace(/\s+/g, '_');
   const cls   = currentCharacter?.classes?.[0]?.name?.toLowerCase() || 'adventurer';
   const level = currentCharacter?.level   || 1;

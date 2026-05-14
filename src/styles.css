@@ -824,3 +824,39 @@ details > summary:focus-visible,
   .party-card { width: 124px; }
   .party-canvas { width: 108px; height: 108px; }
 }
+
+/* ===================================================================== */
+/* M1 — Party Canvas view-mode                                           */
+/* ===================================================================== */
+
+/* When in party view, the main sprite canvas can be much wider than the
+   384px column. Let it overflow horizontally with scroll so 8-character
+   parties don't break the layout. */
+body.party-view-mode .result {
+  grid-template-columns: minmax(0, 1fr);
+}
+body.party-view-mode .sprite-stage {
+  align-items: flex-start;
+  overflow-x: auto;
+  max-width: 100%;
+}
+body.party-view-mode #sprite-canvas {
+  max-width: none;   /* override the mobile shrink */
+  height: auto;
+}
+
+/* In party view the per-character controls don't apply (each member
+   carries their own customizations). Hide the picker panels to reduce
+   confusion. */
+body.party-view-mode #appearance-picker,
+body.party-view-mode #slot-picker,
+body.party-view-mode .sheet {
+  display: none;
+}
+
+/* Make the Party-view toggle visually align with Add-current */
+.party-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
