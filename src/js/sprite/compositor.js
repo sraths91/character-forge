@@ -51,7 +51,7 @@ export async function renderSprite(canvas, character, { scale = 6, direction = '
  * logic, compositor owns the pixel-pushing).
  */
 export async function renderBattleScene(canvas, characters, scene, opts = {}) {
-  const { direction = 'south', frameIdx = 0, positionOf } = opts;
+  const { direction = 'south', frameIdx = 0, positionOf, monsterCharacters = [] } = opts;
   const list = (characters || []).filter(Boolean);
   const cellPx = scene.cellSize * scene.scale;
   const totalW = scene.cols * cellPx;
@@ -90,7 +90,7 @@ export async function renderBattleScene(canvas, characters, scene, opts = {}) {
     ctx.restore();
   }
 
-  // 3. Characters
+  // 3. Characters (PCs)
   let totalGenerated = 0;
   for (let i = 0; i < list.length; i++) {
     const ch = list[i];
@@ -102,7 +102,23 @@ export async function renderBattleScene(canvas, characters, scene, opts = {}) {
     });
     totalGenerated += r.generatedCount;
   }
-  return { canvas, generatedCount: totalGenerated, cellCount: list.length };
+
+  // 4. Monsters — same render pipeline, position comes from the
+  // monster instance's own (col,row). Each monsterCharacters entry is
+  // a buildMonsterCharacter() result with HP/conditions copied from
+  // the live instance, so on-screen state (e.g. wounded) reflects play.
+  for (const mc of monsterCharacters) {
+    const pos = mc._position;
+    if (!pos) continue;
+    const x = pos.col * cellPx;
+    const y = pos.row * cellPx;
+    const r = await drawCharacterAt(ctx, mc, {
+      x, y, scale: scene.scale, direction, frameIdx
+    });
+    totalGenerated += r.generatedCount;
+  }
+
+  return { canvas, generatedCount: totalGenerated, cellCount: list.length + monsterCharacters.length };
 }
 
 /**

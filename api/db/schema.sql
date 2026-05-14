@@ -25,3 +25,20 @@ CREATE TABLE IF NOT EXISTS item_sprites (
 );
 
 CREATE INDEX IF NOT EXISTS idx_item_sprites_recent ON item_sprites(created_at DESC);
+
+-- M3 — Open5e monster cache. Each row is a single creature's stat block
+-- pulled from open5e.com/api/v2/creatures/<slug>/. Cached indefinitely
+-- since SRD content rarely changes; refresh by deleting + re-fetching.
+CREATE TABLE IF NOT EXISTS monsters (
+  slug TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  cr REAL,
+  type TEXT,
+  size TEXT,
+  hp_average INTEGER,
+  payload_json TEXT NOT NULL,
+  fetched_at INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_monsters_name ON monsters(name);
+CREATE INDEX IF NOT EXISTS idx_monsters_cr   ON monsters(cr);

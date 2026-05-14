@@ -112,15 +112,32 @@ const ASSETS = '/assets/lpc';
 
 export const ASSET_MAP = {
   body: {
-    male:   `${ASSETS}/body/male.png`,
-    female: `${ASSETS}/body/female.png`,
-    teen:   `${ASSETS}/body/teen.png`
+    male:     `${ASSETS}/body/male.png`,
+    female:   `${ASSETS}/body/female.png`,
+    teen:     `${ASSETS}/body/teen.png`,
+    // M3 — monster-friendly bodies. skeleton + zombie are pulled from
+    // their walk sheets (we use frame 0 of the south row); muscular is
+    // a beefier male variant used by orcs/trolls/minotaurs.
+    muscular: `${ASSETS}/body/muscular.png`,
+    skeleton: `${ASSETS}/body/skeleton.png`,
+    zombie:   `${ASSETS}/body/zombie.png`
   },
 
   head: {
-    human:        { male: `${ASSETS}/head/heads/human_male.png`, female: `${ASSETS}/head/heads/human_female.png` },
-    goblin:       { male: `${ASSETS}/head/heads/goblin.png`,     female: `${ASSETS}/head/heads/goblin.png` },
-    lizard:       { male: `${ASSETS}/head/heads/lizard_male.png`, female: `${ASSETS}/head/heads/lizard_female.png` }
+    human:    { male: `${ASSETS}/head/heads/human_male.png`, female: `${ASSETS}/head/heads/human_female.png` },
+    goblin:   { male: `${ASSETS}/head/heads/goblin.png`,     female: `${ASSETS}/head/heads/goblin.png` },
+    lizard:   { male: `${ASSETS}/head/heads/lizard_male.png`, female: `${ASSETS}/head/heads/lizard_female.png` },
+    // M3 — monster heads. Most have a single sheet that we use for both
+    // genders (the heads are bald/scaly/etc., gender is irrelevant).
+    orc:      { male: `${ASSETS}/head/heads/orc.png`,        female: `${ASSETS}/head/heads/orc.png` },
+    troll:    { male: `${ASSETS}/head/heads/troll.png`,      female: `${ASSETS}/head/heads/troll.png` },
+    skeleton: { male: `${ASSETS}/head/heads/skeleton.png`,   female: `${ASSETS}/head/heads/skeleton.png` },
+    zombie:   { male: `${ASSETS}/head/heads/zombie.png`,     female: `${ASSETS}/head/heads/zombie.png` },
+    vampire:  { male: `${ASSETS}/head/heads/vampire.png`,    female: `${ASSETS}/head/heads/vampire.png` },
+    wolf:     { male: `${ASSETS}/head/heads/wolf.png`,       female: `${ASSETS}/head/heads/wolf.png` },
+    minotaur: { male: `${ASSETS}/head/heads/minotaur.png`,   female: `${ASSETS}/head/heads/minotaur.png` },
+    boarman:  { male: `${ASSETS}/head/heads/boarman.png`,    female: `${ASSETS}/head/heads/boarman.png` },
+    rat:      { male: `${ASSETS}/head/heads/rat.png`,        female: `${ASSETS}/head/heads/rat.png` }
   },
 
   legs: {
@@ -477,6 +494,13 @@ export function inferSkinTone(character) {
 
 function pickHeadRace(character) {
   const name = String(character.race?.name || character.race?.base || '').toLowerCase();
+  // M3 — monsters set race.name directly to a head ASSET_MAP key
+  // (e.g. 'orc', 'troll', 'skeleton'). EXACT match only — substring would
+  // wrongly pull "Half-Orc" PC characters into the monster-orc head and
+  // suppress their hair (since pickHair gates on 'human').
+  for (const key of Object.keys(ASSET_MAP.head)) {
+    if (name === key) return key;
+  }
   if (name.includes('dragonborn') || name.includes('lizard') || name.includes('kobold')) return 'lizard';
   if (name.includes('goblin') || name.includes('hobgoblin') || name.includes('bugbear')) return 'goblin';
   return 'human';
@@ -1378,11 +1402,14 @@ export function buildRenderPlan(rawCharacter, { direction = 'south' } = {}) {
   ].filter(Boolean);
   const composedFilter = bodyFilterParts.length ? bodyFilterParts.join(' ') : null;
 
-  // Body — gets the composed skin + state filter
+  // Body — gets the composed skin + state filter. M3 — character.body
+  // (a key into ASSET_MAP.body) overrides the gender-based default, so
+  // monsters with skeleton/zombie/muscular bodies render correctly.
+  const bodyKey = character.body && ASSET_MAP.body[character.body] ? character.body : gender;
   layers.push({
     kind: 'lpc',
     slot: 'body',
-    src: ASSET_MAP.body[gender] || ASSET_MAP.body.male,
+    src: ASSET_MAP.body[bodyKey] || ASSET_MAP.body.male,
     filter: composedFilter
   });
 

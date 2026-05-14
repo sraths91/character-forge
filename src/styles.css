@@ -948,3 +948,163 @@ body.party-view-mode #sprite-canvas { cursor: default; }
 /* Battlefield controls should NOT be hidden by the party-view-mode rule
    that hides per-character pickers */
 body.party-view-mode .battlefield-controls { display: block !important; }
+
+/* ===================================================================== */
+/* M3 — Monster panel (battle scene)                                     */
+/* ===================================================================== */
+
+.monsters-panel {
+  display: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px 14px 12px;
+  margin-top: 12px;
+  background: var(--surface-2);
+  width: 100%;
+}
+body.party-view-mode .monsters-panel { display: block !important; }
+
+.monsters-panel legend {
+  padding: 0 6px;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-dim);
+}
+
+.monster-add-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  margin-bottom: 8px;
+}
+#monster-search {
+  flex: 1 1 220px;
+  min-width: 0;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: var(--radius-sm);
+  padding: 6px 10px;
+  font-size: 0.85rem;
+  font-family: inherit;
+}
+.monster-presets-details {
+  flex: 1 1 100%;
+  font-size: 0.85rem;
+  color: var(--text-dim);
+}
+.monster-presets-details summary { cursor: pointer; padding: 4px 0; }
+.monster-presets-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 6px;
+}
+.monster-preset-btn {
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  cursor: pointer;
+  font-family: inherit;
+}
+.monster-preset-btn:hover {
+  background: var(--surface-2);
+  border-color: var(--accent);
+}
+
+.monster-search-results {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 8px;
+  max-height: 240px;
+  overflow-y: auto;
+}
+.monster-search-result {
+  text-align: left;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 6px 10px;
+  font-family: inherit;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.monster-search-result:hover { background: var(--surface-2); border-color: var(--accent); }
+.monster-search-result .dim {
+  font-size: 0.74rem;
+  color: var(--text-dim);
+  text-transform: capitalize;
+}
+
+.monsters-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 6px;
+}
+.monster-empty {
+  color: var(--text-dim);
+  font-size: 0.85rem;
+  margin: 4px 0 0;
+  grid-column: 1 / -1;
+}
+.monster-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.monster-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.monster-card-name {
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+.monster-remove {
+  background: transparent;
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border-radius: 50%;
+  cursor: pointer;
+  font-size: 0.75rem;
+}
+.monster-remove:hover {
+  background: var(--danger);
+  color: white;
+  border-color: var(--danger);
+}
+.monster-hp {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.monster-hp-label { font-size: 0.78rem; color: var(--text-dim); }
+.monster-hp-range { width: 100%; }
+.monster-hp-bar {
+  height: 4px;
+  background: var(--border);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.monster-hp-fill {
+  height: 100%;
+  background: var(--danger);
+  transition: width 120ms ease;
+}

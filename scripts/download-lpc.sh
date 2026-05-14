@@ -47,12 +47,29 @@ fetch "body/bodies/male/idle.png"   "body/male.png"
 fetch "body/bodies/female/idle.png" "body/female.png"
 fetch "body/bodies/teen/idle.png"   "body/teen.png"
 
+# M3 — extra body types used by monster presets
+fetch "body/bodies/skeleton/walk/skeleton.png" "body/skeleton.png"
+fetch "body/bodies/zombie/walk/zombie.png"     "body/zombie.png"
+fetch "body/bodies/muscular/idle.png"          "body/muscular.png"
+
 # Heads — required, since bodies are headless
 fetch "head/heads/human/male/idle.png"        "head/heads/human_male.png"
 fetch "head/heads/human/female/idle.png"      "head/heads/human_female.png"
 fetch "head/heads/goblin/adult/idle.png"      "head/heads/goblin.png"
 fetch "head/heads/lizard/male/idle.png"       "head/heads/lizard_male.png"
 fetch "head/heads/lizard/female/idle.png"     "head/heads/lizard_female.png"
+
+# M3 — Monster-friendly heads. orc/troll/skeleton/zombie/vampire/wolf/minotaur
+# are humanoid-monster bodies usable on the standard male/female body sheets.
+fetch "head/heads/orc/male/idle.png"          "head/heads/orc.png"
+fetch "head/heads/troll/adult/idle.png"       "head/heads/troll.png"
+fetch "head/heads/skeleton/adult/idle/skeleton.png" "head/heads/skeleton.png"
+fetch "head/heads/zombie/adult/idle.png"      "head/heads/zombie.png"
+fetch "head/heads/vampire/adult/idle.png"     "head/heads/vampire.png"
+fetch "head/heads/wolf/male/idle.png"         "head/heads/wolf.png"
+fetch "head/heads/minotaur/male/idle.png"     "head/heads/minotaur.png"
+fetch "head/heads/boarman/adult/idle.png"     "head/heads/boarman.png"
+fetch "head/heads/rat/adult/idle.png"         "head/heads/rat.png"
 
 # Torso — armour (idle.png 128x256)
 fetch "torso/armour/plate/male/idle.png"   "torso/plate_male.png"

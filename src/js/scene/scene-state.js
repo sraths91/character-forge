@@ -35,7 +35,13 @@ export const DEFAULT_SCENE = Object.freeze({
   scale: 3,
   map: { kind: 'color', color: '#3d5a3d' },
   grid: { visible: true, snap: true, color: 'rgba(255,255,255,0.18)' },
-  positions: {}
+  positions: {},
+  // M3 — Monster instances on this scene. Each entry: { id, presetSlug,
+  // name, position:{col,row}, hp:{current,max,temp} }. Positions live on
+  // the entity itself rather than scene.positions because monsters can
+  // share a slug (e.g. multiple goblins) and the keyed-by-id map would
+  // collide.
+  monsters: []
 });
 
 export function loadScene() {
@@ -67,7 +73,8 @@ function mergeWithDefault(saved) {
     ...saved,
     map:  { ...base.map,  ...(saved.map  || {}) },
     grid: { ...base.grid, ...(saved.grid || {}) },
-    positions: saved.positions && typeof saved.positions === 'object' ? saved.positions : {}
+    positions: saved.positions && typeof saved.positions === 'object' ? saved.positions : {},
+    monsters: Array.isArray(saved.monsters) ? saved.monsters : []
   };
 }
 
@@ -141,4 +148,95 @@ export function setPosition(scene, characterId, col, row) {
 
 export function clearPositions(scene) {
   scene.positions = {};
+}
+
+// ---- M3: Monster instance management ----
+
+let monsterIdSeq = 1;
+function nextMonsterId() {
+  return `m_${Date.now().toString(36)}_${(monsterIdSeq++).toString(36)}`;
+}
+
+/**
+ * Add a monster instance to the scene. `preset` is the MONSTER_PRESETS
+ * entry; position defaults to an empty cell near the top-left if not
+ * given. Returns the created instance (caller saves scene).
+ */
+export function addMonsterInstance(scene, preset, position = null) {
+  const existingCount = (scene.monsters || []).filter(m => m.presetSlug === preset.slug).length;
+  const labelSuffix = existingCount === 0 ? '' : ` ${existingCount + 1}`;
+  const instance = {
+    id: nextMonsterId(),
+    presetSlug: preset.slug,
+    name: preset.name + labelSuffix,
+    position: position || findFreeCell(scene),
+    hp: {
+      current: preset.defaultHp?.max || 1,
+      max:     preset.defaultHp?.max || 1,
+      temp: 0
+    }
+  };
+  scene.monsters = [...(scene.monsters || []), instance];
+  return instance;
+}
+
+export function removeMonsterInstance(scene, monsterId) {
+  scene.monsters = (scene.monsters || []).filter(m => m.id !== monsterId);
+}
+
+export function updateMonsterPosition(scene, monsterId, col, row) {
+  const clamped = clampPosition(scene, { col, row });
+  scene.monsters = (scene.monsters || []).map(m =>
+    m.id === monsterId ? { ...m, position: clamped } : m
+  );
+}
+
+/**
+ * Find an empty cell. Tries the top edge first (where monsters typically
+ * start in tactical setups), then row-major scan. Returns (0,0) if the
+ * whole grid is occupied — overlap is acceptable as a fallback.
+ */
+function findFreeCell(scene) {
+  const occupied = new Set();
+  for (const p of Object.values(scene.positions || {})) {
+    occupied.add(`${p.col},${p.row}`);
+  }
+  for (const m of scene.monsters || []) {
+    occupied.add(`${m.position.col},${m.position.row}`);
+  }
+  // Prefer the top row (away from default PC placements at midRow)
+  for (let c = 1; c < scene.cols - 1; c++) {
+    if (!occupied.has(`${c},0`)) return { col: c, row: 0 };
+  }
+  // Otherwise row-major
+  for (let r = 0; r < scene.rows; r++) {
+    for (let c = 0; c < scene.cols; c++) {
+      if (!occupied.has(`${c},${r}`)) return { col: c, row: r };
+    }
+  }
+  return { col: 0, row: 0 };
+}
+
+/**
+ * Extended hit-test that finds either a PC (via positions map) OR a
+ * monster instance under the click. Returns:
+ *   { kind: 'pc' | 'monster', entity }   or null
+ */
+export function entityAt(scene, characters, px, py) {
+  const cellPx = scene.cellSize * scene.scale;
+  const cellCol = Math.floor(px / cellPx);
+  const cellRow = Math.floor(py / cellPx);
+  for (let i = 0; i < characters.length; i++) {
+    const ch = characters[i];
+    const pos = positionOf(scene, ch.id, i);
+    if (pos.col === cellCol && pos.row === cellRow) {
+      return { kind: 'pc', entity: ch };
+    }
+  }
+  for (const m of (scene.monsters || [])) {
+    if (m.position.col === cellCol && m.position.row === cellRow) {
+      return { kind: 'monster', entity: m };
+    }
+  }
+  return null;
 }

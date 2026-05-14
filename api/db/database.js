@@ -113,4 +113,46 @@ export function putItemSprite({ hash, pngBase64, itemName, baseAsset }) {
   `).run(hash, pngBase64, itemName, baseAsset, ITEM_GENERATOR_VERSION, Date.now());
 }
 
+// M3 — Open5e monster cache. Read-through: callers look up by slug, and
+// only call Open5e on miss. The full creature payload is stored as JSON
+// so future endpoints (full stat block) can use it without re-fetching.
+export function getMonsterBySlug(slug) {
+  const row = db.prepare(`SELECT * FROM monsters WHERE slug = ?`).get(String(slug));
+  if (!row) return null;
+  return { ...row, payload: tryParseJson(row.payload_json) };
+}
+
+export function searchMonsters(query, limit = 20) {
+  const q = `%${String(query).toLowerCase()}%`;
+  return db.prepare(`
+    SELECT slug, name, cr, type, size, hp_average
+    FROM monsters
+    WHERE LOWER(name) LIKE ?
+    ORDER BY (cr IS NULL), cr, name
+    LIMIT ?
+  `).all(q, limit);
+}
+
+export function upsertMonster({ slug, name, cr, type, size, hp_average, payload }) {
+  db.prepare(`
+    INSERT INTO monsters (slug, name, cr, type, size, hp_average, payload_json, fetched_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(slug) DO UPDATE SET
+      name = excluded.name,
+      cr = excluded.cr,
+      type = excluded.type,
+      size = excluded.size,
+      hp_average = excluded.hp_average,
+      payload_json = excluded.payload_json,
+      fetched_at = excluded.fetched_at
+  `).run(
+    String(slug), String(name || ''), cr ?? null, type ?? null, size ?? null,
+    hp_average ?? null, JSON.stringify(payload || {}), Date.now()
+  );
+}
+
+function tryParseJson(s) {
+  try { return JSON.parse(s); } catch { return null; }
+}
+
 export default db;

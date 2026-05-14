@@ -87,6 +87,20 @@
           </details>
         </div>
 
+        <fieldset id="monsters-panel" class="monsters-panel">
+          <legend>Monsters</legend>
+          <div class="monster-add-row">
+            <input id="monster-search" type="text" placeholder="Search D&amp;D monsters (goblin, dragon, mind flayer…)" />
+            <button id="monster-search-btn" class="secondary" type="button">Search</button>
+            <details class="monster-presets-details">
+              <summary>or pick a preset</summary>
+              <div id="monster-presets-list" class="monster-presets-list"></div>
+            </details>
+          </div>
+          <div id="monster-search-results" class="monster-search-results" hidden></div>
+          <div id="monsters-list" class="monsters-list"></div>
+        </fieldset>
+
         <fieldset id="battlefield-controls" class="battlefield-controls">
           <legend>Battlefield</legend>
           <div class="bf-row">

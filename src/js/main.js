@@ -2,8 +2,10 @@ import { renderSprite, renderPartyCanvas, renderBattleScene } from './sprite/com
 import { loadOverrides, saveOverrides, assignCarriedSlots } from './sprite/slot-overrides.js';
 import { loadAppearance, saveAppearance, applyAppearanceOverrides } from './sprite/appearance-overrides.js';
 import {
-  loadScene, saveScene, positionOf, characterAt, setPosition, clearPositions, clampPosition
+  loadScene, saveScene, positionOf, setPosition, clearPositions, clampPosition,
+  addMonsterInstance, removeMonsterInstance, updateMonsterPosition, entityAt
 } from './scene/scene-state.js';
+import { MONSTER_PRESETS, buildMonsterCharacter } from './scene/monster-presets.js';
 
 const $ = (id) => document.getElementById(id);
 const status = $('status');
@@ -101,8 +103,10 @@ document.addEventListener('input', (e) => {
 function rerender() {
   if (viewMode === 'party') {
     renderBattleScene(canvas, partyComposedCharacters, currentScene, {
-      direction: currentDirection, frameIdx: animFrame, positionOf
+      direction: currentDirection, frameIdx: animFrame, positionOf,
+      monsterCharacters: buildMonsterCharactersForRender()
     });
+    renderMonsterPanel();   // sync the side card UI
     return;
   }
   if (!originalCharacter) return;
@@ -112,6 +116,28 @@ function rerender() {
   applyAppearanceOverrides(c, currentAppearance);
   currentCharacter = c;
   renderSprite(canvas, c, { scale: 6, direction: currentDirection, frameIdx: animFrame });
+}
+
+// M3 — turn the scene's monster instances into the character-shaped
+// records renderBattleScene needs. Each gets an _position pointing at
+// the live instance's cell, plus HP copied from the instance (so when
+// HP drops, wounded/down filters trigger).
+function buildMonsterCharactersForRender() {
+  const result = [];
+  for (const m of (currentScene.monsters || [])) {
+    const preset = MONSTER_PRESETS[m.presetSlug];
+    if (!preset) continue;
+    const ch = buildMonsterCharacter(preset, m.id);
+    ch.name = m.name;
+    ch.hp = {
+      base: m.hp.max, bonus: 0, override: null,
+      temp: m.hp.temp || 0, removed: Math.max(0, m.hp.max - m.hp.current),
+      max: m.hp.max, current: m.hp.current
+    };
+    ch._position = m.position;
+    result.push(ch);
+  }
+  return result;
 }
 
 // M2 — current battle scene (background + grid + positions). Loaded
@@ -163,6 +189,7 @@ async function enterPartyView() {
   const btn = $('party-view-toggle');
   if (btn) btn.textContent = '◉ Single view';
   syncBattlefieldControls();
+  renderMonsterPresetList();
   setStatus(`Party view: ${partyComposedCharacters.length} character${partyComposedCharacters.length === 1 ? '' : 's'}.`, 'ok');
   rerender();
 }
@@ -208,34 +235,36 @@ function canvasEventToPixels(event) {
 
 canvas.addEventListener('pointerdown', (e) => {
   if (viewMode !== 'party') return;
-  if (partyComposedCharacters.length === 0) return;
   const { px, py } = canvasEventToPixels(e);
-  const ch = characterAt(currentScene, partyComposedCharacters, px, py);
-  if (!ch) return;
+  const hit = entityAt(currentScene, partyComposedCharacters, px, py);
+  if (!hit) return;
   e.preventDefault();
   canvas.setPointerCapture(e.pointerId);
-  dragState = { id: ch.id, pointerId: e.pointerId };
+  dragState = { kind: hit.kind, id: hit.entity.id, pointerId: e.pointerId };
   canvas.style.cursor = 'grabbing';
 });
 
 canvas.addEventListener('pointermove', (e) => {
   if (!dragState || dragState.pointerId !== e.pointerId) {
-    // Hover hint: show a grab cursor when over a draggable character
-    if (viewMode === 'party' && partyComposedCharacters.length > 0) {
+    // Hover hint: show a grab cursor when over a draggable entity
+    if (viewMode === 'party') {
       const { px, py } = canvasEventToPixels(e);
-      const ch = characterAt(currentScene, partyComposedCharacters, px, py);
-      canvas.style.cursor = ch ? 'grab' : 'default';
+      const hit = entityAt(currentScene, partyComposedCharacters, px, py);
+      canvas.style.cursor = hit ? 'grab' : 'default';
     }
     return;
   }
   const { px, py } = canvasEventToPixels(e);
   const cellPx = currentScene.cellSize * currentScene.scale;
-  // Snap to cell containing the pointer
   const target = clampPosition(currentScene, {
     col: Math.floor(px / cellPx),
     row: Math.floor(py / cellPx)
   });
-  setPosition(currentScene, dragState.id, target.col, target.row);
+  if (dragState.kind === 'pc') {
+    setPosition(currentScene, dragState.id, target.col, target.row);
+  } else {
+    updateMonsterPosition(currentScene, dragState.id, target.col, target.row);
+  }
   rerender();
 });
 
@@ -295,6 +324,178 @@ document.addEventListener('click', (e) => {
     saveScene(currentScene);
     if (viewMode === 'party') rerender();
   }
+});
+
+// ---------- M3: Monster panel ----------
+//
+// Three entry points to spawn a monster:
+//   1. "Preset" list — instant, no network. ~14 hand-built LPC composites
+//      (Goblin, Orc, Skeleton, etc.). Click → addMonsterInstance.
+//   2. Search field → /api/monsters/search → results render as buttons.
+//      Click a result → addMonsterInstance using the preset whose slug
+//      best matches (otherwise we fall back to a generic Bandit preset
+//      tagged with the Open5e name + HP so the visual is at least
+//      humanoid even when LPC has no exact match).
+//   3. Existing instances list — each has name, HP slider, remove (✕).
+
+function renderMonsterPresetList() {
+  const wrap = document.getElementById('monster-presets-list');
+  if (!wrap) return;
+  if (wrap.dataset.populated === '1') return;   // populate once
+  wrap.dataset.populated = '1';
+  for (const slug of Object.keys(MONSTER_PRESETS)) {
+    const p = MONSTER_PRESETS[slug];
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'monster-preset-btn';
+    b.textContent = p.name;
+    b.dataset.slug = slug;
+    wrap.appendChild(b);
+  }
+}
+
+function renderMonsterPanel() {
+  const list = document.getElementById('monsters-list');
+  if (!list) return;
+  list.innerHTML = '';
+  const monsters = currentScene.monsters || [];
+  if (monsters.length === 0) {
+    const empty = document.createElement('p');
+    empty.className = 'monster-empty';
+    empty.textContent = 'No monsters on the field yet.';
+    list.appendChild(empty);
+    return;
+  }
+  for (const m of monsters) {
+    const card = document.createElement('div');
+    card.className = 'monster-card';
+    card.dataset.id = m.id;
+    const hpPct = Math.max(0, Math.min(100, Math.round((m.hp.current / m.hp.max) * 100)));
+    card.innerHTML = `
+      <div class="monster-card-head">
+        <span class="monster-card-name">${escapeHtml(m.name)}</span>
+        <button class="monster-remove" type="button" data-monster-remove="${escapeHtml(m.id)}" aria-label="Remove ${escapeHtml(m.name)}">✕</button>
+      </div>
+      <div class="monster-hp">
+        <span class="monster-hp-label">${m.hp.current} / ${m.hp.max} hp</span>
+        <input class="monster-hp-range" type="range" min="0" max="${m.hp.max}" value="${m.hp.current}" data-monster-hp="${escapeHtml(m.id)}" />
+        <div class="monster-hp-bar"><div class="monster-hp-fill" style="width:${hpPct}%"></div></div>
+      </div>
+    `;
+    list.appendChild(card);
+  }
+}
+
+function spawnMonsterFromPreset(slug, opts = {}) {
+  const preset = MONSTER_PRESETS[slug];
+  if (!preset) return null;
+  const overrides = opts.overrides || {};
+  // Apply Open5e-derived HP if provided (so a dragon spawned via search
+  // doesn't show goblin HP just because it's wearing the goblin preset).
+  const merged = { ...preset, ...(overrides.preset || {}) };
+  if (overrides.name)     merged.name = overrides.name;
+  if (overrides.maxHp)    merged.defaultHp = { max: overrides.maxHp };
+  if (overrides.spritePresetSlug) merged.slug = overrides.spritePresetSlug;
+  addMonsterInstance(currentScene, merged);
+  saveScene(currentScene);
+  rerender();
+}
+
+/**
+ * Heuristic: given an Open5e creature name/type, pick the closest LPC
+ * preset for the visual. Falls back to 'bandit' as a generic humanoid.
+ */
+function matchPresetForOpen5e(name, type) {
+  const n = String(name || '').toLowerCase();
+  const t = String(type || '').toLowerCase();
+  for (const slug of Object.keys(MONSTER_PRESETS)) {
+    if (n.includes(slug)) return slug;
+  }
+  if (t.includes('undead') || n.includes('skeleton')) return 'skeleton';
+  if (n.includes('zombie') || n.includes('ghoul'))    return 'zombie';
+  if (n.includes('vampire'))                          return 'vampire';
+  if (n.includes('orc') || n.includes('hobgoblin'))   return 'orc';
+  if (n.includes('goblin') || n.includes('kobold'))   return 'goblin';
+  if (n.includes('troll') || n.includes('ogre') || n.includes('giant')) return 'troll';
+  if (n.includes('minotaur'))                         return 'minotaur';
+  if (n.includes('wolf') || n.includes('gnoll'))      return 'gnoll';
+  return 'bandit';   // generic humanoid fallback
+}
+
+async function searchMonstersOnline(query) {
+  const wrap = document.getElementById('monster-search-results');
+  if (!wrap) return;
+  wrap.hidden = false;
+  wrap.innerHTML = '<span class="hint-line">Searching…</span>';
+  try {
+    const res = await fetch(`/api/monsters/search?q=${encodeURIComponent(query)}`);
+    const data = await res.json();
+    const results = Array.isArray(data?.results) ? data.results : [];
+    if (results.length === 0) {
+      wrap.innerHTML = '<span class="hint-line">No monsters matched. Try a different keyword.</span>';
+      return;
+    }
+    wrap.innerHTML = '';
+    for (const r of results.slice(0, 12)) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'monster-search-result';
+      const cr = r.cr != null ? ` · CR ${r.cr}` : '';
+      const hp = r.hp ? ` · ${r.hp} hp` : '';
+      btn.innerHTML = `<strong>${escapeHtml(r.name)}</strong><span class="dim">${escapeHtml(r.type || '')}${cr}${hp}</span>`;
+      btn.addEventListener('click', () => {
+        const spritePreset = matchPresetForOpen5e(r.name, r.type);
+        spawnMonsterFromPreset(spritePreset, {
+          overrides: { name: r.name, maxHp: r.hp || undefined }
+        });
+        wrap.hidden = true;
+      });
+      wrap.appendChild(btn);
+    }
+  } catch (err) {
+    wrap.innerHTML = `<span class="hint-line">Search failed: ${escapeHtml(err.message)}</span>`;
+  }
+}
+
+// Event delegation for monster controls (works for buttons rendered
+// dynamically, including ones inside the search-result list)
+document.addEventListener('click', (e) => {
+  if (e.target.matches('.monster-preset-btn')) {
+    spawnMonsterFromPreset(e.target.dataset.slug);
+    return;
+  }
+  if (e.target.matches('.monster-remove') || e.target.dataset.monsterRemove) {
+    const id = e.target.dataset.monsterRemove;
+    if (id) {
+      removeMonsterInstance(currentScene, id);
+      saveScene(currentScene);
+      rerender();
+    }
+    return;
+  }
+  if (e.target.id === 'monster-search-btn') {
+    const q = document.getElementById('monster-search')?.value?.trim();
+    if (q) searchMonstersOnline(q);
+  }
+});
+
+document.addEventListener('keydown', (e) => {
+  if (e.target.id === 'monster-search' && e.key === 'Enter') {
+    const q = e.target.value.trim();
+    if (q) searchMonstersOnline(q);
+  }
+});
+
+// HP slider for monster cards
+document.addEventListener('input', (e) => {
+  const id = e.target.dataset?.monsterHp;
+  if (!id) return;
+  const hp = Number(e.target.value);
+  const m = (currentScene.monsters || []).find(x => x.id === id);
+  if (!m) return;
+  m.hp = { ...m.hp, current: Math.max(0, Math.min(m.hp.max, hp)) };
+  saveScene(currentScene);
+  rerender();
 });
 
 function syncBattlefieldControls() {
