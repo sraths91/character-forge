@@ -167,11 +167,19 @@ app.get('/api/monsters/search', importLimiter, async (req, res) => {
       })), source: 'cache' });
     }
     const live = await searchOpen5eCreatures(q);
-    // Side-effect: persist anything new so future lookups hit the cache.
-    for (const r of live) {
+    // Open5e's full-text search returns matches against ANY field, so a
+    // query like "goblin" surfaces dozens of creatures whose description
+    // happens to mention goblins. Filter client-side to require the
+    // query in the name. Fall back to the full list only when nothing
+    // matches on name (so esoteric queries like "shapeshifter" still
+    // work via flavour-text fallback).
+    const ql = q.toLowerCase();
+    const nameMatches = live.filter(r => String(r.name || '').toLowerCase().includes(ql));
+    const final = nameMatches.length > 0 ? nameMatches : live;
+    for (const r of final) {
       try { upsertMonster({ ...r, hp_average: r.hp, payload: r }); } catch { /* ignore */ }
     }
-    res.json({ results: live, source: 'open5e' });
+    res.json({ results: final, source: 'open5e' });
   } catch (err) {
     res.status(502).json({ error: err.message });
   }

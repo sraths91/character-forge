@@ -64,14 +64,22 @@ export async function fetchOpen5eCreature(slug, { fetchImpl = fetch } = {}) {
  * still cached server-side so they're available when needed later.
  */
 export function toSummary(creature) {
+  // Open5e V2 returns type/size as nested { name, key } objects. Fall back
+  // to string fields for V1-style or simpler responses.
+  const typeName = typeof creature.type === 'object' && creature.type
+    ? (creature.type.name || creature.type.key)
+    : (typeof creature.type === 'string' ? creature.type : null);
+  const sizeName = typeof creature.size === 'object' && creature.size
+    ? (creature.size.name || creature.size.key)
+    : (typeof creature.size === 'string' ? creature.size : null);
   return {
     slug: creature.key || creature.slug || creature.id,
     name: creature.name || 'Unknown',
     cr:   typeof creature.cr === 'number'   ? creature.cr
         : typeof creature.challenge_rating === 'number' ? creature.challenge_rating
         : null,
-    type: creature.type || creature.creature_type?.key || null,
-    size: creature.size || creature.size?.key || null,
+    type: typeName,
+    size: sizeName,
     hp:   creature.hit_points || creature.hp_average || creature.hp || null
   };
 }
