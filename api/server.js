@@ -159,9 +159,13 @@ app.get('/api/monsters/search', importLimiter, async (req, res) => {
   const q = String(req.query.q || '').trim();
   if (q.length === 0) return res.json({ results: [] });
   try {
+    // Cache lookup MUST itself only return name-matches (LIKE %q%) so
+    // pre-existing pollution from older queries can't poison newer
+    // searches. searchMonsters already does this — but a recent bug
+    // populated rows with poor relevance, so we require a higher hit
+    // bar (>=8) before short-circuiting Open5e.
     const cached = searchMonsters(q, 20);
-    if (cached.length >= 5) {
-      // Healthy cache hit — return without going to Open5e
+    if (cached.length >= 8) {
       return res.json({ results: cached.map(r => ({
         slug: r.slug, name: r.name, cr: r.cr, type: r.type, size: r.size, hp: r.hp_average
       })), source: 'cache' });

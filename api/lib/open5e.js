@@ -16,12 +16,17 @@
 
 const OPEN5E_HOST = 'https://api.open5e.com';
 
-export async function searchOpen5eCreatures(query, { limit = 20, fetchImpl = fetch } = {}) {
+export async function searchOpen5eCreatures(query, { limit = 30, fetchImpl = fetch } = {}) {
   const q = String(query || '').trim();
   if (q.length === 0) return [];
+  // Use Django REST framework's name__icontains filter — matches creatures
+  // whose name contains the query (case-insensitive). The default
+  // `search` param is full-text and includes flavour text, so "goblin"
+  // surfaces unrelated creatures whose description mentions goblins.
   const url = new URL('/v2/creatures/', OPEN5E_HOST);
-  url.searchParams.set('search', q);
+  url.searchParams.set('name__icontains', q);
   url.searchParams.set('limit', String(limit));
+  url.searchParams.set('ordering', 'cr');   // weakest first — useful for encounter design
   const res = await fetchImpl(url.toString(), {
     headers: { 'Accept': 'application/json', 'User-Agent': 'character-forge/0.1' }
   });
