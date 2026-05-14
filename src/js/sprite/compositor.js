@@ -37,6 +37,75 @@ export async function renderSprite(canvas, character, { scale = 6, direction = '
 }
 
 /**
+ * M2 — Render a battle scene: background + grid + party positioned per
+ * the scene's positions map. Canvas auto-resizes to the scene's grid
+ * dimensions × cellSize × scale.
+ *
+ * The scene argument is the shape produced by scene-state.js. We use
+ * scene.cellSize × scene.scale as the pixel-per-cell unit and place
+ * each character into their saved (col, row) — or a default linear
+ * position when unsaved.
+ *
+ * `positionOf` is passed in so this module doesn't depend on scene-state
+ * directly (cleaner separation; scene-state owns the position-resolution
+ * logic, compositor owns the pixel-pushing).
+ */
+export async function renderBattleScene(canvas, characters, scene, opts = {}) {
+  const { direction = 'south', frameIdx = 0, positionOf } = opts;
+  const list = (characters || []).filter(Boolean);
+  const cellPx = scene.cellSize * scene.scale;
+  const totalW = scene.cols * cellPx;
+  const totalH = scene.rows * cellPx;
+  canvas.width = totalW;
+  canvas.height = totalH;
+  const ctx = canvas.getContext('2d');
+  ctx.imageSmoothingEnabled = false;
+  ctx.clearRect(0, 0, totalW, totalH);
+
+  // 1. Background fill
+  if (scene.map?.kind === 'color') {
+    ctx.fillStyle = scene.map.color || '#3d5a3d';
+    ctx.fillRect(0, 0, totalW, totalH);
+  }
+
+  // 2. Grid overlay (drawn UNDER characters so cell lines show through gaps)
+  if (scene.grid?.visible) {
+    ctx.save();
+    ctx.strokeStyle = scene.grid.color || 'rgba(255,255,255,0.18)';
+    ctx.lineWidth = 1;
+    for (let c = 0; c <= scene.cols; c++) {
+      const x = c * cellPx + 0.5;
+      ctx.beginPath();
+      ctx.moveTo(x, 0);
+      ctx.lineTo(x, totalH);
+      ctx.stroke();
+    }
+    for (let r = 0; r <= scene.rows; r++) {
+      const y = r * cellPx + 0.5;
+      ctx.beginPath();
+      ctx.moveTo(0, y);
+      ctx.lineTo(totalW, y);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  // 3. Characters
+  let totalGenerated = 0;
+  for (let i = 0; i < list.length; i++) {
+    const ch = list[i];
+    const pos = positionOf ? positionOf(scene, ch.id, i) : { col: i, row: 0 };
+    const x = pos.col * cellPx;
+    const y = pos.row * cellPx;
+    const r = await drawCharacterAt(ctx, ch, {
+      x, y, scale: scene.scale, direction, frameIdx
+    });
+    totalGenerated += r.generatedCount;
+  }
+  return { canvas, generatedCount: totalGenerated, cellCount: list.length };
+}
+
+/**
  * M1 (Party Canvas) — render multiple characters horizontally on one
  * canvas. Each character keeps its own customizations / overrides /
  * subclass aura etc. — auras and silhouette transforms are bounded to

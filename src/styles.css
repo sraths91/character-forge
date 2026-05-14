@@ -860,3 +860,91 @@ body.party-view-mode .sheet {
   gap: 8px;
   flex-wrap: wrap;
 }
+
+/* ===================================================================== */
+/* M2 — Battlefield controls + scene UI                                  */
+/* ===================================================================== */
+
+.battlefield-controls {
+  /* Hidden by default; only shown when body has .party-view-mode */
+  display: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px 14px 12px;
+  margin-top: 12px;
+  background: var(--surface-2);
+  width: 100%;
+}
+body.party-view-mode .battlefield-controls { display: block; }
+
+.battlefield-controls legend {
+  padding: 0 6px;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-dim);
+}
+.bf-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  align-items: end;
+  margin-bottom: 8px;
+}
+.bf-row label {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.bf-row > label > span {
+  font-size: 0.72rem;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.bf-row select {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: var(--radius-sm);
+  padding: 4px 8px;
+  font-size: 0.85rem;
+  font-family: inherit;
+}
+.bf-color input[type="color"] {
+  width: 56px;
+  height: 32px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  padding: 0;
+  background: var(--surface);
+}
+.bf-toggles {
+  align-items: center;
+}
+.bf-toggle {
+  flex-direction: row !important;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.85rem;
+}
+.bf-toggle > span {
+  text-transform: none !important;
+  letter-spacing: 0 !important;
+  color: var(--text) !important;
+  font-size: 0.85rem !important;
+}
+.bf-hint {
+  margin: 0;
+  font-size: 0.78rem;
+  color: var(--text-dim);
+}
+
+/* Show grab cursor on the canvas in party view (refined per-character
+   by the JS pointermove handler) */
+body.party-view-mode #sprite-canvas { cursor: default; }
+
+/* Battlefield controls should NOT be hidden by the party-view-mode rule
+   that hides per-character pickers */
+body.party-view-mode .battlefield-controls { display: block !important; }

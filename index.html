@@ -87,6 +87,37 @@
           </details>
         </div>
 
+        <fieldset id="battlefield-controls" class="battlefield-controls">
+          <legend>Battlefield</legend>
+          <div class="bf-row">
+            <label class="bf-color">
+              <span>Background</span>
+              <input type="color" id="scene-bg-color" value="#3d5a3d" />
+            </label>
+            <label>
+              <span>Grid size</span>
+              <select id="scene-size">
+                <option value="8x6">8 × 6</option>
+                <option value="10x7" selected>10 × 7</option>
+                <option value="12x8">12 × 8</option>
+                <option value="16x10">16 × 10</option>
+              </select>
+            </label>
+          </div>
+          <div class="bf-row bf-toggles">
+            <label class="bf-toggle">
+              <input type="checkbox" id="scene-grid-visible" checked />
+              <span>Show grid</span>
+            </label>
+            <label class="bf-toggle">
+              <input type="checkbox" id="scene-grid-snap" checked />
+              <span>Snap to grid</span>
+            </label>
+            <button id="scene-reset-positions" class="secondary" type="button" title="Reset all party positions to the default row">Reset positions</button>
+          </div>
+          <p class="bf-hint">Drag any character to move them. Snap aligns to the grid.</p>
+        </fieldset>
+
         <details class="appearance-picker" id="appearance-picker" hidden>
           <summary>Customize appearance</summary>
           <div class="appearance-direction">

@@ -1,6 +1,9 @@
-import { renderSprite, renderPartyCanvas } from './sprite/compositor.js';
+import { renderSprite, renderPartyCanvas, renderBattleScene } from './sprite/compositor.js';
 import { loadOverrides, saveOverrides, assignCarriedSlots } from './sprite/slot-overrides.js';
 import { loadAppearance, saveAppearance, applyAppearanceOverrides } from './sprite/appearance-overrides.js';
+import {
+  loadScene, saveScene, positionOf, characterAt, setPosition, clearPositions, clampPosition
+} from './scene/scene-state.js';
 
 const $ = (id) => document.getElementById(id);
 const status = $('status');
@@ -97,8 +100,8 @@ document.addEventListener('input', (e) => {
 
 function rerender() {
   if (viewMode === 'party') {
-    renderPartyCanvas(canvas, partyComposedCharacters, {
-      scale: 6, direction: currentDirection, frameIdx: animFrame, cellGap: 8
+    renderBattleScene(canvas, partyComposedCharacters, currentScene, {
+      direction: currentDirection, frameIdx: animFrame, positionOf
     });
     return;
   }
@@ -110,6 +113,12 @@ function rerender() {
   currentCharacter = c;
   renderSprite(canvas, c, { scale: 6, direction: currentDirection, frameIdx: animFrame });
 }
+
+// M2 — current battle scene (background + grid + positions). Loaded
+// from localStorage on startup; mutated by drag handlers and battlefield
+// controls; persisted on every change. Single global scene for now —
+// multi-scene support is M5.
+let currentScene = loadScene();
 
 // ---------- M1: Party Canvas (multi-character view) ----------
 //
@@ -153,6 +162,7 @@ async function enterPartyView() {
   document.body.classList.add('party-view-mode');
   const btn = $('party-view-toggle');
   if (btn) btn.textContent = '◉ Single view';
+  syncBattlefieldControls();
   setStatus(`Party view: ${partyComposedCharacters.length} character${partyComposedCharacters.length === 1 ? '' : 's'}.`, 'ok');
   rerender();
 }
@@ -175,6 +185,128 @@ document.addEventListener('click', (e) => {
   if (viewMode === 'party') exitPartyView();
   else enterPartyView();
 });
+
+// M2 — Drag-to-position. Pointer events handle both mouse and touch.
+// Attached to the main #sprite-canvas; only active in party view. Hit-
+// tests against scene positions to find which character is grabbed,
+// then updates that character's (col, row) on every move and persists
+// on release.
+
+let dragState = null;   // { id, snap, offsetCol, offsetRow }
+
+function canvasEventToPixels(event) {
+  const rect = canvas.getBoundingClientRect();
+  // Canvas internal coords account for CSS scaling (canvas.width might
+  // be larger than its rendered width). Convert event coords to internal.
+  const scaleX = canvas.width  / rect.width;
+  const scaleY = canvas.height / rect.height;
+  return {
+    px: (event.clientX - rect.left) * scaleX,
+    py: (event.clientY - rect.top)  * scaleY
+  };
+}
+
+canvas.addEventListener('pointerdown', (e) => {
+  if (viewMode !== 'party') return;
+  if (partyComposedCharacters.length === 0) return;
+  const { px, py } = canvasEventToPixels(e);
+  const ch = characterAt(currentScene, partyComposedCharacters, px, py);
+  if (!ch) return;
+  e.preventDefault();
+  canvas.setPointerCapture(e.pointerId);
+  dragState = { id: ch.id, pointerId: e.pointerId };
+  canvas.style.cursor = 'grabbing';
+});
+
+canvas.addEventListener('pointermove', (e) => {
+  if (!dragState || dragState.pointerId !== e.pointerId) {
+    // Hover hint: show a grab cursor when over a draggable character
+    if (viewMode === 'party' && partyComposedCharacters.length > 0) {
+      const { px, py } = canvasEventToPixels(e);
+      const ch = characterAt(currentScene, partyComposedCharacters, px, py);
+      canvas.style.cursor = ch ? 'grab' : 'default';
+    }
+    return;
+  }
+  const { px, py } = canvasEventToPixels(e);
+  const cellPx = currentScene.cellSize * currentScene.scale;
+  // Snap to cell containing the pointer
+  const target = clampPosition(currentScene, {
+    col: Math.floor(px / cellPx),
+    row: Math.floor(py / cellPx)
+  });
+  setPosition(currentScene, dragState.id, target.col, target.row);
+  rerender();
+});
+
+canvas.addEventListener('pointerup', (e) => {
+  if (!dragState || dragState.pointerId !== e.pointerId) return;
+  canvas.releasePointerCapture(e.pointerId);
+  canvas.style.cursor = 'default';
+  dragState = null;
+  saveScene(currentScene);
+});
+
+canvas.addEventListener('pointercancel', () => {
+  if (dragState) {
+    canvas.style.cursor = 'default';
+    dragState = null;
+  }
+});
+
+// M2 — Battlefield controls: background color, grid toggle, snap toggle,
+// reset positions. Wired via data-scene attributes so the handlers stay
+// generic.
+document.addEventListener('input', (e) => {
+  if (e.target.id === 'scene-bg-color') {
+    currentScene.map = { ...currentScene.map, kind: 'color', color: e.target.value };
+    saveScene(currentScene);
+    if (viewMode === 'party') rerender();
+  }
+});
+
+document.addEventListener('change', (e) => {
+  if (e.target.id === 'scene-grid-visible') {
+    currentScene.grid = { ...currentScene.grid, visible: e.target.checked };
+    saveScene(currentScene);
+    if (viewMode === 'party') rerender();
+  } else if (e.target.id === 'scene-grid-snap') {
+    currentScene.grid = { ...currentScene.grid, snap: e.target.checked };
+    saveScene(currentScene);
+  } else if (e.target.id === 'scene-size') {
+    const [cols, rows] = String(e.target.value).split('x').map(Number);
+    if (Number.isFinite(cols) && Number.isFinite(rows)) {
+      currentScene.cols = cols;
+      currentScene.rows = rows;
+      // Clamp any out-of-bounds positions so members on the old big grid
+      // don't fall off when shrinking.
+      for (const [id, p] of Object.entries(currentScene.positions || {})) {
+        currentScene.positions[id] = clampPosition(currentScene, p);
+      }
+      saveScene(currentScene);
+      if (viewMode === 'party') rerender();
+    }
+  }
+});
+
+document.addEventListener('click', (e) => {
+  if (e.target.id === 'scene-reset-positions') {
+    clearPositions(currentScene);
+    saveScene(currentScene);
+    if (viewMode === 'party') rerender();
+  }
+});
+
+function syncBattlefieldControls() {
+  const c = document.getElementById('scene-bg-color');
+  const gv = document.getElementById('scene-grid-visible');
+  const gs = document.getElementById('scene-grid-snap');
+  const sz = document.getElementById('scene-size');
+  if (c)  c.value = currentScene.map?.color || '#3d5a3d';
+  if (gv) gv.checked = !!currentScene.grid?.visible;
+  if (gs) gs.checked = !!currentScene.grid?.snap;
+  if (sz) sz.value = `${currentScene.cols}x${currentScene.rows}`;
+}
 
 // ---------- Tier 3.1: Walk-cycle animation ----------
 let animating = false;
@@ -654,8 +786,11 @@ async function exportCurrentSprite(scale = 6) {
   const off = document.createElement('canvas');
   if (viewMode === 'party') {
     if (partyComposedCharacters.length === 0) throw new Error('Party is empty');
-    await renderPartyCanvas(off, partyComposedCharacters, {
-      scale, direction: currentDirection, cellGap: 8
+    // Use a scaled copy of the scene so the export honors the export-size
+    // dropdown without permanently changing the on-screen render.
+    const exportScene = { ...currentScene, scale };
+    await renderBattleScene(off, partyComposedCharacters, exportScene, {
+      direction: currentDirection, positionOf
     });
   } else {
     if (!currentCharacter) throw new Error('No character loaded');
