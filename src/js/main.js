@@ -4,6 +4,7 @@ import { loadAppearance, saveAppearance, applyAppearanceOverrides } from './spri
 import {
   loadScene, saveScene, positionOf, setPosition, clearPositions, clampPosition,
   addMonsterInstance, removeMonsterInstance, updateMonsterPosition, entityAt,
+  setMonsterCondition,
   SCENE_PRESETS,
   listScenes, setActiveScene, createScene, duplicateScene, renameScene, deleteScene, getActiveSceneId
 } from './scene/scene-state.js';
@@ -148,6 +149,10 @@ function buildMonsterCharactersForRender() {
       temp: m.hp.temp || 0, removed: Math.max(0, m.hp.max - m.hp.current),
       max: m.hp.max, current: m.hp.current
     };
+    // M7 — Pipe instance conditions into the rendered character so the
+    // existing E3 condition-filter pipeline (green tint for poisoned,
+    // tinted overlay for frightened, etc.) lights up automatically.
+    ch.conditions = Array.isArray(m.conditions) ? [...m.conditions] : [];
     ch._position = m.position;
     result.push(ch);
   }
@@ -431,6 +436,20 @@ function renderMonsterPresetList() {
   }
 }
 
+// M7 — Canonical condition list, matching the appearance-picker checkboxes
+// on the character sheet. Order is shared so the UX is consistent across
+// PCs and monsters.
+const CONDITION_KEYS = [
+  ['poisoned',    'Poisoned'],
+  ['frightened',  'Frightened'],
+  ['charmed',     'Charmed'],
+  ['paralyzed',   'Paralyzed'],
+  ['stunned',     'Stunned'],
+  ['petrified',   'Petrified'],
+  ['invisible',   'Invisible'],
+  ['unconscious', 'Unconscious']
+];
+
 function renderMonsterPanel() {
   const list = document.getElementById('monsters-list');
   if (!list) return;
@@ -448,6 +467,14 @@ function renderMonsterPanel() {
     card.className = 'monster-card';
     card.dataset.id = m.id;
     const hpPct = Math.max(0, Math.min(100, Math.round((m.hp.current / m.hp.max) * 100)));
+    const activeConditions = Array.isArray(m.conditions) ? m.conditions : [];
+    const condSummary = activeConditions.length === 0
+      ? 'No conditions'
+      : activeConditions.map(c => CONDITION_KEYS.find(([k]) => k === c)?.[1] || c).join(', ');
+    const condCheckboxes = CONDITION_KEYS.map(([key, label]) => {
+      const checked = activeConditions.includes(key) ? ' checked' : '';
+      return `<label class="monster-condition-option"><input type="checkbox" data-monster-condition="${escapeHtml(m.id)}" data-condition="${escapeHtml(key)}"${checked} /><span>${escapeHtml(label)}</span></label>`;
+    }).join('');
     card.innerHTML = `
       <div class="monster-card-head">
         <span class="monster-card-name">${escapeHtml(m.name)}</span>
@@ -458,6 +485,10 @@ function renderMonsterPanel() {
         <input class="monster-hp-range" type="range" min="0" max="${m.hp.max}" value="${m.hp.current}" data-monster-hp="${escapeHtml(m.id)}" />
         <div class="monster-hp-bar"><div class="monster-hp-fill" style="width:${hpPct}%"></div></div>
       </div>
+      <details class="monster-conditions"${activeConditions.length ? ' open' : ''}>
+        <summary><span class="monster-conditions-label">Conditions</span> <span class="monster-conditions-summary">${escapeHtml(condSummary)}</span></summary>
+        <div class="monster-conditions-grid">${condCheckboxes}</div>
+      </details>
     `;
     list.appendChild(card);
   }
@@ -571,6 +602,18 @@ document.addEventListener('input', (e) => {
   const m = (currentScene.monsters || []).find(x => x.id === id);
   if (!m) return;
   m.hp = { ...m.hp, current: Math.max(0, Math.min(m.hp.max, hp)) };
+  saveScene(currentScene);
+  rerender();
+});
+
+// M7 — Condition checkboxes on monster cards. The existing E3 renderer
+// picks up `character.conditions` automatically, so toggling here +
+// re-rendering is all that's needed for the visual filter to apply.
+document.addEventListener('change', (e) => {
+  const id = e.target.dataset?.monsterCondition;
+  if (!id) return;
+  const condition = e.target.dataset.condition;
+  setMonsterCondition(currentScene, id, condition, e.target.checked);
   saveScene(currentScene);
   rerender();
 });

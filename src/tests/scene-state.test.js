@@ -17,7 +17,7 @@ globalThis.localStorage = (() => {
 const {
   loadScene, saveScene,
   listScenes, setActiveScene, createScene, duplicateScene, renameScene, deleteScene,
-  getActiveSceneId, setPosition, addMonsterInstance
+  getActiveSceneId, setPosition, addMonsterInstance, setMonsterCondition
 } = await import('../js/scene/scene-state.js');
 
 beforeEach(() => {
@@ -132,4 +132,62 @@ test('M5: migration — legacy cf_scene blob becomes the Default scene', () => {
   const scenes = listScenes();
   assert.strictEqual(scenes.length, 1);
   assert.strictEqual(scenes[0].name, 'Default');
+});
+
+// ---- M7: Monster conditions ----
+
+test('M7: addMonsterInstance initializes conditions to empty array', () => {
+  loadScene();
+  const s = loadScene();
+  const inst = addMonsterInstance(s, { slug: 'goblin', name: 'Goblin', defaultHp: { max: 7 } });
+  assert.deepStrictEqual(inst.conditions, []);
+});
+
+test('M7: setMonsterCondition adds + removes idempotently', () => {
+  loadScene();
+  const s = loadScene();
+  const inst = addMonsterInstance(s, { slug: 'goblin', name: 'Goblin', defaultHp: { max: 7 } });
+  setMonsterCondition(s, inst.id, 'poisoned', true);
+  let m = s.monsters.find(x => x.id === inst.id);
+  assert.deepStrictEqual(m.conditions, ['poisoned']);
+
+  // Setting same again is a no-op
+  setMonsterCondition(s, inst.id, 'poisoned', true);
+  m = s.monsters.find(x => x.id === inst.id);
+  assert.deepStrictEqual(m.conditions, ['poisoned']);
+
+  // Add a second
+  setMonsterCondition(s, inst.id, 'prone', true);
+  m = s.monsters.find(x => x.id === inst.id);
+  assert.deepStrictEqual(m.conditions.sort(), ['poisoned', 'prone']);
+
+  // Clear the first
+  setMonsterCondition(s, inst.id, 'poisoned', false);
+  m = s.monsters.find(x => x.id === inst.id);
+  assert.deepStrictEqual(m.conditions, ['prone']);
+
+  // Clearing an inactive condition is a no-op
+  setMonsterCondition(s, inst.id, 'charmed', false);
+  m = s.monsters.find(x => x.id === inst.id);
+  assert.deepStrictEqual(m.conditions, ['prone']);
+});
+
+test('M7: setMonsterCondition on unknown monster id returns [] and does not throw', () => {
+  loadScene();
+  const s = loadScene();
+  const result = setMonsterCondition(s, 'nope', 'poisoned', true);
+  assert.deepStrictEqual(result, []);
+});
+
+test('M7: mergeWithDefault backfills missing conditions on legacy monster instances', () => {
+  // Seed a legacy single-scene blob whose monster has no `conditions` field
+  globalThis.localStorage.setItem('cf_scene', JSON.stringify({
+    cols: 10, rows: 7, cellSize: 64, scale: 3,
+    map: { kind: 'color', color: '#000' },
+    monsters: [{ id: 'mX', presetSlug: 'goblin', name: 'Old Goblin', position: { col: 0, row: 0 }, hp: { current: 7, max: 7, temp: 0 } }]
+  }));
+  const s = loadScene();
+  assert.strictEqual(s.monsters.length, 1);
+  assert.deepStrictEqual(s.monsters[0].conditions, [],
+    'old monster instance should have conditions backfilled to []');
 });

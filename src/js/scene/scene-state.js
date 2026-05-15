@@ -223,7 +223,12 @@ function mergeWithDefault(saved) {
     map:  { ...base.map,  ...(saved.map  || {}) },
     grid: { ...base.grid, ...(saved.grid || {}) },
     positions: saved.positions && typeof saved.positions === 'object' ? saved.positions : {},
-    monsters: Array.isArray(saved.monsters) ? saved.monsters : [],
+    // M7 — Defensive backfill: older saves predate the conditions field,
+    // so any monster missing it gets an empty array. Cheap and keeps
+    // setMonsterCondition's invariants clean.
+    monsters: Array.isArray(saved.monsters)
+      ? saved.monsters.map(m => ({ ...m, conditions: Array.isArray(m.conditions) ? m.conditions : [] }))
+      : [],
     initiative: Array.isArray(saved.initiative) ? saved.initiative : []
   };
 }
@@ -324,10 +329,36 @@ export function addMonsterInstance(scene, preset, position = null) {
       current: preset.defaultHp?.max || 1,
       max:     preset.defaultHp?.max || 1,
       temp: 0
-    }
+    },
+    // M7 — Active conditions on this monster instance (e.g. ['poisoned',
+    // 'prone']). Used by the renderer's existing condition-filter
+    // pipeline so monsters get the same visual treatment as PCs.
+    conditions: []
   };
   scene.monsters = [...(scene.monsters || []), instance];
   return instance;
+}
+
+// M7 — Toggle a condition on a monster instance. Idempotent: setting a
+// condition that's already active is a no-op; clearing one that isn't
+// active is also a no-op. Returns the new conditions array.
+export function setMonsterCondition(scene, monsterId, condition, active) {
+  const monsters = scene.monsters || [];
+  const idx = monsters.findIndex(m => m.id === monsterId);
+  if (idx < 0) return [];
+  const m = monsters[idx];
+  const current = Array.isArray(m.conditions) ? m.conditions : [];
+  const isActive = current.includes(condition);
+  if (active === isActive) return current;
+  const next = active
+    ? [...current, condition]
+    : current.filter(c => c !== condition);
+  scene.monsters = [
+    ...monsters.slice(0, idx),
+    { ...m, conditions: next },
+    ...monsters.slice(idx + 1)
+  ];
+  return next;
 }
 
 export function removeMonsterInstance(scene, monsterId) {
