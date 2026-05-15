@@ -28,6 +28,20 @@
 
 const SCENE_KEY = 'cf_scene';
 
+// M2.5 — Built-in scene presets. Each maps to a preset slug; the UI
+// shows them as cards with a swatch / preview. Selecting one swaps
+// scene.map + grid color without touching positions/monsters.
+export const SCENE_PRESETS = {
+  grass:    { name: 'Grass field',  map: { kind: 'color', color: '#3d5a3d' }, grid: { color: 'rgba(255,255,255,0.18)' } },
+  dungeon:  { name: 'Dungeon',      map: { kind: 'color', color: '#2a2a2e' }, grid: { color: 'rgba(255,255,255,0.10)' } },
+  tavern:   { name: 'Tavern floor', map: { kind: 'color', color: '#6b3f1a' }, grid: { color: 'rgba(255,255,255,0.18)' } },
+  forest:   { name: 'Forest',       map: { kind: 'color', color: '#1e3a23' }, grid: { color: 'rgba(255,255,255,0.14)' } },
+  desert:   { name: 'Desert',       map: { kind: 'color', color: '#c8a665' }, grid: { color: 'rgba(0,0,0,0.20)' } },
+  snow:     { name: 'Snowfield',    map: { kind: 'color', color: '#dfe7ea' }, grid: { color: 'rgba(0,0,0,0.15)' } },
+  swamp:    { name: 'Swamp',        map: { kind: 'color', color: '#3b4a2e' }, grid: { color: 'rgba(255,255,255,0.12)' } },
+  cave:     { name: 'Cave',         map: { kind: 'color', color: '#1a1820' }, grid: { color: 'rgba(255,255,255,0.10)' } }
+};
+
 export const DEFAULT_SCENE = Object.freeze({
   cols: 10,
   rows: 7,

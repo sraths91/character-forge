@@ -3,7 +3,8 @@ import { loadOverrides, saveOverrides, assignCarriedSlots } from './sprite/slot-
 import { loadAppearance, saveAppearance, applyAppearanceOverrides } from './sprite/appearance-overrides.js';
 import {
   loadScene, saveScene, positionOf, setPosition, clearPositions, clampPosition,
-  addMonsterInstance, removeMonsterInstance, updateMonsterPosition, entityAt
+  addMonsterInstance, removeMonsterInstance, updateMonsterPosition, entityAt,
+  SCENE_PRESETS
 } from './scene/scene-state.js';
 import { MONSTER_PRESETS, buildMonsterCharacter } from './scene/monster-presets.js';
 import {
@@ -199,6 +200,7 @@ async function enterPartyView() {
   const btn = $('party-view-toggle');
   if (btn) btn.textContent = '◉ Single view';
   syncBattlefieldControls();
+  renderScenePresetList();
   renderMonsterPresetList();
   setStatus(`Party view: ${partyComposedCharacters.length} character${partyComposedCharacters.length === 1 ? '' : 's'}.`, 'ok');
   rerender();
@@ -726,6 +728,108 @@ function syncBattlefieldControls() {
   if (gv) gv.checked = !!currentScene.grid?.visible;
   if (gs) gs.checked = !!currentScene.grid?.snap;
   if (sz) sz.value = `${currentScene.cols}x${currentScene.rows}`;
+}
+
+// ---------- M2.5: Scene presets + custom image background ----------
+//
+// Presets are predefined { map, grid.color } pairs — clicking one swaps
+// the battlefield's look without touching positions / monsters / initiative.
+// Custom-image uploads are read via FileReader, downsized to <=1024px on
+// the longest side (so localStorage isn't blown out by 4k photos), and
+// stored as a data URL on scene.map.image.
+
+function renderScenePresetList() {
+  const wrap = document.getElementById('scene-preset-list');
+  if (!wrap) return;
+  if (wrap.dataset.populated === '1') return;
+  wrap.dataset.populated = '1';
+  for (const slug of Object.keys(SCENE_PRESETS)) {
+    const p = SCENE_PRESETS[slug];
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'scene-preset-btn';
+    b.dataset.preset = slug;
+    b.title = p.name;
+    const swatch = document.createElement('span');
+    swatch.className = 'scene-preset-swatch';
+    swatch.style.background = p.map.color;
+    b.appendChild(swatch);
+    const label = document.createElement('span');
+    label.className = 'scene-preset-label';
+    label.textContent = p.name;
+    b.appendChild(label);
+    wrap.appendChild(b);
+  }
+}
+
+function applyScenePreset(slug) {
+  const p = SCENE_PRESETS[slug];
+  if (!p) return;
+  currentScene.map  = { ...p.map };
+  currentScene.grid = { ...(currentScene.grid || {}), ...p.grid };
+  saveScene(currentScene);
+  syncBattlefieldControls();
+  if (viewMode === 'party') rerender();
+}
+
+document.addEventListener('click', (e) => {
+  const btn = e.target.closest('.scene-preset-btn');
+  if (!btn) return;
+  applyScenePreset(btn.dataset.preset);
+});
+
+// Custom background image: read file → resize → data URL → save
+document.addEventListener('change', (e) => {
+  if (e.target.id !== 'scene-bg-image') return;
+  const file = e.target.files?.[0];
+  if (!file) return;
+  loadImageAsDataUrl(file, 1024).then(dataUrl => {
+    currentScene.map = { kind: 'image', color: currentScene.map?.color || '#3d5a3d', image: dataUrl };
+    saveScene(currentScene);
+    if (viewMode === 'party') rerender();
+    e.target.value = '';   // allow re-selecting the same file later
+  }).catch(err => {
+    setStatus(`Could not load image: ${err.message}`, 'error');
+  });
+});
+
+document.addEventListener('click', (e) => {
+  if (e.target.id !== 'scene-bg-image-clear') return;
+  const color = currentScene.map?.color || '#3d5a3d';
+  currentScene.map = { kind: 'color', color };
+  saveScene(currentScene);
+  if (viewMode === 'party') rerender();
+});
+
+/**
+ * Read a File as an Image, downsize so the longest edge is <= maxEdge,
+ * and return a PNG data URL. Used to keep localStorage payloads modest
+ * (a 4k photo would blow the 5MB quota by itself).
+ */
+function loadImageAsDataUrl(file, maxEdge = 1024) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error('file read failed'));
+    reader.onload = () => {
+      const img = new Image();
+      img.onerror = () => reject(new Error('not a valid image'));
+      img.onload = () => {
+        const ratio = Math.min(1, maxEdge / Math.max(img.width, img.height));
+        const w = Math.round(img.width * ratio);
+        const h = Math.round(img.height * ratio);
+        const off = document.createElement('canvas');
+        off.width = w; off.height = h;
+        const ctx = off.getContext('2d');
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = 'high';
+        ctx.drawImage(img, 0, 0, w, h);
+        try { resolve(off.toDataURL('image/jpeg', 0.85)); }
+        catch (err) { reject(err); }
+      };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  });
 }
 
 // ---------- Tier 3.1: Walk-cycle animation ----------

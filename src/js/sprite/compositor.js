@@ -72,8 +72,18 @@ export async function renderBattleScene(canvas, characters, scene, opts = {}) {
   ctx.imageSmoothingEnabled = false;
   ctx.clearRect(0, 0, totalW, totalH);
 
-  // 1. Background fill
-  if (scene.map?.kind === 'color') {
+  // 1. Background fill — color OR custom image (M2.5). Image draws are
+  //    cover-fitted so the canvas is fully painted regardless of aspect.
+  if (scene.map?.kind === 'image' && scene.map.image) {
+    // Paint the fallback colour first so a slow image decode doesn't
+    // flash white before the bitmap appears.
+    ctx.fillStyle = scene.map.color || '#3d5a3d';
+    ctx.fillRect(0, 0, totalW, totalH);
+    try {
+      const img = await loadCachedImage(scene.map.image);
+      drawImageCover(ctx, img, totalW, totalH);
+    } catch { /* fall back to the colour we already painted */ }
+  } else if (scene.map?.kind === 'color') {
     ctx.fillStyle = scene.map.color || '#3d5a3d';
     ctx.fillRect(0, 0, totalW, totalH);
   }
@@ -194,6 +204,35 @@ export async function renderBattleScene(canvas, characters, scene, opts = {}) {
   }
 
   return { canvas, generatedCount: totalGenerated, cellCount: list.length + monsterCharacters.length };
+}
+
+// M2.5 — Image cache. Decoded HTMLImageElements keyed by data-url so
+// continuous-render loops don't pay decode cost every frame.
+const _bgImageCache = new Map();
+function loadCachedImage(src) {
+  const cached = _bgImageCache.get(src);
+  if (cached) return cached;
+  const promise = new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload  = () => resolve(img);
+    img.onerror = () => reject(new Error('image decode failed'));
+    img.src = src;
+  });
+  _bgImageCache.set(src, promise);
+  return promise;
+}
+
+/** Cover-fit an image into a target rect (preserves aspect, crops overflow). */
+function drawImageCover(ctx, img, targetW, targetH) {
+  const scale = Math.max(targetW / img.width, targetH / img.height);
+  const w = img.width  * scale;
+  const h = img.height * scale;
+  const x = (targetW - w) / 2;
+  const y = (targetH - h) / 2;
+  ctx.save();
+  ctx.imageSmoothingEnabled = true;
+  ctx.drawImage(img, x, y, w, h);
+  ctx.restore();
 }
 
 /** Draw a hollow rectangle outline at (x,y) of size sz, in the given color. */

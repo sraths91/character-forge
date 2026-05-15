@@ -941,6 +941,60 @@ body.party-view-mode .battlefield-controls { display: block; }
   color: var(--text-dim);
 }
 
+/* M2.5 — Scene preset chips */
+.bf-presets-row { align-items: flex-start; flex-wrap: wrap; }
+.bf-presets-label {
+  font-size: 0.78rem;
+  color: var(--text-dim);
+  padding-top: 0.35rem;
+  min-width: 3.5rem;
+}
+.scene-preset-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  flex: 1;
+}
+.scene-preset-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.3rem 0.55rem;
+  border-radius: 6px;
+  border: 1px solid var(--border, #2a2a32);
+  background: var(--surface, #15151a);
+  color: var(--text);
+  font-size: 0.78rem;
+  cursor: pointer;
+  transition: border-color 120ms, transform 120ms;
+}
+.scene-preset-btn:hover {
+  border-color: var(--accent, #60a5fa);
+  transform: translateY(-1px);
+}
+.scene-preset-swatch {
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  border: 1px solid rgba(255,255,255,0.18);
+  flex-shrink: 0;
+}
+
+/* M2.5 — Custom background image upload row */
+.bf-image-row { align-items: center; }
+.bf-image-upload {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.78rem;
+  color: var(--text-dim);
+}
+.bf-image-upload input[type="file"] {
+  font-size: 0.75rem;
+  color: var(--text);
+  max-width: 14rem;
+}
+
 /* Show grab cursor on the canvas in party view (refined per-character
    by the JS pointermove handler) */
 body.party-view-mode #sprite-canvas { cursor: default; }
