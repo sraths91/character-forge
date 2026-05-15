@@ -10,11 +10,13 @@ import {
 } from './scene/scene-state.js';
 import { MONSTER_PRESETS, buildMonsterCharacter } from './scene/monster-presets.js';
 import {
-  combat, beginAttack, cancelAttack, selectAttacker, resolveAttack,
+  combat, beginAttack, cancelAttack, selectAttacker,
+  resolveAttack as resolveAttackAnimation,
   pruneExpired, hasActiveAnimations, entityAnimations, damagePopups
 } from './scene/combat.js';
 import { rollAttack, rollDamage, describeAttack } from './scene/combat-roll.js';
 import { deriveAC, deriveAttack, deriveWeaponAttack } from './scene/pc-stats.js';
+import { resolveAttack } from './scene/combat-resolver.js';
 
 const $ = (id) => document.getElementById(id);
 const status = $('status');
@@ -314,6 +316,7 @@ canvas.addEventListener('pointerdown', (e) => {
       return;
     }
     e.preventDefault();
+    hideAttackPreview();
     runAttackPrompt(hit.kind, hit.entity);
     return;
   }
@@ -333,6 +336,14 @@ canvas.addEventListener('pointermove', (e) => {
       const { px, py } = canvasEventToPixels(e);
       const hit = entityAt(currentScene, partyComposedCharacters, px, py);
       canvas.style.cursor = hit ? 'grab' : 'default';
+      // M16 — Attack preview during pick-target mode. Show breakdown
+      // (advantage/disadvantage reasons, damage, AC) for whatever cell
+      // the cursor is over, BEFORE the user commits the attack.
+      if (combat.mode === 'pick-target') {
+        updateAttackPreview(hit, e.clientX, e.clientY);
+      } else {
+        hideAttackPreview();
+      }
     }
     return;
   }
@@ -364,6 +375,85 @@ canvas.addEventListener('pointercancel', () => {
     dragState = null;
   }
 });
+
+canvas.addEventListener('pointerleave', () => hideAttackPreview());
+
+// M16 — Attack preview tooltip. Driven by pointermove during the
+// pick-target combat mode. Calls the same resolver runAttackPrompt uses
+// so what you see is exactly what will roll.
+function updateAttackPreview(hit, clientX, clientY) {
+  const panel = document.getElementById('attack-preview');
+  if (!panel) return;
+  if (!hit || !combat.attacker) {
+    hideAttackPreview();
+    return;
+  }
+  if (hit.entity.id === combat.attacker.id) {
+    hideAttackPreview();
+    return;
+  }
+  const attackerHit = findHitById(combat.attacker.id);
+  if (!attackerHit) { hideAttackPreview(); return; }
+
+  const attack = getAttackStats(attackerHit);
+  const ac     = getAC({ kind: hit.kind, entity: hit.entity });
+  const weapon = getAttackerWeapon(attackerHit);
+  const verdict = resolveAttack({
+    attacker: attackerHit.entity,
+    target: hit.entity,
+    weapon,
+    scene: currentScene,
+    attackerKind: attackerHit.kind,
+    targetKind: hit.kind,
+    targetAC: ac,
+    advantageOverride: combatAdvantage,
+    attackStats: { bonus: attack.bonus, dice: attack.dice, damageType: attack.damageType }
+  });
+
+  const attackerName = entityName(attackerHit);
+  const targetName = hit.entity.name || 'Target';
+  const sign = attack.bonus >= 0 ? '+' : '';
+  const modeLabel = verdict.d20.overrideApplied
+    ? `${verdict.d20.mode} (override)`
+    : verdict.d20.mode;
+
+  const parts = [];
+  parts.push(`<div class="preview-head">${escapeHtml(attackerName)} → ${escapeHtml(targetName)}</div>`);
+  parts.push(`<div class="preview-line">Attack: ${sign}${attack.bonus} (${escapeHtml(weapon?.name || attack.name || 'Attack')}) vs AC ${ac}</div>`);
+  parts.push(`<div class="preview-line">Damage: ${escapeHtml(attack.dice)}${attack.damageType ? ' ' + escapeHtml(attack.damageType) : ''}</div>`);
+  parts.push(`<div class="preview-line preview-mode preview-mode-${verdict.d20.mode}">${escapeHtml(modeLabel)}</div>`);
+
+  if (verdict.blockers.length) {
+    parts.push(`<div class="preview-blockers">${verdict.blockers.map(b => `⛔ ${escapeHtml(b)}`).join('<br/>')}</div>`);
+  } else {
+    if (verdict.d20.advantage.length) {
+      parts.push(`<div class="preview-reasons preview-adv">Adv: ${verdict.d20.advantage.map(escapeHtml).join('; ')}</div>`);
+    }
+    if (verdict.d20.disadvantage.length) {
+      parts.push(`<div class="preview-reasons preview-dis">Dis: ${verdict.d20.disadvantage.map(escapeHtml).join('; ')}</div>`);
+    }
+    if (verdict.autoCrit) {
+      parts.push(`<div class="preview-reasons preview-crit">⚡ Auto-crit: ${escapeHtml(verdict.autoCritReason)}</div>`);
+    }
+  }
+
+  panel.innerHTML = parts.join('');
+  panel.hidden = false;
+  // Position next to the cursor — kept inside the viewport.
+  const rect = panel.getBoundingClientRect();
+  const offset = 14;
+  let x = clientX + offset;
+  let y = clientY + offset;
+  if (x + rect.width  > window.innerWidth)  x = clientX - rect.width  - offset;
+  if (y + rect.height > window.innerHeight) y = clientY - rect.height - offset;
+  panel.style.left = `${Math.max(0, x)}px`;
+  panel.style.top  = `${Math.max(0, y)}px`;
+}
+
+function hideAttackPreview() {
+  const panel = document.getElementById('attack-preview');
+  if (panel) panel.hidden = true;
+}
 
 // M2 — Battlefield controls: background color, grid toggle, snap toggle,
 // reset positions. Wired via data-scene attributes so the handlers stay
@@ -436,18 +526,24 @@ function renderMonsterPresetList() {
   }
 }
 
-// M7 — Canonical condition list, matching the appearance-picker checkboxes
-// on the character sheet. Order is shared so the UX is consistent across
-// PCs and monsters.
+// M7 + M11/M13 — Canonical condition list, matching the appearance-picker
+// checkboxes on the character sheet. Order is shared so the UX is
+// consistent across PCs and monsters. M11 added the conditions the combat
+// resolver consults (blinded, prone, restrained, grappled, deafened).
 const CONDITION_KEYS = [
   ['poisoned',    'Poisoned'],
+  ['blinded',     'Blinded'],
   ['frightened',  'Frightened'],
   ['charmed',     'Charmed'],
   ['paralyzed',   'Paralyzed'],
   ['stunned',     'Stunned'],
   ['petrified',   'Petrified'],
   ['invisible',   'Invisible'],
-  ['unconscious', 'Unconscious']
+  ['unconscious', 'Unconscious'],
+  ['prone',       'Prone'],
+  ['restrained',  'Restrained'],
+  ['grappled',    'Grappled'],
+  ['deafened',    'Deafened']
 ];
 
 function renderMonsterPanel() {
@@ -644,7 +740,10 @@ function setCombatStatus(text) {
 // M6 — Combat: derive attacker/target stats from the entity, roll the
 // attack, roll damage on hit/crit, and feed the result into the existing
 // animation + HP-update pipeline. Replaces the M4 manual damage prompt.
-let combatAdvantage = 'normal';   // 'normal' | 'advantage' | 'disadvantage'
+//
+// M11/M16 — combatAdvantage now defaults to 'auto' (resolver decides).
+// 'normal' / 'advantage' / 'disadvantage' become explicit overrides.
+let combatAdvantage = 'auto';     // 'auto' | 'normal' | 'advantage' | 'disadvantage'
 
 document.addEventListener('change', (e) => {
   if (e.target.name !== 'combat-adv') return;
@@ -682,8 +781,53 @@ function runAttackPrompt(targetKind, targetEntity) {
   const targetName   = targetEntity.name || 'Target';
   const attack       = getAttackStats(attackerHit);
   const ac           = getAC(targetHit);
+  const weapon       = getAttackerWeapon(attackerHit);
 
-  const atk = rollAttack({ bonus: attack.bonus, advantage: combatAdvantage, targetAC: ac });
+  // M11 — Run the resolver to determine the *real* d20 mode, auto-crit,
+  // auto-miss, and breakdown. The UI radio is now an override; default
+  // 'auto' lets conditions decide.
+  const verdict = resolveAttack({
+    attacker: attackerHit.entity,
+    target: targetEntity,
+    weapon,
+    scene: currentScene,
+    attackerKind: attackerHit.kind,
+    targetKind,
+    targetAC: ac,
+    advantageOverride: combatAdvantage,
+    // Attacker stats come from the per-context derivation (M6 for PCs,
+    // monster preset for monsters); resolver doesn't re-derive.
+    attackStats: {
+      bonus: attack.bonus,
+      dice:  attack.dice,
+      damageType: attack.damageType,
+      parts: [{ source: weapon?.name || attack.name || 'Attack', value: attack.bonus }],
+      damageParts: []
+    }
+  });
+
+  // Hard refusals (charmed, attacker incapacitated): show the blocker and
+  // skip the roll entirely. Combat mode resets so the next click starts fresh.
+  if (verdict.autoMiss) {
+    setCombatStatus(`${attackerName} → ${targetName}: ${verdict.blockers.join('; ')}.`);
+    cancelAttack();
+    rerender();
+    return;
+  }
+
+  // Auto-crit short-circuits the d20: target is paralyzed/unconscious in
+  // melee within 5ft → hit + crit without rolling. We still roll damage.
+  let atk;
+  if (verdict.autoCrit) {
+    atk = {
+      hit: true, crit: true,
+      d20: { kept: 20, dice: [20], advantage: verdict.d20.mode },
+      bonus: attack.bonus, total: 20 + attack.bonus, ac
+    };
+  } else {
+    atk = rollAttack({ bonus: attack.bonus, advantage: verdict.d20.mode, targetAC: ac });
+  }
+
   let damage = 0;
   let dmgRoll = null;
   if (atk.hit) {
@@ -691,24 +835,73 @@ function runAttackPrompt(targetKind, targetEntity) {
     damage = dmgRoll.total;
     applyDamage(targetKind, targetEntity.id, damage);
   }
-  // Feed into combat.js (animation + floating popup). We still want a
-  // visual on a miss — pass amount 0 so the popup says "MISS" via a
-  // negative number-of-zero formatting trick (combat.js currently shows
-  // -N for damage; the M4 popup pipeline doesn't render zero specially,
-  // so we skip the popup entirely on a miss).
+  // Feed into combat.js (animation + floating popup). Animations only
+  // fire on hit since the existing pipeline expects a damage amount.
   if (atk.hit) {
-    resolveAttack(targetEntity.id, targetKind, damage);
+    resolveAttackAnimation(targetEntity.id, targetKind, damage);
   } else {
-    // Still cancel combat mode (resolveAttack does this on hit)
     cancelAttack();
   }
   saveScene(currentScene);
-  setCombatStatus(describeAttack({
-    attackerName, targetName,
-    weaponName: attack.name,
-    atk, dmg: dmgRoll || { total: 0, rolls: [], spec: attack.dice }
-  }));
+  appendAttackLog({ attackerName, targetName, weaponName: weapon?.name || attack.name, verdict, atk, dmgRoll });
+  setCombatStatus(formatAttackSummary({ attackerName, targetName, weaponName: weapon?.name || attack.name, verdict, atk, dmgRoll }));
   startContinuousRender();
+}
+
+// Helper: pull the weapon record the attacker is using. For PCs that's
+// equipment.mainhand; for monsters we don't have a weapon record (we use
+// the preset's attack block), so return null and let the resolver use
+// the synthetic attackStats.
+function getAttackerWeapon(hit) {
+  if (!hit) return null;
+  if (hit.kind === 'pc') return hit.entity.equipment?.mainhand || null;
+  return null;
+}
+
+// One-liner status text (kept compact for the small panel). The roll-log
+// entry has the full structured breakdown.
+function formatAttackSummary({ attackerName, targetName, weaponName, verdict, atk, dmgRoll }) {
+  if (verdict.autoCrit) {
+    return `${attackerName} auto-crits ${targetName} (${verdict.autoCritReason}): ${weaponName} ${verdict.damage.dice} = ${dmgRoll.total}`;
+  }
+  return describeAttack({
+    attackerName, targetName, weaponName,
+    atk, dmg: dmgRoll || { total: 0, rolls: [], spec: verdict.damage.dice }
+  });
+}
+
+// Append a structured entry to the roll log. Hit/miss/crit get colored
+// borders; reasons render under the headline so the user can see exactly
+// what fed into the d20 mode.
+function appendAttackLog({ attackerName, targetName, weaponName, verdict, atk, dmgRoll }) {
+  const wrap = document.getElementById('roll-log');
+  const list = document.getElementById('roll-log-list');
+  if (!wrap || !list) return;
+  wrap.hidden = false;
+  const li = document.createElement('li');
+  li.className = `roll-log-entry ${atk.crit ? 'roll-crit' : atk.hit ? 'roll-hit' : 'roll-miss'}`;
+  const outcomeWord = verdict.autoCrit ? 'AUTO-CRIT' : atk.crit ? 'CRIT' : atk.hit ? 'HIT' : 'MISS';
+  const d20Str = atk.d20.dice.length === 1
+    ? `d20=${atk.d20.kept}`
+    : `d20=${atk.d20.kept} (${atk.d20.advantage} of ${atk.d20.dice.join(',')})`;
+  const sign = atk.bonus >= 0 ? '+' : '';
+  const dmgLine = atk.hit && dmgRoll
+    ? `<div class="roll-line">Damage: ${escapeHtml(verdict.damage.dice)} (rolls ${dmgRoll.rolls.join(',')}) = <strong>${dmgRoll.total}</strong>${verdict.damage.damageType ? ' ' + escapeHtml(verdict.damage.damageType) : ''}</div>`
+    : '';
+  const reasonsHtml = [];
+  if (verdict.d20.advantage.length) reasonsHtml.push(`<span class="reason-adv">Adv: ${verdict.d20.advantage.map(escapeHtml).join(', ')}</span>`);
+  if (verdict.d20.disadvantage.length) reasonsHtml.push(`<span class="reason-dis">Dis: ${verdict.d20.disadvantage.map(escapeHtml).join(', ')}</span>`);
+  if (verdict.d20.overrideApplied) reasonsHtml.push(`<span class="reason-override">Override: ${escapeHtml(verdict.d20.mode)}</span>`);
+  if (verdict.autoCritReason) reasonsHtml.push(`<span class="reason-crit">${escapeHtml(verdict.autoCritReason)}</span>`);
+  const reasonsBlock = reasonsHtml.length ? `<div class="roll-reasons">${reasonsHtml.join(' · ')}</div>` : '';
+  li.innerHTML = `
+    <div class="roll-headline"><strong>${escapeHtml(attackerName)}</strong> → ${escapeHtml(targetName)} (${escapeHtml(weaponName)}) — <span class="roll-outcome">${outcomeWord}</span></div>
+    <div class="roll-line">${d20Str}${sign}${atk.bonus}=${atk.total} vs AC ${verdict.targetAC}</div>
+    ${dmgLine}
+    ${reasonsBlock}
+  `;
+  list.insertBefore(li, list.firstChild);
+  while (list.children.length > 20) list.removeChild(list.lastChild);
 }
 
 /**
@@ -754,6 +947,7 @@ function startContinuousRender() {
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && combat.mode !== 'idle') {
     cancelAttack();
+    hideAttackPreview();
     setCombatStatus('Cancelled.');
     rerender();
   }

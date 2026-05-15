@@ -69,6 +69,7 @@
     <section class="result hidden" id="result">
       <div class="sprite-stage">
         <canvas id="sprite-canvas" width="384" height="384" role="img" aria-label="Composed character sprite. Use the controls below to customize."></canvas>
+        <div id="attack-preview" class="attack-preview" hidden role="tooltip" aria-live="polite"></div>
 
         <div class="export-bar">
           <label class="export-scale">
@@ -107,8 +108,9 @@
             <button id="init-clear" class="secondary" type="button" title="Clear initiative">✕ Clear</button>
           </div>
           <div class="combat-adv-row" role="radiogroup" aria-label="Attack mode">
+            <label class="combat-adv-option"><input type="radio" name="combat-adv" value="auto" checked /><span>Auto (RAW)</span></label>
             <label class="combat-adv-option"><input type="radio" name="combat-adv" value="advantage" /><span>Advantage</span></label>
-            <label class="combat-adv-option"><input type="radio" name="combat-adv" value="normal" checked /><span>Normal</span></label>
+            <label class="combat-adv-option"><input type="radio" name="combat-adv" value="normal" /><span>Normal</span></label>
             <label class="combat-adv-option"><input type="radio" name="combat-adv" value="disadvantage" /><span>Disadvantage</span></label>
           </div>
           <p id="combat-status" class="combat-status">Ready. Drag entities to position them; press Attack to start a strike.</p>
@@ -301,6 +303,7 @@
             <div class="conditions-grid">
               <span class="conditions-label">Conditions</span>
               <label><input type="checkbox" data-condition="poisoned" /><span>Poisoned</span></label>
+              <label><input type="checkbox" data-condition="blinded" /><span>Blinded</span></label>
               <label><input type="checkbox" data-condition="frightened" /><span>Frightened</span></label>
               <label><input type="checkbox" data-condition="charmed" /><span>Charmed</span></label>
               <label><input type="checkbox" data-condition="paralyzed" /><span>Paralyzed</span></label>
@@ -308,6 +311,10 @@
               <label><input type="checkbox" data-condition="petrified" /><span>Petrified</span></label>
               <label><input type="checkbox" data-condition="invisible" /><span>Invisible</span></label>
               <label><input type="checkbox" data-condition="unconscious" /><span>Unconscious</span></label>
+              <label><input type="checkbox" data-condition="prone" /><span>Prone</span></label>
+              <label><input type="checkbox" data-condition="restrained" /><span>Restrained</span></label>
+              <label><input type="checkbox" data-condition="grappled" /><span>Grappled</span></label>
+              <label><input type="checkbox" data-condition="deafened" /><span>Deafened</span></label>
             </div>
           </fieldset>
         </details>
