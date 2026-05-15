@@ -72,6 +72,52 @@ body {
   font-size: 0.95rem;
 }
 
+/* M9 — Top-level view nav (Character / Party / Combat) */
+.topnav {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  gap: 6px;
+  padding: 8px 16px;
+  background: var(--surface, #15151a);
+  border-bottom: 1px solid var(--border, #2a2a32);
+  backdrop-filter: blur(8px);
+}
+.topnav-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 0.9rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 120ms, color 120ms, border-color 120ms;
+}
+.topnav-btn:hover {
+  background: var(--surface-alt, #1f1f26);
+  color: var(--text);
+}
+.topnav-btn.active {
+  background: var(--surface-alt, #1f1f26);
+  color: var(--text);
+  border-color: var(--accent, #60a5fa);
+}
+.topnav-icon { font-size: 1rem; }
+
+/* Flash highlight when Combat view scrolls the panel into view */
+.combat-panel-focus {
+  animation: combat-flash 1.2s ease-out;
+}
+@keyframes combat-flash {
+  0%   { box-shadow: 0 0 0 0 var(--accent, #60a5fa), 0 0 24px 4px rgba(96,165,250,0.6); }
+  100% { box-shadow: 0 0 0 0 transparent, 0 0 0 0 transparent; }
+}
+
 .app {
   max-width: 1080px;
   margin: 0 auto;
@@ -367,9 +413,11 @@ button.primary:disabled { opacity: 0.6; cursor: not-allowed; }
 
 /* Tier 2 — equipment list rarity colors + magical sparkle */
 .equipment-list .item-cell {
-  display: inline-flex;
+  display: flex;
   align-items: center;
   gap: 6px;
+  flex: 1;
+  min-width: 0;
 }
 .equipment-list .item-name { font-weight: 500; }
 .equipment-list .item-name.rarity-uncommon  { color: #60a5fa; }   /* blue */
@@ -381,6 +429,80 @@ button.primary:disabled { opacity: 0.6; cursor: not-allowed; }
   font-size: 0.85rem;
   filter: drop-shadow(0 0 4px rgba(250, 204, 21, 0.55));
 }
+/* M9 — attack chip next to weapon rows */
+.equipment-list .attack-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: var(--surface-alt, #1f1f26);
+  border: 1px solid var(--border, #2a2a32);
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 0.75rem;
+  color: var(--text);
+  white-space: nowrap;
+}
+.attack-roll-btn {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font-size: 0.85rem;
+  padding: 0 2px;
+  line-height: 1;
+  color: var(--text-dim);
+  transition: transform 120ms, color 120ms;
+}
+.attack-roll-btn:hover {
+  color: var(--text);
+  transform: scale(1.15) rotate(-12deg);
+}
+
+/* M9 — roll log */
+.roll-log {
+  margin: 12px 0;
+  padding: 10px 12px;
+  background: var(--surface-alt, #1f1f26);
+  border: 1px solid var(--border, #2a2a32);
+  border-radius: 8px;
+}
+.roll-log-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+  font-size: 0.78rem;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.roll-log-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  max-height: 180px;
+  overflow-y: auto;
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 0.78rem;
+}
+.roll-log-list li {
+  padding: 3px 0;
+  border-bottom: 1px solid var(--border, #2a2a32);
+  color: var(--text);
+}
+.roll-log-list li:last-child { border-bottom: none; }
+.link-btn {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 0.78rem;
+  text-decoration: underline;
+  padding: 0;
+}
+.link-btn:hover { color: var(--text); }
+
 .equipment-list .attuned-dot {
   width: 6px;
   height: 6px;

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert';
-import { proficiencyBonus, totalLevel, deriveAC, deriveAttack } from '../js/scene/pc-stats.js';
+import { proficiencyBonus, totalLevel, deriveAC, deriveAttack, deriveWeaponAttack } from '../js/scene/pc-stats.js';
 
 test('M6: proficiencyBonus follows the 5e ladder', () => {
   assert.strictEqual(proficiencyBonus(1),  2);
@@ -111,4 +111,49 @@ test('M6: deriveAttack — +1 weapon adds magic bonus', () => {
   const a = deriveAttack(ch);
   assert.strictEqual(a.bonus, 3 + 2 + 1);   // STR + prof + magic
   assert.strictEqual(a.dice, '1d8+4');      // STR + magic
+});
+
+test('M9: deriveWeaponAttack — trusts parser damage field over WEAPON_DICE table', () => {
+  // Hand Crossbow: parser reports 1d6 (SRD). Even though our keyword
+  // table also has 'hand crossbow' → 1d6, this test pins behaviour when
+  // a homebrew weapon supplies its own damage dice via the parser.
+  const ch = {
+    abilityModifiers: { STR: 1, DEX: -1 },
+    level: 3,
+    equipment: {}
+  };
+  const weapon = { name: 'Crossbow, Hand', damage: '1d6', damageType: 'Piercing' };
+  const a = deriveWeaponAttack(ch, weapon);
+  // Hand crossbow is ranged → uses DEX (-1) + prof (2) = +1
+  assert.strictEqual(a.bonus, 1);
+  assert.strictEqual(a.dice, '1d6-1');
+  assert.strictEqual(a.damageType, 'Piercing');
+});
+
+test('M9: deriveWeaponAttack — finesse weapon prefers higher of STR/DEX', () => {
+  const ch = { abilityModifiers: { STR: 0, DEX: 3 }, level: 1, equipment: {} };
+  const a = deriveWeaponAttack(ch, { name: 'Shortsword', damage: '1d6', damageType: 'Piercing' });
+  assert.strictEqual(a.bonus, 3 + 2);   // DEX + prof
+  assert.strictEqual(a.dice, '1d6+3');
+});
+
+test('M9: deriveWeaponAttack — uses explicit properties array when present', () => {
+  // Homebrew weapon with the finesse property set but a name our keyword
+  // table doesn\'t know — properties should win.
+  const ch = { abilityModifiers: { STR: 0, DEX: 4 }, level: 1, equipment: {} };
+  const w = { name: 'Singing Blade', damage: '1d6', properties: [{ name: 'Finesse' }] };
+  const a = deriveWeaponAttack(ch, w);
+  assert.strictEqual(a.bonus, 4 + 2);
+});
+
+test('M9: deriveWeaponAttack — homebrew with no damage falls back to 1d4', () => {
+  const ch = { abilityModifiers: { STR: 2 }, level: 1, equipment: {} };
+  const a = deriveWeaponAttack(ch, { name: 'Mystery Weapon' });
+  assert.strictEqual(a.dice, '1d4+2');
+});
+
+test('M9: deriveWeaponAttack — exposes damageType for the chip label', () => {
+  const ch = { abilityModifiers: { STR: 1 }, level: 1, equipment: {} };
+  const a = deriveWeaponAttack(ch, { name: 'Warhammer', damage: '1d8', damageType: 'Bludgeoning' });
+  assert.strictEqual(a.damageType, 'Bludgeoning');
 });

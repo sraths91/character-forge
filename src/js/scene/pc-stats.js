@@ -100,37 +100,68 @@ const FINESSE = new Set(['dagger', 'dart', 'rapier', 'scimitar', 'shortsword', '
 const RANGED  = new Set(['shortbow', 'longbow', 'sling', 'crossbow', 'heavy crossbow', 'hand crossbow', 'heavycrossbow', 'dart', 'javelin']);
 
 /**
- * Derive a PC's primary attack: { name, bonus, dice }. Reads the main-hand
- * weapon, picks the better of STR/DEX for finesse, adds proficiency bonus.
- * Falls back to "Strike — STR mod, 1d4" if no weapon is equipped.
+ * Derive a PC's primary attack: delegates to deriveWeaponAttack with the
+ * main-hand weapon. Kept as a thin wrapper because the combat-roll path
+ * (M6) only cares about the active main-hand attack.
  */
 export function deriveAttack(character) {
-  if (!character) {
-    return { name: 'Strike', bonus: 0, dice: '1d4' };
-  }
-  const strMod = character.abilityModifiers?.STR ?? 0;
-  const dexMod = character.abilityModifiers?.DEX ?? 0;
+  if (!character) return { name: 'Strike', bonus: 0, dice: '1d4' };
+  return deriveWeaponAttack(character, character.equipment?.mainhand);
+}
+
+/**
+ * Derive attack stats for any specific weapon (equipped OR carried).
+ * Used by M9 to render an attack chip next to every weapon line on the
+ * sheet, not just the active main-hand.
+ *
+ *   - Damage die: prefer the parser-extracted `weapon.damage` (D&DB's
+ *     `damage.diceString`). Fall back to WEAPON_DICE keyword lookup if
+ *     missing or unparseable (e.g. homebrew with no damage record).
+ *   - Ability mod: finesse weapons pick max(STR, DEX); ranged use DEX;
+ *     everything else uses STR.
+ *   - Magic bonus: +N from weapon.bonus or a "+N" prefix in the name.
+ *   - Damage dice include ability mod + magic bonus in the modifier.
+ *   - Attack bonus is ability mod + proficiency + magic bonus.
+ *     (We assume PC has proficiency in their carried weapons; this is
+ *     true for the overwhelming majority of imports.)
+ */
+export function deriveWeaponAttack(character, weapon) {
+  const strMod = character?.abilityModifiers?.STR ?? 0;
+  const dexMod = character?.abilityModifiers?.DEX ?? 0;
   const prof   = proficiencyBonus(totalLevel(character));
-  const weapon = character.equipment?.mainhand;
+
   if (!weapon || !weapon.name) {
-    return { name: 'Unarmed Strike', bonus: strMod + prof, dice: `1+${strMod}`.replace('+-', '-') };
+    return {
+      name: 'Unarmed Strike',
+      bonus: strMod + prof,
+      dice: formatDice('1', strMod),
+      damageType: 'Bludgeoning'
+    };
   }
+
   const wn = String(weapon.name).toLowerCase();
-  const key = Object.keys(WEAPON_DICE).find(k => wn.includes(k)) || 'longsword';
-  const baseDice = WEAPON_DICE[key];
-  const isFinesse = FINESSE.has(key);
-  const isRanged = RANGED.has(key);
+  const key = Object.keys(WEAPON_DICE).find(k => wn.includes(k));
+  // Trust the parser's damage string when present; fall back to the
+  // keyword table only when the import didn't carry damage info.
+  const baseDice = weapon.damage || (key ? WEAPON_DICE[key] : '1d4');
+
+  // Finesse / ranged detection: prefer explicit weapon.properties when
+  // available, otherwise fall back to the name keyword.
+  const props = Array.isArray(weapon.properties)
+    ? weapon.properties.map(p => String(p?.name || p || '').toLowerCase())
+    : [];
+  const isFinesse = props.includes('finesse') || (key && FINESSE.has(key));
+  const isRanged  = props.includes('ranged')  || (key && RANGED.has(key));
+
   const abilityMod = isRanged
     ? dexMod
     : (isFinesse ? Math.max(strMod, dexMod) : strMod);
-  // Magical weapons grant +X to both attack and damage. Heuristic: if the
-  // weapon has a magical flag or a numeric suffix like "+1" in the name.
   const plus = magicBonus(weapon);
-  const dice = formatDice(baseDice, abilityMod + plus);
   return {
     name: weapon.name,
     bonus: abilityMod + prof + plus,
-    dice
+    dice: formatDice(baseDice, abilityMod + plus),
+    damageType: weapon.damageType || null
   };
 }
 

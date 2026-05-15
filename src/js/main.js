@@ -13,7 +13,7 @@ import {
   pruneExpired, hasActiveAnimations, entityAnimations, damagePopups
 } from './scene/combat.js';
 import { rollAttack, rollDamage, describeAttack } from './scene/combat-roll.js';
-import { deriveAC, deriveAttack } from './scene/pc-stats.js';
+import { deriveAC, deriveAttack, deriveWeaponAttack } from './scene/pc-stats.js';
 
 const $ = (id) => document.getElementById(id);
 const status = $('status');
@@ -200,8 +200,7 @@ async function enterPartyView() {
   viewMode = 'party';
   result.classList.remove('hidden');     // ensure stage is visible even without a focused character
   document.body.classList.add('party-view-mode');
-  const btn = $('party-view-toggle');
-  if (btn) btn.textContent = '◉ Single view';
+  syncTopnav();
   syncBattlefieldControls();
   renderScenePresetList();
   renderMonsterPresetList();
@@ -213,8 +212,7 @@ function exitPartyView() {
   viewMode = 'solo';
   partyComposedCharacters = [];
   document.body.classList.remove('party-view-mode');
-  const btn = $('party-view-toggle');
-  if (btn) btn.textContent = '▦ Party view';
+  syncTopnav();
   setStatus('Single character view.', 'ok');
   // If a character was loaded before party view, re-render them.
   // Otherwise the canvas just clears.
@@ -222,10 +220,51 @@ function exitPartyView() {
   else { const ctx = canvas.getContext('2d'); ctx.clearRect(0, 0, canvas.width, canvas.height); }
 }
 
+function syncTopnav() {
+  const name = viewMode === 'party' ? 'party' : 'character';
+  document.querySelectorAll('.topnav-btn').forEach(b =>
+    b.classList.toggle('active', b.dataset.view === name));
+}
+
+// M9 — Top-level nav. Three views: Character (single-sprite view, the
+// default), Party (multi-character canvas), Combat (party canvas + the
+// combat panel scrolled into view and visually flagged).
+//
+// We only commit the active-state change AFTER any required entry step
+// (enterPartyView) succeeds — otherwise a failed "no party loaded" entry
+// would leave the nav highlighted on a view the user isn't actually in.
+async function setView(name) {
+  if (name === 'character') {
+    if (viewMode === 'party') exitPartyView();
+    syncTopnav();
+    return;
+  }
+  // Both 'party' and 'combat' require the party canvas
+  if (viewMode !== 'party') {
+    await enterPartyView();
+    if (viewMode !== 'party') {
+      // enterPartyView bailed (empty party). Leave nav state untouched —
+      // syncTopnav inside enterPartyView already handles the success path.
+      return;
+    }
+  }
+  if (name === 'combat') {
+    const combatPanel = document.getElementById('combat-panel');
+    if (combatPanel) {
+      combatPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      combatPanel.classList.add('combat-panel-focus');
+      setTimeout(() => combatPanel.classList.remove('combat-panel-focus'), 1500);
+    }
+  }
+  // For party+combat, mark the actual clicked view as active (not party)
+  document.querySelectorAll('.topnav-btn').forEach(b =>
+    b.classList.toggle('active', b.dataset.view === name));
+}
+
 document.addEventListener('click', (e) => {
-  if (e.target.id !== 'party-view-toggle') return;
-  if (viewMode === 'party') exitPartyView();
-  else enterPartyView();
+  const btn = e.target.closest('.topnav-btn');
+  if (!btn) return;
+  setView(btn.dataset.view);
 });
 
 // M2 — Drag-to-position. Pointer events handle both mouse and touch.
@@ -1325,7 +1364,17 @@ function renderItemLi(slot, item) {
   const nameSpan = `<span class="item-name ${rarityClass(item.rarity)}">${escapeHtml(item.name)}</span>`;
   const sparkle = item.magical ? '<span class="sparkle" title="Magical" aria-hidden="true">✨</span>' : '';
   const attuned = item.attuned ? '<span class="attuned-dot" title="Attuned" aria-hidden="true"></span>' : '';
-  li.innerHTML = `<span class="slot">${escapeHtml(slot)}</span><span class="item-cell">${nameSpan}${sparkle}${attuned}</span>`;
+  // M9 — weapon attack chip + Roll button. We treat anything with a
+  // `damage` field as a weapon (covers carried weapons too, and avoids
+  // misfiring on shields whose damage is null).
+  let attackChip = '';
+  if (item.damage && originalCharacter) {
+    const atk = deriveWeaponAttack(originalCharacter, item);
+    const sign = atk.bonus >= 0 ? '+' : '';
+    const dmgType = atk.damageType ? ` ${escapeHtml(atk.damageType)}` : '';
+    attackChip = `<span class="attack-chip" data-weapon="${escapeHtml(item.name)}" title="Roll attack with ${escapeHtml(item.name)}">${sign}${atk.bonus} · ${escapeHtml(atk.dice)}${dmgType} <button class="attack-roll-btn" type="button" data-weapon="${escapeHtml(item.name)}" aria-label="Roll ${escapeHtml(item.name)} attack">🎲</button></span>`;
+  }
+  li.innerHTML = `<span class="slot">${escapeHtml(slot)}</span><span class="item-cell">${nameSpan}${sparkle}${attuned}${attackChip}</span>`;
   return li;
 }
 
@@ -1352,6 +1401,18 @@ function renderEquipment(eq, carried) {
     }
   }
 
+  // M9 — Carried weapons that the slot-picker routed to back / waist
+  // (alternate-carry positions) still belong to the character. Render
+  // them so the attack chip surfaces their damage too — otherwise the
+  // sheet hides every weapon except the one currently in the main hand.
+  const sheathed = (carried || []).filter(c => c.slot === 'back' || c.slot === 'waist');
+  for (const c of sheathed) {
+    const label = c.slot === 'back' ? 'Back' : 'Waist';
+    const li = renderItemLi(label, c);
+    li.classList.add('sheathed');
+    list.appendChild(li);
+  }
+
   const overflow = (carried || []).filter(c => c.slot === 'overflow');
   if (overflow.length) {
     const heading = document.createElement('li');
@@ -1364,6 +1425,54 @@ function renderEquipment(eq, carried) {
       list.appendChild(li);
     }
   }
+}
+
+// M9 — Weapon roll button + roll log. Clicking a 🎲 next to a weapon
+// rolls a standalone attack (no target — just to-hit + damage, displayed
+// in the roll log). Useful as a quick "what would this hit for?" check
+// outside the combat panel's target-selection flow.
+document.addEventListener('click', (e) => {
+  if (!e.target.matches('.attack-roll-btn')) return;
+  const weaponName = e.target.dataset.weapon;
+  if (!weaponName || !originalCharacter) return;
+  const weapon = findCarriedWeapon(originalCharacter, weaponName);
+  if (!weapon) return;
+  const atk = deriveWeaponAttack(originalCharacter, weapon);
+  const d20 = 1 + Math.floor(Math.random() * 20);
+  const dmgRoll = rollDamage(atk.dice, { crit: d20 === 20 });
+  const crit = d20 === 20 ? ' CRIT!' : (d20 === 1 ? ' (nat 1)' : '');
+  const total = d20 + atk.bonus;
+  const sign = atk.bonus >= 0 ? '+' : '';
+  appendRollLog(
+    `${weaponName}: d20=${d20}${sign}${atk.bonus}=${total} to hit, damage ${dmgRoll.total} (${dmgRoll.rolls.join(',')}${atk.dice.match(/[+-]\d+/)?.[0] || ''})${crit}`
+  );
+});
+
+document.addEventListener('click', (e) => {
+  if (e.target.id !== 'roll-log-clear') return;
+  const list = document.getElementById('roll-log-list');
+  const wrap = document.getElementById('roll-log');
+  if (list) list.innerHTML = '';
+  if (wrap) wrap.hidden = true;
+});
+
+function findCarriedWeapon(character, name) {
+  const inEq = Object.values(character.equipment || {}).filter(Boolean).flat();
+  for (const it of inEq) if (it && it.name === name) return it;
+  for (const it of (character.carried || [])) if (it && it.name === name) return it;
+  return null;
+}
+
+function appendRollLog(line) {
+  const wrap = document.getElementById('roll-log');
+  const list = document.getElementById('roll-log-list');
+  if (!wrap || !list) return;
+  wrap.hidden = false;
+  const li = document.createElement('li');
+  li.textContent = line;
+  list.insertBefore(li, list.firstChild);
+  // Cap at 20 entries so an enthusiastic roller doesn't blow the DOM
+  while (list.children.length > 20) list.removeChild(list.lastChild);
 }
 
 function renderFeats(feats) {

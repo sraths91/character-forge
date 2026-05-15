@@ -35,3 +35,7 @@ Thumbs.db
 
 # Local planning notes (not for shared repo)
 .plans/
+
+# Playwright MCP scratch artifacts (snapshots / screenshots from local QA)
+.playwright-mcp/
+m*-*.png

@@ -13,6 +13,18 @@
     <p class="subtitle">Render your D&amp;D Beyond character as a 2D sprite.</p>
   </header>
 
+  <nav class="topnav" role="navigation" aria-label="Views">
+    <button class="topnav-btn active" data-view="character" type="button" title="Single character view">
+      <span class="topnav-icon" aria-hidden="true">👤</span> Character
+    </button>
+    <button class="topnav-btn" data-view="party" type="button" title="View your whole party on one battlefield">
+      <span class="topnav-icon" aria-hidden="true">▦</span> Party
+    </button>
+    <button class="topnav-btn" data-view="combat" type="button" title="Open the combat / DM tools">
+      <span class="topnav-icon" aria-hidden="true">⚔</span> Combat
+    </button>
+  </nav>
+
   <main class="app">
     <section class="import-card" id="import-card">
       <h2>Import a character</h2>
@@ -48,7 +60,6 @@
       <div class="party-header">
         <h3>Party</h3>
         <div class="party-actions">
-          <button id="party-view-toggle" class="secondary" type="button" title="Show whole party on one canvas">▦ Party view</button>
           <button id="add-to-party" class="secondary" type="button" title="Add current character to party">+ Add current</button>
         </div>
       </div>
@@ -307,6 +318,14 @@
         <p id="char-meta" class="meta"></p>
 
         <div class="ability-grid" id="ability-grid"></div>
+
+        <div class="roll-log" id="roll-log" hidden>
+          <div class="roll-log-head">
+            <span>Roll log</span>
+            <button id="roll-log-clear" class="link-btn" type="button">Clear</button>
+          </div>
+          <ul id="roll-log-list" class="roll-log-list"></ul>
+        </div>
 
         <h3>Equipment</h3>
         <ul id="equipment-list" class="equipment-list"></ul>
