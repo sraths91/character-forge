@@ -22,6 +22,7 @@ export function parseCharacter(raw) {
   const { slots: equipment, carried } = parseEquipment(raw);
   const feats = parseFeats(raw);
   const classFeatures = parseClassFeatures(raw);
+  const combatMods = parseCombatModifiers(raw);
   const hp = parseHitPoints(raw, abilityScores, level);
   const deathSaves = parseDeathSaves(raw);
 
@@ -43,6 +44,7 @@ export function parseCharacter(raw) {
     carried,
     feats,
     classFeatures,
+    combatMods,
     // Note: skinTone is intentionally NOT set here. The renderer's
     // inferSkinTone() consults character.appearance.skin first (via the
     // E1 appearance-parser) and falls back to a race default — setting
@@ -340,6 +342,158 @@ export function formatDDBDice(dice) {
  * at L2 has maxUses=1 resetType='shortrest'. Returns null when uses are
  * unspecified (most features don't cap by rest).
  */
+// M12 — Combat modifier extraction.
+//
+// D&DB encodes per-item / per-feat / per-class numeric bonuses as records
+// in raw.modifiers.{item,feat,class,race,background}. Each modifier has
+//   - type    (e.g. 'bonus', 'set', 'advantage', 'proficiency')
+//   - subType (e.g. 'spell-attacks', 'damage-rolls', 'armor-class')
+//   - value/fixedValue (numeric)
+//   - componentId (id of the item/feat/feature it came from)
+//
+// We pull the combat-relevant ones (attack/damage/AC bonuses; saves and
+// initiative kept for future use) and resolve componentId back to the
+// source item/feat/feature so the UI can label every part of an attack
+// breakdown with where the bonus came from ("+1 from Amulet of the
+// Devout").
+//
+// Attunement: items with `definition.canAttune === true` only contribute
+// their modifiers while `isAttuned === true`. We flag inactive mods with
+// `inactive: true` rather than dropping them so the future "why isn't
+// this bonus applying?" UI has something to point at.
+
+const COMBAT_MOD_SUBTYPES = new Map([
+  // Attack bonuses
+  ['attack-rolls',          { kind: 'attack', scope: 'all' }],
+  ['weapon-attacks',        { kind: 'attack', scope: 'weapon-all' }],
+  ['melee-attacks',         { kind: 'attack', scope: 'weapon-melee' }],
+  ['ranged-attacks',        { kind: 'attack', scope: 'weapon-ranged' }],
+  ['melee-weapon-attacks',  { kind: 'attack', scope: 'weapon-melee' }],
+  ['ranged-weapon-attacks', { kind: 'attack', scope: 'weapon-ranged' }],
+  ['spell-attacks',         { kind: 'attack', scope: 'spell' }],
+  // Damage bonuses
+  ['damage-rolls',          { kind: 'damage', scope: 'all' }],
+  ['weapon-damage',         { kind: 'damage', scope: 'weapon-all' }],
+  ['melee-damage',          { kind: 'damage', scope: 'weapon-melee' }],
+  ['ranged-damage',         { kind: 'damage', scope: 'weapon-ranged' }],
+  ['melee-weapon-damage',   { kind: 'damage', scope: 'weapon-melee' }],
+  ['ranged-weapon-damage',  { kind: 'damage', scope: 'weapon-ranged' }],
+  ['spell-damage',          { kind: 'damage', scope: 'spell' }],
+  // Save DC bonuses
+  ['spell-save-dc',         { kind: 'save-dc', scope: 'spell' }],
+  // AC
+  ['armor-class',           { kind: 'ac', scope: 'all' }],
+  ['unarmored-armor-class', { kind: 'ac', scope: 'unarmored' }],
+  // Saves
+  ['saving-throws',         { kind: 'save', scope: 'all' }],
+  ['strength-saving-throws',     { kind: 'save', scope: 'str' }],
+  ['dexterity-saving-throws',    { kind: 'save', scope: 'dex' }],
+  ['constitution-saving-throws', { kind: 'save', scope: 'con' }],
+  ['intelligence-saving-throws', { kind: 'save', scope: 'int' }],
+  ['wisdom-saving-throws',       { kind: 'save', scope: 'wis' }],
+  ['charisma-saving-throws',     { kind: 'save', scope: 'cha' }],
+  // Initiative
+  ['initiative',            { kind: 'initiative', scope: 'all' }]
+]);
+
+export function parseCombatModifiers(raw) {
+  const buckets = ['item', 'feat', 'class', 'race', 'background'];
+  const out = [];
+
+  // Build componentId → source-name index once per bucket so we don't
+  // re-scan inventory/feats for every modifier row.
+  const itemIndex = indexInventoryItems(raw.inventory);
+  const featIndex = indexById(raw.feats, f => f?.definition?.id, f => f?.definition?.name);
+  const classFeatureIndex = indexClassFeatureNames(raw.classes);
+
+  for (const bucket of buckets) {
+    const mods = raw.modifiers?.[bucket];
+    if (!Array.isArray(mods)) continue;
+    for (const m of mods) {
+      // We only care about numeric bonuses (advantages, proficiencies,
+      // sets, etc. are handled elsewhere or out of M12 scope).
+      if (m.type !== 'bonus') continue;
+      const meta = COMBAT_MOD_SUBTYPES.get(m.subType);
+      if (!meta) continue;
+      const value = Number(m.value ?? m.fixedValue);
+      if (!Number.isFinite(value) || value === 0) continue;
+
+      let source = 'Unknown';
+      let attunementInfo = null;
+      if (bucket === 'item') {
+        const itemEntry = itemIndex.get(m.componentId);
+        if (itemEntry) {
+          source = itemEntry.name;
+          attunementInfo = {
+            requiresAttunement: !!itemEntry.canAttune,
+            attuned: !!itemEntry.isAttuned
+          };
+        }
+      } else if (bucket === 'feat') {
+        source = featIndex.get(m.componentId) || 'Feat';
+      } else if (bucket === 'class') {
+        source = classFeatureIndex.get(m.componentId) || 'Class';
+      } else {
+        source = bucket.charAt(0).toUpperCase() + bucket.slice(1);
+      }
+
+      const inactive = attunementInfo?.requiresAttunement && !attunementInfo.attuned;
+
+      out.push({
+        bucket,
+        source,
+        subType: m.subType,
+        kind: meta.kind,
+        scope: meta.scope,
+        value,
+        inactive: !!inactive,
+        requiresAttunement: !!attunementInfo?.requiresAttunement,
+        attuned: attunementInfo?.attuned ?? null
+      });
+    }
+  }
+
+  return out;
+}
+
+function indexInventoryItems(inventory) {
+  const map = new Map();
+  if (!Array.isArray(inventory)) return map;
+  for (const it of inventory) {
+    const id = it?.definition?.id;
+    if (id == null) continue;
+    map.set(id, {
+      name: it.definition.name || 'Item',
+      canAttune: !!it.definition.canAttune,
+      isAttuned: !!it.isAttuned
+    });
+  }
+  return map;
+}
+
+function indexById(arr, idFn, valueFn) {
+  const map = new Map();
+  if (!Array.isArray(arr)) return map;
+  for (const x of arr) {
+    const id = idFn(x);
+    if (id == null) continue;
+    map.set(id, valueFn(x));
+  }
+  return map;
+}
+
+function indexClassFeatureNames(classes) {
+  const map = new Map();
+  if (!Array.isArray(classes)) return map;
+  for (const cls of classes) {
+    for (const f of (cls.classFeatures || [])) {
+      const id = f?.definition?.id;
+      if (id != null) map.set(id, f.definition.name || 'Class Feature');
+    }
+  }
+  return map;
+}
+
 export function formatUses(limitedUse) {
   if (!limitedUse) return null;
   const max = Number(limitedUse.maxUses) || null;

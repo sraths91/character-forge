@@ -108,20 +108,37 @@ export function resolveAttack(ctx) {
   }
 
   // --- Attack bonus breakdown ---
-  // For M11 we lean on the existing M6 deriveWeaponAttack for PCs and the
-  // preset attack record for monsters. M12 will plug in combatMods.
+  // Start from the M6 derivation (ability mod + proficiency + magic +N
+  // from the weapon name), then add any M12 combatMods that apply to
+  // this attack type.
   const atkStats = ctx.attackStats || deriveAttackStatsForContext(ctx);
-  const attackBonus = {
-    total: atkStats.bonus,
-    parts: atkStats.parts || [{ source: weapon?.name || 'Attack', value: atkStats.bonus }]
-  };
+  const attackParts = atkStats.parts
+    ? [...atkStats.parts]
+    : [{ source: weapon?.name || 'Attack', value: atkStats.bonus }];
+  const damageParts = atkStats.damageParts ? [...atkStats.damageParts] : [];
+  const attackScope = attackScopeFor(weapon, ranged);
 
-  // --- Damage breakdown ---
-  // Same approach: trust the M6 derivation for now; M12 adds magic +N etc.
+  // M12 — Apply combat modifiers from the attacker's items/feats/etc.
+  const mods = Array.isArray(attacker?.combatMods) ? attacker.combatMods : [];
+  for (const mod of mods) {
+    if (mod.inactive) continue;
+    if (mod.kind === 'attack' && scopeMatches(mod.scope, attackScope)) {
+      attackParts.push({ source: mod.source, value: mod.value });
+    } else if (mod.kind === 'damage' && scopeMatches(mod.scope, attackScope)) {
+      damageParts.push({ source: mod.source, value: mod.value });
+    }
+  }
+
+  const attackBonusTotal = attackParts.reduce((sum, p) => sum + (Number(p.value) || 0), 0);
+  const damageFlatTotal  = damageParts.reduce((sum, p) => sum + (Number(p.value) || 0), 0);
+
+  const attackBonus = { total: attackBonusTotal, parts: attackParts };
+
   const damage = {
-    dice: atkStats.dice,
+    dice: appendModToDice(atkStats.dice, damageFlatTotal),
     damageType: atkStats.damageType,
-    parts: atkStats.damageParts || []
+    parts: damageParts,
+    flatBonus: damageFlatTotal
   };
 
   // --- d20 mode: collect advantage + disadvantage reasons ---
@@ -202,6 +219,40 @@ export function resolveAttack(ctx) {
 
 function conditionsOf(entity) {
   return new Set(Array.isArray(entity?.conditions) ? entity.conditions : []);
+}
+
+// M12 — Determine what scope tag matches the current attack so combat
+// modifiers can be filtered. Spells aren't supported in the attack flow
+// yet (M11 only handles weapon attacks), so we always return a weapon
+// scope here. The 'spell' branch is reserved for the future spell flow.
+function attackScopeFor(weapon, isRanged) {
+  if (!weapon) return 'weapon-melee';   // unarmed strikes are melee
+  return isRanged ? 'weapon-ranged' : 'weapon-melee';
+}
+
+// Modifier scope matching against the current attack scope.
+// Hierarchy: 'all' > 'weapon-all' > specific weapon-melee/ranged.
+// 'spell' / 'unarmored' never match a weapon attack.
+function scopeMatches(modScope, attackScope) {
+  if (modScope === 'all') return true;
+  if (modScope === 'weapon-all' && attackScope.startsWith('weapon-')) return true;
+  return modScope === attackScope;
+}
+
+// Append a numeric modifier to an existing dice spec.
+//   '1d8+3' + 1 → '1d8+4'
+//   '1d6'  + 2 → '1d6+2'
+//   '1d6-1' + 2 → '1d6+1'
+//   '2d6+3' + -3 → '2d6'
+function appendModToDice(diceSpec, extra) {
+  if (!extra) return diceSpec;
+  const m = String(diceSpec || '').match(/^(\d*d\d+)\s*([+-]\s*\d+)?\s*$/i);
+  if (!m) return diceSpec;
+  const base = m[1];
+  const existing = m[2] ? parseInt(m[2].replace(/\s+/g, ''), 10) : 0;
+  const total = existing + extra;
+  if (total === 0) return base;
+  return total > 0 ? `${base}+${total}` : `${base}${total}`;
 }
 
 /**

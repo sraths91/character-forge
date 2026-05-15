@@ -446,3 +446,109 @@ test('M10: stripHtml removes D&DB templating tokens like {{modifier:wis@min:1}}'
     `template still present: ${parsed.classFeatures[0].description}`);
   assert.ok(parsed.classFeatures[0].description.includes('creatures'));
 });
+
+// ---- M12: parseCombatModifiers ----
+
+test('M12: item modifier — bonus subType for spell-attacks from attuned item', () => {
+  const raw = rawFixture({
+    inventory: [{
+      equipped: true, isAttuned: true,
+      definition: { id: 9999, name: 'Amulet of the Devout, +1', type: 'Wondrous item', filterType: 'Wondrous item', canAttune: true, magic: true }
+    }],
+    modifiers: { item: [
+      { type: 'bonus', subType: 'spell-attacks', value: 1, fixedValue: 1, componentId: 9999 },
+      { type: 'bonus', subType: 'spell-save-dc', value: 1, fixedValue: 1, componentId: 9999 }
+    ]}
+  });
+  const parsed = parseCharacter(raw);
+  assert.strictEqual(parsed.combatMods.length, 2);
+  const atk = parsed.combatMods.find(m => m.subType === 'spell-attacks');
+  assert.strictEqual(atk.source, 'Amulet of the Devout, +1');
+  assert.strictEqual(atk.kind, 'attack');
+  assert.strictEqual(atk.scope, 'spell');
+  assert.strictEqual(atk.value, 1);
+  assert.strictEqual(atk.inactive, false);
+});
+
+test('M12: item modifier — inactive when item requires attunement and is unattuned', () => {
+  const raw = rawFixture({
+    inventory: [{
+      equipped: true, isAttuned: false,
+      definition: { id: 9999, name: 'Amulet of the Devout, +1', canAttune: true, magic: true }
+    }],
+    modifiers: { item: [
+      { type: 'bonus', subType: 'spell-attacks', value: 1, fixedValue: 1, componentId: 9999 }
+    ]}
+  });
+  const parsed = parseCharacter(raw);
+  assert.strictEqual(parsed.combatMods[0].inactive, true);
+  assert.strictEqual(parsed.combatMods[0].requiresAttunement, true);
+});
+
+test('M12: feat modifier — bonus carries through with feat name as source', () => {
+  const raw = rawFixture({
+    feats: [{ definition: { id: 1234, name: 'Sharpshooter' }, componentTypeId: 1, componentId: 1234 }],
+    modifiers: { feat: [
+      { type: 'bonus', subType: 'ranged-weapon-attacks', value: 0, fixedValue: 0, componentId: 1234 },
+      { type: 'bonus', subType: 'ranged-weapon-damage', value: 10, fixedValue: 10, componentId: 1234 }
+    ]}
+  });
+  const parsed = parseCharacter(raw);
+  const dmg = parsed.combatMods.find(m => m.subType === 'ranged-weapon-damage');
+  assert.strictEqual(dmg.source, 'Sharpshooter');
+  assert.strictEqual(dmg.kind, 'damage');
+  assert.strictEqual(dmg.scope, 'weapon-ranged');
+  // Zero-valued mod was filtered out
+  assert.strictEqual(parsed.combatMods.filter(m => m.subType === 'ranged-weapon-attacks').length, 0);
+});
+
+test('M12: ignores non-bonus types (advantage, proficiency, set)', () => {
+  const raw = rawFixture({
+    modifiers: { feat: [
+      { type: 'proficiency', subType: 'constitution-saving-throws', value: null, fixedValue: null, componentId: 1 },
+      { type: 'advantage',   subType: 'attack-rolls',                value: null, fixedValue: null, componentId: 1 },
+      { type: 'set',         subType: 'subclass',                    value: null, fixedValue: null, componentId: 1 }
+    ]}
+  });
+  const parsed = parseCharacter(raw);
+  assert.deepStrictEqual(parsed.combatMods, []);
+});
+
+test('M12: ignores subTypes that are not combat-relevant', () => {
+  const raw = rawFixture({
+    modifiers: { race: [
+      { type: 'bonus', subType: 'speed', value: 5, fixedValue: 5, componentId: 1 },
+      { type: 'bonus', subType: 'wisdom-score', value: 2, fixedValue: 2, componentId: 2 }
+    ]}
+  });
+  const parsed = parseCharacter(raw);
+  assert.deepStrictEqual(parsed.combatMods, []);
+});
+
+test('M12: classifies subTypes into kind/scope correctly', () => {
+  const raw = rawFixture({
+    modifiers: { item: [
+      { type: 'bonus', subType: 'melee-weapon-attacks',  value: 1, componentId: 1 },
+      { type: 'bonus', subType: 'ranged-weapon-damage',  value: 2, componentId: 1 },
+      { type: 'bonus', subType: 'armor-class',           value: 1, componentId: 1 },
+      { type: 'bonus', subType: 'dexterity-saving-throws', value: 1, componentId: 1 },
+      { type: 'bonus', subType: 'initiative',            value: 5, componentId: 1 }
+    ]}
+  });
+  const parsed = parseCharacter(raw);
+  const get = (st) => parsed.combatMods.find(m => m.subType === st);
+  assert.strictEqual(get('melee-weapon-attacks').kind, 'attack');
+  assert.strictEqual(get('melee-weapon-attacks').scope, 'weapon-melee');
+  assert.strictEqual(get('ranged-weapon-damage').kind, 'damage');
+  assert.strictEqual(get('ranged-weapon-damage').scope, 'weapon-ranged');
+  assert.strictEqual(get('armor-class').kind, 'ac');
+  assert.strictEqual(get('dexterity-saving-throws').kind, 'save');
+  assert.strictEqual(get('dexterity-saving-throws').scope, 'dex');
+  assert.strictEqual(get('initiative').kind, 'initiative');
+});
+
+test('M12: parseCombatModifiers returns [] when raw has no modifiers', () => {
+  const raw = rawFixture({});
+  const parsed = parseCharacter(raw);
+  assert.deepStrictEqual(parsed.combatMods, []);
+});

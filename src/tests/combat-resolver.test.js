@@ -239,3 +239,93 @@ test('M16: override "auto" passes through resolver decision (default behavior)',
   assert.strictEqual(r.d20.mode, 'advantage');
   assert.strictEqual(r.d20.overrideApplied, false);
 });
+
+// ---- M12: combatMods consumption ----
+
+test('M12: weapon-melee attack picks up melee-scoped attack mods', () => {
+  const attacker = pcAt({ pos: { col: 5, row: 5 } });
+  attacker.combatMods = [
+    { source: 'Belt of Battle',  kind: 'attack', scope: 'weapon-melee', value: 2, inactive: false }
+  ];
+  const r = resolveAttack(baseCtx({ attacker }));
+  assert.strictEqual(r.attackBonus.total, 6 + 2);
+  assert.ok(r.attackBonus.parts.some(p => p.source === 'Belt of Battle' && p.value === 2));
+});
+
+test('M12: weapon-ranged attack does NOT pick up melee-scoped mods', () => {
+  const attacker = pcAt({ pos: { col: 5, row: 5 } });
+  attacker.combatMods = [
+    { source: 'Brutal Critical', kind: 'attack', scope: 'weapon-melee', value: 2, inactive: false }
+  ];
+  const r = resolveAttack(baseCtx({
+    attacker,
+    weapon: { name: 'Longbow' },
+    attackStats: { bonus: 6, dice: '1d8+3', damageType: 'Piercing',
+      parts: [{ source: 'Longbow', value: 6 }], damageParts: [] }
+  }));
+  assert.strictEqual(r.attackBonus.total, 6, 'melee-scoped mod must not apply to ranged attack');
+});
+
+test('M12: weapon-all scope applies to BOTH melee and ranged', () => {
+  const attackerMelee  = pcAt({ pos: { col: 5, row: 5 } });
+  const attackerRanged = pcAt({ pos: { col: 5, row: 5 } });
+  const universalMod = { source: 'Bardic Inspiration', kind: 'attack', scope: 'weapon-all', value: 1, inactive: false };
+  attackerMelee.combatMods  = [universalMod];
+  attackerRanged.combatMods = [universalMod];
+  const rMelee = resolveAttack(baseCtx({ attacker: attackerMelee }));
+  const rRanged = resolveAttack(baseCtx({
+    attacker: attackerRanged,
+    weapon: { name: 'Longbow' },
+    attackStats: { bonus: 6, dice: '1d8+3', damageType: 'Piercing',
+      parts: [{ source: 'Longbow', value: 6 }], damageParts: [] }
+  }));
+  assert.strictEqual(rMelee.attackBonus.total, 7);
+  assert.strictEqual(rRanged.attackBonus.total, 7);
+});
+
+test('M12: spell-scoped attack mod does NOT apply to weapon attacks', () => {
+  // Saris's case: Amulet of the Devout +1 grants spell-attacks, not weapon
+  const attacker = pcAt({ pos: { col: 5, row: 5 } });
+  attacker.combatMods = [
+    { source: 'Amulet of the Devout, +1', kind: 'attack', scope: 'spell', value: 1, inactive: false }
+  ];
+  const r = resolveAttack(baseCtx({ attacker }));
+  assert.strictEqual(r.attackBonus.total, 6,
+    "spell-scoped mod must NOT apply to weapon attack (Amulet doesn't help your Longsword)");
+});
+
+test('M12: inactive mods (unattuned items) are skipped entirely', () => {
+  const attacker = pcAt({ pos: { col: 5, row: 5 } });
+  attacker.combatMods = [
+    { source: 'Sword of Sharpness', kind: 'attack', scope: 'weapon-all', value: 3, inactive: true }
+  ];
+  const r = resolveAttack(baseCtx({ attacker }));
+  assert.strictEqual(r.attackBonus.total, 6, 'inactive mod must not contribute');
+  assert.ok(!r.attackBonus.parts.some(p => p.source === 'Sword of Sharpness'),
+    'inactive mod must not appear in parts');
+});
+
+test('M12: damage mods extend the dice string with the new flat modifier', () => {
+  // Base damage 1d8+3. +2 from a hex/curse should produce 1d8+5.
+  const attacker = pcAt({ pos: { col: 5, row: 5 } });
+  attacker.combatMods = [
+    { source: 'Hunter\'s Mark', kind: 'damage', scope: 'all', value: 2, inactive: false }
+  ];
+  const r = resolveAttack(baseCtx({ attacker }));
+  assert.strictEqual(r.damage.dice, '1d8+5');
+  assert.strictEqual(r.damage.flatBonus, 2);
+  assert.ok(r.damage.parts.some(p => p.source === "Hunter's Mark" && p.value === 2));
+});
+
+test('M12: stacked attack + damage mods both surface in the breakdown', () => {
+  const attacker = pcAt({ pos: { col: 5, row: 5 } });
+  attacker.combatMods = [
+    { source: '+1 Weapon',       kind: 'attack', scope: 'weapon-all', value: 1, inactive: false },
+    { source: '+1 Weapon',       kind: 'damage', scope: 'weapon-all', value: 1, inactive: false },
+    { source: 'Bless',           kind: 'attack', scope: 'all',        value: 4, inactive: false }
+  ];
+  const r = resolveAttack(baseCtx({ attacker }));
+  assert.strictEqual(r.attackBonus.total, 6 + 1 + 4);
+  assert.strictEqual(r.damage.flatBonus, 1);
+  assert.strictEqual(r.damage.dice, '1d8+4');
+});

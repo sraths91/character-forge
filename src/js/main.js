@@ -412,15 +412,22 @@ function updateAttackPreview(hit, clientX, clientY) {
 
   const attackerName = entityName(attackerHit);
   const targetName = hit.entity.name || 'Target';
-  const sign = attack.bonus >= 0 ? '+' : '';
   const modeLabel = verdict.d20.overrideApplied
     ? `${verdict.d20.mode} (override)`
     : verdict.d20.mode;
 
+  // M12 — Use verdict totals so item/feat bonuses appear in the preview
+  // exactly as they will in the actual roll.
+  const previewBonus = verdict.attackBonus.total;
+  const previewBonusSign = previewBonus >= 0 ? '+' : '';
   const parts = [];
   parts.push(`<div class="preview-head">${escapeHtml(attackerName)} → ${escapeHtml(targetName)}</div>`);
-  parts.push(`<div class="preview-line">Attack: ${sign}${attack.bonus} (${escapeHtml(weapon?.name || attack.name || 'Attack')}) vs AC ${ac}</div>`);
-  parts.push(`<div class="preview-line">Damage: ${escapeHtml(attack.dice)}${attack.damageType ? ' ' + escapeHtml(attack.damageType) : ''}</div>`);
+  parts.push(`<div class="preview-line">Attack: ${previewBonusSign}${previewBonus} (${escapeHtml(weapon?.name || attack.name || 'Attack')}) vs AC ${ac}</div>`);
+  if (verdict.attackBonus.parts.length > 1) {
+    const partsStr = verdict.attackBonus.parts.map(p => `${escapeHtml(p.source)} ${p.value >= 0 ? '+' : ''}${p.value}`).join(', ');
+    parts.push(`<div class="preview-parts">${partsStr}</div>`);
+  }
+  parts.push(`<div class="preview-line">Damage: ${escapeHtml(verdict.damage.dice)}${verdict.damage.damageType ? ' ' + escapeHtml(verdict.damage.damageType) : ''}</div>`);
   parts.push(`<div class="preview-line preview-mode preview-mode-${verdict.d20.mode}">${escapeHtml(modeLabel)}</div>`);
 
   if (verdict.blockers.length) {
@@ -815,6 +822,12 @@ function runAttackPrompt(targetKind, targetEntity) {
     return;
   }
 
+  // M12 — Use the resolver totals (which include item/feat mods) for
+  // both the to-hit and the damage dice. The M6-derived attack.bonus and
+  // attack.dice were the baseline; resolver enriched them with combatMods.
+  const finalBonus = verdict.attackBonus.total;
+  const finalDmgDice = verdict.damage.dice;
+
   // Auto-crit short-circuits the d20: target is paralyzed/unconscious in
   // melee within 5ft → hit + crit without rolling. We still roll damage.
   let atk;
@@ -822,16 +835,16 @@ function runAttackPrompt(targetKind, targetEntity) {
     atk = {
       hit: true, crit: true,
       d20: { kept: 20, dice: [20], advantage: verdict.d20.mode },
-      bonus: attack.bonus, total: 20 + attack.bonus, ac
+      bonus: finalBonus, total: 20 + finalBonus, ac
     };
   } else {
-    atk = rollAttack({ bonus: attack.bonus, advantage: verdict.d20.mode, targetAC: ac });
+    atk = rollAttack({ bonus: finalBonus, advantage: verdict.d20.mode, targetAC: ac });
   }
 
   let damage = 0;
   let dmgRoll = null;
   if (atk.hit) {
-    dmgRoll = rollDamage(attack.dice, { crit: atk.crit });
+    dmgRoll = rollDamage(finalDmgDice, { crit: atk.crit });
     damage = dmgRoll.total;
     applyDamage(targetKind, targetEntity.id, damage);
   }
@@ -894,10 +907,17 @@ function appendAttackLog({ attackerName, targetName, weaponName, verdict, atk, d
   if (verdict.d20.overrideApplied) reasonsHtml.push(`<span class="reason-override">Override: ${escapeHtml(verdict.d20.mode)}</span>`);
   if (verdict.autoCritReason) reasonsHtml.push(`<span class="reason-crit">${escapeHtml(verdict.autoCritReason)}</span>`);
   const reasonsBlock = reasonsHtml.length ? `<div class="roll-reasons">${reasonsHtml.join(' · ')}</div>` : '';
+
+  // M12 — Attack-bonus breakdown (every part: STR mod, prof, +N items/feats).
+  // Only show when there's more than one part so trivial attacks stay tidy.
+  const breakdownBlock = verdict.attackBonus?.parts?.length > 1
+    ? `<div class="roll-breakdown">Attack: ${verdict.attackBonus.parts.map(p => `<span class="part">${escapeHtml(p.source)} ${p.value >= 0 ? '+' : ''}${p.value}</span>`).join(' ')}</div>`
+    : '';
   li.innerHTML = `
     <div class="roll-headline"><strong>${escapeHtml(attackerName)}</strong> → ${escapeHtml(targetName)} (${escapeHtml(weaponName)}) — <span class="roll-outcome">${outcomeWord}</span></div>
     <div class="roll-line">${d20Str}${sign}${atk.bonus}=${atk.total} vs AC ${verdict.targetAC}</div>
     ${dmgLine}
+    ${breakdownBlock}
     ${reasonsBlock}
   `;
   list.insertBefore(li, list.firstChild);
