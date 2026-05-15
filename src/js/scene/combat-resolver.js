@@ -30,16 +30,16 @@
  */
 
 import { deriveWeaponAttack } from './pc-stats.js';
+import {
+  chebyshevFeet as gridDistance,
+  meleeReachFt,
+  isFlanking,
+  hostileInMeleeOfRangedAttacker
+} from './grid-rules.js';
 
-/**
- * Compute Chebyshev distance between two cells, in feet (5ft per cell).
- * Same cell → 0ft, adjacent → 5ft, two cells away → 10ft. Used for
- * "within 5ft" melee checks (auto-crit on paralyzed target).
- */
-export function chebyshevFeet(posA, posB) {
-  if (!posA || !posB) return Infinity;
-  return Math.max(Math.abs(posA.col - posB.col), Math.abs(posA.row - posB.row)) * 5;
-}
+// Re-export grid distance helper so existing M11 callers keep working.
+// The canonical home is grid-rules.js (M14).
+export { chebyshevFeet } from './grid-rules.js';
 
 /**
  * Heuristic: is this weapon ranged? A ranged weapon attack triggers
@@ -141,6 +141,19 @@ export function resolveAttack(ctx) {
     flatBonus: damageFlatTotal
   };
 
+  // Position lookup — used by reach/flanking/ranged-adjacent/autoCrit.
+  const attackerPos = positionOfEntity(attacker, attackerKind, scene);
+  const targetPos   = positionOfEntity(target, targetKind, scene);
+  const distance    = gridDistance(attackerPos, targetPos);
+
+  // --- M14: Out-of-reach blocker for melee attacks ---
+  if (!ranged && Number.isFinite(distance)) {
+    const reach = meleeReachFt(weapon);
+    if (distance > reach) {
+      blockers.push(`Out of reach (${distance} ft away, ${reach} ft reach)`);
+    }
+  }
+
   // --- d20 mode: collect advantage + disadvantage reasons ---
   const advReasons = [];
   const disReasons = [];
@@ -167,6 +180,28 @@ export function resolveAttack(ctx) {
     else        advReasons.push('Target prone (melee)');
   }
 
+  // --- M14: Flanking advantage (5e optional rule, scene-toggled) ---
+  // Both attacker and a friendly creature must be adjacent to the target
+  // on opposite sides. Only applies to melee attacks.
+  if (!ranged && scene?.flankingEnabled && Array.isArray(ctx.allies) && ctx.allies.length) {
+    const fl = isFlanking(attackerPos, targetPos, ctx.allies);
+    if (fl.flanking) {
+      advReasons.push(`Flanking with ${fl.ally?.name || 'ally'}`);
+    }
+  }
+
+  // --- M14: Ranged attacker adjacent to a hostile → disadvantage ---
+  // PHB p195: "You have disadvantage on a ranged attack roll if you are
+  // within 5 feet of a hostile creature who can see you and isn't
+  // incapacitated." We can't model "can see you" without vision rules,
+  // so we apply RAW minus that clause (conservative).
+  if (ranged && Array.isArray(ctx.hostiles)) {
+    const adjacent = hostileInMeleeOfRangedAttacker(attackerPos, ctx.hostiles);
+    if (adjacent) {
+      disReasons.push(`Ranged attacker adjacent to ${adjacent.name || 'hostile'}`);
+    }
+  }
+
   // 5e PHB: any advantage + any disadvantage → normal (canceling).
   let resolvedMode = 'normal';
   if (advReasons.length && !disReasons.length) resolvedMode = 'advantage';
@@ -182,18 +217,15 @@ export function resolveAttack(ctx) {
   }
 
   // --- autoCrit: melee within 5ft of paralyzed / unconscious target ---
+  // (positions and distance computed earlier; reuse them here.)
   let autoCrit = false;
   let autoCritReason = null;
   const targetIncapacitatedToAutoCrit =
     targetConditions.has('paralyzed') ||
     targetConditions.has('unconscious');
-  if (targetIncapacitatedToAutoCrit && !ranged) {
-    const attackerPos = positionOfEntity(attacker, attackerKind, scene);
-    const targetPos   = positionOfEntity(target, targetKind, scene);
-    if (chebyshevFeet(attackerPos, targetPos) <= 5) {
-      autoCrit = true;
-      autoCritReason = `Target ${targetConditions.has('paralyzed') ? 'paralyzed' : 'unconscious'}, melee within 5 ft`;
-    }
+  if (targetIncapacitatedToAutoCrit && !ranged && distance <= 5) {
+    autoCrit = true;
+    autoCritReason = `Target ${targetConditions.has('paralyzed') ? 'paralyzed' : 'unconscious'}, melee within 5 ft`;
   }
 
   return {

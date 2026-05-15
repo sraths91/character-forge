@@ -17,6 +17,7 @@ import {
 import { rollAttack, rollDamage, describeAttack } from './scene/combat-roll.js';
 import { deriveAC, deriveAttack, deriveWeaponAttack } from './scene/pc-stats.js';
 import { resolveAttack } from './scene/combat-resolver.js';
+import { factionLists } from './scene/grid-rules.js';
 
 const $ = (id) => document.getElementById(id);
 const status = $('status');
@@ -398,6 +399,12 @@ function updateAttackPreview(hit, clientX, clientY) {
   const attack = getAttackStats(attackerHit);
   const ac     = getAC({ kind: hit.kind, entity: hit.entity });
   const weapon = getAttackerWeapon(attackerHit);
+  const { allies, hostiles } = factionLists({
+    attackerKind: attackerHit.kind,
+    attackerId: attackerHit.entity.id,
+    party: partyComposedCharacters.map(pc => ({ ...pc, _position: positionOf(currentScene, pc.id, partyComposedCharacters.indexOf(pc)) })),
+    monsters: (currentScene.monsters || [])
+  });
   const verdict = resolveAttack({
     attacker: attackerHit.entity,
     target: hit.entity,
@@ -407,6 +414,7 @@ function updateAttackPreview(hit, clientX, clientY) {
     targetKind: hit.kind,
     targetAC: ac,
     advantageOverride: combatAdvantage,
+    allies, hostiles,
     attackStats: { bonus: attack.bonus, dice: attack.dice, damageType: attack.damageType }
   });
 
@@ -481,6 +489,10 @@ document.addEventListener('change', (e) => {
   } else if (e.target.id === 'scene-grid-snap') {
     currentScene.grid = { ...currentScene.grid, snap: e.target.checked };
     saveScene(currentScene);
+  } else if (e.target.id === 'scene-flanking') {
+    currentScene.flankingEnabled = e.target.checked;
+    saveScene(currentScene);
+    if (viewMode === 'party') rerender();
   } else if (e.target.id === 'scene-size') {
     const [cols, rows] = String(e.target.value).split('x').map(Number);
     if (Number.isFinite(cols) && Number.isFinite(rows)) {
@@ -790,6 +802,16 @@ function runAttackPrompt(targetKind, targetEntity) {
   const ac           = getAC(targetHit);
   const weapon       = getAttackerWeapon(attackerHit);
 
+  // M14 — Build allies + hostiles lists for the attacker so the resolver
+  // can evaluate flanking (allies on opposite side of target) and the
+  // ranged-attacker-adjacent disadvantage (any hostile within 5ft).
+  const { allies, hostiles } = factionLists({
+    attackerKind: attackerHit.kind,
+    attackerId: attackerHit.entity.id,
+    party: partyComposedCharacters.map(pc => ({ ...pc, _position: positionOf(currentScene, pc.id, partyComposedCharacters.indexOf(pc)) })),
+    monsters: (currentScene.monsters || [])
+  });
+
   // M11 — Run the resolver to determine the *real* d20 mode, auto-crit,
   // auto-miss, and breakdown. The UI radio is now an override; default
   // 'auto' lets conditions decide.
@@ -802,6 +824,7 @@ function runAttackPrompt(targetKind, targetEntity) {
     targetKind,
     targetAC: ac,
     advantageOverride: combatAdvantage,
+    allies, hostiles,
     // Attacker stats come from the per-context derivation (M6 for PCs,
     // monster preset for monsters); resolver doesn't re-derive.
     attackStats: {
@@ -1070,6 +1093,8 @@ function syncBattlefieldControls() {
   if (gv) gv.checked = !!currentScene.grid?.visible;
   if (gs) gs.checked = !!currentScene.grid?.snap;
   if (sz) sz.value = `${currentScene.cols}x${currentScene.rows}`;
+  const fl = document.getElementById('scene-flanking');
+  if (fl) fl.checked = !!currentScene.flankingEnabled;
   renderScenePicker();
 }
 

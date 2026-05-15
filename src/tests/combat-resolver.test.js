@@ -329,3 +329,107 @@ test('M12: stacked attack + damage mods both surface in the breakdown', () => {
   assert.strictEqual(r.damage.flatBonus, 1);
   assert.strictEqual(r.damage.dice, '1d8+4');
 });
+
+// ---- M14: Positional rules in the resolver ----
+
+test('M14: out-of-reach melee → blocker (autoMiss)', () => {
+  const r = resolveAttack(baseCtx({
+    attacker: pcAt({ pos: { col: 0, row: 0 } }),    // far away
+    target:   monsterAt({ pos: { col: 5, row: 5 } })
+  }));
+  assert.strictEqual(r.autoMiss, true);
+  assert.ok(r.blockers.some(b => /Out of reach/.test(b)));
+});
+
+test('M14: out-of-reach is OK for ranged weapons', () => {
+  const r = resolveAttack(baseCtx({
+    attacker: pcAt({ pos: { col: 0, row: 0 } }),
+    target:   monsterAt({ pos: { col: 5, row: 5 } }),
+    weapon: { name: 'Longbow' },
+    attackStats: { ...ATTACK_STATS, parts: [{ source: 'Longbow', value: 6 }] }
+  }));
+  assert.strictEqual(r.autoMiss, false);
+});
+
+test('M14: reach weapon (Halberd) extends melee to 10ft', () => {
+  const r = resolveAttack(baseCtx({
+    attacker: pcAt({ pos: { col: 5, row: 5 } }),
+    target:   monsterAt({ pos: { col: 7, row: 5 } }),   // 10ft
+    weapon: { name: 'Halberd' },
+    attackStats: { ...ATTACK_STATS, parts: [{ source: 'Halberd', value: 6 }] }
+  }));
+  assert.strictEqual(r.autoMiss, false);
+});
+
+test('M14: flanking grants advantage when toggle is enabled', () => {
+  const ally = { id: 'ally', name: 'Adrin', _position: { col: 6, row: 5 } };
+  const r = resolveAttack(baseCtx({
+    attacker: pcAt({ pos: { col: 4, row: 5 } }),
+    target:   monsterAt({ pos: { col: 5, row: 5 } }),
+    scene: { ...SCENE, flankingEnabled: true },
+    allies: [ally], hostiles: []
+  }));
+  assert.strictEqual(r.d20.mode, 'advantage');
+  assert.ok(r.d20.advantage.some(s => /Flanking with Adrin/.test(s)));
+});
+
+test('M14: flanking does NOT trigger when scene.flankingEnabled = false', () => {
+  const ally = { id: 'ally', name: 'Adrin', _position: { col: 6, row: 5 } };
+  const r = resolveAttack(baseCtx({
+    attacker: pcAt({ pos: { col: 4, row: 5 } }),
+    target:   monsterAt({ pos: { col: 5, row: 5 } }),
+    scene: { ...SCENE, flankingEnabled: false },
+    allies: [ally], hostiles: []
+  }));
+  assert.strictEqual(r.d20.mode, 'normal');
+});
+
+test('M14: flanking does NOT trigger for ranged attacks', () => {
+  const ally = { id: 'ally', name: 'Adrin', _position: { col: 6, row: 5 } };
+  const r = resolveAttack(baseCtx({
+    attacker: pcAt({ pos: { col: 4, row: 5 } }),
+    target:   monsterAt({ pos: { col: 5, row: 5 } }),
+    scene: { ...SCENE, flankingEnabled: true },
+    weapon: { name: 'Longbow' },
+    attackStats: { ...ATTACK_STATS, parts: [{ source: 'Longbow', value: 6 }] },
+    allies: [ally], hostiles: []
+  }));
+  assert.strictEqual(r.d20.mode, 'normal');   // ranged attackers never flank
+});
+
+test('M14: ranged attacker adjacent to a hostile → disadvantage', () => {
+  const r = resolveAttack(baseCtx({
+    attacker: pcAt({ pos: { col: 5, row: 5 } }),
+    target:   monsterAt({ pos: { col: 9, row: 5 } }),   // out of melee
+    weapon: { name: 'Longbow' },
+    attackStats: { ...ATTACK_STATS, parts: [{ source: 'Longbow', value: 6 }] },
+    allies: [],
+    hostiles: [{ id: 'h', name: 'Goblin 2', _position: { col: 5, row: 6 } }]
+  }));
+  assert.strictEqual(r.d20.mode, 'disadvantage');
+  assert.ok(r.d20.disadvantage.some(s => /Ranged attacker adjacent/.test(s)));
+});
+
+test('M14: melee attacker adjacent to other hostiles → no disadvantage', () => {
+  const r = resolveAttack(baseCtx({
+    attacker: pcAt({ pos: { col: 5, row: 5 } }),
+    target:   monsterAt({ pos: { col: 6, row: 5 } }),
+    allies: [],
+    hostiles: [{ id: 'h', name: 'Goblin 2', _position: { col: 5, row: 6 } }]
+  }));
+  // Melee attackers don't suffer the adjacent-hostile penalty
+  assert.strictEqual(r.d20.mode, 'normal');
+});
+
+test('M14: flanking + target invisible → canceling rule (advantage + disadvantage = normal)', () => {
+  const ally = { id: 'ally', name: 'Adrin', _position: { col: 6, row: 5 } };
+  const r = resolveAttack(baseCtx({
+    attacker: pcAt({ pos: { col: 4, row: 5 } }),
+    target:   monsterAt({ pos: { col: 5, row: 5 }, conditions: ['invisible'] }),
+    scene: { ...SCENE, flankingEnabled: true },
+    allies: [ally], hostiles: []
+  }));
+  assert.strictEqual(r.d20.mode, 'normal');
+  assert.strictEqual(r.d20.advantage.length, 1);
+  assert.strictEqual(r.d20.disadvantage.length, 1);
+});

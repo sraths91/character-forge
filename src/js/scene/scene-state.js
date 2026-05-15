@@ -59,7 +59,10 @@ export const DEFAULT_SCENE = Object.freeze({
   monsters: [],
   // M4 — Initiative order. [{ entityId, entityKind, name, score, active }]
   // Empty until "Roll initiative" populates it; persisted with the scene.
-  initiative: []
+  initiative: [],
+  // M14 — 5e optional flanking rule (DMG p251). Off by default since many
+  // tables don't use it (PHB doesn't include it as core).
+  flankingEnabled: false
 });
 
 // ---- M5: Multi-scene container ----
@@ -229,7 +232,8 @@ function mergeWithDefault(saved) {
     monsters: Array.isArray(saved.monsters)
       ? saved.monsters.map(m => ({ ...m, conditions: Array.isArray(m.conditions) ? m.conditions : [] }))
       : [],
-    initiative: Array.isArray(saved.initiative) ? saved.initiative : []
+    initiative: Array.isArray(saved.initiative) ? saved.initiative : [],
+    flankingEnabled: typeof saved.flankingEnabled === 'boolean' ? saved.flankingEnabled : false
   };
 }
 
