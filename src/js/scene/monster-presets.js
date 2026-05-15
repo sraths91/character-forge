@@ -18,6 +18,9 @@
  *   equipment    — optional: { armor, mainhand, offhand, helm, cloak }
  *   gender       — 'male' | 'female' (defaults to male for head-asset selection)
  *   defaultHp    — { max } baseline HP for spawned instance
+ *   ac           — M6: Armor Class (5e SRD value). Defaults to 12 if unset.
+ *   attack       — M6: { name, bonus, dice } for the creature's primary attack.
+ *                  Defaults to { name: 'Strike', bonus: 2, dice: '1d6' } if unset.
  */
 
 export const MONSTER_PRESETS = {
@@ -25,84 +28,98 @@ export const MONSTER_PRESETS = {
     slug: 'goblin', name: 'Goblin',
     body: 'male', headRace: 'goblin', skinTone: 'green', hairStyle: 'balding',
     equipment: { mainhand: { name: 'Scimitar' } },
-    defaultHp: { max: 7 }
+    defaultHp: { max: 7 }, ac: 15,
+    attack: { name: 'Scimitar', bonus: 4, dice: '1d6+2' }
   },
   orc: {
     slug: 'orc', name: 'Orc',
     body: 'muscular', headRace: 'orc', skinTone: 'green', hairStyle: 'spiked',
     equipment: { mainhand: { name: 'Greataxe' }, armor: { name: 'Hide Armor' } },
-    defaultHp: { max: 15 }
+    defaultHp: { max: 15 }, ac: 13,
+    attack: { name: 'Greataxe', bonus: 5, dice: '1d12+3' }
   },
   hobgoblin: {
     slug: 'hobgoblin', name: 'Hobgoblin',
     body: 'male', headRace: 'goblin', skinTone: 'olive', hairStyle: 'spiked',
     equipment: { mainhand: { name: 'Longsword' }, offhand: { name: 'Shield' }, armor: { name: 'Chain Mail' } },
-    defaultHp: { max: 11 }
+    defaultHp: { max: 11 }, ac: 18,
+    attack: { name: 'Longsword', bonus: 3, dice: '1d8+1' }
   },
   bugbear: {
     slug: 'bugbear', name: 'Bugbear',
     body: 'muscular', headRace: 'wolf', skinTone: 'green', hairStyle: 'bedhead',
     equipment: { mainhand: { name: 'Morningstar' }, armor: { name: 'Hide Armor' } },
-    defaultHp: { max: 27 }
+    defaultHp: { max: 27 }, ac: 16,
+    attack: { name: 'Morningstar', bonus: 4, dice: '2d8+2' }
   },
   kobold: {
     slug: 'kobold', name: 'Kobold',
     body: 'teen', headRace: 'lizard', skinTone: 'red', hairStyle: 'balding',
     equipment: { mainhand: { name: 'Dagger' } },
-    defaultHp: { max: 5 }
+    defaultHp: { max: 5 }, ac: 12,
+    attack: { name: 'Dagger', bonus: 4, dice: '1d4+2' }
   },
   skeleton: {
     slug: 'skeleton', name: 'Skeleton',
     body: 'skeleton', headRace: 'skeleton', skinTone: 'ashen', hairStyle: 'balding',
     equipment: { mainhand: { name: 'Shortsword' }, offhand: { name: 'Shield' } },
-    defaultHp: { max: 13 }
+    defaultHp: { max: 13 }, ac: 13,
+    attack: { name: 'Shortsword', bonus: 4, dice: '1d6+2' }
   },
   zombie: {
     slug: 'zombie', name: 'Zombie',
     body: 'zombie', headRace: 'zombie', skinTone: 'ashen', hairStyle: 'balding',
-    defaultHp: { max: 22 }
+    defaultHp: { max: 22 }, ac: 8,
+    attack: { name: 'Slam', bonus: 3, dice: '1d6+1' }
   },
   vampire: {
     slug: 'vampire-spawn', name: 'Vampire Spawn',
     body: 'male', headRace: 'vampire', skinTone: 'pale', hairStyle: 'long',
     equipment: { cloak: { name: 'Black Cloak' } },
-    defaultHp: { max: 82 }
+    defaultHp: { max: 82 }, ac: 15,
+    attack: { name: 'Claws', bonus: 6, dice: '2d4+3' }
   },
   troll: {
     slug: 'troll', name: 'Troll',
     body: 'muscular', headRace: 'troll', skinTone: 'green', hairStyle: 'balding',
     equipment: { mainhand: { name: 'Greatclub' } },
-    defaultHp: { max: 84 }
+    defaultHp: { max: 84 }, ac: 15,
+    attack: { name: 'Claws', bonus: 7, dice: '2d6+4' }
   },
   minotaur: {
     slug: 'minotaur', name: 'Minotaur',
     body: 'muscular', headRace: 'minotaur', skinTone: 'tan', hairStyle: 'balding',
     equipment: { mainhand: { name: 'Greataxe' } },
-    defaultHp: { max: 76 }
+    defaultHp: { max: 76 }, ac: 14,
+    attack: { name: 'Greataxe', bonus: 6, dice: '2d12+4' }
   },
   bandit: {
     slug: 'bandit', name: 'Bandit',
     body: 'male', headRace: 'human', skinTone: 'tan', hairStyle: 'bedhead',
     equipment: { mainhand: { name: 'Scimitar' }, armor: { name: 'Leather' }, helm: { name: 'Hood' } },
-    defaultHp: { max: 11 }
+    defaultHp: { max: 11 }, ac: 12,
+    attack: { name: 'Scimitar', bonus: 3, dice: '1d6+1' }
   },
   cultist: {
     slug: 'cultist', name: 'Cultist',
     body: 'male', headRace: 'human', skinTone: 'pale', hairStyle: 'long',
     equipment: { mainhand: { name: 'Scimitar' }, helm: { name: 'Hood' }, cloak: { name: 'Black Cloak' } },
-    defaultHp: { max: 9 }
+    defaultHp: { max: 9 }, ac: 12,
+    attack: { name: 'Scimitar', bonus: 3, dice: '1d6+1' }
   },
   gnoll: {
     slug: 'gnoll', name: 'Gnoll',
     body: 'muscular', headRace: 'wolf', skinTone: 'tan', hairStyle: 'spiked',
     equipment: { mainhand: { name: 'Spear' }, armor: { name: 'Hide Armor' } },
-    defaultHp: { max: 22 }
+    defaultHp: { max: 22 }, ac: 15,
+    attack: { name: 'Spear', bonus: 4, dice: '1d6+2' }
   },
   ratfolk: {
     slug: 'ratfolk', name: 'Ratfolk',
     body: 'teen', headRace: 'rat', skinTone: 'tan', hairStyle: 'balding',
     equipment: { mainhand: { name: 'Dagger' } },
-    defaultHp: { max: 6 }
+    defaultHp: { max: 6 }, ac: 11,
+    attack: { name: 'Dagger', bonus: 3, dice: '1d4+1' }
   }
 };
 

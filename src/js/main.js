@@ -12,6 +12,8 @@ import {
   combat, beginAttack, cancelAttack, selectAttacker, resolveAttack,
   pruneExpired, hasActiveAnimations, entityAnimations, damagePopups
 } from './scene/combat.js';
+import { rollAttack, rollDamage, describeAttack } from './scene/combat-roll.js';
+import { deriveAC, deriveAttack } from './scene/pc-stats.js';
 
 const $ = (id) => document.getElementById(id);
 const status = $('status');
@@ -557,30 +559,73 @@ function setCombatStatus(text) {
   if (el) el.textContent = text;
 }
 
+// M6 — Combat: derive attacker/target stats from the entity, roll the
+// attack, roll damage on hit/crit, and feed the result into the existing
+// animation + HP-update pipeline. Replaces the M4 manual damage prompt.
+let combatAdvantage = 'normal';   // 'normal' | 'advantage' | 'disadvantage'
+
+document.addEventListener('change', (e) => {
+  if (e.target.name !== 'combat-adv') return;
+  combatAdvantage = e.target.value;
+});
+
+function getAttackStats(hit) {
+  if (!hit) return null;
+  if (hit.kind === 'monster') {
+    const preset = MONSTER_PRESETS[hit.entity.presetSlug] || {};
+    return preset.attack || { name: 'Strike', bonus: 2, dice: '1d6' };
+  }
+  return deriveAttack(hit.entity);
+}
+
+function getAC(hit) {
+  if (!hit) return 10;
+  if (hit.kind === 'monster') {
+    const preset = MONSTER_PRESETS[hit.entity.presetSlug] || {};
+    return preset.ac || 12;
+  }
+  return deriveAC(hit.entity);
+}
+
 function runAttackPrompt(targetKind, targetEntity) {
   const attackerHit = findHitById(combat.attacker.id);
-  const attackerName = attackerHit ? entityName(attackerHit) : 'Attacker';
-  const targetName = targetEntity.name || 'Target';
-  const raw = window.prompt(`Damage from ${attackerName} → ${targetName}?`, '');
-  if (raw === null) {
-    setCombatStatus('Attack cancelled.');
+  const targetHit   = { kind: targetKind, entity: targetEntity };
+  if (!attackerHit) {
+    setCombatStatus('Attacker is gone. Cancelled.');
     cancelAttack();
     rerender();
     return;
   }
-  const dmg = parseInt(raw, 10);
-  if (!Number.isFinite(dmg)) {
-    setCombatStatus('Damage must be a number. Attack cancelled.');
-    cancelAttack();
-    rerender();
-    return;
+  const attackerName = entityName(attackerHit);
+  const targetName   = targetEntity.name || 'Target';
+  const attack       = getAttackStats(attackerHit);
+  const ac           = getAC(targetHit);
+
+  const atk = rollAttack({ bonus: attack.bonus, advantage: combatAdvantage, targetAC: ac });
+  let damage = 0;
+  let dmgRoll = null;
+  if (atk.hit) {
+    dmgRoll = rollDamage(attack.dice, { crit: atk.crit });
+    damage = dmgRoll.total;
+    applyDamage(targetKind, targetEntity.id, damage);
   }
-  // Apply HP change (handles both PC and monster targets), then fire
-  // the animation + popup via combat.resolveAttack.
-  applyDamage(targetKind, targetEntity.id, dmg);
-  resolveAttack(targetEntity.id, targetKind, dmg);
+  // Feed into combat.js (animation + floating popup). We still want a
+  // visual on a miss — pass amount 0 so the popup says "MISS" via a
+  // negative number-of-zero formatting trick (combat.js currently shows
+  // -N for damage; the M4 popup pipeline doesn't render zero specially,
+  // so we skip the popup entirely on a miss).
+  if (atk.hit) {
+    resolveAttack(targetEntity.id, targetKind, damage);
+  } else {
+    // Still cancel combat mode (resolveAttack does this on hit)
+    cancelAttack();
+  }
   saveScene(currentScene);
-  setCombatStatus(`${attackerName} hits ${targetName} for ${dmg}.`);
+  setCombatStatus(describeAttack({
+    attackerName, targetName,
+    weaponName: attack.name,
+    atk, dmg: dmgRoll || { total: 0, rolls: [], spec: attack.dice }
+  }));
   startContinuousRender();
 }
 

@@ -95,6 +95,11 @@
             <button id="init-next" class="secondary" type="button" title="Advance the active turn">▶ Next turn</button>
             <button id="init-clear" class="secondary" type="button" title="Clear initiative">✕ Clear</button>
           </div>
+          <div class="combat-adv-row" role="radiogroup" aria-label="Attack mode">
+            <label class="combat-adv-option"><input type="radio" name="combat-adv" value="advantage" /><span>Advantage</span></label>
+            <label class="combat-adv-option"><input type="radio" name="combat-adv" value="normal" checked /><span>Normal</span></label>
+            <label class="combat-adv-option"><input type="radio" name="combat-adv" value="disadvantage" /><span>Disadvantage</span></label>
+          </div>
           <p id="combat-status" class="combat-status">Ready. Drag entities to position them; press Attack to start a strike.</p>
           <div id="initiative-tracker" class="initiative-tracker"></div>
         </fieldset>
