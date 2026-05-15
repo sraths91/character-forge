@@ -99,6 +99,27 @@
           </details>
         </div>
 
+        <fieldset id="actions-panel" class="actions-panel">
+          <legend>Actions</legend>
+          <div class="actions-head">
+            <span id="actions-subject">No active turn</span>
+            <button id="actions-pick" class="secondary" type="button" title="Pick which entity's actions to show">Change…</button>
+          </div>
+          <div class="actions-blockers" id="actions-blockers" hidden></div>
+          <div class="actions-section" id="actions-attacks-section">
+            <div class="actions-section-head">Attacks</div>
+            <div class="actions-list" id="actions-attacks-list"></div>
+          </div>
+          <div class="actions-section" id="actions-features-section">
+            <div class="actions-section-head">Class features</div>
+            <div class="actions-list" id="actions-features-list"></div>
+          </div>
+          <div class="actions-section">
+            <div class="actions-section-head">Common actions</div>
+            <div class="actions-list" id="actions-common-list"></div>
+          </div>
+        </fieldset>
+
         <fieldset id="combat-panel" class="combat-panel">
           <legend>Combat</legend>
           <div class="combat-actions">

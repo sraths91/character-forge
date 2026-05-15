@@ -1592,6 +1592,121 @@ body.party-view-mode .monsters-panel { display: block !important; }
 /* M4 — Combat panel + initiative tracker                                */
 /* ===================================================================== */
 
+/* M17 — Active-turn actions panel (sibling of combat-panel) */
+.actions-panel {
+  display: none;
+  margin-top: 16px;
+  padding: 12px;
+  background: var(--surface, #15151a);
+  border: 1px solid var(--border, #2a2a32);
+  border-radius: 10px;
+}
+body.party-view-mode .actions-panel { display: block; }
+.actions-panel legend {
+  padding: 0 6px;
+  color: var(--text);
+  font-weight: 600;
+  font-size: 0.85rem;
+}
+.actions-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 8px;
+}
+#actions-subject {
+  font-weight: 600;
+  font-size: 0.95rem;
+  color: var(--text);
+}
+.actions-blockers {
+  margin: 0 0 8px;
+  padding: 6px 10px;
+  background: rgba(239, 68, 68, 0.10);
+  border: 1px solid rgba(239, 68, 68, 0.35);
+  border-radius: 6px;
+  font-size: 0.8rem;
+  color: #f87171;
+}
+.actions-section { margin-top: 10px; }
+.actions-section-head {
+  font-size: 0.7rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  margin-bottom: 4px;
+}
+.actions-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.actions-empty {
+  font-style: italic;
+  font-size: 0.78rem;
+  color: var(--text-dim);
+  padding: 2px 0;
+}
+.action-row {
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border, #2a2a32);
+  background: var(--surface-2, #1f1f26);
+  cursor: default;
+}
+.action-row.unavailable { opacity: 0.45; }
+.action-row-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+.action-name { font-weight: 500; font-size: 0.86rem; }
+.action-stat {
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 0.78rem;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--surface, #15151a);
+  border: 1px solid var(--border, #2a2a32);
+  white-space: nowrap;
+}
+.action-row-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  margin-top: 3px;
+  font-size: 0.72rem;
+  color: var(--text-dim);
+}
+.action-source { font-style: italic; }
+.action-range  { font-family: var(--mono, ui-monospace); }
+.action-status.ok   { color: #4ade80; }
+.action-status.warn { color: #fbbf24; font-style: italic; }
+.action-status.off  { color: #f87171; font-style: italic; }
+.action-uses {
+  font-size: 0.7rem;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--surface, #15151a);
+  border: 1px solid var(--border);
+}
+.action-hints {
+  margin-top: 4px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.action-hint {
+  font-size: 0.72rem;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgba(74, 222, 128, 0.10);
+  border: 1px solid rgba(74, 222, 128, 0.35);
+  color: #4ade80;
+}
+
 .combat-panel {
   display: none;
   border: 1px solid var(--border);

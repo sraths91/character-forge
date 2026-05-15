@@ -18,6 +18,7 @@ import { rollAttack, rollDamage, describeAttack } from './scene/combat-roll.js';
 import { deriveAC, deriveAttack, deriveWeaponAttack } from './scene/pc-stats.js';
 import { resolveAttack } from './scene/combat-resolver.js';
 import { factionLists } from './scene/grid-rules.js';
+import { buildActionsFor } from './scene/actions-panel.js';
 
 const $ = (id) => document.getElementById(id);
 const status = $('status');
@@ -125,6 +126,7 @@ function rerender() {
     });
     renderMonsterPanel();   // sync the side card UI
     renderInitiativeTracker();
+    renderActionsPanel();
     return;
   }
   if (!originalCharacter) return;
@@ -1107,6 +1109,188 @@ function renderInitiativeTracker() {
     wrap.appendChild(row);
   }
 }
+
+// M17 — Active-turn actions panel.
+//
+// Drives the new #actions-panel: shows attacks (filtered by reach/range
+// vs hostiles on the map), class features (with dice + uses), and
+// common actions (Dash/Dodge/Hide/etc.) for the "active" entity in the
+// scene. Active resolution:
+//   1. the entity currently flagged active in initiative
+//   2. else the selected attacker (combat.attacker)
+//   3. else the first PC in the party (planning aid before combat starts)
+//
+// The user can override via the "Change…" button (prompts for an entity
+// by name) — useful for inspecting other party members' options
+// out-of-turn.
+let actionsSubjectOverride = null;   // entityId; null = auto
+
+function resolveActionsSubject() {
+  if (actionsSubjectOverride) {
+    const fromOverride = findActionsSubjectById(actionsSubjectOverride);
+    if (fromOverride) return fromOverride;
+    actionsSubjectOverride = null;   // stale id — fall through to auto
+  }
+  // Initiative active
+  const init = (currentScene.initiative || []).find(i => i.active);
+  if (init) {
+    const found = findActionsSubjectById(init.entityId);
+    if (found) return found;
+  }
+  // Selected attacker
+  if (combat.attacker?.id) {
+    const found = findActionsSubjectById(combat.attacker.id);
+    if (found) return found;
+  }
+  // Fallback: first PC
+  if (partyComposedCharacters.length) {
+    return { entity: partyComposedCharacters[0], kind: 'pc' };
+  }
+  return null;
+}
+
+function findActionsSubjectById(id) {
+  const idStr = String(id);
+  for (const pc of partyComposedCharacters) {
+    if (String(pc.id) === idStr) return { entity: pc, kind: 'pc' };
+  }
+  for (const m of (currentScene.monsters || [])) {
+    if (String(m.id) === idStr) return { entity: m, kind: 'monster' };
+  }
+  return null;
+}
+
+function renderActionsPanel() {
+  const panel = document.getElementById('actions-panel');
+  if (!panel) return;
+  const subject = resolveActionsSubject();
+  const subjectEl  = document.getElementById('actions-subject');
+  const blockersEl = document.getElementById('actions-blockers');
+  const attackList = document.getElementById('actions-attacks-list');
+  const featList   = document.getElementById('actions-features-list');
+  const commonList = document.getElementById('actions-common-list');
+  if (!subject) {
+    subjectEl.textContent = 'No active turn';
+    blockersEl.hidden = true;
+    attackList.innerHTML = '<div class="actions-empty">Add a character to your party to see actions.</div>';
+    featList.innerHTML = '';
+    commonList.innerHTML = '';
+    return;
+  }
+  subjectEl.textContent = subject.entity.name || 'Unnamed';
+
+  // Pre-resolve _position for every PC + monster so the actions builder
+  // can find them on the grid without separate lookups.
+  const party = partyComposedCharacters.map((pc, i) => ({
+    ...pc, _position: positionOf(currentScene, pc.id, i)
+  }));
+  const monsters = (currentScene.monsters || []).map(m => ({ ...m }));
+
+  const result = buildActionsFor({
+    entity: subject.entity, kind: subject.kind,
+    scene: currentScene, party, monsters
+  });
+
+  if (result.blockers.length) {
+    blockersEl.hidden = false;
+    blockersEl.innerHTML = result.blockers.map(b => `⛔ ${escapeHtml(b)}`).join(' · ');
+  } else {
+    blockersEl.hidden = true;
+  }
+
+  // Attacks
+  attackList.innerHTML = '';
+  if (result.attacks.length === 0) {
+    attackList.innerHTML = '<div class="actions-empty">No weapons available.</div>';
+  } else {
+    for (const a of result.attacks) {
+      const row = document.createElement('div');
+      row.className = `action-row ${a.available ? 'available' : 'unavailable'}`;
+      const sign = a.bonus >= 0 ? '+' : '';
+      const targets = a.targetsInRange.length;
+      const status = a.available
+        ? `<span class="action-status ok">${targets} target${targets === 1 ? '' : 's'} ${a.isRanged ? 'in range' : 'in reach'}</span>`
+        : `<span class="action-status off">${escapeHtml(a.blockReason || 'unavailable')}</span>`;
+      const hints = a.hints.length
+        ? `<div class="action-hints">${a.hints.map(h => `<span class="action-hint">✨ ${escapeHtml(h)}</span>`).join(' ')}</div>`
+        : '';
+      row.innerHTML = `
+        <div class="action-row-head">
+          <span class="action-name">${escapeHtml(a.name)}</span>
+          <span class="action-stat">${sign}${a.bonus} · ${escapeHtml(a.dice)}${a.damageType ? ' ' + escapeHtml(a.damageType) : ''}</span>
+        </div>
+        <div class="action-row-meta">
+          <span class="action-range">${a.isRanged ? `Range ${a.reachFt} ft` : `Reach ${a.reachFt} ft`}</span>
+          ${status}
+        </div>
+        ${hints}
+      `;
+      attackList.appendChild(row);
+    }
+  }
+
+  // Features
+  featList.innerHTML = '';
+  if (result.features.length === 0) {
+    featList.innerHTML = '<div class="actions-empty">No actionable class features.</div>';
+  } else {
+    for (const f of result.features) {
+      const row = document.createElement('div');
+      row.className = 'action-row available';
+      const diceChip = f.dice ? `<span class="action-stat">${escapeHtml(f.dice)}</span>` : '';
+      const usesChip = f.uses ? `<span class="action-uses">${f.uses.max}${f.uses.reset ? ' / ' + escapeHtml(f.uses.reset) : ''}</span>` : '';
+      row.innerHTML = `
+        <div class="action-row-head">
+          <span class="action-name">${escapeHtml(f.name)}</span>
+          ${diceChip}
+        </div>
+        <div class="action-row-meta">
+          <span class="action-source">${escapeHtml(f.source || '')}${f.level ? ` · L${f.level}` : ''}</span>
+          ${usesChip}
+        </div>
+      `;
+      featList.appendChild(row);
+    }
+  }
+
+  // Common actions
+  commonList.innerHTML = '';
+  for (const c of result.common) {
+    const row = document.createElement('div');
+    row.className = `action-row ${c.available ? 'available' : 'unavailable'}`;
+    const status = c.available
+      ? (c.blockReason ? `<span class="action-status warn">${escapeHtml(c.blockReason)}</span>` : '')
+      : `<span class="action-status off">${escapeHtml(c.blockReason || 'unavailable')}</span>`;
+    row.innerHTML = `
+      <div class="action-row-head">
+        <span class="action-name">${escapeHtml(c.name)}</span>
+        ${status}
+      </div>
+      <div class="action-row-meta">
+        <span class="action-source">${escapeHtml(c.summary)}</span>
+      </div>
+    `;
+    row.addEventListener('click', () => appendRollLog(`${subject.entity.name || 'Entity'} took the ${c.name} action.`));
+    commonList.appendChild(row);
+  }
+}
+
+document.addEventListener('click', (e) => {
+  if (e.target.id !== 'actions-pick') return;
+  const choices = [
+    ...partyComposedCharacters.map(c => ({ id: c.id, name: c.name || 'PC' })),
+    ...(currentScene.monsters || []).map(m => ({ id: m.id, name: m.name || 'Monster' }))
+  ];
+  if (choices.length === 0) return;
+  const list = choices.map((c, i) => `${i + 1}. ${c.name}`).join('\n');
+  const pick = window.prompt(`Show actions for which entity?\n\n${list}\n\nEnter number:`);
+  if (pick === null) return;
+  const idx = parseInt(pick, 10) - 1;
+  if (idx >= 0 && idx < choices.length) {
+    actionsSubjectOverride = choices[idx].id;
+    renderActionsPanel();
+  }
+});
 
 function syncBattlefieldControls() {
   const c = document.getElementById('scene-bg-color');
