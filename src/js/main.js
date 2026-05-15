@@ -452,6 +452,20 @@ function updateAttackPreview(hit, clientX, clientY) {
     }
   }
 
+  // M15 — Class-feature availability indicators (e.g. Sneak Attack).
+  for (const f of (verdict.features || [])) {
+    if (f.available) {
+      parts.push(`<div class="preview-feature available">✨ ${escapeHtml(f.name)}: <strong>${escapeHtml(f.dice)}</strong> <em>(${escapeHtml(f.reason || '')})</em></div>`);
+    } else {
+      // Show as a hint only — don't clutter the preview with every
+      // unavailable feature. Keep just the most actionable one (Sneak
+      // Attack is the common-rogue case).
+      if (/sneak attack/i.test(f.name)) {
+        parts.push(`<div class="preview-feature unavailable">${escapeHtml(f.name)}: <em>${escapeHtml(f.blockReason || 'unavailable')}</em></div>`);
+      }
+    }
+  }
+
   panel.innerHTML = parts.join('');
   panel.hidden = false;
   // Position next to the cursor — kept inside the viewport.
@@ -936,11 +950,21 @@ function appendAttackLog({ attackerName, targetName, weaponName, verdict, atk, d
   const breakdownBlock = verdict.attackBonus?.parts?.length > 1
     ? `<div class="roll-breakdown">Attack: ${verdict.attackBonus.parts.map(p => `<span class="part">${escapeHtml(p.source)} ${p.value >= 0 ? '+' : ''}${p.value}</span>`).join(' ')}</div>`
     : '';
+
+  // M15 — Class-feature availability on a hit. Only show on actual hits
+  // (no point telling the rogue they could have sneak-attacked on a miss).
+  const availableFeatures = atk.hit ? (verdict.features || []).filter(f => f.available) : [];
+  const featuresBlock = availableFeatures.length
+    ? `<div class="roll-features">${availableFeatures.map(f =>
+        `<span class="feature-chip">✨ ${escapeHtml(f.name)}: <strong>${escapeHtml(f.dice)}</strong> <button class="feature-roll-btn" type="button" data-dice="${escapeHtml(f.dice)}" data-name="${escapeHtml(f.name)}" aria-label="Roll ${escapeHtml(f.name)} bonus damage">🎲</button></span>`
+      ).join(' ')}</div>`
+    : '';
   li.innerHTML = `
     <div class="roll-headline"><strong>${escapeHtml(attackerName)}</strong> → ${escapeHtml(targetName)} (${escapeHtml(weaponName)}) — <span class="roll-outcome">${outcomeWord}</span></div>
     <div class="roll-line">${d20Str}${sign}${atk.bonus}=${atk.total} vs AC ${verdict.targetAC}</div>
     ${dmgLine}
     ${breakdownBlock}
+    ${featuresBlock}
     ${reasonsBlock}
   `;
   list.insertBefore(li, list.firstChild);
@@ -1824,9 +1848,10 @@ function renderAbilityLi(f) {
 }
 
 // Roll button on dice-bearing class features. Reuses the M9 roll log
-// so all ad-hoc rolls land in one place.
+// so all ad-hoc rolls land in one place. Also drives M15's
+// "Roll Sneak Attack damage" button on roll log entries.
 document.addEventListener('click', (e) => {
-  if (!e.target.matches('.ability-roll-btn')) return;
+  if (!e.target.matches('.ability-roll-btn, .feature-roll-btn')) return;
   const dice = e.target.dataset.dice;
   const name = e.target.dataset.name;
   if (!dice) return;

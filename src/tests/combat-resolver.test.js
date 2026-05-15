@@ -433,3 +433,75 @@ test('M14: flanking + target invisible → canceling rule (advantage + disadvant
   assert.strictEqual(r.d20.advantage.length, 1);
   assert.strictEqual(r.d20.disadvantage.length, 1);
 });
+
+// ---- M15: Class-feature availability via verdict.features ----
+
+test('M15: verdict.features is empty when attacker has no class features', () => {
+  // Default pcAt fixture has no classFeatures array
+  const r = resolveAttack(baseCtx());
+  assert.deepStrictEqual(r.features, []);
+});
+
+test('M15: verdict.features surfaces Sneak Attack as available for a rogue with advantage', () => {
+  const rogue = pcAt({ pos: { col: 5, row: 5 } });
+  rogue.classFeatures = [{ name: 'Sneak Attack', source: 'Rogue', dice: '3d6' }];
+  rogue.equipment = { mainhand: { name: 'Rapier' } };
+  const r = resolveAttack(baseCtx({
+    attacker: rogue,
+    weapon: { name: 'Rapier' },
+    target: monsterAt({ conditions: ['blinded'] }),   // grants advantage
+    attackStats: { bonus: 6, dice: '1d8+3', damageType: 'Piercing',
+      parts: [{ source: 'Rapier', value: 6 }], damageParts: [] }
+  }));
+  const sa = r.features.find(f => f.name === 'Sneak Attack');
+  assert.ok(sa, 'Sneak Attack should appear in verdict.features');
+  assert.strictEqual(sa.available, true);
+  assert.strictEqual(sa.dice, '3d6');
+});
+
+test('M15: verdict.features surfaces Sneak Attack BLOCKED when weapon is non-finesse melee', () => {
+  const rogue = pcAt({ pos: { col: 5, row: 5 } });
+  rogue.classFeatures = [{ name: 'Sneak Attack', source: 'Rogue', dice: '3d6' }];
+  // baseCtx weapon is Longsword (not finesse, not ranged) — should block
+  const r = resolveAttack(baseCtx({
+    attacker: rogue,
+    target: monsterAt({ conditions: ['blinded'] })
+  }));
+  const sa = r.features.find(f => f.name === 'Sneak Attack');
+  assert.strictEqual(sa.available, false);
+  assert.match(sa.blockReason, /finesse or ranged/i);
+});
+
+test('M15: verdict.features Sneak Attack Path B fires when ally adjacent to target (no advantage)', () => {
+  const rogue = pcAt({ pos: { col: 8, row: 8 } });
+  rogue.classFeatures = [{ name: 'Sneak Attack', source: 'Rogue', dice: '3d6' }];
+  const ally = { id: 'ally', name: 'Adrin', _position: { col: 6, row: 5 } };
+  const r = resolveAttack(baseCtx({
+    attacker: rogue,
+    weapon: { name: 'Shortbow' },
+    target: monsterAt({ pos: { col: 5, row: 5 } }),
+    attackStats: { bonus: 6, dice: '1d6+3', damageType: 'Piercing',
+      parts: [{ source: 'Shortbow', value: 6 }], damageParts: [] },
+    allies: [ally]
+  }));
+  const sa = r.features.find(f => f.name === 'Sneak Attack');
+  assert.strictEqual(sa.available, true);
+  assert.match(sa.reason, /Ally adjacent.*Adrin/);
+});
+
+test('M15: verdict.features Sneak Attack blocked when net disadvantage (poisoned rogue)', () => {
+  const rogue = pcAt({ pos: { col: 5, row: 5 }, conditions: ['poisoned'] });
+  rogue.classFeatures = [{ name: 'Sneak Attack', source: 'Rogue', dice: '3d6' }];
+  const ally = { id: 'ally', name: 'Adrin', _position: { col: 6, row: 5 } };
+  const r = resolveAttack(baseCtx({
+    attacker: rogue,
+    weapon: { name: 'Rapier' },
+    target: monsterAt({ pos: { col: 5, row: 5 } }),
+    attackStats: { bonus: 6, dice: '1d8+3', damageType: 'Piercing',
+      parts: [{ source: 'Rapier', value: 6 }], damageParts: [] },
+    allies: [ally]
+  }));
+  const sa = r.features.find(f => f.name === 'Sneak Attack');
+  assert.strictEqual(sa.available, false);
+  assert.match(sa.blockReason, /disadvantage/i);
+});

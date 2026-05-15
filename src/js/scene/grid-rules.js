@@ -24,6 +24,25 @@ export function chebyshevFeet(posA, posB) {
 }
 
 const REACH_NAME_KEYWORDS = ['halberd', 'glaive', 'pike', 'lance', 'whip'];
+const RANGED_NAME_KEYWORDS = ['bow', 'crossbow', 'sling', 'dart', 'javelin', 'blowgun'];
+
+/**
+ * Heuristic: is this weapon used as a ranged attack? Trusted property
+ * "ranged" wins. "thrown" weapons default to melee unless the caller sets
+ * weapon.usedAsRanged. Falls back to name keyword match.
+ */
+export function isRangedWeapon(weapon) {
+  if (!weapon) return false;
+  const props = Array.isArray(weapon.properties)
+    ? weapon.properties.map(p => String(p?.name || p || '').toLowerCase())
+    : [];
+  if (props.includes('ranged')) return true;
+  if (props.includes('thrown') && !props.includes('finesse')) {
+    return !!weapon.usedAsRanged;
+  }
+  const n = String(weapon.name || '').toLowerCase();
+  return RANGED_NAME_KEYWORDS.some(k => n.includes(k));
+}
 
 /**
  * Reach for a melee weapon, in feet. Defaults to 5ft; reach weapons (or

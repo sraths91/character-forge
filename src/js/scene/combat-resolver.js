@@ -34,34 +34,15 @@ import {
   chebyshevFeet as gridDistance,
   meleeReachFt,
   isFlanking,
-  hostileInMeleeOfRangedAttacker
+  hostileInMeleeOfRangedAttacker,
+  isRangedWeapon
 } from './grid-rules.js';
+import { evaluateFeatures } from './class-feature-rules.js';
 
-// Re-export grid distance helper so existing M11 callers keep working.
-// The canonical home is grid-rules.js (M14).
-export { chebyshevFeet } from './grid-rules.js';
-
-/**
- * Heuristic: is this weapon ranged? A ranged weapon attack triggers
- * different mechanics than melee (e.g. prone target = disadvantage for
- * ranged, advantage for melee).
- */
-const RANGED_NAME_KEYWORDS = ['bow', 'crossbow', 'sling', 'dart', 'javelin', 'blowgun'];
-export function isRangedWeapon(weapon) {
-  if (!weapon) return false;
-  const props = Array.isArray(weapon.properties)
-    ? weapon.properties.map(p => String(p?.name || p || '').toLowerCase())
-    : [];
-  if (props.includes('ranged')) return true;
-  if (props.includes('thrown') && !props.includes('finesse')) {
-    // Thrown weapons used as ranged attacks — caller can disambiguate by
-    // setting weapon.usedAsRanged. Default: treat as melee since most
-    // throws happen in melee on the LPC stage.
-    return !!weapon.usedAsRanged;
-  }
-  const n = String(weapon.name || '').toLowerCase();
-  return RANGED_NAME_KEYWORDS.some(k => n.includes(k));
-}
+// Re-export grid distance + ranged-detection helpers so existing M11
+// callers (and tests importing from combat-resolver) keep working.
+// The canonical home is grid-rules.js.
+export { chebyshevFeet, isRangedWeapon } from './grid-rules.js';
 
 /**
  * Resolve an attack given the scene context. Returns a fully structured
@@ -216,6 +197,22 @@ export function resolveAttack(ctx) {
     overrideApplied = true;
   }
 
+  // --- M15: Class-feature availability (Sneak Attack et al) ---
+  // The registry evaluates rules against the attack context. We pass
+  // finalMode as `resolvedMode` because per 5e RAW "if you have
+  // advantage on the attack roll" refers to the actual roll mode —
+  // a player invoking Reckless Attack or another override DOES have
+  // advantage for SA purposes. resolvedModeRaw is also exposed so
+  // future rules that care specifically about RAW pre-override state
+  // (e.g. some homebrew) can access it.
+  const features = evaluateFeatures({
+    attacker, target, weapon, scene, attackerKind, targetKind,
+    resolvedMode: finalMode,
+    resolvedModeRaw: resolvedMode,
+    advReasons, disReasons,
+    allies: ctx.allies, hostiles: ctx.hostiles
+  });
+
   // --- autoCrit: melee within 5ft of paralyzed / unconscious target ---
   // (positions and distance computed earlier; reuse them here.)
   let autoCrit = false;
@@ -243,7 +240,8 @@ export function resolveAttack(ctx) {
     autoMiss: blockers.length > 0,
     blockers,
     targetAC: targetAC ?? 10,
-    weaponIsRanged: ranged
+    weaponIsRanged: ranged,
+    features
   };
 }
 

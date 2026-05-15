@@ -639,6 +639,50 @@ button.primary:disabled { opacity: 0.6; cursor: not-allowed; }
   font-style: italic;
 }
 
+/* M15 — Class-feature availability rows (preview + log) */
+.preview-feature {
+  margin-top: 4px;
+  padding: 3px 6px;
+  border-radius: 4px;
+  font-size: 0.74rem;
+}
+.preview-feature.available {
+  background: rgba(168, 85, 247, 0.15);
+  color: #c4b5fd;
+  border-left: 2px solid #a855f7;
+}
+.preview-feature.unavailable {
+  color: var(--text-dim);
+  font-size: 0.7rem;
+  font-style: italic;
+}
+.roll-features {
+  margin-top: 4px;
+  font-size: 0.74rem;
+}
+.feature-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  margin-right: 4px;
+  border-radius: 999px;
+  background: rgba(168, 85, 247, 0.12);
+  border: 1px solid rgba(168, 85, 247, 0.30);
+  color: #c4b5fd;
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+}
+.feature-roll-btn {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font-size: 0.85rem;
+  padding: 0 2px;
+  color: #c4b5fd;
+  transition: transform 120ms;
+}
+.feature-roll-btn:hover { transform: scale(1.2) rotate(-12deg); }
+
 /* M9 — roll log */
 .roll-log {
   margin: 12px 0;
