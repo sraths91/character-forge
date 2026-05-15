@@ -87,6 +87,18 @@
           </details>
         </div>
 
+        <fieldset id="combat-panel" class="combat-panel">
+          <legend>Combat</legend>
+          <div class="combat-actions">
+            <button id="attack-btn" class="primary" type="button" title="Start an attack — pick attacker, then target">⚔ Attack</button>
+            <button id="init-roll" class="secondary" type="button" title="Roll initiative for everyone">🎲 Roll initiative</button>
+            <button id="init-next" class="secondary" type="button" title="Advance the active turn">▶ Next turn</button>
+            <button id="init-clear" class="secondary" type="button" title="Clear initiative">✕ Clear</button>
+          </div>
+          <p id="combat-status" class="combat-status">Ready. Drag entities to position them; press Attack to start a strike.</p>
+          <div id="initiative-tracker" class="initiative-tracker"></div>
+        </fieldset>
+
         <fieldset id="monsters-panel" class="monsters-panel">
           <legend>Monsters</legend>
           <div class="monster-add-row">

@@ -1108,3 +1108,93 @@ body.party-view-mode .monsters-panel { display: block !important; }
   background: var(--danger);
   transition: width 120ms ease;
 }
+
+/* ===================================================================== */
+/* M4 — Combat panel + initiative tracker                                */
+/* ===================================================================== */
+
+.combat-panel {
+  display: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px 14px 12px;
+  margin-top: 12px;
+  background: var(--surface-2);
+  width: 100%;
+}
+body.party-view-mode .combat-panel { display: block !important; }
+
+.combat-panel legend {
+  padding: 0 6px;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-dim);
+}
+
+.combat-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+#attack-btn {
+  background: #dc2626;
+  border: none;
+  color: white;
+  padding: 8px 16px;
+  border-radius: var(--radius-sm);
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+}
+#attack-btn:hover { filter: brightness(1.1); }
+
+.combat-status {
+  margin: 0 0 8px;
+  font-size: 0.85rem;
+  color: var(--text-dim);
+  font-style: italic;
+}
+
+.initiative-tracker {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+.init-row {
+  display: grid;
+  grid-template-columns: 36px 1fr auto;
+  gap: 8px;
+  align-items: center;
+  padding: 4px 8px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 0.85rem;
+}
+.init-row.active {
+  background: var(--accent);
+  color: white;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent), 0 0 12px rgba(99, 102, 241, 0.35);
+}
+.init-row.active .init-score { color: white; }
+.init-score {
+  font-weight: 700;
+  text-align: center;
+  background: var(--surface-2);
+  color: var(--text);
+  border-radius: 4px;
+  padding: 2px 0;
+  font-size: 0.85rem;
+}
+.init-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.init-kind {
+  font-size: 0.7rem;
+  color: var(--text-dim);
+  text-transform: uppercase;
+}
+.init-row.active .init-kind { color: rgba(255, 255, 255, 0.8); }

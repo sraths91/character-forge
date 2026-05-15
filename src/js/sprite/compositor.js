@@ -51,7 +51,17 @@ export async function renderSprite(canvas, character, { scale = 6, direction = '
  * logic, compositor owns the pixel-pushing).
  */
 export async function renderBattleScene(canvas, characters, scene, opts = {}) {
-  const { direction = 'south', frameIdx = 0, positionOf, monsterCharacters = [] } = opts;
+  const {
+    direction = 'south',
+    frameIdx = 0,
+    positionOf,
+    monsterCharacters = [],
+    // M4 — combat overlays
+    selectedAttackerId = null,   // glowing outline on this entity's cell
+    activeTurnId = null,         // turn-order indicator
+    animations = null,           // Map<entityId, { kind, startedAt, duration }>
+    popups = null                // array of { targetId, amount, startedAt, duration }
+  } = opts;
   const list = (characters || []).filter(Boolean);
   const cellPx = scene.cellSize * scene.scale;
   const totalW = scene.cols * cellPx;
@@ -118,7 +128,108 @@ export async function renderBattleScene(canvas, characters, scene, opts = {}) {
     totalGenerated += r.generatedCount;
   }
 
+  // 5. M4 — Combat overlays drawn LAST so they sit above sprites.
+  //    Helpers below pull entity positions via locateEntity().
+  const locateEntity = (entityId) => {
+    for (let i = 0; i < list.length; i++) {
+      if (String(list[i].id) === String(entityId)) {
+        return { ...positionOf(scene, list[i].id, i) };
+      }
+    }
+    for (const mc of monsterCharacters) {
+      if (String(mc.id) === String(entityId)) return { ...mc._position };
+    }
+    return null;
+  };
+
+  // 5a. Selection outline for the chosen attacker
+  if (selectedAttackerId) {
+    const pos = locateEntity(selectedAttackerId);
+    if (pos) drawCellOutline(ctx, pos.col * cellPx, pos.row * cellPx, cellPx, '#22d3ee', 4);
+  }
+  // 5b. Current-turn outline
+  if (activeTurnId && activeTurnId !== selectedAttackerId) {
+    const pos = locateEntity(activeTurnId);
+    if (pos) drawCellOutline(ctx, pos.col * cellPx, pos.row * cellPx, cellPx, '#fbbf24', 3);
+  }
+
+  // 5c. Active animations (attack lunge glow / hurt flash)
+  if (animations) {
+    const now = performance.now();
+    for (const [id, anim] of animations) {
+      const elapsed = now - anim.startedAt;
+      if (elapsed < 0 || elapsed > anim.duration) continue;
+      const t = elapsed / anim.duration;
+      const pos = locateEntity(id);
+      if (!pos) continue;
+      const x = pos.col * cellPx;
+      const y = pos.row * cellPx;
+      if (anim.kind === 'attack') {
+        // Orange flash that pulses then fades
+        const alpha = Math.sin(t * Math.PI) * 0.55;
+        drawCellGlow(ctx, x, y, cellPx, '#fb923c', alpha);
+      } else if (anim.kind === 'hurt') {
+        // Red flash that decays linearly
+        const alpha = (1 - t) * 0.75;
+        drawCellGlow(ctx, x, y, cellPx, '#dc2626', alpha);
+      }
+    }
+  }
+
+  // 5d. Floating damage popups
+  if (popups && popups.length > 0) {
+    const now = performance.now();
+    for (const p of popups) {
+      const elapsed = now - p.startedAt;
+      if (elapsed < 0 || elapsed > p.duration) continue;
+      const t = elapsed / p.duration;
+      const pos = locateEntity(p.targetId);
+      if (!pos) continue;
+      const x = pos.col * cellPx + cellPx / 2;
+      // Float upward over the cell, fade out
+      const y = pos.row * cellPx + cellPx * 0.2 - t * cellPx * 0.55;
+      const alpha = 1 - t * 0.85;
+      drawDamageNumber(ctx, x, y, p.amount, alpha, Math.max(18, cellPx * 0.22));
+    }
+  }
+
   return { canvas, generatedCount: totalGenerated, cellCount: list.length + monsterCharacters.length };
+}
+
+/** Draw a hollow rectangle outline at (x,y) of size sz, in the given color. */
+function drawCellOutline(ctx, x, y, sz, color, width = 3) {
+  ctx.save();
+  ctx.strokeStyle = color;
+  ctx.lineWidth = width;
+  ctx.shadowColor = color;
+  ctx.shadowBlur = 8;
+  ctx.strokeRect(x + width / 2, y + width / 2, sz - width, sz - width);
+  ctx.restore();
+}
+
+/** Fill a cell with a semi-transparent color (used for hit-flash + attack-glow). */
+function drawCellGlow(ctx, x, y, sz, color, alpha) {
+  ctx.save();
+  ctx.globalAlpha = Math.max(0, Math.min(1, alpha));
+  ctx.fillStyle = color;
+  ctx.fillRect(x, y, sz, sz);
+  ctx.restore();
+}
+
+/** Floating "-N" damage popup centred at (cx, cy). */
+function drawDamageNumber(ctx, cx, cy, amount, alpha, fontSize) {
+  ctx.save();
+  ctx.globalAlpha = Math.max(0, Math.min(1, alpha));
+  ctx.font = `bold ${fontSize}px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  const text = amount > 0 ? `-${amount}` : `+${-amount}`;
+  ctx.lineWidth = Math.max(2, fontSize / 8);
+  ctx.strokeStyle = '#000';
+  ctx.strokeText(text, cx, cy);
+  ctx.fillStyle = amount > 0 ? '#fca5a5' : '#86efac';   // red for damage, green for heal
+  ctx.fillText(text, cx, cy);
+  ctx.restore();
 }
 
 /**

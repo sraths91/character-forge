@@ -41,7 +41,10 @@ export const DEFAULT_SCENE = Object.freeze({
   // the entity itself rather than scene.positions because monsters can
   // share a slug (e.g. multiple goblins) and the keyed-by-id map would
   // collide.
-  monsters: []
+  monsters: [],
+  // M4 — Initiative order. [{ entityId, entityKind, name, score, active }]
+  // Empty until "Roll initiative" populates it; persisted with the scene.
+  initiative: []
 });
 
 export function loadScene() {
@@ -74,7 +77,8 @@ function mergeWithDefault(saved) {
     map:  { ...base.map,  ...(saved.map  || {}) },
     grid: { ...base.grid, ...(saved.grid || {}) },
     positions: saved.positions && typeof saved.positions === 'object' ? saved.positions : {},
-    monsters: Array.isArray(saved.monsters) ? saved.monsters : []
+    monsters: Array.isArray(saved.monsters) ? saved.monsters : [],
+    initiative: Array.isArray(saved.initiative) ? saved.initiative : []
   };
 }
 

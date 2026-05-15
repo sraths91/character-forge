@@ -6,6 +6,10 @@ import {
   addMonsterInstance, removeMonsterInstance, updateMonsterPosition, entityAt
 } from './scene/scene-state.js';
 import { MONSTER_PRESETS, buildMonsterCharacter } from './scene/monster-presets.js';
+import {
+  combat, beginAttack, cancelAttack, selectAttacker, resolveAttack,
+  pruneExpired, hasActiveAnimations, entityAnimations, damagePopups
+} from './scene/combat.js';
 
 const $ = (id) => document.getElementById(id);
 const status = $('status');
@@ -104,9 +108,15 @@ function rerender() {
   if (viewMode === 'party') {
     renderBattleScene(canvas, partyComposedCharacters, currentScene, {
       direction: currentDirection, frameIdx: animFrame, positionOf,
-      monsterCharacters: buildMonsterCharactersForRender()
+      monsterCharacters: buildMonsterCharactersForRender(),
+      // M4 — combat overlays
+      selectedAttackerId: combat.attacker?.id || null,
+      activeTurnId: (currentScene.initiative?.find?.(i => i.active))?.entityId || null,
+      animations: entityAnimations,
+      popups: damagePopups
     });
     renderMonsterPanel();   // sync the side card UI
+    renderInitiativeTracker();
     return;
   }
   if (!originalCharacter) return;
@@ -237,6 +247,29 @@ canvas.addEventListener('pointerdown', (e) => {
   if (viewMode !== 'party') return;
   const { px, py } = canvasEventToPixels(e);
   const hit = entityAt(currentScene, partyComposedCharacters, px, py);
+
+  // M4 — combat mode short-circuits the drag handler. Clicking an entity
+  // either picks the attacker or fires the attack on the target.
+  if (combat.mode === 'pick-attacker') {
+    if (!hit) { setCombatStatus('Click an entity to attack with — or press Esc to cancel.'); return; }
+    selectAttacker(hit.entity.id, hit.kind);
+    setCombatStatus(`Attacker: ${entityName(hit)}. Click a target.`);
+    startContinuousRender();   // selection outline animates the canvas
+    rerender();
+    return;
+  }
+  if (combat.mode === 'pick-target') {
+    if (!hit) { setCombatStatus('Click another entity to attack — or press Esc to cancel.'); return; }
+    if (hit.entity.id === combat.attacker?.id) {
+      setCombatStatus('Cannot target the attacker. Click someone else or press Esc.');
+      return;
+    }
+    e.preventDefault();
+    runAttackPrompt(hit.kind, hit.entity);
+    return;
+  }
+
+  // Normal drag flow
   if (!hit) return;
   e.preventDefault();
   canvas.setPointerCapture(e.pointerId);
@@ -498,6 +531,192 @@ document.addEventListener('input', (e) => {
   rerender();
 });
 
+// ---------- M4: Combat actions (attack flow, animations, initiative) ----------
+
+function entityName(hit) {
+  if (!hit) return '';
+  if (hit.kind === 'pc') return hit.entity.name || 'Character';
+  return hit.entity.name || 'Monster';
+}
+
+function findHitById(id) {
+  for (const pc of partyComposedCharacters) {
+    if (String(pc.id) === String(id)) return { kind: 'pc', entity: pc };
+  }
+  for (const m of (currentScene.monsters || [])) {
+    if (String(m.id) === String(id)) return { kind: 'monster', entity: m };
+  }
+  return null;
+}
+
+function setCombatStatus(text) {
+  const el = document.getElementById('combat-status');
+  if (el) el.textContent = text;
+}
+
+function runAttackPrompt(targetKind, targetEntity) {
+  const attackerHit = findHitById(combat.attacker.id);
+  const attackerName = attackerHit ? entityName(attackerHit) : 'Attacker';
+  const targetName = targetEntity.name || 'Target';
+  const raw = window.prompt(`Damage from ${attackerName} → ${targetName}?`, '');
+  if (raw === null) {
+    setCombatStatus('Attack cancelled.');
+    cancelAttack();
+    rerender();
+    return;
+  }
+  const dmg = parseInt(raw, 10);
+  if (!Number.isFinite(dmg)) {
+    setCombatStatus('Damage must be a number. Attack cancelled.');
+    cancelAttack();
+    rerender();
+    return;
+  }
+  // Apply HP change (handles both PC and monster targets), then fire
+  // the animation + popup via combat.resolveAttack.
+  applyDamage(targetKind, targetEntity.id, dmg);
+  resolveAttack(targetEntity.id, targetKind, dmg);
+  saveScene(currentScene);
+  setCombatStatus(`${attackerName} hits ${targetName} for ${dmg}.`);
+  startContinuousRender();
+}
+
+/**
+ * Apply HP damage (positive number) or healing (negative). For PCs we
+ * adjust the per-party HP override (stored on the composed character —
+ * not persisted across imports, but works for the current session). For
+ * monsters we mutate the scene's monster instance directly.
+ */
+function applyDamage(targetKind, targetId, damage) {
+  if (targetKind === 'monster') {
+    const m = (currentScene.monsters || []).find(x => x.id === targetId);
+    if (!m) return;
+    const next = Math.max(0, Math.min(m.hp.max, m.hp.current - damage));
+    m.hp = { ...m.hp, current: next };
+    return;
+  }
+  // PC — adjust the rendered character's HP. This stays in-session.
+  const pc = partyComposedCharacters.find(c => String(c.id) === String(targetId));
+  if (!pc || !pc.hp) return;
+  const next = Math.max(0, Math.min(pc.hp.max, (pc.hp.current ?? pc.hp.max) - damage));
+  pc.hp = { ...pc.hp, current: next };
+}
+
+// Continuous-render loop. Driven by requestAnimationFrame so animations
+// run at display refresh rate. Auto-stops once all animations / popups
+// have expired AND the walk-cycle animation isn't running.
+let continuousRAF = null;
+function startContinuousRender() {
+  if (continuousRAF) return;
+  const tick = () => {
+    pruneExpired();
+    rerender();
+    if (hasActiveAnimations() || animating) {
+      continuousRAF = requestAnimationFrame(tick);
+    } else {
+      continuousRAF = null;
+    }
+  };
+  continuousRAF = requestAnimationFrame(tick);
+}
+
+// Esc cancels attack mode (and clears combat status)
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && combat.mode !== 'idle') {
+    cancelAttack();
+    setCombatStatus('Cancelled.');
+    rerender();
+  }
+});
+
+document.addEventListener('click', (e) => {
+  if (e.target.id === 'attack-btn') {
+    if (combat.mode === 'idle') {
+      beginAttack();
+      setCombatStatus('Click an entity to attack with. Esc to cancel.');
+    } else {
+      cancelAttack();
+      setCombatStatus('Cancelled.');
+    }
+    rerender();
+  }
+  if (e.target.id === 'init-roll') {
+    rollInitiative();
+  }
+  if (e.target.id === 'init-next') {
+    advanceTurn();
+  }
+  if (e.target.id === 'init-clear') {
+    currentScene.initiative = [];
+    saveScene(currentScene);
+    rerender();
+  }
+});
+
+// ---------- M4: Initiative tracker ----------
+//
+// Initiative is an ordered list on the scene. Each entry:
+//   { entityId, entityKind, name, score, active }
+//
+// `Roll initiative` generates d20 + 0 for each entity (lightweight v1 —
+// proper DEX-based mods can come later). `Next turn` advances the active
+// marker. The active entity gets a yellow outline on the canvas.
+
+function rollInitiative() {
+  const entries = [];
+  for (const pc of partyComposedCharacters) {
+    entries.push({
+      entityId: pc.id, entityKind: 'pc', name: pc.name,
+      score: 1 + Math.floor(Math.random() * 20),
+      active: false
+    });
+  }
+  for (const m of (currentScene.monsters || [])) {
+    entries.push({
+      entityId: m.id, entityKind: 'monster', name: m.name,
+      score: 1 + Math.floor(Math.random() * 20),
+      active: false
+    });
+  }
+  entries.sort((a, b) => b.score - a.score);
+  if (entries.length > 0) entries[0].active = true;
+  currentScene.initiative = entries;
+  saveScene(currentScene);
+  rerender();
+}
+
+function advanceTurn() {
+  const init = currentScene.initiative || [];
+  if (init.length === 0) return;
+  const cur = init.findIndex(i => i.active);
+  init.forEach(i => { i.active = false; });
+  init[(cur + 1) % init.length].active = true;
+  currentScene.initiative = init;
+  saveScene(currentScene);
+  rerender();
+}
+
+function renderInitiativeTracker() {
+  const wrap = document.getElementById('initiative-tracker');
+  if (!wrap) return;
+  const init = currentScene.initiative || [];
+  if (init.length === 0) {
+    wrap.innerHTML = '<p class="hint-line">Press <strong>Roll initiative</strong> to start.</p>';
+    return;
+  }
+  wrap.innerHTML = '';
+  for (const ent of init) {
+    const row = document.createElement('div');
+    row.className = `init-row${ent.active ? ' active' : ''}`;
+    row.innerHTML = `
+      <span class="init-score">${ent.score}</span>
+      <span class="init-name">${escapeHtml(ent.name || '(entity)')}</span>
+      <span class="init-kind">${ent.entityKind === 'pc' ? 'PC' : 'M'}</span>
+    `;
+    wrap.appendChild(row);
+  }
+}
+
 function syncBattlefieldControls() {
   const c = document.getElementById('scene-bg-color');
   const gv = document.getElementById('scene-grid-visible');
@@ -522,6 +741,7 @@ function startAnimation() {
   if (btn) btn.textContent = '⏸ Animating';
   animTimer = setInterval(() => {
     animFrame = (animFrame + 1) & 0xFFFF;   // never overflow; renderer mods per-layer
+    pruneExpired();
     rerender();
   }, FRAME_INTERVAL_MS);
 }
