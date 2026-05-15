@@ -459,6 +459,94 @@ button.primary:disabled { opacity: 0.6; cursor: not-allowed; }
   transform: scale(1.15) rotate(-12deg);
 }
 
+/* M10 — Class & subclass abilities */
+.abilities-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: 0 0 16px;
+}
+.abilities-group {
+  background: var(--surface-2, var(--surface-alt, #1f1f26));
+  border: 1px solid var(--border, #2a2a32);
+  border-radius: 8px;
+  padding: 8px 12px;
+}
+.abilities-source {
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  margin-bottom: 6px;
+}
+.abilities-items {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.ability-feature {
+  border-top: 1px solid var(--border, #2a2a32);
+  padding-top: 6px;
+}
+.ability-feature:first-child { border-top: none; padding-top: 0; }
+.ability-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.ability-name { font-weight: 500; font-size: 0.92rem; }
+.ability-level {
+  font-size: 0.7rem;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--surface, #15151a);
+  color: var(--text-dim);
+  border: 1px solid var(--border, #2a2a32);
+}
+.ability-uses, .ability-dice {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 0.74rem;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: var(--surface, #15151a);
+  border: 1px solid var(--border, #2a2a32);
+}
+.ability-uses { color: var(--text-dim); }
+.ability-dice { color: var(--text); margin-left: auto; }
+.ability-roll-btn {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font-size: 0.85rem;
+  padding: 0 2px;
+  line-height: 1;
+  color: var(--text-dim);
+  transition: transform 120ms, color 120ms;
+}
+.ability-roll-btn:hover {
+  color: var(--text);
+  transform: scale(1.15) rotate(-12deg);
+}
+.ability-desc {
+  margin-top: 4px;
+  font-size: 0.82rem;
+  color: var(--text-dim);
+}
+.ability-desc summary {
+  cursor: pointer;
+  font-size: 0.74rem;
+  color: var(--text-dim);
+  user-select: none;
+}
+.ability-desc p { margin: 4px 0 0; }
+
 /* M9 — roll log */
 .roll-log {
   margin: 12px 0;

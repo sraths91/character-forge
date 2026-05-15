@@ -237,3 +237,212 @@ test('ddb-parser: HP at level 0 uses baseHitPoints only (defensive)', () => {
   assert.strictEqual(parsed.level, 0);
   assert.strictEqual(parsed.hp.max, 10, 'CON × 0 contributes nothing');
 });
+
+// ---- M10: parseClassFeatures ----
+
+function classFeature({ id, name, level, classId = 2, isSub = false, hide = false, snippet = '', description = '', limitedUse = null }) {
+  // M10: `classId` is the canonical signal for subclass attribution.
+  // Defaults to 2 (PHB Cleric base class id) so most fixtures don't need
+  // to set it; pass classId = subclassDefinition.id when the feature
+  // should be tagged with the subclass name.
+  return {
+    definition: {
+      id, name, requiredLevel: level,
+      classId,
+      isSubClassFeature: isSub,
+      hideInSheet: hide,
+      snippet, description,
+      limitedUse
+    }
+  };
+}
+
+test('M10: parseClassFeatures includes only features at or below current level', () => {
+  const raw = rawFixture({
+    classes: [{
+      definition: { name: 'Cleric' },
+      level: 3,
+      subclassDefinition: { name: 'Twilight Domain' },
+      classFeatures: [
+        classFeature({ id: 1, name: 'Spellcasting', level: 1 }),
+        classFeature({ id: 2, name: 'Channel Divinity', level: 2 }),
+        classFeature({ id: 3, name: 'Destroy Undead', level: 5 }),   // not yet
+        classFeature({ id: 4, name: 'Divine Intervention', level: 10 }) // not yet
+      ]
+    }]
+  });
+  const parsed = parseCharacter(raw);
+  const names = parsed.classFeatures.map(f => f.name);
+  assert.deepStrictEqual(names, ['Spellcasting', 'Channel Divinity']);
+});
+
+test('M10: parseClassFeatures filters noise features by name', () => {
+  const raw = rawFixture({
+    classes: [{
+      definition: { name: 'Fighter' },
+      level: 4,
+      classFeatures: [
+        classFeature({ id: 1, name: 'Hit Points', level: 1 }),
+        classFeature({ id: 2, name: 'Equipment', level: 1 }),
+        classFeature({ id: 3, name: 'Proficiencies', level: 1 }),
+        classFeature({ id: 4, name: 'Ability Score Improvement', level: 4 }),
+        classFeature({ id: 5, name: 'Second Wind', level: 1 })   // real
+      ]
+    }]
+  });
+  const parsed = parseCharacter(raw);
+  assert.deepStrictEqual(parsed.classFeatures.map(f => f.name), ['Second Wind']);
+});
+
+test('M10: parseClassFeatures honors hideInSheet', () => {
+  const raw = rawFixture({
+    classes: [{
+      definition: { name: 'Wizard' }, level: 1,
+      classFeatures: [
+        classFeature({ id: 1, name: 'Secret Lab', level: 1, hide: true }),
+        classFeature({ id: 2, name: 'Arcane Recovery', level: 1 })
+      ]
+    }]
+  });
+  const parsed = parseCharacter(raw);
+  assert.deepStrictEqual(parsed.classFeatures.map(f => f.name), ['Arcane Recovery']);
+});
+
+test('M10: parseClassFeatures tags subclass features with the subclass name as source', () => {
+  const raw = rawFixture({
+    classes: [{
+      definition: { id: 2, name: 'Cleric' }, level: 2,
+      subclassDefinition: { id: 654582, name: 'Twilight Domain' },
+      classFeatures: [
+        classFeature({ id: 1, name: 'Spellcasting', level: 1, classId: 2 }),
+        classFeature({ id: 2, name: 'Eyes of Night', level: 1, classId: 654582 }),
+        classFeature({ id: 3, name: 'Channel Divinity: Twilight Sanctuary', level: 2, classId: 654582 })
+      ]
+    }]
+  });
+  const parsed = parseCharacter(raw);
+  const sources = parsed.classFeatures.map(f => ({ n: f.name, s: f.source }));
+  assert.deepStrictEqual(sources, [
+    { n: 'Spellcasting', s: 'Cleric' },
+    { n: 'Eyes of Night', s: 'Twilight Domain' },
+    { n: 'Channel Divinity: Twilight Sanctuary', s: 'Twilight Domain' }
+  ]);
+});
+
+test('M10: parseClassFeatures cross-references actions.class for dice + uses', () => {
+  const raw = rawFixture({
+    classes: [{
+      definition: { name: 'Rogue' }, level: 5,
+      classFeatures: [
+        classFeature({ id: 42, name: 'Sneak Attack', level: 1 })
+      ]
+    }],
+    actions: {
+      class: [{
+        componentId: 42, name: 'Sneak Attack',
+        dice: { diceCount: 3, diceValue: 6 },
+        limitedUse: { maxUses: 1, resetType: 'turn' }
+      }]
+    }
+  });
+  const parsed = parseCharacter(raw);
+  assert.strictEqual(parsed.classFeatures[0].dice, '3d6');
+  assert.deepStrictEqual(parsed.classFeatures[0].uses, { max: 1, reset: 'turn' });
+});
+
+test('M10: parseClassFeatures prefers snippet over HTML description', () => {
+  const raw = rawFixture({
+    classes: [{
+      definition: { name: 'Bard' }, level: 1,
+      classFeatures: [
+        classFeature({
+          id: 1, name: 'Bardic Inspiration', level: 1,
+          snippet: 'Inspire your allies.',
+          description: '<p>A much longer wordy description...</p>'
+        })
+      ]
+    }]
+  });
+  const parsed = parseCharacter(raw);
+  assert.strictEqual(parsed.classFeatures[0].description, 'Inspire your allies.');
+});
+
+test('M10: parseClassFeatures strips HTML when snippet is missing', () => {
+  const raw = rawFixture({
+    classes: [{
+      definition: { name: 'Druid' }, level: 1,
+      classFeatures: [
+        classFeature({
+          id: 1, name: 'Druidic', level: 1,
+          description: '<p>You can speak <em>Druidic</em>, a secret language.</p><p>Bonus paragraph.</p>'
+        })
+      ]
+    }]
+  });
+  const parsed = parseCharacter(raw);
+  // Only the first <p> block, tags stripped
+  assert.strictEqual(parsed.classFeatures[0].description, 'You can speak Druidic, a secret language.');
+});
+
+test('M10: parseClassFeatures returns [] when no classes defined', () => {
+  const raw = rawFixture({ classes: [] });
+  const parsed = parseCharacter(raw);
+  assert.deepStrictEqual(parsed.classFeatures, []);
+});
+
+test('M10: subclass features identified by feature.definition.classId !== base classId', () => {
+  // Real D&DB data: every classFeatures entry carries `definition.classId`
+  // pointing at the class (or subclass) the feature belongs to. The base
+  // class id matches `classes[].definition.id`. Anything with a different
+  // classId is a subclass feature.
+  const raw = rawFixture({
+    classes: [{
+      definition: { id: 2, name: 'Cleric' }, level: 2,
+      subclassDefinition: { id: 654582, name: 'Twilight Domain' },
+      classFeatures: [
+        classFeature({ id: 108, name: 'Spellcasting', level: 1, classId: 2 }),
+        classFeature({ id: 555, name: 'Eyes of Night', level: 1, classId: 654582 }),
+        classFeature({ id: 556, name: 'Channel Divinity: Twilight Sanctuary', level: 2, classId: 654582 })
+      ]
+    }]
+  });
+  const parsed = parseCharacter(raw);
+  const map = Object.fromEntries(parsed.classFeatures.map(f => [f.name, f.source]));
+  assert.strictEqual(map['Spellcasting'], 'Cleric');
+  assert.strictEqual(map['Eyes of Night'], 'Twilight Domain');
+  assert.strictEqual(map['Channel Divinity: Twilight Sanctuary'], 'Twilight Domain');
+});
+
+test('M10: limitedUse with numeric resetType maps to a label', () => {
+  // resetType=1 → short rest, resetType=2 → long rest (D&DB enum).
+  const raw = rawFixture({
+    classes: [{
+      definition: { name: 'Cleric' }, level: 2,
+      classFeatures: [classFeature({ id: 110, name: 'Channel Divinity', level: 2 })]
+    }],
+    actions: {
+      class: [{
+        componentId: 110, name: 'Channel Divinity',
+        limitedUse: { maxUses: 1, resetType: 1 }
+      }]
+    }
+  });
+  const parsed = parseCharacter(raw);
+  assert.deepStrictEqual(parsed.classFeatures[0].uses, { max: 1, reset: 'short rest' });
+});
+
+test('M10: stripHtml removes D&DB templating tokens like {{modifier:wis@min:1}}', () => {
+  const raw = rawFixture({
+    classes: [{
+      definition: { name: 'Cleric' }, level: 1,
+      classFeatures: [classFeature({
+        id: 1, name: 'Eyes of Night', level: 1,
+        snippet: 'You share darkvision with up to {{modifier:wis@min:1}} creatures.'
+      })]
+    }]
+  });
+  const parsed = parseCharacter(raw);
+  assert.ok(!parsed.classFeatures[0].description.includes('{{'),
+    `template still present: ${parsed.classFeatures[0].description}`);
+  assert.ok(parsed.classFeatures[0].description.includes('creatures'));
+});

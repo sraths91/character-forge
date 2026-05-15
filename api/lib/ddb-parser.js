@@ -21,6 +21,7 @@ export function parseCharacter(raw) {
   const abilityScores = parseAbilityScores(raw);
   const { slots: equipment, carried } = parseEquipment(raw);
   const feats = parseFeats(raw);
+  const classFeatures = parseClassFeatures(raw);
   const hp = parseHitPoints(raw, abilityScores, level);
   const deathSaves = parseDeathSaves(raw);
 
@@ -41,6 +42,7 @@ export function parseCharacter(raw) {
     equipment,
     carried,
     feats,
+    classFeatures,
     // Note: skinTone is intentionally NOT set here. The renderer's
     // inferSkinTone() consults character.appearance.skin first (via the
     // E1 appearance-parser) and falls back to a race default — setting
@@ -170,6 +172,180 @@ function parseClasses(raw) {
     level: Number(c?.level) || 0,
     subclass: c?.subclassDefinition?.name || null
   }));
+}
+
+// M10 — Class & subclass features.
+//
+// D&DB exposes the full ladder of features for each class (1..20) inside
+// `classes[i].classFeatures`. We want the ones the character has actually
+// unlocked at their current level. Subclass features are flagged with
+// `definition.isSubClassFeature` and routed to the subclass name as
+// source so the UI can group them.
+//
+// We also cross-reference `actions.class[]` by `componentId === feature.id`
+// to surface dice and usage caps (e.g. Channel Divinity 1/short rest).
+//
+// Noise features (Hit Points, Equipment, Proficiencies, ASI placeholders,
+// Languages) are filtered out — they aren't actionable abilities the
+// player needs surfaced on a play sheet.
+
+const FEATURE_NAME_DENYLIST = new Set([
+  'Hit Points',
+  'Equipment',
+  'Proficiencies',
+  'Ability Score Improvement',
+  'Languages',
+  'Saving Throws',
+  'Tool Proficiencies',
+  'Weapon Proficiencies',
+  'Armor Proficiencies'
+]);
+
+// D&DB encodes resetType as either a numeric code OR a string label
+// depending on where in the JSON it appears. The numeric codes come
+// from actions.class[].limitedUse and follow D&DB's internal enum.
+// String labels appear in some other paths; we keep both for safety.
+const RESET_TYPE_LABEL = {
+  // String forms
+  'shortrest': 'short rest',
+  'short': 'short rest',
+  'longrest': 'long rest',
+  'long': 'long rest',
+  'turn': 'turn',
+  'dawn': 'dawn',
+  // Numeric forms (from limitedUse.resetType — observed empirically)
+  '1': 'short rest',
+  '2': 'long rest',
+  '3': 'dawn',
+  '4': 'dusk',
+  '5': 'turn'
+};
+
+export function parseClassFeatures(raw) {
+  const classes = Array.isArray(raw.classes) ? raw.classes : [];
+  const actionsByComponent = indexClassActions(raw.actions?.class);
+  const out = [];
+
+  for (const cls of classes) {
+    const className = cls?.definition?.name || 'Class';
+    const subclassName = cls?.subclassDefinition?.name || null;
+    const currentLevel = Number(cls?.level) || 0;
+    const features = Array.isArray(cls.classFeatures) ? cls.classFeatures : [];
+
+    // Subclass detection. D&DB sets `definition.classId` on every feature
+    // to the id of the class (or subclass) it BELONGS to. The parent class
+    // id matches `cls.definition.id`, the subclass id matches
+    // `cls.subclassDefinition.id`. Cross-referencing isSubClassFeature
+    // and the subclassDefinition.classFeatures id-set proved unreliable
+    // on real character data — both ignored Twilight Domain attribution.
+    const baseClassId = cls?.definition?.id;
+
+    for (const f of features) {
+      const def = f?.definition;
+      if (!def) continue;
+      if (def.hideInSheet) continue;
+      const featureName = String(def.name || '').trim();
+      if (!featureName || FEATURE_NAME_DENYLIST.has(featureName)) continue;
+      const requiredLevel = Number(def.requiredLevel) || 1;
+      if (requiredLevel > currentLevel) continue;
+
+      const action = actionsByComponent.get(def.id) || null;
+      const description = pickDescription(def, action);
+      const dice = action ? formatDDBDice(action.dice) : null;
+      const uses = action ? formatUses(action.limitedUse) : null;
+
+      const isSub = baseClassId != null && def.classId != null && def.classId !== baseClassId;
+      out.push({
+        name: featureName,
+        source: isSub && subclassName ? subclassName : className,
+        level: requiredLevel,
+        description,
+        dice,
+        uses
+      });
+    }
+  }
+
+  // Stable ordering: by level, then by source then name. The sheet groups
+  // by source anyway, but a stable order within each group keeps re-imports
+  // visually stable.
+  out.sort((a, b) =>
+    a.level - b.level ||
+    a.source.localeCompare(b.source) ||
+    a.name.localeCompare(b.name));
+  return out;
+}
+
+function indexClassActions(actions) {
+  const map = new Map();
+  if (!Array.isArray(actions)) return map;
+  for (const a of actions) {
+    if (a?.componentId != null) map.set(a.componentId, a);
+  }
+  return map;
+}
+
+/**
+ * Pick the most readable, compact description. Snippet is plain text and
+ * preferred. Falls back to first paragraph of HTML description with tags
+ * stripped — keeps the sheet from drowning in 800-word feature writeups.
+ */
+function pickDescription(def, action) {
+  const snippet = (action?.snippet || def?.snippet || '').trim();
+  if (snippet) return stripHtml(snippet).trim();   // snippets also carry {{tokens}}
+  const desc = String(def?.description || '');
+  if (!desc) return '';
+  // First <p>...</p> block, tags stripped; fall back to entire text stripped.
+  const para = desc.match(/<p[^>]*>([\s\S]*?)<\/p>/i);
+  const inner = para ? para[1] : desc;
+  return stripHtml(inner).trim();
+}
+
+function stripHtml(s) {
+  return String(s)
+    .replace(/<\/?[^>]+>/g, '')
+    // D&DB embeds inline templating like {{modifier:wis@min:1}} for stat
+    // refs and proficiency bonus. We can't compute them in-parser without
+    // the full modifier engine, so strip the token entirely rather than
+    // showing the raw mustache to the user.
+    .replace(/\{\{[^}]+\}\}/g, '')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&#39;/g, "'")
+    .replace(/&quot;/g, '"')
+    .replace(/\s+/g, ' ');
+}
+
+/**
+ * D&DB dice are usually `{ diceCount, diceValue, fixedValue, diceString }`.
+ * We trust diceString when present; otherwise compose from the parts.
+ * Returns null if the action carries no dice info.
+ */
+export function formatDDBDice(dice) {
+  if (!dice) return null;
+  if (typeof dice.diceString === 'string' && dice.diceString) return dice.diceString;
+  const count = Number(dice.diceCount) || 0;
+  const sides = Number(dice.diceValue) || 0;
+  const mod   = Number(dice.fixedValue) || 0;
+  if (!count || !sides) return null;
+  const base = `${count}d${sides}`;
+  if (!mod) return base;
+  return mod > 0 ? `${base}+${mod}` : `${base}${mod}`;
+}
+
+/**
+ * Format D&DB limited-use info into { max, reset } — e.g. Channel Divinity
+ * at L2 has maxUses=1 resetType='shortrest'. Returns null when uses are
+ * unspecified (most features don't cap by rest).
+ */
+export function formatUses(limitedUse) {
+  if (!limitedUse) return null;
+  const max = Number(limitedUse.maxUses) || null;
+  if (!max) return null;
+  const reset = RESET_TYPE_LABEL[String(limitedUse.resetType || '').toLowerCase()] || null;
+  return { max, reset };
 }
 
 // D&DB stores ability-score adjustments in two places:

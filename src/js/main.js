@@ -1247,6 +1247,7 @@ async function render(character) {
 
   renderAbilities(effective);
   renderEquipment(effective.equipment, effective.carried);
+  renderClassFeatures(effective.classFeatures);
   renderFeats(effective.feats);
   populateSlotPicker(effective);
   $('raw-json').textContent = JSON.stringify(effective, null, 2);
@@ -1474,6 +1475,82 @@ function appendRollLog(line) {
   // Cap at 20 entries so an enthusiastic roller doesn't blow the DOM
   while (list.children.length > 20) list.removeChild(list.lastChild);
 }
+
+// M10 — Class & subclass abilities panel. Features come from the parser
+// (parseClassFeatures), already filtered to the character's level and
+// stripped of noise like ASI / proficiency placeholders. We group by
+// source (e.g. "Cleric", "Twilight Domain") so subclass abilities
+// cluster together.
+function renderClassFeatures(features) {
+  const heading = document.getElementById('abilities-heading');
+  const wrap = document.getElementById('abilities-list');
+  if (!heading || !wrap) return;
+  const list = Array.isArray(features) ? features : [];
+  if (list.length === 0) {
+    heading.hidden = true;
+    wrap.hidden = true;
+    wrap.innerHTML = '';
+    return;
+  }
+  heading.hidden = false;
+  wrap.hidden = false;
+
+  // Group by source
+  const grouped = new Map();
+  for (const f of list) {
+    if (!grouped.has(f.source)) grouped.set(f.source, []);
+    grouped.get(f.source).push(f);
+  }
+
+  wrap.innerHTML = '';
+  for (const [source, items] of grouped) {
+    const group = document.createElement('div');
+    group.className = 'abilities-group';
+    group.innerHTML = `<div class="abilities-source">${escapeHtml(source)}</div>`;
+    const ul = document.createElement('ul');
+    ul.className = 'abilities-items';
+    for (const f of items) {
+      ul.appendChild(renderAbilityLi(f));
+    }
+    group.appendChild(ul);
+    wrap.appendChild(group);
+  }
+}
+
+function renderAbilityLi(f) {
+  const li = document.createElement('li');
+  li.className = 'ability-feature';
+  const diceChip = f.dice
+    ? `<span class="ability-dice" title="Click to roll">${escapeHtml(f.dice)} <button class="ability-roll-btn" type="button" data-dice="${escapeHtml(f.dice)}" data-name="${escapeHtml(f.name)}" aria-label="Roll ${escapeHtml(f.name)}">🎲</button></span>`
+    : '';
+  const usesChip = f.uses
+    ? `<span class="ability-uses">${f.uses.max}${f.uses.reset ? ` / ${escapeHtml(f.uses.reset)}` : ''}</span>`
+    : '';
+  const desc = f.description
+    ? `<details class="ability-desc"><summary>Details</summary><p>${escapeHtml(f.description)}</p></details>`
+    : '';
+  li.innerHTML = `
+    <div class="ability-head">
+      <span class="ability-name">${escapeHtml(f.name)}</span>
+      <span class="ability-level" title="Acquired at level ${f.level}">L${f.level}</span>
+      ${usesChip}
+      ${diceChip}
+    </div>
+    ${desc}
+  `;
+  return li;
+}
+
+// Roll button on dice-bearing class features. Reuses the M9 roll log
+// so all ad-hoc rolls land in one place.
+document.addEventListener('click', (e) => {
+  if (!e.target.matches('.ability-roll-btn')) return;
+  const dice = e.target.dataset.dice;
+  const name = e.target.dataset.name;
+  if (!dice) return;
+  const dmg = rollDamage(dice, { crit: false });
+  appendRollLog(`${name}: ${dice} (rolls ${dmg.rolls.join(',')}) = ${dmg.total}`);
+});
 
 function renderFeats(feats) {
   const list = $('feat-list');
