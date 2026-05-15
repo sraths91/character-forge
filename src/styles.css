@@ -941,6 +941,42 @@ body.party-view-mode .battlefield-controls { display: block; }
   color: var(--text-dim);
 }
 
+/* M5 — Scene picker row */
+.bf-scenes-row {
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+.bf-scene-picker {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex: 1;
+  min-width: 12rem;
+}
+.bf-scene-picker > span {
+  font-size: 0.78rem;
+  color: var(--text-dim);
+  flex-shrink: 0;
+}
+.bf-scene-picker select {
+  flex: 1;
+  min-width: 8rem;
+}
+.bf-scene-actions {
+  display: flex;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+}
+.bf-scene-actions button {
+  padding: 0.25rem 0.55rem;
+  font-size: 0.75rem;
+}
+.bf-scene-actions button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
 /* M2.5 — Scene preset chips */
 .bf-presets-row { align-items: flex-start; flex-wrap: wrap; }
 .bf-presets-label {

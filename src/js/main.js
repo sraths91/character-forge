@@ -4,7 +4,8 @@ import { loadAppearance, saveAppearance, applyAppearanceOverrides } from './spri
 import {
   loadScene, saveScene, positionOf, setPosition, clearPositions, clampPosition,
   addMonsterInstance, removeMonsterInstance, updateMonsterPosition, entityAt,
-  SCENE_PRESETS
+  SCENE_PRESETS,
+  listScenes, setActiveScene, createScene, duplicateScene, renameScene, deleteScene, getActiveSceneId
 } from './scene/scene-state.js';
 import { MONSTER_PRESETS, buildMonsterCharacter } from './scene/monster-presets.js';
 import {
@@ -728,7 +729,89 @@ function syncBattlefieldControls() {
   if (gv) gv.checked = !!currentScene.grid?.visible;
   if (gs) gs.checked = !!currentScene.grid?.snap;
   if (sz) sz.value = `${currentScene.cols}x${currentScene.rows}`;
+  renderScenePicker();
 }
+
+// ---------- M5: Multi-scene management ----------
+//
+// All scenes live in one localStorage container; only one is active at
+// a time. Switching saves the current scene first (drag positions, monster
+// changes etc. are already persisted as they happen, so this is just a
+// safety belt) then loads the chosen scene into currentScene and re-syncs
+// every panel.
+
+function renderScenePicker() {
+  const sel = document.getElementById('scene-picker');
+  if (!sel) return;
+  const scenes = listScenes();
+  const activeId = getActiveSceneId();
+  sel.innerHTML = '';
+  for (const s of scenes) {
+    const opt = document.createElement('option');
+    opt.value = s.id;
+    opt.textContent = s.name;
+    if (s.id === activeId) opt.selected = true;
+    sel.appendChild(opt);
+  }
+  // Disable Delete when only one scene remains
+  const del = document.getElementById('scene-delete');
+  if (del) del.disabled = scenes.length <= 1;
+}
+
+function switchToScene(id) {
+  // Persist anything pending on the current scene, then swap.
+  saveScene(currentScene);
+  const next = setActiveScene(id);
+  if (!next) return;
+  currentScene = next;
+  // M4 — initiative + combat state are per-scene (they live on scene
+  // and reset when we move to a different scene's container slot).
+  // We don't tear down the in-flight combat.attacker because that's a
+  // transient UI mode; the user can press Esc to cancel after the swap.
+  syncBattlefieldControls();
+  if (viewMode === 'party') rerender();
+}
+
+document.addEventListener('change', (e) => {
+  if (e.target.id !== 'scene-picker') return;
+  switchToScene(e.target.value);
+});
+
+document.addEventListener('click', (e) => {
+  if (e.target.id === 'scene-new') {
+    const name = window.prompt('Name for the new scene:', `Scene ${listScenes().length + 1}`);
+    if (name === null) return;
+    saveScene(currentScene);
+    const id = createScene(name.trim() || 'New scene');
+    switchToScene(id);
+  }
+  if (e.target.id === 'scene-duplicate') {
+    saveScene(currentScene);
+    const id = duplicateScene();
+    if (id) switchToScene(id);
+  }
+  if (e.target.id === 'scene-rename') {
+    const id = getActiveSceneId();
+    const current = listScenes().find(s => s.id === id);
+    const name = window.prompt('Rename scene:', current?.name || '');
+    if (name === null) return;
+    renameScene(id, name);
+    renderScenePicker();
+  }
+  if (e.target.id === 'scene-delete') {
+    const scenes = listScenes();
+    if (scenes.length <= 1) return;
+    const id = getActiveSceneId();
+    const current = scenes.find(s => s.id === id);
+    if (!window.confirm(`Delete scene "${current?.name || 'this scene'}"? This cannot be undone.`)) return;
+    deleteScene(id);
+    // After deletion, the state layer has already picked a new active id —
+    // reload it.
+    currentScene = loadScene();
+    syncBattlefieldControls();
+    if (viewMode === 'party') rerender();
+  }
+});
 
 // ---------- M2.5: Scene presets + custom image background ----------
 //
