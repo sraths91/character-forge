@@ -123,6 +123,34 @@ export const MONSTER_PRESETS = {
   }
 };
 
+// M21 — SRD save bonuses per preset (ability-mod values; no preset
+// monster has expertise/proficiency in saves in v1). Used by the save
+// resolver when a save-based spell targets a monster. Unknown slugs
+// fall back to 0 for every stat.
+export const MONSTER_DEFAULT_SAVES = {
+  goblin:        { STR: -1, DEX: +2, CON:  0, INT:  0, WIS: -1, CHA: -2 },
+  orc:           { STR: +3, DEX: +1, CON: +3, INT: -2, WIS:  0, CHA:  0 },
+  hobgoblin:     { STR: +2, DEX: +1, CON: +1, INT:  0, WIS:  0, CHA: -1 },
+  bugbear:       { STR: +2, DEX: +2, CON: +1, INT: -1, WIS:  0, CHA: -1 },
+  kobold:        { STR: -2, DEX: +2, CON: -1, INT: -1, WIS: -2, CHA: -1 },
+  skeleton:      { STR:  0, DEX: +2, CON: +2, INT: -2, WIS: -1, CHA: -3 },
+  zombie:        { STR: +1, DEX: -2, CON: +3, INT: -4, WIS:  0, CHA: -3 },
+  'vampire-spawn': { STR: +3, DEX: +2, CON: +3, INT:  0, WIS:  0, CHA: +2 },
+  troll:         { STR: +4, DEX: +1, CON: +5, INT: -2, WIS: -1, CHA: -2 },
+  minotaur:      { STR: +4, DEX:  0, CON: +3, INT: -2, WIS: +2, CHA: -1 },
+  bandit:        { STR:  0, DEX: +1, CON:  0, INT:  0, WIS:  0, CHA:  0 },
+  cultist:       { STR:  0, DEX:  0, CON:  0, INT:  0, WIS: +1, CHA:  0 },
+  gnoll:         { STR: +2, DEX:  0, CON: +1, INT: -2, WIS:  0, CHA: -2 },
+  ratfolk:       { STR: -2, DEX: +3, CON:  0, INT:  0, WIS:  0, CHA: -2 }
+};
+
+/** Save bonus for a monster instance against a given stat ('DEX' etc.). */
+export function monsterSaveBonus(presetSlug, stat) {
+  const table = MONSTER_DEFAULT_SAVES[presetSlug];
+  if (!table) return 0;
+  return table[stat] || 0;
+}
+
 /**
  * Synthesize a character-shaped object that buildRenderPlan can consume,
  * representing a monster instance. The bridge points:

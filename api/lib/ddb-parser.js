@@ -24,6 +24,7 @@ export function parseCharacter(raw) {
   const classFeatures = parseClassFeatures(raw);
   const combatMods = parseCombatModifiers(raw);
   const spells = parseSpells(raw);
+  const savingThrowProficiencies = parseSavingThrowProficiencies(raw);
   const hp = parseHitPoints(raw, abilityScores, level);
   const deathSaves = parseDeathSaves(raw);
 
@@ -47,6 +48,7 @@ export function parseCharacter(raw) {
     classFeatures,
     combatMods,
     spells,
+    savingThrowProficiencies,
     // Note: skinTone is intentionally NOT set here. The renderer's
     // inferSkinTone() consults character.appearance.skin first (via the
     // E1 appearance-parser) and falls back to a race default — setting
@@ -580,6 +582,9 @@ export function parseSpells(raw) {
       requiresAttackRoll: !!def.requiresAttackRoll,
       requiresSavingThrow: !!def.requiresSavingThrow,
       saveStat: STAT_NAMES_BY_DDB_ID[def.saveDcAbilityId] || null,
+      // M21 — save-success behavior: most damage spells with saves
+      // deal HALF on success; control/cantrip saves usually deal none.
+      saveOnHalf: spellSaveDealsHalfOnSuccess(def),
       ritual: !!def.ritual,
       concentration: def.duration?.durationType === 'Concentration',
       // Spellcasting ability for THIS spell — per-spell override beats
@@ -637,6 +642,46 @@ function classifySpellKind(def) {
   if (Array.isArray(def.healingDice) && def.healingDice.length) return 'heal';
   if (def.healing) return 'heal';
   return 'utility';
+}
+
+/**
+ * M21 — Does this spell deal HALF damage on a successful save (the
+ * common case for AoE damage spells) vs NO damage on save (most save-
+ * based cantrips and control spells)? Heuristic on the description:
+ * 5e canonical phrasing for half-damage spells is "half as much
+ * damage on a successful one" or "half damage on a successful save".
+ * If the spell isn't a save spell at all the question is moot.
+ */
+export function spellSaveDealsHalfOnSuccess(def) {
+  if (!def?.requiresSavingThrow) return false;
+  const desc = String(def.description || '').toLowerCase();
+  if (/half as much damage on a successful/i.test(desc)) return true;
+  if (/half damage on a successful/i.test(desc)) return true;
+  return false;
+}
+
+/**
+ * Pull the character's saving-throw proficiencies. D&DB encodes them as
+ * `modifiers.class[]` (and sometimes feat/background) entries with
+ * type='proficiency' and subType like 'wisdom-saving-throws'. Returns
+ * a small array of stat keys (STR/DEX/CON/INT/WIS/CHA).
+ */
+export function parseSavingThrowProficiencies(raw) {
+  const out = new Set();
+  for (const m of collectAllModifiers(raw)) {
+    if (m.type !== 'proficiency') continue;
+    const match = String(m.subType || '').match(/^(strength|dexterity|constitution|intelligence|wisdom|charisma)-saving-throws$/);
+    if (!match) continue;
+    const stat = match[1].slice(0, 3).toUpperCase();
+    out.add(stat === 'STR' ? 'STR'
+          : stat === 'DEX' ? 'DEX'
+          : stat === 'CON' ? 'CON'
+          : stat === 'INT' ? 'INT'
+          : stat === 'WIS' ? 'WIS'
+          : stat === 'CHA' ? 'CHA' : '');
+  }
+  out.delete('');
+  return [...out];
 }
 
 export function formatUses(limitedUse) {

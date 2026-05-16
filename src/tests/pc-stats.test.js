@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert';
-import { proficiencyBonus, totalLevel, deriveAC, deriveAttack, deriveWeaponAttack, spellcastingAbility, spellAttackBonus, spellSaveDC } from '../js/scene/pc-stats.js';
+import { proficiencyBonus, totalLevel, deriveAC, deriveAttack, deriveWeaponAttack, spellcastingAbility, spellAttackBonus, spellSaveDC, saveBonus } from '../js/scene/pc-stats.js';
 
 test('M6: proficiencyBonus follows the 5e ladder', () => {
   assert.strictEqual(proficiencyBonus(1),  2);
@@ -196,4 +196,29 @@ test('M18: spellAttackBonus — no spellcasting ability returns proficiency only
   const character = { abilityModifiers: {}, classes: [{ level: 1 }], spells: [] };
   const a = spellAttackBonus(character, {});
   assert.strictEqual(a.total, 2);   // prof only
+});
+
+// ---- M21: saveBonus ----
+
+test('M21: saveBonus — proficient save = ability mod + proficiency', () => {
+  const ch = {
+    abilityModifiers: { WIS: 3, DEX: 1 },
+    classes: [{ level: 5 }],
+    savingThrowProficiencies: ['WIS', 'CHA']
+  };
+  assert.strictEqual(saveBonus(ch, 'WIS'), 3 + 3);   // WIS mod + prof@L5
+  assert.strictEqual(saveBonus(ch, 'DEX'), 1);         // DEX mod, NOT proficient
+});
+
+test('M21: saveBonus — non-proficient is just the ability mod', () => {
+  const ch = {
+    abilityModifiers: { STR: -1 },
+    classes: [{ level: 1 }],
+    savingThrowProficiencies: []
+  };
+  assert.strictEqual(saveBonus(ch, 'STR'), -1);
+});
+
+test('M21: saveBonus — empty character returns 0 (no ability, no proficiency)', () => {
+  assert.strictEqual(saveBonus({}, 'WIS'), 0);
 });

@@ -695,3 +695,69 @@ test('M18: parseSpells utility spells (Bless) get kind=utility', () => {
   const s = parsed.spells.find(x => x.name === 'Bless');
   assert.strictEqual(s.kind, 'utility');
 });
+
+// ---- M21: save metadata ----
+
+test('M21: parseSavingThrowProficiencies extracts proficient saves from class modifiers', () => {
+  const raw = rawFixture({
+    modifiers: { class: [
+      { type: 'proficiency', subType: 'wisdom-saving-throws' },
+      { type: 'proficiency', subType: 'charisma-saving-throws' },
+      { type: 'proficiency', subType: 'longsword' }   // not a save — ignored
+    ]}
+  });
+  const parsed = parseCharacter(raw);
+  assert.deepStrictEqual(parsed.savingThrowProficiencies.sort(), ['CHA', 'WIS']);
+});
+
+test('M21: parseSavingThrowProficiencies picks up feat-granted saves (Resilient)', () => {
+  const raw = rawFixture({
+    modifiers: { feat: [
+      { type: 'proficiency', subType: 'constitution-saving-throws' }
+    ]}
+  });
+  const parsed = parseCharacter(raw);
+  assert.deepStrictEqual(parsed.savingThrowProficiencies, ['CON']);
+});
+
+test('M21: parseSpells — saveOnHalf detected from "half as much damage" phrasing', () => {
+  const raw = rawFixture({
+    classSpells: [{
+      characterClassId: 1, spellCastingAbilityId: 5,
+      spells: [{
+        prepared: true, usesSpellSlot: true, castAtLevel: 3,
+        definition: {
+          id: 1, name: 'Fireball', level: 3, school: 'Evocation',
+          range: { origin: 'Ranged', rangeValue: 150 },
+          requiresSavingThrow: true, saveDcAbilityId: 2,
+          description: '...takes 8d6 fire damage on a failed save, or half as much damage on a successful one.',
+          modifiers: [{ subType: 'fire-damage', die: { diceString: '8d6' } }]
+        }
+      }]
+    }]
+  });
+  const parsed = parseCharacter(raw);
+  const s = parsed.spells.find(x => x.name === 'Fireball');
+  assert.strictEqual(s.saveOnHalf, true);
+});
+
+test('M21: parseSpells — saveOnHalf=false for cantrips with no half-on-save text', () => {
+  const raw = rawFixture({
+    classSpells: [{
+      characterClassId: 1, spellCastingAbilityId: 5,
+      spells: [{
+        prepared: true, usesSpellSlot: false, castAtLevel: 0,
+        definition: {
+          id: 1, name: 'Sacred Flame', level: 0,
+          range: { origin: 'Ranged', rangeValue: 60 },
+          requiresSavingThrow: true, saveDcAbilityId: 2,
+          description: 'The target must succeed on a Dexterity saving throw or take 1d8 radiant damage.',
+          modifiers: [{ subType: 'radiant-damage', die: { diceString: '1d8' } }]
+        }
+      }]
+    }]
+  });
+  const parsed = parseCharacter(raw);
+  const s = parsed.spells.find(x => x.name === 'Sacred Flame');
+  assert.strictEqual(s.saveOnHalf, false);
+});

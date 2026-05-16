@@ -8,20 +8,21 @@ import {
   SCENE_PRESETS,
   listScenes, setActiveScene, createScene, duplicateScene, renameScene, deleteScene, getActiveSceneId
 } from './scene/scene-state.js';
-import { MONSTER_PRESETS, buildMonsterCharacter } from './scene/monster-presets.js';
+import { MONSTER_PRESETS, buildMonsterCharacter, monsterSaveBonus } from './scene/monster-presets.js';
 import {
   combat, beginAttack, cancelAttack, selectAttacker,
   resolveAttack as resolveAttackAnimation,
   pruneExpired, hasActiveAnimations, entityAnimations, damagePopups
 } from './scene/combat.js';
 import { rollAttack, rollDamage, describeAttack } from './scene/combat-roll.js';
-import { deriveAC, deriveAttack, deriveWeaponAttack, spellAttackBonus } from './scene/pc-stats.js';
+import { deriveAC, deriveAttack, deriveWeaponAttack, spellAttackBonus, saveBonus } from './scene/pc-stats.js';
 import { resolveAttack } from './scene/combat-resolver.js';
 import { factionLists } from './scene/grid-rules.js';
 import { buildActionsFor } from './scene/actions-panel.js';
 import { templateCells, entitiesInTemplate } from './scene/aoe.js';
 import { tooltipFor } from './scene/rules-reference.js';
 import { buildTurnTips } from './scene/turn-coach.js';
+import { resolveSpellSave } from './scene/save-rolls.js';
 
 const $ = (id) => document.getElementById(id);
 const status = $('status');
@@ -931,7 +932,14 @@ function runAttackPrompt(targetKind, targetEntity) {
   // M18 — If a spell was set on combat.spell, route through the spell
   // path: spell attack bonus, spell dice, scope='spell'. Otherwise the
   // existing weapon path.
+  // M21 — If the queued spell requires a saving throw (Sacred Flame,
+  // Toll the Dead, Fireball etc.), short-circuit to the save resolver
+  // entirely; that flow doesn't roll a to-hit.
   const spell = combat.spell || null;
+  if (spell?.requiresSavingThrow) {
+    runSpellSavePrompt(attackerHit, { kind: targetKind, entity: targetEntity }, spell);
+    return;
+  }
   const attack = spell ? null : getAttackStats(attackerHit);
   const weapon = spell ? null : getAttackerWeapon(attackerHit);
 
@@ -1034,6 +1042,93 @@ function runAttackPrompt(targetKind, targetEntity) {
   appendAttackLog({ attackerName, targetName, weaponName: label, verdict, atk, dmgRoll });
   setCombatStatus(formatAttackSummary({ attackerName, targetName, weaponName: label, verdict, atk, dmgRoll }));
   startContinuousRender();
+}
+
+// M21 — Spell-save resolution flow. Caster attacker, target's save bonus
+// derived per-kind, save roll vs caster's DC, damage applied per the
+// spell's saveOnHalf policy. Mirrors the M11 flow shape so the existing
+// animation + log infrastructure works unchanged.
+function runSpellSavePrompt(attackerHit, targetHit, spell) {
+  const attackerName = entityName(attackerHit);
+  const targetName   = targetHit.entity.name || 'Target';
+  const stat = spell.saveStat || 'DEX';
+
+  // Spell save DC: 8 + ability mod + proficiency. We compute via the
+  // existing M18 helper but inline the DC formula to keep the shape
+  // small here.
+  const sa = spellAttackBonus(attackerHit.entity, spell);
+  const dc = 8 + sa.total;
+
+  // Target save bonus
+  let targetSaveBonus = 0;
+  if (targetHit.kind === 'pc') {
+    targetSaveBonus = saveBonus(targetHit.entity, stat);
+  } else {
+    // Monster: look up SRD save bonus by preset slug. Unknown slugs
+    // default to 0 (no proficiency, no ability mod).
+    targetSaveBonus = monsterSaveBonus(targetHit.entity.presetSlug, stat);
+  }
+
+  // Roll!
+  const result = resolveSpellSave({
+    spell, targetSaveBonus, dc, advantage: 'normal'
+  });
+
+  // Apply damage if the spell deals damage on this outcome.
+  if (result.damage > 0) {
+    applyDamage(targetHit.kind, targetHit.entity.id, result.damage);
+    resolveAttackAnimation(targetHit.entity.id, targetHit.kind, result.damage);
+  }
+  combat.spell = null;
+  cancelAttack();
+  saveScene(currentScene);
+
+  // Log entry — structured save line, distinct from the attack log so
+  // the user can tell at a glance which kind of roll happened.
+  appendSaveLog({
+    attackerName, targetName, spell, dc, stat,
+    targetSaveBonus, result
+  });
+  setCombatStatus(formatSaveSummary({ attackerName, targetName, spell, result }));
+  startContinuousRender();
+}
+
+function formatSaveSummary({ attackerName, targetName, spell, result }) {
+  const verdict = result.save.success ? 'saves' : 'fails';
+  const tail = result.damage > 0
+    ? `→ ${result.damage} ${spell.damageType || 'damage'} (${result.outcome})`
+    : result.outcome === 'half'
+      ? '→ half damage'
+      : result.outcome === 'none'
+        ? '→ no damage'
+        : '→ no damage';
+  return `${attackerName} casts ${spell.name} on ${targetName}: ${targetName} ${verdict} (d20=${result.save.kept}${result.save.bonus >= 0 ? '+' : ''}${result.save.bonus}=${result.save.total} vs DC ${result.save.dc}) ${tail}.`;
+}
+
+function appendSaveLog({ attackerName, targetName, spell, dc, stat, targetSaveBonus, result }) {
+  const wrap = document.getElementById('roll-log');
+  const list = document.getElementById('roll-log-list');
+  if (!wrap || !list) return;
+  wrap.hidden = false;
+  const li = document.createElement('li');
+  const outcomeClass = result.save.success
+    ? (result.outcome === 'half' ? 'roll-hit' : 'roll-miss')
+    : 'roll-hit';
+  li.className = `roll-log-entry ${outcomeClass}`;
+  const outcomeWord = result.save.success
+    ? (result.outcome === 'half' ? 'SAVE (half)' : 'SAVE (no damage)')
+    : 'FAIL';
+  const sign = targetSaveBonus >= 0 ? '+' : '';
+  const dmgLine = result.damage > 0
+    ? `<div class="roll-line">Damage: ${escapeHtml(result.damageRoll.spec)} (rolls ${result.damageRoll.rolls.join(',')}) = <strong>${result.damage}</strong>${spell.damageType ? ' ' + escapeHtml(spell.damageType) : ''}${result.outcome === 'half' ? ' (halved)' : ''}</div>`
+    : '';
+  li.innerHTML = `
+    <div class="roll-headline"><strong>${escapeHtml(attackerName)}</strong> casts <strong>${escapeHtml(spell.name)}</strong> on ${escapeHtml(targetName)} — <span class="roll-outcome">${outcomeWord}</span></div>
+    <div class="roll-line">${escapeHtml(stat)} save: d20=${result.save.kept}${sign}${targetSaveBonus}=${result.save.total} vs DC ${dc}</div>
+    ${dmgLine}
+  `;
+  list.insertBefore(li, list.firstChild);
+  while (list.children.length > 20) list.removeChild(list.lastChild);
 }
 
 // Helper: pull the weapon record the attacker is using. For PCs that's
@@ -1457,14 +1552,13 @@ function renderActionsPanel() {
         // Click handler — only attack-roll spells run through the full
         // combat flow for now. Save-based spells log a reminder so the
         // DM tracks the save manually (auto-save resolution is M19-ish).
-        if (s.available && s.requiresAttackRoll) {
+        if (s.available && (s.requiresAttackRoll || s.requiresSavingThrow)) {
+          // Both branches enter pick-target mode with the spell queued
+          // on combat.spell. runAttackPrompt branches on the spell's
+          // requiresSavingThrow flag to either roll an attack or roll
+          // the target's save.
           row.addEventListener('click', () => {
             beginSpellAttack(subject, s.spell);
-          });
-          row.classList.add('action-row-clickable');
-        } else if (s.available && s.requiresSavingThrow) {
-          row.addEventListener('click', () => {
-            appendRollLog(`${subject.entity.name} casts ${s.name}: targets make DC ${s.saveDC} ${s.saveStat} save (${s.dice || ''}${s.damageType ? ' ' + s.damageType : ''}).`);
           });
           row.classList.add('action-row-clickable');
         }

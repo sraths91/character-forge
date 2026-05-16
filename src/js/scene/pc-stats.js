@@ -215,6 +215,20 @@ export function spellSaveDC(character, spell) {
   return 8 + a.total;
 }
 
+/**
+ * M21 — Save bonus for a single ability.
+ *   = abilityModifier + (proficiency if proficient in this save)
+ * Proficiency comes from character.savingThrowProficiencies (M21 parser).
+ */
+export function saveBonus(character, stat) {
+  if (!character || !stat) return 0;
+  const abilityMod = character.abilityModifiers?.[stat] ?? 0;
+  const profs = character.savingThrowProficiencies || [];
+  const proficient = profs.includes(stat);
+  const prof = proficient ? proficiencyBonus(totalLevel(character)) : 0;
+  return abilityMod + prof;
+}
+
 function magicBonus(weapon) {
   if (!weapon) return 0;
   if (typeof weapon.bonus === 'number') return weapon.bonus;
