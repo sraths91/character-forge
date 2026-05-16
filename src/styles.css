@@ -1040,6 +1040,125 @@ button.primary:disabled { opacity: 0.6; cursor: not-allowed; }
   .recent-label { width: 100%; }
 }
 
+/* M24 — Mobile / touch refinements (applied at and below 768px). The
+   720/768 blocks above handle the layout reflow; this block focuses on
+   touch hit targets (Apple HIG: 44×44 min), condensed panel paddings,
+   and reducing vertical noise so the canvas is the visual anchor. */
+@media (max-width: 768px) {
+  /* Topnav fits 3 buttons even on a 320px screen */
+  .topnav {
+    padding: 6px 8px;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .topnav::-webkit-scrollbar { display: none; }
+  .topnav-btn {
+    padding: 8px 10px;
+    min-height: 44px;
+    font-size: 0.85rem;
+    flex: 1 0 auto;
+  }
+  .topnav-icon { font-size: 1.1rem; }
+
+  /* Buttons and chips meet 44px touch targets */
+  button.primary,
+  button.secondary,
+  #attack-btn,
+  .attack-roll-btn,
+  .feature-roll-btn,
+  .ability-roll-btn {
+    min-height: 44px;
+  }
+  .feature-roll-btn,
+  .attack-roll-btn,
+  .ability-roll-btn {
+    /* Inline 🎲 buttons: keep visual size but enlarge tap area via padding */
+    padding: 8px;
+    min-width: 44px;
+  }
+  .recent-chip,
+  .monster-preset-btn,
+  .scene-preset-btn { min-height: 36px; padding: 8px 12px; }
+
+  /* Action panel rows: collapse the two metadata lines into one when
+     space is tight, larger touch zones on the click-to-log rows */
+  .action-row { padding: 10px 8px; min-height: 56px; }
+  .action-row-meta { font-size: 0.74rem; gap: 6px; flex-wrap: wrap; }
+  .action-row-clickable { padding: 12px 10px; }
+
+  /* Battlefield + monster panel control rows wrap cleanly */
+  .bf-row { gap: 8px; flex-wrap: wrap; }
+  .monster-add-row { flex-wrap: wrap; }
+  .monster-add-row input[type="text"] { flex: 1 1 100%; min-width: 0; }
+
+  /* Combat panel buttons get a touch-friendly row */
+  .combat-actions { gap: 6px; }
+  .combat-actions button { flex: 1 1 calc(50% - 6px); min-height: 44px; }
+
+  /* Conditions grid uses two columns instead of one cramped wrap */
+  .conditions-grid { grid-template-columns: 1fr 1fr; }
+  .monster-conditions-grid { grid-template-columns: 1fr 1fr; }
+  .monster-condition-option { padding: 6px 0; }
+  .conditions-grid label { padding: 6px 0; }
+
+  /* Roll log entries keep breakdown chips on their own line so the d20
+     math doesn't get squished */
+  .roll-log-entry { padding: 8px 6px; }
+  .roll-headline { font-size: 0.82rem; line-height: 1.35; }
+  .roll-breakdown { font-size: 0.72rem; }
+  .roll-breakdown .part { display: inline-block; margin-bottom: 2px; }
+
+  /* AoE picker wraps to two rows */
+  .aoe-row { gap: 6px; }
+  .aoe-row select,
+  .aoe-row input[type="number"] { min-height: 36px; }
+  .aoe-row > button { min-height: 36px; }
+
+  /* Simulator results table: drop the avg-DPR column on narrow screens
+     since it's the least urgent (death rate + avg HP do most of the work) */
+  .sim-table th:nth-child(4),
+  .sim-table td:nth-child(4) { display: none; }
+
+  /* Hover preview is mouse-only; keep it visible but smaller so a tap
+     near a target on a touch device doesn't dominate the view */
+  .attack-preview { font-size: 0.72rem; max-width: 240px; }
+}
+
+/* Very-narrow phones (iPhone SE / Android compact): trade label text
+   for icons to save horizontal space in the topnav, hide the export
+   scale dropdown's verbose options. */
+@media (max-width: 420px) {
+  .topnav-btn { padding: 8px 6px; font-size: 0.78rem; }
+  .topnav-btn .topnav-icon { font-size: 1rem; }
+
+  /* Sheet ability grid: 3 across instead of 6 */
+  .ability-grid { grid-template-columns: repeat(3, 1fr); gap: 4px; }
+  .ability { padding: 4px 6px; }
+  .ability .score { font-size: 1.15rem; }
+
+  /* Smaller, denser export bar so it fits in one row */
+  .export-bar { gap: 6px; }
+  .export-bar > button { font-size: 0.8rem; }
+
+  /* Subtitle is decorative — drop it on tiny screens to give the canvas
+     room above the fold */
+  .subtitle { display: none; }
+}
+
+/* M24 — Touch-device hint: where pointer is coarse, enforce hit targets
+   regardless of viewport width (helps tablets running in landscape). */
+@media (pointer: coarse) {
+  button:not(.attack-roll-btn):not(.feature-roll-btn):not(.ability-roll-btn) {
+    min-height: 40px;
+  }
+  /* Inline dice buttons: pad the tap area but keep the icon small */
+  .attack-roll-btn,
+  .feature-roll-btn,
+  .ability-roll-btn { padding: 6px; min-width: 36px; min-height: 36px; }
+  /* Sliders are notoriously hard on touch — fatten the thumb */
+  input[type="range"] { height: 28px; }
+}
+
 /* Tier 2 — Accessibility (T2.4): visible focus rings on interactive elements */
 button:focus-visible,
 select:focus-visible,
