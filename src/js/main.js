@@ -32,7 +32,9 @@ import { resolveSpellSave } from './scene/save-rolls.js';
 import { simulateEncounter } from './scene/simulator.js';
 import { diffCharacters, describeDiff } from './character/diff-character.js';
 import { buildSceneSnapshot, restoreSceneFromSnapshot } from './scene/scene-snapshot.js';
-import { buildArenaScene, endStateOf, validateArenaInputs } from './scene/versus.js';
+import {
+  buildPartyArenaScene, partyEndStateOf, rollPartyInitiative
+} from './scene/versus.js';
 
 const $ = (id) => document.getElementById(id);
 const status = $('status');
@@ -310,18 +312,32 @@ async function setView(name) {
 // M28 — Versus mode state. Active fight tracking + setup wiring.
 let versusActive = false;
 
+// M29 — Party-versus state: list of monster slugs the user has queued
+// up as the encounter. Each entry is { id, slug, name }. id is local-
+// only and used as a stable key for removal/render.
+let versusEncounter = [];
+
 function populateVersusSetup() {
-  const pcSel = document.getElementById('versus-pc');
-  const monSel = document.getElementById('versus-monster');
-  if (pcSel) {
-    pcSel.innerHTML = '';
+  // Party checkboxes (multi-select all party members)
+  const partyList = document.getElementById('versus-party-list');
+  if (partyList) {
+    partyList.innerHTML = '';
     for (const pc of partyComposedCharacters) {
-      const o = document.createElement('option');
-      o.value = String(pc.id);
-      o.textContent = pc.name || `PC ${pc.id}`;
-      pcSel.appendChild(o);
+      const id = String(pc.id);
+      const label = document.createElement('label');
+      label.className = 'versus-party-option';
+      label.innerHTML = `
+        <input type="checkbox" name="versus-party-member" value="${escapeHtml(id)}" checked />
+        <span>${escapeHtml(pc.name || `PC ${id}`)}</span>
+      `;
+      partyList.appendChild(label);
+    }
+    if (partyComposedCharacters.length === 0) {
+      partyList.innerHTML = '<span class="versus-empty">No party members loaded.</span>';
     }
   }
+
+  const monSel = document.getElementById('versus-monster');
   if (monSel) {
     monSel.innerHTML = '';
     for (const slug of Object.keys(MONSTER_PRESETS)) {
@@ -331,6 +347,7 @@ function populateVersusSetup() {
       monSel.appendChild(o);
     }
   }
+  renderEncounterList();
   document.getElementById('versus-start')?.removeAttribute('hidden');
   document.getElementById('versus-rematch')?.setAttribute('hidden', '');
   document.getElementById('versus-exit')?.setAttribute('hidden', '');
@@ -338,21 +355,63 @@ function populateVersusSetup() {
   if (status) status.textContent = '';
 }
 
+function renderEncounterList() {
+  const list = document.getElementById('versus-encounter-list');
+  if (!list) return;
+  if (versusEncounter.length === 0) {
+    list.innerHTML = '<span class="versus-empty">No opponents added yet.</span>';
+    return;
+  }
+  list.innerHTML = '';
+  for (const e of versusEncounter) {
+    const chip = document.createElement('span');
+    chip.className = 'versus-encounter-chip';
+    chip.innerHTML = `${escapeHtml(e.name)} <button class="versus-remove" data-versus-remove="${escapeHtml(e.id)}" aria-label="Remove ${escapeHtml(e.name)}">✕</button>`;
+    list.appendChild(chip);
+  }
+}
+
+let versusMonsterSeq = 1;
+function addEncounterMonster(slug) {
+  const preset = MONSTER_PRESETS[slug];
+  if (!preset) return;
+  const idx = versusEncounter.filter(e => e.slug === slug).length + 1;
+  versusEncounter.push({
+    id: `vm_${versusMonsterSeq++}`,
+    slug,
+    name: idx === 1 ? preset.name : `${preset.name} ${idx}`
+  });
+  renderEncounterList();
+}
+
+document.addEventListener('click', (e) => {
+  if (e.target.id === 'versus-add-monster') {
+    const slug = document.getElementById('versus-monster')?.value;
+    if (slug) addEncounterMonster(slug);
+    return;
+  }
+  const rem = e.target.dataset?.versusRemove;
+  if (rem) {
+    versusEncounter = versusEncounter.filter(x => x.id !== rem);
+    renderEncounterList();
+  }
+});
+
 function readVersusInputs() {
-  const pcId = document.getElementById('versus-pc')?.value;
-  const monsterPresetSlug = document.getElementById('versus-monster')?.value;
+  const pcIds = [...document.querySelectorAll('[name="versus-party-member"]:checked')]
+    .map(cb => cb.value);
   const mode = [...document.querySelectorAll('[name="versus-mode"]')]
     .find(r => r.checked)?.value || 'roll';
   const logMode = [...document.querySelectorAll('[name="versus-log"]')]
     .find(r => r.checked)?.value || 'keep';
-  return { pcId, monsterPresetSlug, mode, logMode };
+  return { pcIds, mode, logMode };
 }
 
 async function startVersusFight() {
-  const { pcId, monsterPresetSlug, mode, logMode } = readVersusInputs();
+  const { pcIds, mode, logMode } = readVersusInputs();
   const status = document.getElementById('versus-status');
-  const reason = validateArenaInputs({ pcId, monsterPresetSlug, monsterPresets: MONSTER_PRESETS });
-  if (reason) { if (status) status.textContent = reason; return; }
+  if (pcIds.length === 0) { if (status) status.textContent = 'Pick at least one party member.'; return; }
+  if (versusEncounter.length === 0) { if (status) status.textContent = 'Add at least one opponent.'; return; }
 
   // Optionally clear the roll log
   if (logMode === 'reset') {
@@ -362,39 +421,57 @@ async function startVersusFight() {
     if (wrap) wrap.hidden = true;
   }
 
-  // Replace currentScene with the arena. Save the previous active scene
-  // id so we can return to it on Exit. The arena lives in memory only.
   versusPreviousScene = currentScene;
-  const preset = MONSTER_PRESETS[monsterPresetSlug];
-  const monsterInstance = {
-    id: `versus_${Date.now()}`,
-    presetSlug: monsterPresetSlug,
-    name: preset.name,
-    hp: { current: preset.defaultHp?.max || 1, max: preset.defaultHp?.max || 1, temp: 0 },
-    conditions: [],
-    position: { col: 3, row: 1 }
-  };
-  const arena = buildArenaScene({ pcId, monsterInstance });
+  versusPreviousParty = partyComposedCharacters;
+
+  // Build monster instances from the encounter list
+  const monsterInstances = versusEncounter.map((e, i) => {
+    const preset = MONSTER_PRESETS[e.slug];
+    return {
+      id: `versus_${Date.now()}_${i}`,
+      presetSlug: e.slug, name: e.name,
+      hp: { current: preset.defaultHp?.max || 1, max: preset.defaultHp?.max || 1, temp: 0 },
+      conditions: []
+    };
+  });
+
+  // Build the arena: party PCs left, monsters right
+  const arena = buildPartyArenaScene({
+    pcIds, monsterInstances,
+    flankingEnabled: !!currentScene?.flankingEnabled
+  });
   currentScene = arena;
   versusActive = true;
-  // Restrict the party render to just the chosen PC for this arena
-  versusPreviousParty = partyComposedCharacters;
-  partyComposedCharacters = partyComposedCharacters.filter(p => String(p.id) === String(pcId));
+
+  // Filter party to just selected members so the canvas only renders them
+  const selectedSet = new Set(pcIds.map(String));
+  partyComposedCharacters = partyComposedCharacters.filter(p => selectedSet.has(String(p.id)));
+
+  // Roll initiative once at fight start
+  const pcsForInit = partyComposedCharacters;
+  versusInitiative = rollPartyInitiative({ pcs: pcsForInit, monsters: monsterInstances });
+  currentScene.initiative = versusInitiative.map((e, i) => ({
+    entityId: e.entityId, entityKind: e.entityKind,
+    name: e.name, score: e.score, active: i === 0
+  }));
 
   document.getElementById('versus-start')?.setAttribute('hidden', '');
   document.getElementById('versus-rematch')?.removeAttribute('hidden');
   document.getElementById('versus-exit')?.removeAttribute('hidden');
-  if (status) status.textContent = `Fight! ${partyComposedCharacters[0]?.name} vs ${preset.name}. Mode: ${mode}.`;
-
+  if (status) {
+    const partySize = partyComposedCharacters.length;
+    status.textContent = `Fight! ${partySize} PC${partySize === 1 ? '' : 's'} vs ${monsterInstances.length} opponent${monsterInstances.length === 1 ? '' : 's'}. Mode: ${mode}.`;
+  }
   rerender();
 
   if (mode === 'quick') {
-    runVersusQuickStats(pcId, monsterInstance);
+    runVersusQuickStats();
   } else if (mode === 'auto') {
-    runVersusAuto(pcId, monsterInstance);
+    runVersusPartyAuto();
   }
-  // 'roll' mode: user drives via the normal Attack flow.
 }
+
+let versusInitiative = [];
 
 let versusPreviousScene = null;
 let versusPreviousParty = null;
@@ -409,48 +486,93 @@ function exitVersusFight() {
   rerender();
 }
 
-function runVersusQuickStats(pcId, monsterInstance) {
-  // Run 200 Monte Carlo sims via M20 and surface the result
-  const pc = partyComposedCharacters[0];
+// M29 — Quick stats for the full N-vs-M encounter via the M20 simulator.
+function runVersusQuickStats() {
+  const pcsWithPositions = partyComposedCharacters.map((pc, i) => ({
+    ...pc, _position: positionOf(currentScene, pc.id, i)
+  }));
+  const monsters = currentScene.monsters || [];
   const stats = simulateEncounter({
-    party: [{ ...pc, _position: { col: 1, row: 1 } }],
-    monsters: [monsterInstance],
+    party: pcsWithPositions,
+    monsters,
     scene: currentScene,
     iterations: 200,
     seed: Math.floor(Math.random() * 1e9)
   });
   const winPct = Math.round(stats.victoryRate * 100);
   const lossPct = Math.round((stats.monsterVictories / stats.iterations) * 100);
+  const drawPct = Math.round((stats.draws / stats.iterations) * 100);
   const status = document.getElementById('versus-status');
-  if (status) status.textContent = `Quick stats: ${pc.name} wins ${winPct}% / loses ${lossPct}% over ${stats.iterations} sims (avg ${stats.avgRounds.toFixed(1)} rounds).`;
+  if (status) {
+    status.textContent = `Quick stats over 200 sims: party wins ${winPct}% / loses ${lossPct}% / stalemates ${drawPct}% — avg ${stats.avgRounds.toFixed(1)} rounds.`;
+  }
 }
 
-// Auto-fight: drive runAttackPrompt programmatically with a delay
-// between turns so animations have time to play. Stops when either
-// side hits 0 HP or after 30 rounds (safety cap).
-async function runVersusAuto(pcId, monsterInstance) {
+// M29 — Auto-fight in initiative order. Each tick: pick the next alive
+// entity in the rolled initiative list, pick the lowest-HP enemy as
+// target, run runAttackPrompt. Cap at 30 rounds for safety.
+async function runVersusPartyAuto() {
   const status = document.getElementById('versus-status');
+  const order = versusInitiative.slice();   // captured at fight start
+  const stepDelay = 950;                    // ms between turns
+
   for (let round = 1; round <= 30; round++) {
-    // PC turn
-    if (!versusActive) return;
-    const pc = partyComposedCharacters[0];
-    if (pc.hp?.current > 0 && monsterInstance.hp.current > 0) {
-      attackInVersus({ kind: 'pc', entity: pc }, { kind: 'monster', entity: monsterInstance });
-      await new Promise(f => setTimeout(f, 1100));
+    for (const entry of order) {
+      if (!versusActive) return;
+      const entity = resolveEntityById(entry.entityId, entry.entityKind);
+      if (!entity || versusHpOf(entity, entry.entityKind) <= 0) continue;
+
+      // Pick lowest-HP enemy on the opposite side
+      const target = pickLowestHpEnemy(entry.entityKind);
+      if (!target) break;   // no enemies left, end will detect
+
+      attackInVersus({ kind: entry.entityKind, entity }, { kind: target.kind, entity: target.entity });
+      await new Promise(f => setTimeout(f, stepDelay));
+
+      const verdict = currentPartyEndState();
+      if (verdict) return endVersusFight(verdict, round);
     }
-    const end1 = endStateOf({ partyHp: pc.hp?.current ?? 0, monsterHp: monsterInstance.hp.current });
-    if (end1) return endVersusFight(end1, round);
-    // Monster turn
-    if (!versusActive) return;
-    if (monsterInstance.hp.current > 0 && pc.hp?.current > 0) {
-      attackInVersus({ kind: 'monster', entity: monsterInstance }, { kind: 'pc', entity: pc });
-      await new Promise(f => setTimeout(f, 1100));
+    if (status) {
+      const pcHp = partyComposedCharacters.map(p => p.hp?.current ?? 0).reduce((a, b) => a + b, 0);
+      const monHp = (currentScene.monsters || []).map(m => m.hp?.current ?? 0).reduce((a, b) => a + b, 0);
+      status.textContent = `Round ${round}: party HP ${pcHp}, enemy HP ${monHp}.`;
     }
-    const end2 = endStateOf({ partyHp: pc.hp?.current ?? 0, monsterHp: monsterInstance.hp.current });
-    if (end2) return endVersusFight(end2, round);
-    if (status) status.textContent = `Round ${round} complete — ${pc.name} ${pc.hp.current}/${pc.hp.max}, ${monsterInstance.name} ${monsterInstance.hp.current}/${monsterInstance.hp.max}.`;
   }
   endVersusFight('draw', 30);
+}
+
+function resolveEntityById(id, kind) {
+  if (kind === 'pc') return partyComposedCharacters.find(p => String(p.id) === String(id));
+  return (currentScene.monsters || []).find(m => String(m.id) === String(id));
+}
+
+function versusHpOf(entity, kind) {
+  if (kind === 'pc') return entity.hp?.current ?? 0;
+  return entity.hp?.current ?? 0;
+}
+
+function pickLowestHpEnemy(attackerKind) {
+  if (attackerKind === 'pc') {
+    let best = null;
+    for (const m of (currentScene.monsters || [])) {
+      if (m.hp?.current <= 0) continue;
+      if (!best || m.hp.current < best.hp.current) best = m;
+    }
+    return best ? { kind: 'monster', entity: best } : null;
+  }
+  let best = null;
+  for (const p of partyComposedCharacters) {
+    if ((p.hp?.current ?? 0) <= 0) continue;
+    if (!best || p.hp.current < best.hp.current) best = p;
+  }
+  return best ? { kind: 'pc', entity: best } : null;
+}
+
+function currentPartyEndState() {
+  return partyEndStateOf({
+    partyHps: partyComposedCharacters.map(p => p.hp?.current ?? 0),
+    monsterHps: (currentScene.monsters || []).map(m => m.hp?.current ?? 0)
+  });
 }
 
 // Helper: invokes the same combat flow used by manual play, then
@@ -466,14 +588,15 @@ function attackInVersus(attackerHit, targetHit) {
 function endVersusFight(outcome, rounds) {
   const status = document.getElementById('versus-status');
   if (!status) return;
-  const pc = partyComposedCharacters[0];
-  const monsterInstance = currentScene.monsters?.[0];
-  const winnerName = outcome === 'pc-wins' ? pc?.name
-                   : outcome === 'monster-wins' ? monsterInstance?.name
-                   : 'Stalemate';
-  status.textContent = outcome === 'draw'
-    ? `Stalemate after ${rounds} rounds.`
-    : `🏆 ${winnerName} wins in ${rounds} round${rounds === 1 ? '' : 's'}.`;
+  // M29 outcomes: 'party-wins' | 'monsters-win' | 'draw' (single-entity
+  // legacy 'pc-wins' / 'monster-wins' fall through to the same banners).
+  if (outcome === 'draw') {
+    status.textContent = `Stalemate after ${rounds} rounds.`;
+    return;
+  }
+  const partyWon = outcome === 'party-wins' || outcome === 'pc-wins';
+  const label = partyWon ? '🏆 Party wins' : '💀 Monsters win';
+  status.textContent = `${label} in ${rounds} round${rounds === 1 ? '' : 's'}.`;
 }
 
 document.addEventListener('click', (e) => {

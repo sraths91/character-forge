@@ -106,14 +106,23 @@
         <fieldset id="versus-panel" class="versus-panel" hidden>
           <legend>Versus — 1v1 arena</legend>
           <div class="versus-setup" id="versus-setup">
-            <label class="versus-row">
-              <span>Your character</span>
-              <select id="versus-pc"></select>
-            </label>
-            <label class="versus-row">
-              <span>Opponent</span>
-              <select id="versus-monster"></select>
-            </label>
+            <div class="versus-row">
+              <span>Your party</span>
+              <div id="versus-party-list" class="versus-party-list"></div>
+            </div>
+            <div class="versus-row versus-opponents-row">
+              <span>Opponents</span>
+              <div class="versus-opponents-controls">
+                <select id="versus-monster"></select>
+                <button id="versus-add-monster" class="secondary" type="button" title="Add this monster to the encounter">+ Add</button>
+              </div>
+            </div>
+            <div class="versus-row">
+              <span>Encounter</span>
+              <div id="versus-encounter-list" class="versus-encounter-list">
+                <span class="versus-empty">No opponents added yet.</span>
+              </div>
+            </div>
             <div class="versus-row versus-modes">
               <span>Mode</span>
               <label><input type="radio" name="versus-mode" value="roll" checked /><span>Roll each hit</span></label>

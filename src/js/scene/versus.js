@@ -85,3 +85,85 @@ export function validateArenaInputs({ pcId, monsterPresetSlug, monsterPresets } 
   }
   return null;
 }
+
+// ---------- M29: Party combat ----------
+
+/**
+ * Build a wider arena for N PCs vs M monsters. PCs line up along the
+ * left two columns; monsters along the right two. Grid scales with the
+ * larger side to keep entities visible. Default 8×5 grid handles up to
+ * a 6v6 fight comfortably.
+ *
+ *   pcIds            — array of PC character ids (positions assigned)
+ *   monsterInstances — array of monster instance records (positions assigned)
+ *   flankingEnabled  — passthrough scene setting
+ */
+export function buildPartyArenaScene({ pcIds = [], monsterInstances = [], flankingEnabled = false } = {}) {
+  const teamSize = Math.max(pcIds.length, monsterInstances.length);
+  const rows = Math.max(3, Math.min(7, teamSize + 1));
+  const cols = 8;
+  const positions = {};
+  pcIds.forEach((id, i) => {
+    // Column 1 first, then column 0 for the back row
+    const col = i < rows ? 1 : 0;
+    const row = i < rows ? i : (i - rows);
+    positions[String(id)] = { col, row };
+  });
+  const monsters = monsterInstances.map((m, i) => {
+    const col = i < rows ? cols - 2 : cols - 1;
+    const row = i < rows ? i : (i - rows);
+    return { ...m, position: { col, row } };
+  });
+  return {
+    cols, rows, cellSize: 64, scale: 3,
+    map: { kind: 'color', color: '#2a2a2e' },
+    grid: { visible: true, snap: true, color: 'rgba(255,255,255,0.18)' },
+    positions, monsters,
+    initiative: [], flankingEnabled
+  };
+}
+
+/**
+ * End-state across a multi-entity fight. Returns 'party-wins' |
+ * 'monsters-win' | 'draw' | null.
+ *
+ *   partyHps     — array of PC current HP values
+ *   monsterHps   — array of monster current HP values
+ *
+ * Side is "down" when every entity on that side is at <=0 HP.
+ */
+export function partyEndStateOf({ partyHps = [], monsterHps = [] } = {}) {
+  if (partyHps.length === 0 && monsterHps.length === 0) return 'draw';
+  const partyDown   = partyHps.length === 0   || partyHps.every(h => h <= 0);
+  const monstersDown = monsterHps.length === 0 || monsterHps.every(h => h <= 0);
+  if (partyDown && monstersDown) return 'draw';
+  if (partyDown)   return 'monsters-win';
+  if (monstersDown) return 'party-wins';
+  return null;
+}
+
+/**
+ * Roll initiative for every entity on both sides. Each entry:
+ *   { entityId, entityKind, name, score }
+ * Sorted descending by score. Pure: caller injects rng for tests.
+ */
+export function rollPartyInitiative({ pcs = [], monsters = [] } = {}, rng = Math.random) {
+  const d20 = () => 1 + Math.floor(rng() * 20);
+  const dexMod = ent => Number.isFinite(ent.abilityModifiers?.DEX) ? ent.abilityModifiers.DEX : 0;
+  const entries = [];
+  for (const pc of pcs) {
+    entries.push({
+      entityId: pc.id, entityKind: 'pc', name: pc.name || 'PC',
+      score: d20() + dexMod(pc)
+    });
+  }
+  for (const m of monsters) {
+    // Monster preset DEX is rarely available; default to 0 unless explicit
+    entries.push({
+      entityId: m.id, entityKind: 'monster', name: m.name || 'Monster',
+      score: d20()
+    });
+  }
+  entries.sort((a, b) => b.score - a.score);
+  return entries;
+}

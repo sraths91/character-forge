@@ -1892,6 +1892,71 @@ body.party-view-mode .versus-panel:not([hidden]) { display: block; }
 .versus-modes input[type="radio"] { margin: 0; cursor: pointer; }
 .versus-actions { display: flex; gap: 8px; margin-top: 6px; }
 .versus-actions button { min-height: 36px; }
+.versus-party-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  flex: 1;
+}
+.versus-party-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border, #2a2a32);
+  background: var(--surface, #15151a);
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+.versus-party-option:has(input:checked) {
+  border-color: rgba(96, 165, 250, 0.7);
+  background: rgba(96, 165, 250, 0.10);
+}
+.versus-party-option input { margin: 0; cursor: pointer; }
+
+.versus-opponents-row { align-items: stretch; }
+.versus-opponents-controls {
+  display: flex;
+  gap: 6px;
+  flex: 1;
+  align-items: center;
+}
+.versus-opponents-controls select { flex: 1; }
+.versus-opponents-controls button { min-height: 36px; }
+
+.versus-encounter-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  flex: 1;
+}
+.versus-encounter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--surface-2, #1f1f26);
+  border: 1px solid var(--border, #2a2a32);
+  font-size: 0.78rem;
+}
+.versus-remove {
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+  padding: 0 2px;
+  font-size: 0.95rem;
+  line-height: 1;
+}
+.versus-remove:hover { color: var(--danger, #f87171); }
+.versus-empty {
+  font-style: italic;
+  font-size: 0.78rem;
+  color: var(--text-dim);
+}
+
 .versus-status {
   margin: 8px 0 0;
   padding: 6px 10px;
