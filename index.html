@@ -140,6 +140,30 @@
           </div>
           <p id="combat-status" class="combat-status">Ready. Drag entities to position them; press Attack to start a strike.</p>
           <div id="initiative-tracker" class="initiative-tracker"></div>
+
+          <div class="aoe-controls">
+            <div class="aoe-row">
+              <span class="aoe-label">AoE</span>
+              <select id="aoe-shape">
+                <option value="">None</option>
+                <option value="sphere">Sphere</option>
+                <option value="cube">Cube</option>
+                <option value="cone">Cone</option>
+                <option value="line">Line</option>
+              </select>
+              <input type="number" id="aoe-size" min="5" step="5" value="15" title="Size in feet (radius for sphere, side for cube, length for line/cone)" />
+              <span class="aoe-unit">ft</span>
+              <select id="aoe-direction" title="Direction (line / cone)">
+                <option value="east">East ▶</option>
+                <option value="north">North ▲</option>
+                <option value="south">South ▼</option>
+                <option value="west">West ◀</option>
+              </select>
+              <button id="aoe-place" class="secondary" type="button">Place</button>
+              <button id="aoe-clear" class="secondary" type="button">Clear</button>
+            </div>
+            <p id="aoe-status" class="aoe-status hidden"></p>
+          </div>
         </fieldset>
 
         <fieldset id="monsters-panel" class="monsters-panel">

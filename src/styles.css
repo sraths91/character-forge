@@ -1661,6 +1661,43 @@ body.party-view-mode .actions-panel { display: block; }
   transform: translateX(2px);
 }
 .action-row-clickable:active { transform: translateX(0); }
+
+/* M8 — AoE template picker */
+.aoe-controls { margin-top: 10px; }
+.aoe-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.aoe-label {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-dim);
+}
+.aoe-row select,
+.aoe-row input[type="number"] {
+  background: var(--surface, #15151a);
+  border: 1px solid var(--border, #2a2a32);
+  color: var(--text);
+  padding: 3px 6px;
+  border-radius: 6px;
+  font-size: 0.8rem;
+}
+.aoe-row input[type="number"] { width: 4rem; }
+.aoe-unit { font-size: 0.72rem; color: var(--text-dim); }
+.aoe-status {
+  margin: 6px 0 0;
+  font-size: 0.78rem;
+  color: var(--text);
+  font-style: italic;
+  padding: 4px 8px;
+  background: rgba(96, 165, 250, 0.10);
+  border: 1px solid rgba(96, 165, 250, 0.30);
+  border-radius: 6px;
+}
+.aoe-status.hidden { display: none; }
 .action-row-head {
   display: flex;
   justify-content: space-between;

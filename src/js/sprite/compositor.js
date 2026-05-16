@@ -60,7 +60,9 @@ export async function renderBattleScene(canvas, characters, scene, opts = {}) {
     selectedAttackerId = null,   // glowing outline on this entity's cell
     activeTurnId = null,         // turn-order indicator
     animations = null,           // Map<entityId, { kind, startedAt, duration }>
-    popups = null                // array of { targetId, amount, startedAt, duration }
+    popups = null,               // array of { targetId, amount, startedAt, duration }
+    // M8 — AoE template overlay: { cells: [{col,row}], color, label }
+    aoeTemplate = null
   } = opts;
   const list = (characters || []).filter(Boolean);
   const cellPx = scene.cellSize * scene.scale;
@@ -106,6 +108,43 @@ export async function renderBattleScene(canvas, characters, scene, opts = {}) {
       ctx.moveTo(0, y);
       ctx.lineTo(totalW, y);
       ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  // 2.5 M8 — AoE template overlay (below sprites so creatures sit on top).
+  //         Translucent fill on every covered cell + a 2px outline that
+  //         traces only the OUTSIDE edges of the shape so adjacent
+  //         cells share a clean perimeter.
+  if (aoeTemplate?.cells?.length) {
+    const fill   = aoeTemplate.color || 'rgba(96,165,250,0.30)';
+    const stroke = aoeTemplate.strokeColor || 'rgba(96,165,250,0.90)';
+    const cellSet = new Set(aoeTemplate.cells.map(c => `${c.col},${c.row}`));
+    ctx.save();
+    ctx.fillStyle = fill;
+    for (const { col, row } of aoeTemplate.cells) {
+      ctx.fillRect(col * cellPx, row * cellPx, cellPx, cellPx);
+    }
+    ctx.strokeStyle = stroke;
+    ctx.lineWidth = 2;
+    for (const { col, row } of aoeTemplate.cells) {
+      const x = col * cellPx, y = row * cellPx;
+      // Top edge
+      if (!cellSet.has(`${col},${row - 1}`)) {
+        ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + cellPx, y); ctx.stroke();
+      }
+      // Bottom
+      if (!cellSet.has(`${col},${row + 1}`)) {
+        ctx.beginPath(); ctx.moveTo(x, y + cellPx); ctx.lineTo(x + cellPx, y + cellPx); ctx.stroke();
+      }
+      // Left
+      if (!cellSet.has(`${col - 1},${row}`)) {
+        ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x, y + cellPx); ctx.stroke();
+      }
+      // Right
+      if (!cellSet.has(`${col + 1},${row}`)) {
+        ctx.beginPath(); ctx.moveTo(x + cellPx, y); ctx.lineTo(x + cellPx, y + cellPx); ctx.stroke();
+      }
     }
     ctx.restore();
   }

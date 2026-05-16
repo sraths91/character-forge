@@ -19,6 +19,7 @@ import { deriveAC, deriveAttack, deriveWeaponAttack, spellAttackBonus } from './
 import { resolveAttack } from './scene/combat-resolver.js';
 import { factionLists } from './scene/grid-rules.js';
 import { buildActionsFor } from './scene/actions-panel.js';
+import { templateCells, entitiesInTemplate } from './scene/aoe.js';
 
 const $ = (id) => document.getElementById(id);
 const status = $('status');
@@ -122,7 +123,9 @@ function rerender() {
       selectedAttackerId: combat.attacker?.id || null,
       activeTurnId: (currentScene.initiative?.find?.(i => i.active))?.entityId || null,
       animations: entityAnimations,
-      popups: damagePopups
+      popups: damagePopups,
+      // M8 — AoE template (placed + previewed shapes)
+      aoeTemplate: currentAoeTemplate
     });
     renderMonsterPanel();   // sync the side card UI
     renderInitiativeTracker();
@@ -300,6 +303,25 @@ function canvasEventToPixels(event) {
 canvas.addEventListener('pointerdown', (e) => {
   if (viewMode !== 'party') return;
   const { px, py } = canvasEventToPixels(e);
+
+  // M8 — AoE place mode: the next click anchors the template at the
+  // clicked cell. Short-circuits all other modes so dragging is paused.
+  if (aoePlacing) {
+    const cellPx = currentScene.cellSize * currentScene.scale;
+    const col = Math.floor(px / cellPx);
+    const row = Math.floor(py / cellPx);
+    const rebuilt = rebuildAoeTemplateAt(col, row);
+    if (rebuilt) {
+      currentAoeTemplate = rebuilt;
+      aoePlacing = false;
+      showAoeAffected();
+      setCombatStatus('Template placed. Adjust shape/size/direction live, or Clear to remove.');
+      rerender();
+    }
+    e.preventDefault();
+    return;
+  }
+
   const hit = entityAt(currentScene, partyComposedCharacters, px, py);
 
   // M4 — combat mode short-circuits the drag handler. Clicking an entity
@@ -780,6 +802,94 @@ function setCombatStatus(text) {
 // 'normal' / 'advantage' / 'disadvantage' become explicit overrides.
 let combatAdvantage = 'auto';     // 'auto' | 'normal' | 'advantage' | 'disadvantage'
 
+// M8 — Active AoE template. When `placing` is true, the next canvas
+// click anchors the template at the clicked cell. Once placed (cells
+// non-empty) the overlay is drawn in renderBattleScene and the
+// "Affected" listing populates.
+let currentAoeTemplate = null;    // { shape, cells, originCol, originRow, sizeCells, direction, color, strokeColor }
+let aoePlacing = false;
+
+function readAoePicker() {
+  const shape = document.getElementById('aoe-shape')?.value || '';
+  const sizeFt = Number(document.getElementById('aoe-size')?.value) || 15;
+  const direction = document.getElementById('aoe-direction')?.value || 'east';
+  return {
+    shape, direction,
+    sizeCells: shape === 'sphere' ? Math.max(1, Math.round(sizeFt / 5)) : Math.max(1, Math.round(sizeFt / 5))
+  };
+}
+
+function rebuildAoeTemplateAt(originCol, originRow) {
+  const { shape, sizeCells, direction } = readAoePicker();
+  if (!shape) return null;
+  const cells = templateCells({
+    shape, originCol, originRow, sizeCells, direction,
+    cols: currentScene.cols, rows: currentScene.rows
+  });
+  return {
+    shape, sizeCells, direction,
+    originCol, originRow, cells,
+    color: 'rgba(96,165,250,0.30)',
+    strokeColor: 'rgba(96,165,250,0.90)'
+  };
+}
+
+function showAoeAffected() {
+  const status = document.getElementById('aoe-status');
+  if (!status) return;
+  if (!currentAoeTemplate) { status.classList.add('hidden'); status.textContent = ''; return; }
+  const party = partyComposedCharacters.map((pc, i) => ({
+    ...pc, _position: positionOf(currentScene, pc.id, i)
+  }));
+  const monsters = (currentScene.monsters || []);
+  const hits = entitiesInTemplate(currentAoeTemplate.cells, { party, monsters, scene: currentScene });
+  const sizeFt = currentAoeTemplate.sizeCells * 5;
+  const label = `${currentAoeTemplate.shape} ${sizeFt}ft${['line','cone'].includes(currentAoeTemplate.shape) ? ' ' + currentAoeTemplate.direction : ''}`;
+  if (hits.length === 0) {
+    status.textContent = `${label} — no entities in template.`;
+  } else {
+    status.textContent = `${label} — affects: ${hits.map(h => h.entity.name || 'Entity').join(', ')}`;
+  }
+  status.classList.remove('hidden');
+}
+
+document.addEventListener('click', (e) => {
+  if (e.target.id === 'aoe-place') {
+    const { shape } = readAoePicker();
+    if (!shape) {
+      setCombatStatus('Pick a shape first.');
+      return;
+    }
+    aoePlacing = true;
+    setCombatStatus(`Click a cell to anchor the ${shape}. Esc to cancel.`);
+    return;
+  }
+  if (e.target.id === 'aoe-clear') {
+    currentAoeTemplate = null;
+    aoePlacing = false;
+    showAoeAffected();
+    rerender();
+    return;
+  }
+});
+
+// Live-update the template overlay when the user tweaks shape/size/dir
+// AFTER placing — keeps the anchor cell but recomputes geometry.
+document.addEventListener('change', (e) => {
+  if (!['aoe-shape', 'aoe-size', 'aoe-direction'].includes(e.target.id)) return;
+  if (!currentAoeTemplate) return;
+  const rebuilt = rebuildAoeTemplateAt(currentAoeTemplate.originCol, currentAoeTemplate.originRow);
+  if (rebuilt) {
+    currentAoeTemplate = rebuilt;
+    showAoeAffected();
+    rerender();
+  } else {
+    currentAoeTemplate = null;
+    showAoeAffected();
+    rerender();
+  }
+});
+
 document.addEventListener('change', (e) => {
   if (e.target.name !== 'combat-adv') return;
   combatAdvantage = e.target.value;
@@ -1044,6 +1154,11 @@ document.addEventListener('keydown', (e) => {
     hideAttackPreview();
     setCombatStatus('Cancelled.');
     rerender();
+  }
+  // M8 — Esc also cancels AoE placing mode
+  if (e.key === 'Escape' && aoePlacing) {
+    aoePlacing = false;
+    setCombatStatus('AoE placement cancelled.');
   }
 });
 
