@@ -1662,6 +1662,66 @@ body.party-view-mode .actions-panel { display: block; }
 }
 .action-row-clickable:active { transform: translateX(0); }
 
+/* M20 — Monte Carlo simulator results */
+.sim-controls {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin: 10px 0 6px;
+}
+.sim-controls select {
+  background: var(--surface, #15151a);
+  border: 1px solid var(--border, #2a2a32);
+  color: var(--text);
+  padding: 4px 8px;
+  border-radius: 6px;
+  font-size: 0.8rem;
+}
+.sim-results {
+  margin: 4px 0 12px;
+  padding: 10px 12px;
+  background: rgba(96, 165, 250, 0.06);
+  border: 1px solid rgba(96, 165, 250, 0.30);
+  border-radius: 8px;
+}
+.sim-headline {
+  font-size: 0.88rem;
+  font-weight: 600;
+  margin-bottom: 8px;
+  color: var(--text);
+}
+.sim-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.78rem;
+}
+.sim-table th {
+  text-align: left;
+  font-size: 0.7rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  padding: 2px 6px 4px;
+  border-bottom: 1px solid var(--border, #2a2a32);
+}
+.sim-table td {
+  padding: 3px 6px;
+  border-bottom: 1px solid rgba(255,255,255,0.05);
+}
+.sim-name { color: var(--text); font-weight: 500; }
+.sim-row.sim-pc      .sim-name::before { content: '👤 '; }
+.sim-row.sim-monster .sim-name::before { content: '⚔ '; }
+.sim-cell { font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace); }
+.sim-cell.sim-ok   { color: #4ade80; }
+.sim-cell.sim-warn { color: #fbbf24; }
+.sim-cell.sim-bad  { color: #f87171; }
+.sim-disclaimer {
+  margin: 8px 0 0;
+  font-size: 0.7rem;
+  font-style: italic;
+  color: var(--text-dim);
+}
+
 /* M8 — AoE template picker */
 .aoe-controls { margin-top: 10px; }
 .aoe-row {

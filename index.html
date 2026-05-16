@@ -145,6 +145,17 @@
           <p id="combat-status" class="combat-status">Ready. Drag entities to position them; press Attack to start a strike.</p>
           <div id="initiative-tracker" class="initiative-tracker"></div>
 
+          <div class="sim-controls">
+            <button id="sim-run" class="secondary" type="button" title="Monte Carlo: simulate this encounter N times and report victory rate + per-entity stats">🎲 Simulate encounter</button>
+            <select id="sim-iterations">
+              <option value="100">100 runs</option>
+              <option value="500" selected>500 runs</option>
+              <option value="1000">1000 runs</option>
+              <option value="2000">2000 runs</option>
+            </select>
+          </div>
+          <div id="sim-results" class="sim-results" hidden></div>
+
           <div class="aoe-controls">
             <div class="aoe-row">
               <span class="aoe-label">AoE</span>

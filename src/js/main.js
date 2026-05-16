@@ -23,6 +23,7 @@ import { templateCells, entitiesInTemplate } from './scene/aoe.js';
 import { tooltipFor } from './scene/rules-reference.js';
 import { buildTurnTips } from './scene/turn-coach.js';
 import { resolveSpellSave } from './scene/save-rolls.js';
+import { simulateEncounter } from './scene/simulator.js';
 
 const $ = (id) => document.getElementById(id);
 const status = $('status');
@@ -854,6 +855,68 @@ function showAoeAffected() {
     status.textContent = `${label} — affects: ${hits.map(h => h.entity.name || 'Entity').join(', ')}`;
   }
   status.classList.remove('hidden');
+}
+
+// M20 — Monte Carlo simulate button. Snapshots the current scene
+// state (positions, HP, conditions, conditions, combat mods) and runs
+// `iterations` headless encounters. The button shows a "Running…"
+// state during the (sync) loop — typical 500-iteration run completes
+// in well under a second on modern hardware.
+document.addEventListener('click', (e) => {
+  if (e.target.id !== 'sim-run') return;
+  if (viewMode !== 'party') {
+    setCombatStatus('Enter party view to simulate.');
+    return;
+  }
+  const iters = Number(document.getElementById('sim-iterations')?.value) || 500;
+  const btn = e.target;
+  const prev = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = `Running ${iters}…`;
+  // Defer to next frame so the UI can repaint the button state
+  requestAnimationFrame(() => {
+    const party = partyComposedCharacters.map((pc, i) => ({
+      ...pc, _position: positionOf(currentScene, pc.id, i)
+    }));
+    const monsters = (currentScene.monsters || []);
+    const stats = simulateEncounter({
+      party, monsters, scene: currentScene,
+      iterations: iters,
+      seed: Math.floor(Math.random() * 1e9)
+    });
+    renderSimResults(stats);
+    btn.disabled = false;
+    btn.textContent = prev;
+  });
+});
+
+function renderSimResults(stats) {
+  const wrap = document.getElementById('sim-results');
+  if (!wrap) return;
+  wrap.hidden = false;
+  const winPct = Math.round(stats.victoryRate * 100);
+  const losePct = Math.round((stats.monsterVictories / stats.iterations) * 100);
+  const drawPct = Math.round((stats.draws / stats.iterations) * 100);
+  const headline = `Party wins ${winPct}% · loses ${losePct}% · stalemate ${drawPct}% · avg ${stats.avgRounds.toFixed(1)} rounds`;
+  const rows = stats.entities.map(e => {
+    const deathPct = Math.round(e.deathRate * 100);
+    const hpAvg = e.avgFinalHp.toFixed(1);
+    const dpr = (e.avgDamageDealt / Math.max(1, stats.avgRounds)).toFixed(1);
+    return `<tr class="sim-row sim-${e.kind}">
+      <td class="sim-name">${escapeHtml(e.name)}</td>
+      <td class="sim-cell sim-${deathPct >= 50 ? 'bad' : deathPct >= 25 ? 'warn' : 'ok'}">${deathPct}% drop</td>
+      <td class="sim-cell">${hpAvg} / ${e.hpMax} HP</td>
+      <td class="sim-cell">${dpr} DPR</td>
+    </tr>`;
+  }).join('');
+  wrap.innerHTML = `
+    <div class="sim-headline">${escapeHtml(headline)}</div>
+    <table class="sim-table">
+      <thead><tr><th>Entity</th><th>Death rate</th><th>Avg final HP</th><th>Avg DPR</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+    <p class="sim-disclaimer">v1 simulation: each entity uses its primary weapon attack only — no spells, multiattack, movement, or healing. Results sample current state; re-run after position or condition changes.</p>
+  `;
 }
 
 document.addEventListener('click', (e) => {
