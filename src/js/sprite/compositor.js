@@ -62,7 +62,9 @@ export async function renderBattleScene(canvas, characters, scene, opts = {}) {
     animations = null,           // Map<entityId, { kind, startedAt, duration }>
     popups = null,               // array of { targetId, amount, startedAt, duration }
     // M8 — AoE template overlay: { cells: [{col,row}], color, label }
-    aoeTemplate = null
+    aoeTemplate = null,
+    // M27 — Effect queue (list of effect descriptors from scene/effects.js)
+    effects = null
   } = opts;
   const list = (characters || []).filter(Boolean);
   const cellPx = scene.cellSize * scene.scale;
@@ -149,13 +151,38 @@ export async function renderBattleScene(canvas, characters, scene, opts = {}) {
     ctx.restore();
   }
 
+  // M27 — Sprite displacement map (lunge / recoil). Pre-computed before
+  // drawing so sprites land in the displaced position naturally rather
+  // than redrawing later. Each lunge moves the attacker ~25% of a cell
+  // toward the target, peaking mid-animation; recoil does the same
+  // moving away. The render loop ticks every frame so the bob looks
+  // smooth even without re-allocation.
+  const displacementById = new Map();
+  if (Array.isArray(effects) && effects.length > 0) {
+    const now = performance.now();
+    for (const e of effects) {
+      if (e.kind !== 'lunge' && e.kind !== 'recoil') continue;
+      const elapsed = now - e.startedAt;
+      if (elapsed < 0 || elapsed > e.duration) continue;
+      const t = elapsed / e.duration;
+      // Easing: peak at mid then return to 0. sin(πt) gives a clean bell.
+      const magnitude = Math.sin(t * Math.PI) * cellPx * 0.28;
+      const dirVec = DIR_VEC[e.direction] || DIR_VEC.east;
+      const ox = dirVec.dc * magnitude;
+      const oy = dirVec.dr * magnitude;
+      const cur = displacementById.get(e.entityId) || { x: 0, y: 0 };
+      displacementById.set(e.entityId, { x: cur.x + ox, y: cur.y + oy });
+    }
+  }
+
   // 3. Characters (PCs)
   let totalGenerated = 0;
   for (let i = 0; i < list.length; i++) {
     const ch = list[i];
     const pos = positionOf ? positionOf(scene, ch.id, i) : { col: i, row: 0 };
-    const x = pos.col * cellPx;
-    const y = pos.row * cellPx;
+    const disp = displacementById.get(ch.id) || { x: 0, y: 0 };
+    const x = pos.col * cellPx + disp.x;
+    const y = pos.row * cellPx + disp.y;
     const r = await drawCharacterAt(ctx, ch, {
       x, y, scale: scene.scale, direction, frameIdx
     });
@@ -169,8 +196,9 @@ export async function renderBattleScene(canvas, characters, scene, opts = {}) {
   for (const mc of monsterCharacters) {
     const pos = mc._position;
     if (!pos) continue;
-    const x = pos.col * cellPx;
-    const y = pos.row * cellPx;
+    const disp = displacementById.get(mc.id) || { x: 0, y: 0 };
+    const x = pos.col * cellPx + disp.x;
+    const y = pos.row * cellPx + disp.y;
     const r = await drawCharacterAt(ctx, mc, {
       x, y, scale: scene.scale, direction, frameIdx
     });
@@ -242,7 +270,253 @@ export async function renderBattleScene(canvas, characters, scene, opts = {}) {
     }
   }
 
+  // 5e. M27 — Effect primitives (slash arcs, projectiles, beams,
+  //     bursts, AoE fills, divine glows, shadow strikes, glyph rises).
+  //     Lunge / recoil already applied as sprite displacement above.
+  if (Array.isArray(effects) && effects.length > 0) {
+    const now = performance.now();
+    for (const e of effects) {
+      const elapsed = now - e.startedAt;
+      if (elapsed < 0 || elapsed > e.duration) continue;
+      const t = elapsed / e.duration;
+      renderEffect(ctx, e, t, cellPx);
+    }
+  }
+
   return { canvas, generatedCount: totalGenerated, cellCount: list.length + monsterCharacters.length };
+}
+
+// M27 — Direction unit vectors for sprite displacement.
+const DIR_VEC = {
+  north: { dc: 0,  dr: -1 },
+  south: { dc: 0,  dr: 1  },
+  east:  { dc: 1,  dr: 0  },
+  west:  { dc: -1, dr: 0  }
+};
+
+// M27 — Render a single effect descriptor at progress `t` (0..1).
+// Each primitive has its own visual signature; colors come from the
+// effect record (set per damage type by the effects module).
+function renderEffect(ctx, e, t, cellPx) {
+  switch (e.kind) {
+    case 'slash-arc':     return renderSlashArc(ctx, e, t, cellPx);
+    case 'thrust':        return renderThrust(ctx, e, t, cellPx);
+    case 'bash':          return renderBash(ctx, e, t, cellPx);
+    case 'projectile':    return renderProjectile(ctx, e, t, cellPx);
+    case 'beam':          return renderBeam(ctx, e, t, cellPx);
+    case 'burst':         return renderBurst(ctx, e, t, cellPx);
+    case 'aoe-fill':      return renderAoeFill(ctx, e, t, cellPx);
+    case 'divine-glow':   return renderDivineGlow(ctx, e, t, cellPx);
+    case 'shadow-strike': return renderShadowStrike(ctx, e, t, cellPx);
+    case 'glyph-rise':    return renderGlyphRise(ctx, e, t, cellPx);
+    // lunge / recoil handled as sprite displacement, no overlay
+    default: return;
+  }
+}
+
+function cellCenter(pos, cellPx) {
+  return { x: pos.col * cellPx + cellPx / 2, y: pos.row * cellPx + cellPx / 2 };
+}
+
+function renderSlashArc(ctx, e, t, cellPx) {
+  const a = cellCenter(e.from, cellPx);
+  const b = cellCenter(e.to, cellPx);
+  // Midpoint with a perpendicular offset → curved arc
+  const dx = b.x - a.x, dy = b.y - a.y;
+  const len = Math.hypot(dx, dy) || 1;
+  const nx = -dy / len, ny = dx / len;
+  const mid = { x: (a.x + b.x) / 2 + nx * cellPx * 0.4, y: (a.y + b.y) / 2 + ny * cellPx * 0.4 };
+  const alpha = Math.sin(t * Math.PI) * 0.85;
+  ctx.save();
+  ctx.strokeStyle = e.color;
+  ctx.globalAlpha = alpha;
+  ctx.lineWidth = Math.max(3, cellPx * 0.08);
+  ctx.shadowColor = e.color;
+  ctx.shadowBlur = cellPx * 0.25;
+  ctx.beginPath();
+  ctx.moveTo(a.x, a.y);
+  ctx.quadraticCurveTo(mid.x, mid.y, b.x, b.y);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function renderThrust(ctx, e, t, cellPx) {
+  const a = cellCenter(e.from, cellPx);
+  const b = cellCenter(e.to, cellPx);
+  // Extend halfway out then retract; peak extension at t=0.5
+  const phase = t < 0.5 ? t * 2 : (1 - t) * 2;
+  const tipX = a.x + (b.x - a.x) * phase;
+  const tipY = a.y + (b.y - a.y) * phase;
+  const alpha = 0.9 - Math.abs(0.5 - t) * 0.4;
+  ctx.save();
+  ctx.strokeStyle = e.color;
+  ctx.globalAlpha = alpha;
+  ctx.lineWidth = Math.max(4, cellPx * 0.1);
+  ctx.shadowColor = e.color;
+  ctx.shadowBlur = cellPx * 0.3;
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(a.x, a.y);
+  ctx.lineTo(tipX, tipY);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function renderBash(ctx, e, t, cellPx) {
+  // Expanding ring at target position
+  const c = cellCenter(e.to, cellPx);
+  const radius = cellPx * 0.2 + t * cellPx * 0.45;
+  const alpha = (1 - t) * 0.85;
+  ctx.save();
+  ctx.strokeStyle = e.color;
+  ctx.globalAlpha = alpha;
+  ctx.lineWidth = Math.max(2, cellPx * 0.06) * (1 - t * 0.5);
+  ctx.shadowColor = e.color;
+  ctx.shadowBlur = cellPx * 0.2;
+  ctx.beginPath();
+  ctx.arc(c.x, c.y, radius, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function renderProjectile(ctx, e, t, cellPx) {
+  const a = cellCenter(e.from, cellPx);
+  const b = cellCenter(e.to, cellPx);
+  // Projectile head travels from a→b across t. Trail behind it.
+  const hx = a.x + (b.x - a.x) * t;
+  const hy = a.y + (b.y - a.y) * t;
+  ctx.save();
+  // Trail
+  ctx.strokeStyle = e.color;
+  ctx.globalAlpha = 0.55;
+  ctx.lineWidth = Math.max(3, cellPx * 0.07);
+  ctx.lineCap = 'round';
+  ctx.shadowColor = e.color;
+  ctx.shadowBlur = cellPx * 0.2;
+  ctx.beginPath();
+  // Trail tail at slightly behind position (15% of full trip)
+  const tx = a.x + (b.x - a.x) * Math.max(0, t - 0.18);
+  const ty = a.y + (b.y - a.y) * Math.max(0, t - 0.18);
+  ctx.moveTo(tx, ty);
+  ctx.lineTo(hx, hy);
+  ctx.stroke();
+  // Head (bright dot)
+  ctx.fillStyle = e.color;
+  ctx.globalAlpha = 1;
+  ctx.beginPath();
+  ctx.arc(hx, hy, cellPx * 0.10, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+function renderBeam(ctx, e, t, cellPx) {
+  const a = cellCenter(e.from, cellPx);
+  const b = cellCenter(e.to, cellPx);
+  // Beam fades in then out; thicker mid-animation
+  const alpha = Math.sin(t * Math.PI) * 0.95;
+  const thickness = Math.max(3, cellPx * 0.06) + Math.sin(t * Math.PI) * cellPx * 0.04;
+  ctx.save();
+  ctx.strokeStyle = e.color;
+  ctx.globalAlpha = alpha;
+  ctx.lineWidth = thickness;
+  ctx.lineCap = 'round';
+  ctx.shadowColor = e.color;
+  ctx.shadowBlur = cellPx * 0.4;
+  ctx.beginPath();
+  ctx.moveTo(a.x, a.y);
+  ctx.lineTo(b.x, b.y);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function renderBurst(ctx, e, t, cellPx) {
+  // Two expanding rings + bright core
+  const c = cellCenter(e.to, cellPx);
+  ctx.save();
+  ctx.shadowColor = e.color;
+  ctx.shadowBlur = cellPx * 0.3;
+  // Outer ring
+  ctx.strokeStyle = e.color;
+  ctx.globalAlpha = (1 - t) * 0.7;
+  ctx.lineWidth = Math.max(2, cellPx * 0.05);
+  ctx.beginPath();
+  ctx.arc(c.x, c.y, cellPx * 0.15 + t * cellPx * 0.55, 0, Math.PI * 2);
+  ctx.stroke();
+  // Inner core (filled)
+  ctx.fillStyle = e.color;
+  ctx.globalAlpha = (1 - t) * 0.85;
+  ctx.beginPath();
+  ctx.arc(c.x, c.y, cellPx * 0.18 * (1 - t * 0.6), 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+function renderAoeFill(ctx, e, t, cellPx) {
+  if (!Array.isArray(e.cells)) return;
+  // Pulse: fade in fast, hold, fade out
+  const alpha = t < 0.2 ? t * 5 * 0.5 : 0.5 * (1 - (t - 0.2) / 0.8);
+  ctx.save();
+  ctx.fillStyle = e.color;
+  ctx.globalAlpha = Math.max(0, alpha);
+  for (const c of e.cells) {
+    ctx.fillRect(c.col * cellPx, c.row * cellPx, cellPx, cellPx);
+  }
+  ctx.restore();
+}
+
+function renderDivineGlow(ctx, e, t, cellPx) {
+  // Halo: bright ring that pulses outward + inward
+  const c = cellCenter(e.to, cellPx);
+  ctx.save();
+  ctx.shadowColor = e.color;
+  ctx.shadowBlur = cellPx * 0.5;
+  ctx.strokeStyle = e.color;
+  ctx.globalAlpha = Math.sin(t * Math.PI) * 0.9;
+  ctx.lineWidth = Math.max(2, cellPx * 0.06);
+  ctx.beginPath();
+  ctx.arc(c.x, c.y, cellPx * 0.4 * (1 + Math.sin(t * Math.PI * 2) * 0.15), 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function renderShadowStrike(ctx, e, t, cellPx) {
+  // Dark vignette + red slash flash
+  const c = cellCenter(e.to, cellPx);
+  ctx.save();
+  // Dark vignette
+  const grd = ctx.createRadialGradient(c.x, c.y, cellPx * 0.1, c.x, c.y, cellPx * 0.7);
+  grd.addColorStop(0, `rgba(0,0,0,${0.7 * (1 - t)})`);
+  grd.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = grd;
+  ctx.fillRect(c.x - cellPx, c.y - cellPx, cellPx * 2, cellPx * 2);
+  // Red flash on top
+  ctx.strokeStyle = e.color || '#dc2626';
+  ctx.globalAlpha = Math.sin(t * Math.PI) * 0.85;
+  ctx.lineWidth = Math.max(3, cellPx * 0.08);
+  ctx.beginPath();
+  ctx.moveTo(c.x - cellPx * 0.35, c.y - cellPx * 0.25);
+  ctx.lineTo(c.x + cellPx * 0.35, c.y + cellPx * 0.25);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(c.x - cellPx * 0.25, c.y + cellPx * 0.35);
+  ctx.lineTo(c.x + cellPx * 0.25, c.y - cellPx * 0.35);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function renderGlyphRise(ctx, e, t, cellPx) {
+  const c = cellCenter(e.to, cellPx);
+  const y = c.y - t * cellPx * 0.9;
+  ctx.save();
+  ctx.font = `${Math.floor(cellPx * 0.45)}px serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.shadowColor = e.color;
+  ctx.shadowBlur = cellPx * 0.3;
+  ctx.globalAlpha = 1 - t * 0.85;
+  ctx.fillStyle = e.color;
+  ctx.fillText(e.glyph || '✨', c.x, y);
+  ctx.restore();
 }
 
 // M2.5 — Image cache. Decoded HTMLImageElements keyed by data-url so

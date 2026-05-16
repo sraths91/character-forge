@@ -12,8 +12,14 @@ import { MONSTER_PRESETS, buildMonsterCharacter, monsterSaveBonus } from './scen
 import {
   combat, beginAttack, cancelAttack, selectAttacker,
   resolveAttack as resolveAttackAnimation,
-  pruneExpired, hasActiveAnimations, entityAnimations, damagePopups
+  pruneExpired, hasActiveAnimations, entityAnimations, damagePopups,
+  pushEffects, effects as effectQueue
 } from './scene/combat.js';
+import {
+  effectsForWeaponHit, effectsForWeaponMiss,
+  effectsForSpellAttack, effectsForSaveSpell,
+  effectsForFeatureTrigger
+} from './scene/effects.js';
 import { rollAttack, rollDamage, describeAttack } from './scene/combat-roll.js';
 import { deriveAC, deriveAttack, deriveWeaponAttack, spellAttackBonus, saveBonus } from './scene/pc-stats.js';
 import { resolveAttack } from './scene/combat-resolver.js';
@@ -131,7 +137,9 @@ function rerender() {
       animations: entityAnimations,
       popups: damagePopups,
       // M8 — AoE template (placed + previewed shapes)
-      aoeTemplate: currentAoeTemplate
+      aoeTemplate: currentAoeTemplate,
+      // M27 — Per-action effect descriptors
+      effects: effectQueue
     });
     renderMonsterPanel();   // sync the side card UI
     renderInitiativeTracker();
@@ -1097,6 +1105,51 @@ function runAttackPrompt(targetKind, targetEntity) {
   }
   // Feed into combat.js (animation + floating popup). Animations only
   // fire on hit since the existing pipeline expects a damage amount.
+  // M27 — additionally push the per-action effect descriptors so the
+  // compositor draws slash arcs / projectiles / bursts on top of the
+  // existing M4 flash animation.
+  const attackerForFx = {
+    id: attackerHit.entity.id,
+    _position: attackerHit.kind === 'pc'
+      ? positionOf(currentScene, attackerHit.entity.id, partyComposedCharacters.indexOf(attackerHit.entity))
+      : attackerHit.entity.position
+  };
+  const targetForFx = {
+    id: targetEntity.id,
+    _position: targetKind === 'pc'
+      ? positionOf(currentScene, targetEntity.id, partyComposedCharacters.indexOf(targetEntity))
+      : targetEntity.position
+  };
+  if (spell) {
+    pushEffects(effectsForSpellAttack({
+      attacker: attackerForFx, target: targetForFx,
+      spell: { ...spell, damageType: verdict.damage.damageType },
+      hit: atk.hit
+    }));
+  } else {
+    const isRanged = !!verdict.weaponIsRanged;
+    const weaponForFx = { ...(weapon || {}), damageType: verdict.damage.damageType };
+    if (atk.hit) {
+      pushEffects(effectsForWeaponHit({
+        attacker: attackerForFx, target: targetForFx,
+        weapon: weaponForFx, isRanged, crit: !!atk.crit
+      }));
+    } else {
+      pushEffects(effectsForWeaponMiss({
+        attacker: attackerForFx, target: targetForFx,
+        weapon: weaponForFx, isRanged
+      }));
+    }
+  }
+  // M27 — Surface class-feature effect cues (e.g. Sneak Attack shadow
+  // strike) for any available feature when the hit lands.
+  if (atk.hit && Array.isArray(verdict.features)) {
+    for (const f of verdict.features) {
+      if (!f.available) continue;
+      pushEffects(effectsForFeatureTrigger({ feature: f, target: targetForFx }));
+    }
+  }
+
   if (atk.hit) {
     resolveAttackAnimation(targetEntity.id, targetKind, damage);
   } else {
@@ -1147,6 +1200,23 @@ function runSpellSavePrompt(attackerHit, targetHit, spell) {
     applyDamage(targetHit.kind, targetHit.entity.id, result.damage);
     resolveAttackAnimation(targetHit.entity.id, targetHit.kind, result.damage);
   }
+  // M27 — Save-spell visual: burst at target colored by damage type.
+  const attackerForFx = {
+    id: attackerHit.entity.id,
+    _position: attackerHit.kind === 'pc'
+      ? positionOf(currentScene, attackerHit.entity.id, partyComposedCharacters.indexOf(attackerHit.entity))
+      : attackerHit.entity.position
+  };
+  const targetForFx = {
+    id: targetHit.entity.id,
+    _position: targetHit.kind === 'pc'
+      ? positionOf(currentScene, targetHit.entity.id, partyComposedCharacters.indexOf(targetHit.entity))
+      : targetHit.entity.position
+  };
+  pushEffects(effectsForSaveSpell({
+    attacker: attackerForFx, target: targetForFx,
+    spell, damaged: result.damage > 0
+  }));
   combat.spell = null;
   cancelAttack();
   saveScene(currentScene);

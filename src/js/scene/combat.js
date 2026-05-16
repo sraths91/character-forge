@@ -34,6 +34,25 @@ export const entityAnimations = new Map();
 // Floating "-X" damage numbers. Each: { id, targetId, amount, startedAt, duration }
 export const damagePopups = [];
 
+// M27 — Effect queue. Each entry is an effect descriptor from
+// scene/effects.js (slash-arc, projectile, beam, burst, aoe-fill,
+// divine-glow, shadow-strike, lunge, recoil, glyph-rise, plus the
+// thrust/bash variants). The compositor's overlay pass iterates this
+// every frame and renders progress-driven shapes on top of sprites.
+export const effects = [];
+
+/**
+ * Append one or many effect descriptors to the queue. Each effect must
+ * already carry { startedAt, duration } — the effects module assigns
+ * timestamps when it builds the descriptor sequence so multi-stage
+ * effects (lunge → arc → recoil) cascade correctly.
+ */
+export function pushEffects(arr) {
+  if (!arr) return;
+  if (Array.isArray(arr)) effects.push(...arr);
+  else effects.push(arr);
+}
+
 let popupSeq = 1;
 const DEFAULT_ANIM_MS = {
   attack: 280,
@@ -106,11 +125,16 @@ export function pruneExpired() {
     const p = damagePopups[i];
     if (now > p.startedAt + p.duration) damagePopups.splice(i, 1);
   }
-  return entityAnimations.size > 0 || damagePopups.length > 0;
+  // M27 — Effect queue garbage collection
+  for (let i = effects.length - 1; i >= 0; i--) {
+    const e = effects[i];
+    if (now > e.startedAt + e.duration) effects.splice(i, 1);
+  }
+  return entityAnimations.size > 0 || damagePopups.length > 0 || effects.length > 0;
 }
 
 export function hasActiveAnimations() {
-  return entityAnimations.size > 0 || damagePopups.length > 0;
+  return entityAnimations.size > 0 || damagePopups.length > 0 || effects.length > 0;
 }
 
 /** Animation progress 0..1, or null if not started yet / already expired. */
