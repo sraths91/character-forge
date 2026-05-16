@@ -1781,6 +1781,62 @@ body.party-view-mode .actions-panel { display: block; }
 }
 .action-row-clickable:active { transform: translateX(0); }
 
+/* M26 — Read-only mode (recipient of a scene-snapshot share link).
+   Strips out edit affordances so a player following along can't
+   accidentally clobber the scene they're viewing. */
+.readonly-banner {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 16px;
+  background: rgba(251, 191, 36, 0.16);
+  border-bottom: 1px solid rgba(251, 191, 36, 0.45);
+  color: var(--text);
+  font-size: 0.85rem;
+}
+.readonly-exit {
+  color: var(--accent, #60a5fa);
+  text-decoration: underline;
+  font-size: 0.82rem;
+}
+.readonly-exit:hover { color: var(--text); }
+body.readonly-mode .monster-add-row,
+body.readonly-mode .combat-actions,
+body.readonly-mode .combat-adv-row,
+body.readonly-mode .aoe-controls,
+body.readonly-mode .sim-controls,
+body.readonly-mode #scene-reset-positions,
+body.readonly-mode .monster-remove,
+body.readonly-mode #add-to-party,
+body.readonly-mode .bf-scene-actions,
+body.readonly-mode .scene-preset-list,
+body.readonly-mode .bf-image-row,
+body.readonly-mode #share-scene,
+body.readonly-mode #share-link {
+  display: none !important;
+}
+body.readonly-mode .monster-hp-range,
+body.readonly-mode #hp-range,
+body.readonly-mode .conditions-grid input,
+body.readonly-mode .monster-conditions input,
+body.readonly-mode select,
+body.readonly-mode .action-row-clickable,
+body.readonly-mode .attack-roll-btn,
+body.readonly-mode .feature-roll-btn,
+body.readonly-mode .ability-roll-btn {
+  pointer-events: none;
+  opacity: 0.6;
+}
+body.readonly-mode #sprite-canvas {
+  cursor: default !important;
+  /* drag-to-position fires on pointerdown — the JS handler exits early
+     when readonly-mode is on, so this is just a visual cue. */
+}
+
 /* M23 — Re-sync banner shown after a re-import detects changes */
 .sync-banner {
   margin: 10px 0;

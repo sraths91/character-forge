@@ -25,6 +25,7 @@ import { buildTurnTips } from './scene/turn-coach.js';
 import { resolveSpellSave } from './scene/save-rolls.js';
 import { simulateEncounter } from './scene/simulator.js';
 import { diffCharacters, describeDiff } from './character/diff-character.js';
+import { buildSceneSnapshot, restoreSceneFromSnapshot } from './scene/scene-snapshot.js';
 
 const $ = (id) => document.getElementById(id);
 const status = $('status');
@@ -307,6 +308,9 @@ function canvasEventToPixels(event) {
 
 canvas.addEventListener('pointerdown', (e) => {
   if (viewMode !== 'party') return;
+  // M26 — Read-only mode (recipient of a shared scene snapshot)
+  // disables all canvas interactions; the page is for viewing only.
+  if (document.body.classList.contains('readonly-mode')) return;
   const { px, py } = canvasEventToPixels(e);
 
   // M8 — AoE place mode: the next click anchors the template at the
@@ -1993,6 +1997,28 @@ function buildShareUrl() {
   return url.toString();
 }
 
+// M26 — Async scene snapshot share. Encodes the full visual state
+// (party member ids + scene positions / monsters / HP / conditions /
+// initiative) into the URL hash. Recipients open it in read-only mode:
+// no drag, no attack, no monster spawning — just the live scene as
+// the DM has it. Lets a player follow along on their phone without
+// screen-share.
+function buildSceneShareUrl() {
+  if (viewMode !== 'party') return null;
+  const ids = (partyComposedCharacters || []).map(c => String(c.id)).filter(Boolean);
+  if (ids.length === 0) return null;
+  const payload = {
+    party: ids,
+    scene: buildSceneSnapshot(currentScene),
+    ro: true,
+    d: currentDirection !== 'south' ? currentDirection : undefined
+  };
+  const encoded = b64urlEncode(JSON.stringify(payload));
+  const url = new URL(window.location.href);
+  url.hash = `s=${encoded}`;
+  return url.toString();
+}
+
 async function consumeShareLink() {
   if (!window.location.hash.startsWith('#s=')) return false;
   try {
@@ -2016,6 +2042,20 @@ async function consumeShareLink() {
       saveParty(payload.party.map(String));
       refreshParty();
       if (payload.d) currentDirection = payload.d;
+
+      // M26 — Scene snapshot share: when the payload carries a `scene`
+      // field, restore that scene IN MEMORY (not into the multi-scene
+      // container, so the recipient's own saved scenes are untouched).
+      // The `ro` flag puts the page in read-only mode so the recipient
+      // can't accidentally edit the borrowed scene.
+      if (payload.scene) {
+        const restored = restoreSceneFromSnapshot(payload.scene);
+        currentScene = restored;
+      }
+      if (payload.ro) {
+        document.body.classList.add('readonly-mode');
+        renderReadOnlyBanner();
+      }
       await enterPartyView();
       return true;
     }
@@ -2030,11 +2070,52 @@ async function consumeShareLink() {
   }
 }
 
+// M26 — Read-only banner shown at the top of the page when a snapshot
+// share has been loaded. Includes an "Exit" link that strips the hash
+// + reloads, restoring the recipient's own state.
+function renderReadOnlyBanner() {
+  if (document.getElementById('readonly-banner')) return;
+  const banner = document.createElement('div');
+  banner.id = 'readonly-banner';
+  banner.className = 'readonly-banner';
+  banner.innerHTML = `
+    <span>👁 Viewing a shared scene snapshot — read-only. Your own scenes are untouched.</span>
+    <a href="#" class="readonly-exit" id="readonly-exit">Exit shared view</a>
+  `;
+  document.body.insertBefore(banner, document.body.firstChild);
+}
+
+document.addEventListener('click', (e) => {
+  if (e.target.id !== 'readonly-exit') return;
+  e.preventDefault();
+  // Drop the hash, reload to restore normal state
+  history.replaceState(null, '', window.location.pathname + window.location.search);
+  window.location.reload();
+});
+
 // Queued by consumeShareLink() and consumed inside render() so the shared
 // customizations beat localStorage's saved state for this session only.
 let pendingShareOverrides = null;
 
 document.addEventListener('click', async (e) => {
+  if (e.target.id === 'share-scene') {
+    const btn = e.target;
+    const url = buildSceneShareUrl();
+    if (!url) { setStatus('Enter party view first.', 'error'); return; }
+    if (!navigator.clipboard?.writeText) {
+      setStatus('Clipboard not available — copy the URL from your address bar.', 'error');
+      return;
+    }
+    const prev = btn.textContent;
+    try {
+      await navigator.clipboard.writeText(url);
+      btn.textContent = '✓ Scene link copied';
+      setTimeout(() => { btn.textContent = prev; }, 2200);
+    } catch (err) {
+      setStatus(`Could not copy: ${err.message}`, 'error');
+    }
+    return;
+  }
   if (e.target.id !== 'share-link') return;
   const btn = e.target;
   const url = buildShareUrl();
