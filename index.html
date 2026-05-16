@@ -23,6 +23,9 @@
     <button class="topnav-btn" data-view="combat" type="button" title="Open the combat / DM tools">
       <span class="topnav-icon" aria-hidden="true">⚔</span> Combat
     </button>
+    <button class="topnav-btn" data-view="versus" type="button" title="1v1 versus mode: test your character against a single monster">
+      <span class="topnav-icon" aria-hidden="true">🥊</span> Versus
+    </button>
   </nav>
 
   <main class="app">
@@ -99,6 +102,37 @@
             </div>
           </details>
         </div>
+
+        <fieldset id="versus-panel" class="versus-panel" hidden>
+          <legend>Versus — 1v1 arena</legend>
+          <div class="versus-setup" id="versus-setup">
+            <label class="versus-row">
+              <span>Your character</span>
+              <select id="versus-pc"></select>
+            </label>
+            <label class="versus-row">
+              <span>Opponent</span>
+              <select id="versus-monster"></select>
+            </label>
+            <div class="versus-row versus-modes">
+              <span>Mode</span>
+              <label><input type="radio" name="versus-mode" value="roll" checked /><span>Roll each hit</span></label>
+              <label><input type="radio" name="versus-mode" value="auto" /><span>Auto-fight</span></label>
+              <label><input type="radio" name="versus-mode" value="quick" /><span>Quick stats (200 sims)</span></label>
+            </div>
+            <div class="versus-row versus-modes">
+              <span>Log</span>
+              <label><input type="radio" name="versus-log" value="keep" checked /><span>Save to log</span></label>
+              <label><input type="radio" name="versus-log" value="reset" /><span>Fresh log each fight</span></label>
+            </div>
+            <div class="versus-actions">
+              <button id="versus-start" class="primary" type="button">Start fight</button>
+              <button id="versus-exit"  class="secondary" type="button" hidden>Exit versus</button>
+              <button id="versus-rematch" class="secondary" type="button" hidden>Rematch</button>
+            </div>
+            <p id="versus-status" class="versus-status"></p>
+          </div>
+        </fieldset>
 
         <fieldset id="actions-panel" class="actions-panel">
           <legend>Actions</legend>

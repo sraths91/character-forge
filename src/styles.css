@@ -1837,6 +1837,72 @@ body.readonly-mode #sprite-canvas {
      when readonly-mode is on, so this is just a visual cue. */
 }
 
+/* M28 — Versus mode setup card */
+.versus-panel {
+  display: none;
+  margin-top: 16px;
+  padding: 12px;
+  background: linear-gradient(180deg, rgba(96,165,250,0.10), rgba(96,165,250,0.04));
+  border: 1px solid rgba(96, 165, 250, 0.45);
+  border-radius: 10px;
+}
+body.party-view-mode .versus-panel[hidden=""],
+body.party-view-mode .versus-panel:not([hidden]) { display: block; }
+.versus-panel legend {
+  padding: 0 6px;
+  color: var(--text);
+  font-weight: 600;
+  font-size: 0.85rem;
+}
+.versus-setup {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.versus-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.versus-row > span:first-child {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+  min-width: 6rem;
+}
+.versus-row select {
+  flex: 1;
+  min-height: 36px;
+  background: var(--surface, #15151a);
+  border: 1px solid var(--border, #2a2a32);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 0.85rem;
+}
+.versus-modes { flex-wrap: wrap; }
+.versus-modes label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+.versus-modes input[type="radio"] { margin: 0; cursor: pointer; }
+.versus-actions { display: flex; gap: 8px; margin-top: 6px; }
+.versus-actions button { min-height: 36px; }
+.versus-status {
+  margin: 8px 0 0;
+  padding: 6px 10px;
+  background: rgba(0, 0, 0, 0.20);
+  border-radius: 6px;
+  font-size: 0.82rem;
+  color: var(--text);
+  font-style: italic;
+  min-height: 1.4em;
+}
+
 /* M23 — Re-sync banner shown after a re-import detects changes */
 .sync-banner {
   margin: 10px 0;

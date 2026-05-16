@@ -32,6 +32,7 @@ import { resolveSpellSave } from './scene/save-rolls.js';
 import { simulateEncounter } from './scene/simulator.js';
 import { diffCharacters, describeDiff } from './character/diff-character.js';
 import { buildSceneSnapshot, restoreSceneFromSnapshot } from './scene/scene-snapshot.js';
+import { buildArenaScene, endStateOf, validateArenaInputs } from './scene/versus.js';
 
 const $ = (id) => document.getElementById(id);
 const status = $('status');
@@ -263,17 +264,36 @@ function syncTopnav() {
 async function setView(name) {
   if (name === 'character') {
     if (viewMode === 'party') exitPartyView();
+    versusActive = false;
+    document.getElementById('versus-panel')?.setAttribute('hidden', '');
     syncTopnav();
     return;
   }
+  // M28 — Versus mode: enters party-view with an ephemeral arena scene.
+  // Setup card is shown; the user picks PC + monster + mode + log mode,
+  // then clicks Start fight.
+  if (name === 'versus') {
+    if (partyComposedCharacters.length === 0) {
+      await enterPartyView();
+      if (viewMode !== 'party') return;   // empty party bail
+    } else if (viewMode !== 'party') {
+      await enterPartyView();
+      if (viewMode !== 'party') return;
+    }
+    populateVersusSetup();
+    document.getElementById('versus-panel')?.removeAttribute('hidden');
+    document.querySelectorAll('.topnav-btn').forEach(b =>
+      b.classList.toggle('active', b.dataset.view === 'versus'));
+    return;
+  }
+  // Hide versus panel when navigating elsewhere
+  document.getElementById('versus-panel')?.setAttribute('hidden', '');
+  versusActive = false;
+
   // Both 'party' and 'combat' require the party canvas
   if (viewMode !== 'party') {
     await enterPartyView();
-    if (viewMode !== 'party') {
-      // enterPartyView bailed (empty party). Leave nav state untouched —
-      // syncTopnav inside enterPartyView already handles the success path.
-      return;
-    }
+    if (viewMode !== 'party') return;
   }
   if (name === 'combat') {
     const combatPanel = document.getElementById('combat-panel');
@@ -283,10 +303,184 @@ async function setView(name) {
       setTimeout(() => combatPanel.classList.remove('combat-panel-focus'), 1500);
     }
   }
-  // For party+combat, mark the actual clicked view as active (not party)
   document.querySelectorAll('.topnav-btn').forEach(b =>
     b.classList.toggle('active', b.dataset.view === name));
 }
+
+// M28 — Versus mode state. Active fight tracking + setup wiring.
+let versusActive = false;
+
+function populateVersusSetup() {
+  const pcSel = document.getElementById('versus-pc');
+  const monSel = document.getElementById('versus-monster');
+  if (pcSel) {
+    pcSel.innerHTML = '';
+    for (const pc of partyComposedCharacters) {
+      const o = document.createElement('option');
+      o.value = String(pc.id);
+      o.textContent = pc.name || `PC ${pc.id}`;
+      pcSel.appendChild(o);
+    }
+  }
+  if (monSel) {
+    monSel.innerHTML = '';
+    for (const slug of Object.keys(MONSTER_PRESETS)) {
+      const o = document.createElement('option');
+      o.value = slug;
+      o.textContent = MONSTER_PRESETS[slug].name;
+      monSel.appendChild(o);
+    }
+  }
+  document.getElementById('versus-start')?.removeAttribute('hidden');
+  document.getElementById('versus-rematch')?.setAttribute('hidden', '');
+  document.getElementById('versus-exit')?.setAttribute('hidden', '');
+  const status = document.getElementById('versus-status');
+  if (status) status.textContent = '';
+}
+
+function readVersusInputs() {
+  const pcId = document.getElementById('versus-pc')?.value;
+  const monsterPresetSlug = document.getElementById('versus-monster')?.value;
+  const mode = [...document.querySelectorAll('[name="versus-mode"]')]
+    .find(r => r.checked)?.value || 'roll';
+  const logMode = [...document.querySelectorAll('[name="versus-log"]')]
+    .find(r => r.checked)?.value || 'keep';
+  return { pcId, monsterPresetSlug, mode, logMode };
+}
+
+async function startVersusFight() {
+  const { pcId, monsterPresetSlug, mode, logMode } = readVersusInputs();
+  const status = document.getElementById('versus-status');
+  const reason = validateArenaInputs({ pcId, monsterPresetSlug, monsterPresets: MONSTER_PRESETS });
+  if (reason) { if (status) status.textContent = reason; return; }
+
+  // Optionally clear the roll log
+  if (logMode === 'reset') {
+    const list = document.getElementById('roll-log-list');
+    if (list) list.innerHTML = '';
+    const wrap = document.getElementById('roll-log');
+    if (wrap) wrap.hidden = true;
+  }
+
+  // Replace currentScene with the arena. Save the previous active scene
+  // id so we can return to it on Exit. The arena lives in memory only.
+  versusPreviousScene = currentScene;
+  const preset = MONSTER_PRESETS[monsterPresetSlug];
+  const monsterInstance = {
+    id: `versus_${Date.now()}`,
+    presetSlug: monsterPresetSlug,
+    name: preset.name,
+    hp: { current: preset.defaultHp?.max || 1, max: preset.defaultHp?.max || 1, temp: 0 },
+    conditions: [],
+    position: { col: 3, row: 1 }
+  };
+  const arena = buildArenaScene({ pcId, monsterInstance });
+  currentScene = arena;
+  versusActive = true;
+  // Restrict the party render to just the chosen PC for this arena
+  versusPreviousParty = partyComposedCharacters;
+  partyComposedCharacters = partyComposedCharacters.filter(p => String(p.id) === String(pcId));
+
+  document.getElementById('versus-start')?.setAttribute('hidden', '');
+  document.getElementById('versus-rematch')?.removeAttribute('hidden');
+  document.getElementById('versus-exit')?.removeAttribute('hidden');
+  if (status) status.textContent = `Fight! ${partyComposedCharacters[0]?.name} vs ${preset.name}. Mode: ${mode}.`;
+
+  rerender();
+
+  if (mode === 'quick') {
+    runVersusQuickStats(pcId, monsterInstance);
+  } else if (mode === 'auto') {
+    runVersusAuto(pcId, monsterInstance);
+  }
+  // 'roll' mode: user drives via the normal Attack flow.
+}
+
+let versusPreviousScene = null;
+let versusPreviousParty = null;
+
+function exitVersusFight() {
+  if (versusPreviousScene) currentScene = versusPreviousScene;
+  if (versusPreviousParty) partyComposedCharacters = versusPreviousParty;
+  versusActive = false;
+  versusPreviousScene = null;
+  versusPreviousParty = null;
+  populateVersusSetup();
+  rerender();
+}
+
+function runVersusQuickStats(pcId, monsterInstance) {
+  // Run 200 Monte Carlo sims via M20 and surface the result
+  const pc = partyComposedCharacters[0];
+  const stats = simulateEncounter({
+    party: [{ ...pc, _position: { col: 1, row: 1 } }],
+    monsters: [monsterInstance],
+    scene: currentScene,
+    iterations: 200,
+    seed: Math.floor(Math.random() * 1e9)
+  });
+  const winPct = Math.round(stats.victoryRate * 100);
+  const lossPct = Math.round((stats.monsterVictories / stats.iterations) * 100);
+  const status = document.getElementById('versus-status');
+  if (status) status.textContent = `Quick stats: ${pc.name} wins ${winPct}% / loses ${lossPct}% over ${stats.iterations} sims (avg ${stats.avgRounds.toFixed(1)} rounds).`;
+}
+
+// Auto-fight: drive runAttackPrompt programmatically with a delay
+// between turns so animations have time to play. Stops when either
+// side hits 0 HP or after 30 rounds (safety cap).
+async function runVersusAuto(pcId, monsterInstance) {
+  const status = document.getElementById('versus-status');
+  for (let round = 1; round <= 30; round++) {
+    // PC turn
+    if (!versusActive) return;
+    const pc = partyComposedCharacters[0];
+    if (pc.hp?.current > 0 && monsterInstance.hp.current > 0) {
+      attackInVersus({ kind: 'pc', entity: pc }, { kind: 'monster', entity: monsterInstance });
+      await new Promise(f => setTimeout(f, 1100));
+    }
+    const end1 = endStateOf({ partyHp: pc.hp?.current ?? 0, monsterHp: monsterInstance.hp.current });
+    if (end1) return endVersusFight(end1, round);
+    // Monster turn
+    if (!versusActive) return;
+    if (monsterInstance.hp.current > 0 && pc.hp?.current > 0) {
+      attackInVersus({ kind: 'monster', entity: monsterInstance }, { kind: 'pc', entity: pc });
+      await new Promise(f => setTimeout(f, 1100));
+    }
+    const end2 = endStateOf({ partyHp: pc.hp?.current ?? 0, monsterHp: monsterInstance.hp.current });
+    if (end2) return endVersusFight(end2, round);
+    if (status) status.textContent = `Round ${round} complete — ${pc.name} ${pc.hp.current}/${pc.hp.max}, ${monsterInstance.name} ${monsterInstance.hp.current}/${monsterInstance.hp.max}.`;
+  }
+  endVersusFight('draw', 30);
+}
+
+// Helper: invokes the same combat flow used by manual play, then
+// dispatches a synthetic pointer click on the target cell so the
+// existing pointerdown handler fires the attack with full M11/M27
+// effect playback.
+function attackInVersus(attackerHit, targetHit) {
+  combat.attacker = { id: attackerHit.entity.id, kind: attackerHit.kind };
+  combat.mode = 'pick-target';
+  runAttackPrompt(targetHit.kind, targetHit.entity);
+}
+
+function endVersusFight(outcome, rounds) {
+  const status = document.getElementById('versus-status');
+  if (!status) return;
+  const pc = partyComposedCharacters[0];
+  const monsterInstance = currentScene.monsters?.[0];
+  const winnerName = outcome === 'pc-wins' ? pc?.name
+                   : outcome === 'monster-wins' ? monsterInstance?.name
+                   : 'Stalemate';
+  status.textContent = outcome === 'draw'
+    ? `Stalemate after ${rounds} rounds.`
+    : `🏆 ${winnerName} wins in ${rounds} round${rounds === 1 ? '' : 's'}.`;
+}
+
+document.addEventListener('click', (e) => {
+  if (e.target.id === 'versus-start')   { startVersusFight(); return; }
+  if (e.target.id === 'versus-rematch') { startVersusFight(); return; }
+  if (e.target.id === 'versus-exit')    { exitVersusFight();  return; }
+});
 
 document.addEventListener('click', (e) => {
   const btn = e.target.closest('.topnav-btn');
