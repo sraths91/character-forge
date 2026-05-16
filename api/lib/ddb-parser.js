@@ -23,6 +23,7 @@ export function parseCharacter(raw) {
   const feats = parseFeats(raw);
   const classFeatures = parseClassFeatures(raw);
   const combatMods = parseCombatModifiers(raw);
+  const spells = parseSpells(raw);
   const hp = parseHitPoints(raw, abilityScores, level);
   const deathSaves = parseDeathSaves(raw);
 
@@ -45,6 +46,7 @@ export function parseCharacter(raw) {
     feats,
     classFeatures,
     combatMods,
+    spells,
     // Note: skinTone is intentionally NOT set here. The renderer's
     // inferSkinTone() consults character.appearance.skin first (via the
     // E1 appearance-parser) and falls back to a race default — setting
@@ -492,6 +494,149 @@ function indexClassFeatureNames(classes) {
     }
   }
   return map;
+}
+
+// M18 — Spell parser.
+//
+// D&DB exposes a character's spells in two shapes:
+//   raw.classSpells[]  — class-granted prepared spells (the big bucket)
+//   raw.spells.{race,feat,item} — innate/granted spells from other sources
+//
+// We pull both, filter to "things you'd cast at a target" (attack-roll or
+// save-based damage-dealing), and normalize into a compact shape the
+// combat resolver and Actions panel can consume.
+//
+// Each spell carries `spellCastingAbilityId` (DDB stat id 1-6) so the
+// resolver can compute spell attack bonus / save DC per-spell rather
+// than per-character (multiclass can mix WIS-cleric + CHA-warlock).
+//
+// Healing and pure-buff spells (Bless, Cure Wounds, Mage Armor) are
+// surfaced too with kind='utility' so the Actions panel can show them
+// without trying to attack-roll them. Filtering happens at the panel
+// layer, not here, so future spell mechanics (heal, buff) can hook in.
+
+const STAT_NAMES_BY_DDB_ID = { 1: 'STR', 2: 'DEX', 3: 'CON', 4: 'INT', 5: 'WIS', 6: 'CHA' };
+
+export function parseSpells(raw) {
+  const collected = [];
+  // Map characterClassId → spellCastingAbilityId. D&DB puts the ability
+  // on classes[].definition.spellCastingAbilityId (Cleric = 5/WIS,
+  // Wizard = 4/INT, etc.). The classSpells[] groups are keyed by
+  // characterClassId, NOT the class definition id, so we go through
+  // raw.classes to map each prepared spell back to its caster ability.
+  const abilityByCharacterClassId = new Map();
+  for (const cls of (raw.classes || [])) {
+    const ability = cls?.definition?.spellCastingAbilityId
+      ?? cls?.subclassDefinition?.spellCastingAbilityId
+      ?? null;
+    if (cls?.id != null && ability != null) {
+      abilityByCharacterClassId.set(cls.id, ability);
+    }
+  }
+
+  // Class spells (Cleric prepared list, etc.)
+  for (const cs of (raw.classSpells || [])) {
+    const classAbility = cs.spellCastingAbilityId
+      ?? abilityByCharacterClassId.get(cs.characterClassId)
+      ?? null;
+    for (const entry of (cs.spells || [])) {
+      collected.push({ entry, classCastingAbility: classAbility });
+    }
+  }
+  // Granted spells from race/feat/item/background (e.g. Magic Initiate,
+  // Mark of Sentinel races, Ring of Spell Storing).
+  const grantedBuckets = ['race', 'feat', 'item', 'background'];
+  for (const b of grantedBuckets) {
+    const list = raw.spells?.[b];
+    if (!Array.isArray(list)) continue;
+    for (const entry of list) {
+      collected.push({ entry, classCastingAbility: null });
+    }
+  }
+
+  const out = [];
+  for (const { entry, classCastingAbility } of collected) {
+    const def = entry?.definition;
+    if (!def) continue;
+    // Only surface spells that are actually accessible right now.
+    // Cantrips (level 0) are always accessible; leveled spells must be
+    // `prepared` OR `alwaysPrepared` (Twilight Domain's domain spells).
+    const isCantrip = def.level === 0;
+    if (!isCantrip && !entry.prepared && !entry.alwaysPrepared) continue;
+
+    const spell = {
+      name: def.name,
+      level: def.level,
+      school: def.school || null,
+      // Range: rangeValue (in feet) for ranged; origin for "Self"/"Touch".
+      range: def.range?.rangeValue
+        ? { kind: 'ranged', feet: def.range.rangeValue }
+        : { kind: (def.range?.origin || 'self').toLowerCase(), feet: 0 },
+      // Damage / dice. Cantrips often have an `atHigherLevels.scaleType`
+      // that bumps the die count at L5/11/17, but for v1 we use the
+      // base die unscaled. Caster level scaling can be a later pass.
+      dice: extractSpellDice(def),
+      damageType: extractSpellDamageType(def),
+      requiresAttackRoll: !!def.requiresAttackRoll,
+      requiresSavingThrow: !!def.requiresSavingThrow,
+      saveStat: STAT_NAMES_BY_DDB_ID[def.saveDcAbilityId] || null,
+      ritual: !!def.ritual,
+      concentration: def.duration?.durationType === 'Concentration',
+      // Spellcasting ability for THIS spell — per-spell override beats
+      // class default. Used by the resolver to compute attack bonus.
+      spellCastingAbility:
+        STAT_NAMES_BY_DDB_ID[entry.spellCastingAbilityId] ||
+        STAT_NAMES_BY_DDB_ID[classCastingAbility] ||
+        null,
+      // Slot info: usesSpellSlot=true means a leveled spell that consumes
+      // a slot of `castAtLevel`. Cantrips have usesSpellSlot=false.
+      usesSpellSlot: !!entry.usesSpellSlot,
+      castAtLevel: entry.castAtLevel || def.level,
+      // Kind classification — drives the actions panel category.
+      // attack-roll spells go in 'spell-attack', save-based in 'spell-save',
+      // healing spells get 'heal', everything else 'utility'.
+      kind: classifySpellKind(def)
+    };
+    out.push(spell);
+  }
+  // Sort: cantrips first, then by level asc, then by name. Predictable order.
+  out.sort((a, b) => a.level - b.level || a.name.localeCompare(b.name));
+  return out;
+}
+
+function extractSpellDice(def) {
+  // D&DB stores damage dice on def.modifiers[].die for the base "deal damage" modifier.
+  // Healing spells use def.healingDice / def.healing instead.
+  const mods = Array.isArray(def.modifiers) ? def.modifiers : [];
+  // Damage modifier first — prefer one tagged with a damage subType.
+  const damageMod = mods.find(m => /damage$/i.test(m.subType || '') && m.die?.diceString);
+  if (damageMod?.die?.diceString) return damageMod.die.diceString;
+  // Fall back to first die we find
+  const anyDie = mods.find(m => m.die?.diceString);
+  if (anyDie) return anyDie.die.diceString;
+  // Healing spells: def.healingDice is sometimes set
+  if (Array.isArray(def.healingDice) && def.healingDice[0]?.diceString) {
+    return def.healingDice[0].diceString;
+  }
+  return null;
+}
+
+function extractSpellDamageType(def) {
+  const mods = Array.isArray(def.modifiers) ? def.modifiers : [];
+  const dmg = mods.find(m => /damage$/i.test(m.subType || ''));
+  if (!dmg) return null;
+  // SubType is like "fire-damage", "radiant-damage", etc.
+  const m = String(dmg.subType || '').match(/^(.+)-damage$/);
+  if (!m) return null;
+  return m[1].charAt(0).toUpperCase() + m[1].slice(1);
+}
+
+function classifySpellKind(def) {
+  if (def.requiresAttackRoll) return 'spell-attack';
+  if (def.requiresSavingThrow) return 'spell-save';
+  if (Array.isArray(def.healingDice) && def.healingDice.length) return 'heal';
+  if (def.healing) return 'heal';
+  return 'utility';
 }
 
 export function formatUses(limitedUse) {

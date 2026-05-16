@@ -15,7 +15,7 @@ import {
   pruneExpired, hasActiveAnimations, entityAnimations, damagePopups
 } from './scene/combat.js';
 import { rollAttack, rollDamage, describeAttack } from './scene/combat-roll.js';
-import { deriveAC, deriveAttack, deriveWeaponAttack } from './scene/pc-stats.js';
+import { deriveAC, deriveAttack, deriveWeaponAttack, spellAttackBonus } from './scene/pc-stats.js';
 import { resolveAttack } from './scene/combat-resolver.js';
 import { factionLists } from './scene/grid-rules.js';
 import { buildActionsFor } from './scene/actions-panel.js';
@@ -814,9 +814,14 @@ function runAttackPrompt(targetKind, targetEntity) {
   }
   const attackerName = entityName(attackerHit);
   const targetName   = targetEntity.name || 'Target';
-  const attack       = getAttackStats(attackerHit);
   const ac           = getAC(targetHit);
-  const weapon       = getAttackerWeapon(attackerHit);
+
+  // M18 — If a spell was set on combat.spell, route through the spell
+  // path: spell attack bonus, spell dice, scope='spell'. Otherwise the
+  // existing weapon path.
+  const spell = combat.spell || null;
+  const attack = spell ? null : getAttackStats(attackerHit);
+  const weapon = spell ? null : getAttackerWeapon(attackerHit);
 
   // M14 — Build allies + hostiles lists for the attacker so the resolver
   // can evaluate flanking (allies on opposite side of target) and the
@@ -828,28 +833,43 @@ function runAttackPrompt(targetKind, targetEntity) {
     monsters: (currentScene.monsters || [])
   });
 
+  // Build attackStats — spell path uses spellAttackBonus; weapon path uses
+  // the existing M6 derivation.
+  let attackStats;
+  if (spell) {
+    const sa = spellAttackBonus(attackerHit.entity, spell);
+    attackStats = {
+      bonus: sa.total,
+      dice:  spell.dice || '1d8',
+      damageType: spell.damageType,
+      parts: sa.parts,
+      damageParts: []
+    };
+  } else {
+    attackStats = {
+      bonus: attack.bonus,
+      dice:  attack.dice,
+      damageType: attack.damageType,
+      parts: [{ source: weapon?.name || attack.name || 'Attack', value: attack.bonus }],
+      damageParts: []
+    };
+  }
+
   // M11 — Run the resolver to determine the *real* d20 mode, auto-crit,
-  // auto-miss, and breakdown. The UI radio is now an override; default
-  // 'auto' lets conditions decide.
+  // auto-miss, and breakdown. ctx.spell tells the resolver to use the
+  // 'spell' scope so M12 modifiers like Amulet of the Devout +1 apply.
   const verdict = resolveAttack({
     attacker: attackerHit.entity,
     target: targetEntity,
     weapon,
+    spell,
     scene: currentScene,
     attackerKind: attackerHit.kind,
     targetKind,
     targetAC: ac,
     advantageOverride: combatAdvantage,
     allies, hostiles,
-    // Attacker stats come from the per-context derivation (M6 for PCs,
-    // monster preset for monsters); resolver doesn't re-derive.
-    attackStats: {
-      bonus: attack.bonus,
-      dice:  attack.dice,
-      damageType: attack.damageType,
-      parts: [{ source: weapon?.name || attack.name || 'Attack', value: attack.bonus }],
-      damageParts: []
-    }
+    attackStats
   });
 
   // Hard refusals (charmed, attacker incapacitated): show the blocker and
@@ -894,9 +914,13 @@ function runAttackPrompt(targetKind, targetEntity) {
   } else {
     cancelAttack();
   }
+  // M18 — Spell rolls always clear combat.spell so the next attack
+  // defaults back to weapon mode.
+  const label = spell?.name || weapon?.name || attack?.name || 'Attack';
+  combat.spell = null;
   saveScene(currentScene);
-  appendAttackLog({ attackerName, targetName, weaponName: weapon?.name || attack.name, verdict, atk, dmgRoll });
-  setCombatStatus(formatAttackSummary({ attackerName, targetName, weaponName: weapon?.name || attack.name, verdict, atk, dmgRoll }));
+  appendAttackLog({ attackerName, targetName, weaponName: label, verdict, atk, dmgRoll });
+  setCombatStatus(formatAttackSummary({ attackerName, targetName, weaponName: label, verdict, atk, dmgRoll }));
   startContinuousRender();
 }
 
@@ -1016,6 +1040,7 @@ function startContinuousRender() {
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && combat.mode !== 'idle') {
     cancelAttack();
+    combat.spell = null;
     hideAttackPreview();
     setCombatStatus('Cancelled.');
     rerender();
@@ -1180,14 +1205,27 @@ function renderActionsPanel() {
   subjectEl.textContent = subject.entity.name || 'Unnamed';
 
   // Pre-resolve _position for every PC + monster so the actions builder
-  // can find them on the grid without separate lookups.
+  // can find them on the grid without separate lookups. The subject
+  // entity must also be augmented — positionOf falls back to a default
+  // grid slot when no drag-saved position exists, but the actions
+  // module's plain lookup doesn't, so we need to feed it the resolved
+  // position explicitly.
   const party = partyComposedCharacters.map((pc, i) => ({
     ...pc, _position: positionOf(currentScene, pc.id, i)
   }));
   const monsters = (currentScene.monsters || []).map(m => ({ ...m }));
 
+  // Find the subject in the augmented party (PC) or monsters (monster)
+  // so it has a resolved _position.
+  let augmentedSubject = subject.entity;
+  if (subject.kind === 'pc') {
+    augmentedSubject = party.find(p => String(p.id) === String(subject.entity.id)) || subject.entity;
+  } else {
+    augmentedSubject = monsters.find(m => String(m.id) === String(subject.entity.id)) || subject.entity;
+  }
+
   const result = buildActionsFor({
-    entity: subject.entity, kind: subject.kind,
+    entity: augmentedSubject, kind: subject.kind,
     scene: currentScene, party, monsters
   });
 
@@ -1226,6 +1264,71 @@ function renderActionsPanel() {
         ${hints}
       `;
       attackList.appendChild(row);
+    }
+  }
+
+  // M18 — Spells
+  const spellList = document.getElementById('actions-spells-list');
+  if (spellList) {
+    spellList.innerHTML = '';
+    const spells = result.spells || [];
+    if (spells.length === 0) {
+      spellList.innerHTML = '<div class="actions-empty">No spells prepared.</div>';
+    } else {
+      for (const s of spells) {
+        const row = document.createElement('div');
+        row.className = `action-row ${s.available ? 'available' : 'unavailable'}`;
+        const levelLabel = s.level === 0 ? 'Cantrip' : `L${s.level}`;
+        const sign = s.attackBonus >= 0 ? '+' : '';
+        // For attack-roll spells show the to-hit + damage. For save-based
+        // spells show the DC + damage + the save stat the target rolls.
+        let statChip = '';
+        if (s.requiresAttackRoll) {
+          statChip = `<span class="action-stat">${sign}${s.attackBonus} to hit · ${escapeHtml(s.dice || '')}${s.damageType ? ' ' + escapeHtml(s.damageType) : ''}</span>`;
+        } else if (s.requiresSavingThrow) {
+          statChip = `<span class="action-stat">DC ${s.saveDC} ${escapeHtml(s.saveStat || 'save')} · ${escapeHtml(s.dice || '')}${s.damageType ? ' ' + escapeHtml(s.damageType) : ''}</span>`;
+        } else if (s.dice) {
+          statChip = `<span class="action-stat">${escapeHtml(s.dice)}${s.damageType ? ' ' + escapeHtml(s.damageType) : ''}</span>`;
+        }
+        const meta = [];
+        meta.push(`<span class="action-source">${escapeHtml(levelLabel)}${s.school ? ' · ' + escapeHtml(s.school) : ''}${s.concentration ? ' · Conc.' : ''}${s.requiresSavingThrow && !s.requiresAttackRoll ? ' · Save spell' : ''}</span>`);
+        if (s.rangeKind === 'ranged') {
+          meta.push(`<span class="action-range">Range ${s.rangeFt} ft</span>`);
+        } else {
+          meta.push(`<span class="action-range">${escapeHtml(s.rangeKind || 'self')}</span>`);
+        }
+        if (s.available) {
+          if (s.requiresAttackRoll || s.requiresSavingThrow) {
+            meta.push(`<span class="action-status ok">${s.targetsInRange.length} target${s.targetsInRange.length === 1 ? '' : 's'} in range</span>`);
+          }
+        } else {
+          meta.push(`<span class="action-status off">${escapeHtml(s.blockReason || 'unavailable')}</span>`);
+        }
+        row.innerHTML = `
+          <div class="action-row-head">
+            <span class="action-name">${escapeHtml(s.name)}</span>
+            ${statChip}
+          </div>
+          <div class="action-row-meta">
+            ${meta.join('')}
+          </div>
+        `;
+        // Click handler — only attack-roll spells run through the full
+        // combat flow for now. Save-based spells log a reminder so the
+        // DM tracks the save manually (auto-save resolution is M19-ish).
+        if (s.available && s.requiresAttackRoll) {
+          row.addEventListener('click', () => {
+            beginSpellAttack(subject, s.spell);
+          });
+          row.classList.add('action-row-clickable');
+        } else if (s.available && s.requiresSavingThrow) {
+          row.addEventListener('click', () => {
+            appendRollLog(`${subject.entity.name} casts ${s.name}: targets make DC ${s.saveDC} ${s.saveStat} save (${s.dice || ''}${s.damageType ? ' ' + s.damageType : ''}).`);
+          });
+          row.classList.add('action-row-clickable');
+        }
+        spellList.appendChild(row);
+      }
     }
   }
 
@@ -1273,6 +1376,18 @@ function renderActionsPanel() {
     row.addEventListener('click', () => appendRollLog(`${subject.entity.name || 'Entity'} took the ${c.name} action.`));
     commonList.appendChild(row);
   }
+}
+
+// M18 — Spell attack: set the spell as the active cast, pre-select the
+// attacker, then enter pick-target mode. The pointer-down handler picks
+// it up via combat.mode and routes into runAttackPrompt — but the runner
+// checks combat.spell to switch from weapon to spell flow.
+function beginSpellAttack(subject, spell) {
+  beginAttack();
+  selectAttacker(subject.entity.id, subject.kind);
+  combat.spell = spell;     // ← extension to the M11/M4 combat state
+  setCombatStatus(`${subject.entity.name} casts ${spell.name} — click a target.`);
+  rerender();
 }
 
 document.addEventListener('click', (e) => {

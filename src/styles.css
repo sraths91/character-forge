@@ -1655,6 +1655,12 @@ body.party-view-mode .actions-panel { display: block; }
   cursor: default;
 }
 .action-row.unavailable { opacity: 0.45; }
+.action-row-clickable { cursor: pointer; transition: border-color 120ms, transform 80ms; }
+.action-row-clickable:hover {
+  border-color: var(--accent, #60a5fa);
+  transform: translateX(2px);
+}
+.action-row-clickable:active { transform: translateX(0); }
 .action-row-head {
   display: flex;
   justify-content: space-between;

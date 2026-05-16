@@ -69,7 +69,13 @@ export function resolveAttack(ctx) {
 
   const attackerConditions = conditionsOf(attacker);
   const targetConditions   = conditionsOf(target);
-  const ranged = isRangedWeapon(weapon);
+  // M18 — Spell attacks: when ctx.spell is set we're rolling a spell
+  // attack, not a weapon attack. Spells are always treated as ranged
+  // (even melee-range cantrips like Shocking Grasp follow the ranged-
+  // attack-roll rules per PHB), and they use scope='spell' so M12
+  // modifiers like Amulet of the Devout +1 finally apply.
+  const isSpellAttack = !!ctx.spell;
+  const ranged = isSpellAttack ? true : isRangedWeapon(weapon);
 
   // --- Hard blockers: refuse the attack outright ---
   const blockers = [];
@@ -95,9 +101,10 @@ export function resolveAttack(ctx) {
   const atkStats = ctx.attackStats || deriveAttackStatsForContext(ctx);
   const attackParts = atkStats.parts
     ? [...atkStats.parts]
-    : [{ source: weapon?.name || 'Attack', value: atkStats.bonus }];
+    : [{ source: weapon?.name || ctx.spell?.name || 'Attack', value: atkStats.bonus }];
   const damageParts = atkStats.damageParts ? [...atkStats.damageParts] : [];
-  const attackScope = attackScopeFor(weapon, ranged);
+  // M18: spells always use scope='spell'; weapons use the M14 helper.
+  const attackScope = isSpellAttack ? 'spell' : attackScopeFor(weapon, ranged);
 
   // M12 — Apply combat modifiers from the attacker's items/feats/etc.
   const mods = Array.isArray(attacker?.combatMods) ? attacker.combatMods : [];
@@ -128,7 +135,10 @@ export function resolveAttack(ctx) {
   const distance    = gridDistance(attackerPos, targetPos);
 
   // --- M14: Out-of-reach blocker for melee attacks ---
-  if (!ranged && Number.isFinite(distance)) {
+  // Spell attacks have their own range model (spell.range.feet), checked
+  // in the Actions panel before the spell is even offered, so the
+  // resolver itself doesn't impose a reach blocker on spells.
+  if (!ranged && !isSpellAttack && Number.isFinite(distance)) {
     const reach = meleeReachFt(weapon);
     if (distance > reach) {
       blockers.push(`Out of reach (${distance} ft away, ${reach} ft reach)`);

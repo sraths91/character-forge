@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert';
-import { proficiencyBonus, totalLevel, deriveAC, deriveAttack, deriveWeaponAttack } from '../js/scene/pc-stats.js';
+import { proficiencyBonus, totalLevel, deriveAC, deriveAttack, deriveWeaponAttack, spellcastingAbility, spellAttackBonus, spellSaveDC } from '../js/scene/pc-stats.js';
 
 test('M6: proficiencyBonus follows the 5e ladder', () => {
   assert.strictEqual(proficiencyBonus(1),  2);
@@ -156,4 +156,44 @@ test('M9: deriveWeaponAttack — exposes damageType for the chip label', () => {
   const ch = { abilityModifiers: { STR: 1 }, level: 1, equipment: {} };
   const a = deriveWeaponAttack(ch, { name: 'Warhammer', damage: '1d8', damageType: 'Bludgeoning' });
   assert.strictEqual(a.damageType, 'Bludgeoning');
+});
+
+// ---- M18: spellcasting stats ----
+
+test('M18: spellcastingAbility — uses per-spell override when present', () => {
+  const character = { abilityModifiers: { WIS: 3, INT: 2 }, classes: [{ level: 3 }] };
+  assert.strictEqual(spellcastingAbility(character, { spellCastingAbility: 'INT' }), 'INT');
+});
+
+test('M18: spellcastingAbility — falls back to character.spells[].spellCastingAbility', () => {
+  const character = { spells: [{ spellCastingAbility: 'WIS' }] };
+  assert.strictEqual(spellcastingAbility(character, { spellCastingAbility: null }), 'WIS');
+});
+
+test('M18: spellAttackBonus — Cleric L3 with WIS +3 → +5 (WIS +3, prof +2)', () => {
+  const character = {
+    abilityModifiers: { WIS: 3 },
+    classes: [{ level: 3 }],
+    spells: [{ spellCastingAbility: 'WIS' }]
+  };
+  const a = spellAttackBonus(character, { spellCastingAbility: 'WIS' });
+  assert.strictEqual(a.total, 5);
+  assert.strictEqual(a.ability, 'WIS');
+  assert.ok(a.parts.find(p => /WIS mod/.test(p.source)));
+  assert.ok(a.parts.find(p => /Proficiency/.test(p.source)));
+});
+
+test('M18: spellSaveDC — Cleric L3 with WIS +3 → 13 (8 + 3 + 2)', () => {
+  const character = {
+    abilityModifiers: { WIS: 3 },
+    classes: [{ level: 3 }],
+    spells: [{ spellCastingAbility: 'WIS' }]
+  };
+  assert.strictEqual(spellSaveDC(character, { spellCastingAbility: 'WIS' }), 13);
+});
+
+test('M18: spellAttackBonus — no spellcasting ability returns proficiency only', () => {
+  const character = { abilityModifiers: {}, classes: [{ level: 1 }], spells: [] };
+  const a = spellAttackBonus(character, {});
+  assert.strictEqual(a.total, 2);   // prof only
 });

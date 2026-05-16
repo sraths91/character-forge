@@ -26,7 +26,7 @@
  *   }
  */
 
-import { deriveWeaponAttack } from './pc-stats.js';
+import { deriveWeaponAttack, spellAttackBonus, spellSaveDC } from './pc-stats.js';
 import {
   chebyshevFeet, meleeReachFt, isRangedWeapon, factionLists
 } from './grid-rules.js';
@@ -87,9 +87,69 @@ export function buildActionsFor({ entity, kind, scene, party, monsters }) {
 
   const attacks  = buildAttacks({ entity, kind, scene, allies, hostiles, entityPos, blockers });
   const features = buildFeatures(entity);
+  const spells   = buildSpells({ entity, kind, hostiles, entityPos, blockers });
   const common   = buildCommonActions({ entity, kind, scene, allies, hostiles, entityPos, conditions, blockers });
 
-  return { attacks, features, common, blockers };
+  return { attacks, features, spells, common, blockers };
+}
+
+// ---------- Spells ----------
+
+function buildSpells({ entity, kind, hostiles, entityPos, blockers }) {
+  if (kind !== 'pc') return [];   // M18 v1: PCs only — monsters get spells later
+  const spells = Array.isArray(entity?.spells) ? entity.spells : [];
+  if (spells.length === 0) return [];
+  return spells.map(spell => {
+    const isOffensive = spell.kind === 'spell-attack' || spell.kind === 'spell-save';
+    const rangeFt = spell.range?.feet ?? 0;
+    const rangeKind = spell.range?.kind || 'self';
+    // Count hostiles in range when it's offensive and has a numeric range.
+    let targetsInRange = [];
+    if (isOffensive && rangeKind === 'ranged' && rangeFt > 0 && entityPos) {
+      for (const h of hostiles) {
+        const hPos = h?._position || h?.position;
+        if (!hPos) continue;
+        const dist = chebyshevFeet(entityPos, hPos);
+        if (dist <= rangeFt) targetsInRange.push({ entity: h, distance: dist });
+      }
+    }
+    // Availability
+    let available = !blockers.length;
+    let blockReason = blockers.length ? blockers[0] : null;
+    if (available && isOffensive) {
+      if (rangeKind === 'self' && spell.kind === 'spell-attack') {
+        // Shouldn't really happen, but guard
+        available = false;
+        blockReason = 'Self-range spell';
+      } else if (rangeKind === 'ranged' && targetsInRange.length === 0) {
+        available = false;
+        blockReason = `No targets within ${rangeFt} ft`;
+      }
+    }
+    // Spell attack bonus + save DC
+    const atk = spellAttackBonus(entity, spell);
+    const dc  = spellSaveDC(entity, spell);
+    return {
+      spell,
+      name: spell.name,
+      level: spell.level,
+      kind: spell.kind,
+      dice: spell.dice,
+      damageType: spell.damageType,
+      school: spell.school,
+      rangeFt, rangeKind,
+      attackBonus: atk.total,
+      saveDC: dc,
+      saveStat: spell.saveStat,
+      requiresAttackRoll: spell.requiresAttackRoll,
+      requiresSavingThrow: spell.requiresSavingThrow,
+      concentration: spell.concentration,
+      usesSpellSlot: spell.usesSpellSlot,
+      castAtLevel: spell.castAtLevel,
+      targetsInRange,
+      available, blockReason
+    };
+  });
 }
 
 // ---------- Attacks ----------

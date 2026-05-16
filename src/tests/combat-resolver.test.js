@@ -505,3 +505,71 @@ test('M15: verdict.features Sneak Attack blocked when net disadvantage (poisoned
   assert.strictEqual(sa.available, false);
   assert.match(sa.blockReason, /disadvantage/i);
 });
+
+// ---- M18: Spell attack scope ----
+
+test('M18: ctx.spell switches scope to "spell"; spell-scope mods apply', () => {
+  const cleric = pcAt({ pos: { col: 5, row: 5 } });
+  cleric.combatMods = [
+    { source: 'Amulet of the Devout, +1', kind: 'attack', scope: 'spell', value: 1, inactive: false }
+  ];
+  const goblin = monsterAt({ pos: { col: 7, row: 5 } });   // 10ft away
+  const r = resolveAttack(baseCtx({
+    attacker: cleric,
+    target: goblin,
+    weapon: null,
+    spell: { name: 'Spiritual Weapon', dice: '1d8+3', requiresAttackRoll: true, range: { kind: 'ranged', feet: 60 } },
+    attackStats: { bonus: 5, dice: '1d8+3', damageType: 'Force',
+      parts: [{ source: 'WIS mod', value: 3 }, { source: 'Proficiency', value: 2 }],
+      damageParts: [] }
+  }));
+  assert.strictEqual(r.attackBonus.total, 5 + 1, "Amulet's +1 must apply to spell attacks");
+  assert.ok(r.attackBonus.parts.some(p => /Amulet of the Devout/.test(p.source)));
+});
+
+test('M18: spell attack does NOT pick up weapon-scope mods', () => {
+  const cleric = pcAt({ pos: { col: 5, row: 5 } });
+  cleric.combatMods = [
+    { source: '+1 Longsword', kind: 'attack', scope: 'weapon-melee', value: 1, inactive: false }
+  ];
+  const goblin = monsterAt({ pos: { col: 7, row: 5 } });
+  const r = resolveAttack(baseCtx({
+    attacker: cleric, target: goblin,
+    weapon: null,
+    spell: { name: 'Sacred Flame', dice: '1d8', requiresSavingThrow: true, saveStat: 'DEX', range: { kind: 'ranged', feet: 60 } },
+    attackStats: { bonus: 5, dice: '1d8', damageType: 'Radiant',
+      parts: [{ source: 'WIS mod', value: 3 }, { source: 'Proficiency', value: 2 }], damageParts: [] }
+  }));
+  assert.strictEqual(r.attackBonus.total, 5, 'weapon-melee mod must not apply to spell');
+});
+
+test('M18: spell attacks skip the melee out-of-reach blocker', () => {
+  const cleric = pcAt({ pos: { col: 0, row: 0 } });
+  const goblin = monsterAt({ pos: { col: 9, row: 9 } });   // very far
+  const r = resolveAttack(baseCtx({
+    attacker: cleric, target: goblin,
+    weapon: null,
+    spell: { name: 'Guiding Bolt', dice: '4d6', requiresAttackRoll: true, range: { kind: 'ranged', feet: 120 } },
+    attackStats: { bonus: 5, dice: '4d6', damageType: 'Radiant',
+      parts: [{ source: 'WIS mod', value: 3 }, { source: 'Proficiency', value: 2 }], damageParts: [] }
+  }));
+  assert.strictEqual(r.autoMiss, false);
+  assert.strictEqual(r.blockers.length, 0);
+});
+
+test('M18: spell attacks are treated as ranged for ranged-adjacent disadvantage', () => {
+  const cleric = pcAt({ pos: { col: 5, row: 5 } });
+  const goblin = monsterAt({ pos: { col: 9, row: 9 } });
+  // A hostile right next to the caster
+  const adjacent = { id: 'h2', name: 'Adjacent', _position: { col: 6, row: 5 } };
+  const r = resolveAttack(baseCtx({
+    attacker: cleric, target: goblin,
+    weapon: null,
+    spell: { name: 'Guiding Bolt', dice: '4d6', requiresAttackRoll: true, range: { kind: 'ranged', feet: 120 } },
+    attackStats: { bonus: 5, dice: '4d6', damageType: 'Radiant',
+      parts: [{ source: 'WIS mod', value: 3 }, { source: 'Proficiency', value: 2 }], damageParts: [] },
+    allies: [], hostiles: [goblin, adjacent]
+  }));
+  assert.strictEqual(r.d20.mode, 'disadvantage');
+  assert.ok(r.d20.disadvantage.some(s => /Ranged attacker adjacent/.test(s)));
+});

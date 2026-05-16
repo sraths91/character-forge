@@ -165,6 +165,56 @@ export function deriveWeaponAttack(character, weapon) {
   };
 }
 
+// M18 — Spellcasting stats.
+//
+// For a given spell, derive the attack bonus and save DC:
+//   attackBonus = abilityMod + proficiency
+//   saveDC      = 8 + abilityMod + proficiency
+// The ability comes from spell.spellCastingAbility (per-spell override) or
+// the character's primary spellcasting class.
+
+/**
+ * Pick the spellcasting ability for this spell. The spell record (from
+ * the M18 parser) carries it; if absent, fall back to the character's
+ * first spellcasting class default.
+ */
+export function spellcastingAbility(character, spell) {
+  if (spell?.spellCastingAbility) return spell.spellCastingAbility;
+  // Fall back to first spell on the character that declares an ability
+  const list = character?.spells || [];
+  for (const s of list) if (s.spellCastingAbility) return s.spellCastingAbility;
+  return null;
+}
+
+/**
+ * Spell attack bonus: ability mod + proficiency.
+ * Returns { total, parts } in the same shape M12 attackBonus uses so the
+ * resolver can fold combatMods on top.
+ */
+export function spellAttackBonus(character, spell) {
+  const ability = spellcastingAbility(character, spell);
+  const abilityMod = ability ? (character?.abilityModifiers?.[ability] ?? 0) : 0;
+  const prof = proficiencyBonus(totalLevel(character));
+  return {
+    total: abilityMod + prof,
+    parts: ability
+      ? [
+          { source: `${ability} mod`, value: abilityMod },
+          { source: 'Proficiency', value: prof }
+        ]
+      : [{ source: 'Proficiency', value: prof }],
+    ability
+  };
+}
+
+/**
+ * Spell save DC: 8 + ability mod + proficiency.
+ */
+export function spellSaveDC(character, spell) {
+  const a = spellAttackBonus(character, spell);
+  return 8 + a.total;
+}
+
 function magicBonus(weapon) {
   if (!weapon) return 0;
   if (typeof weapon.bonus === 'number') return weapon.bonus;

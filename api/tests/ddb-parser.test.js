@@ -552,3 +552,146 @@ test('M12: parseCombatModifiers returns [] when raw has no modifiers', () => {
   const parsed = parseCharacter(raw);
   assert.deepStrictEqual(parsed.combatMods, []);
 });
+
+// ---- M18: parseSpells ----
+
+function spellEntry({ name, level, prepared = true, alwaysPrepared = false,
+                     requiresAttackRoll = false, requiresSavingThrow = false,
+                     saveDcAbilityId = null, range = { rangeValue: 60 },
+                     dieString = '1d8', damageSubType = 'fire-damage',
+                     concentration = false, ritual = false,
+                     spellCastingAbilityId = null,
+                     usesSpellSlot = true }) {
+  return {
+    prepared, alwaysPrepared, usesSpellSlot,
+    castAtLevel: level,
+    spellCastingAbilityId,
+    definition: {
+      id: Math.floor(Math.random() * 1e6),
+      name, level, school: 'Evocation',
+      range: { origin: 'Ranged', ...range },
+      duration: concentration ? { durationType: 'Concentration' } : { durationType: 'Instantaneous' },
+      ritual,
+      requiresAttackRoll, requiresSavingThrow, saveDcAbilityId,
+      modifiers: [{
+        type: 'bonus', subType: damageSubType,
+        die: { diceString: dieString }
+      }]
+    }
+  };
+}
+
+test('M18: parseSpells extracts prepared attack-roll spells with dice + range', () => {
+  const raw = rawFixture({
+    classSpells: [{
+      characterClassId: 1, spellCastingAbilityId: 5,
+      spells: [spellEntry({
+        name: 'Guiding Bolt', level: 1, requiresAttackRoll: true,
+        range: { rangeValue: 120 }, dieString: '4d6',
+        damageSubType: 'radiant-damage'
+      })]
+    }]
+  });
+  const parsed = parseCharacter(raw);
+  const s = parsed.spells.find(x => x.name === 'Guiding Bolt');
+  assert.ok(s);
+  assert.strictEqual(s.level, 1);
+  assert.strictEqual(s.requiresAttackRoll, true);
+  assert.strictEqual(s.kind, 'spell-attack');
+  assert.strictEqual(s.dice, '4d6');
+  assert.strictEqual(s.damageType, 'Radiant');
+  assert.deepStrictEqual(s.range, { kind: 'ranged', feet: 120 });
+  assert.strictEqual(s.spellCastingAbility, 'WIS');
+});
+
+test('M18: parseSpells extracts save-based cantrips with saveStat', () => {
+  const raw = rawFixture({
+    classSpells: [{
+      characterClassId: 1, spellCastingAbilityId: 5,
+      spells: [spellEntry({
+        name: 'Sacred Flame', level: 0, requiresSavingThrow: true,
+        saveDcAbilityId: 2, range: { rangeValue: 60 }, dieString: '1d8',
+        damageSubType: 'radiant-damage'
+      })]
+    }]
+  });
+  const parsed = parseCharacter(raw);
+  const s = parsed.spells.find(x => x.name === 'Sacred Flame');
+  assert.strictEqual(s.kind, 'spell-save');
+  assert.strictEqual(s.saveStat, 'DEX');
+  assert.strictEqual(s.level, 0);
+});
+
+test('M18: parseSpells respects prepared flag — unprepared leveled spells excluded', () => {
+  const raw = rawFixture({
+    classSpells: [{
+      characterClassId: 1, spellCastingAbilityId: 5,
+      spells: [
+        spellEntry({ name: 'Bless', level: 1, prepared: false }),
+        spellEntry({ name: 'Sacred Flame', level: 0, prepared: false,
+          requiresSavingThrow: true, saveDcAbilityId: 2 })   // cantrip — always accessible
+      ]
+    }]
+  });
+  const parsed = parseCharacter(raw);
+  assert.strictEqual(parsed.spells.find(s => s.name === 'Bless'), undefined,
+    'unprepared leveled spell should be filtered');
+  assert.ok(parsed.spells.find(s => s.name === 'Sacred Flame'),
+    'cantrips should be included even when prepared=false');
+});
+
+test('M18: parseSpells alwaysPrepared (Twilight Domain Spells) included', () => {
+  const raw = rawFixture({
+    classSpells: [{
+      characterClassId: 1, spellCastingAbilityId: 5,
+      spells: [spellEntry({
+        name: 'Faerie Fire', level: 1, prepared: false, alwaysPrepared: true,
+        requiresSavingThrow: true, saveDcAbilityId: 2
+      })]
+    }]
+  });
+  const parsed = parseCharacter(raw);
+  assert.ok(parsed.spells.find(s => s.name === 'Faerie Fire'));
+});
+
+test('M18: parseSpells healing spells get kind=heal', () => {
+  const raw = rawFixture({
+    classSpells: [{
+      characterClassId: 1, spellCastingAbilityId: 5,
+      spells: [{
+        prepared: true, usesSpellSlot: true, castAtLevel: 1,
+        definition: {
+          id: 1, name: 'Cure Wounds', level: 1, school: 'Evocation',
+          range: { origin: 'Touch' },
+          healingDice: [{ diceString: '1d8' }],
+          modifiers: []
+        }
+      }]
+    }]
+  });
+  const parsed = parseCharacter(raw);
+  const s = parsed.spells.find(x => x.name === 'Cure Wounds');
+  assert.strictEqual(s.kind, 'heal');
+  assert.strictEqual(s.dice, '1d8');
+  assert.deepStrictEqual(s.range, { kind: 'touch', feet: 0 });
+});
+
+test('M18: parseSpells utility spells (Bless) get kind=utility', () => {
+  const raw = rawFixture({
+    classSpells: [{
+      characterClassId: 1, spellCastingAbilityId: 5,
+      spells: [{
+        prepared: true, usesSpellSlot: true, castAtLevel: 1,
+        definition: {
+          id: 1, name: 'Bless', level: 1, school: 'Enchantment',
+          range: { origin: 'Ranged', rangeValue: 30 },
+          requiresAttackRoll: false, requiresSavingThrow: false,
+          modifiers: []
+        }
+      }]
+    }]
+  });
+  const parsed = parseCharacter(raw);
+  const s = parsed.spells.find(x => x.name === 'Bless');
+  assert.strictEqual(s.kind, 'utility');
+});
