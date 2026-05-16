@@ -24,6 +24,7 @@ import { tooltipFor } from './scene/rules-reference.js';
 import { buildTurnTips } from './scene/turn-coach.js';
 import { resolveSpellSave } from './scene/save-rolls.js';
 import { simulateEncounter } from './scene/simulator.js';
+import { diffCharacters, describeDiff } from './character/diff-character.js';
 
 const $ = (id) => document.getElementById(id);
 const status = $('status');
@@ -2083,17 +2084,76 @@ async function postImport(body) {
     if (!res.ok) {
       throw makeImportError(res.status, data);
     }
+    // M23 — re-import diff. If the server returned a previous parse,
+    // diff it against the new one and show a "what changed" banner.
+    // Also preserve in-session HP / conditions on any party member
+    // who's being re-imported, so a re-sync doesn't wipe live damage.
+    const diff = data.previous ? diffCharacters(data.previous, data.character) : [];
+    if (data.previous) preserveInSessionState(data.character);
+
     const generatedCount = await render(data.character);
     const suffix = generatedCount > 0
       ? ` — generated ${generatedCount} item sprite${generatedCount === 1 ? '' : 's'}`
       : '';
     setStatus(`Loaded ${data.character.name} (${data.source})${suffix}.`, 'ok');
+    if (data.previous) renderSyncBanner(data.character, diff);
     refreshRecentCharacters();  // re-pull after a successful import
     refreshParty();              // re-mark the active card in the party strip
   } catch (err) {
     setStatus(err.message, 'error', err.hint);
   }
 }
+
+// M23 — Carry in-session HP / conditions from the rendered party copy
+// into the freshly-parsed character so a re-sync doesn't reset live
+// damage or condition toggles. The new max HP is honored; current is
+// clamped into the new range.
+function preserveInSessionState(nextChar) {
+  const cached = partyComposedCharacters.find(c => String(c.id) === String(nextChar.id));
+  if (!cached) return;   // not in active party — nothing to preserve
+  if (nextChar.hp && cached.hp?.current != null) {
+    nextChar.hp.current = Math.min(nextChar.hp.max ?? cached.hp.current, cached.hp.current);
+  }
+  if (Array.isArray(cached.conditions) && cached.conditions.length) {
+    nextChar.conditions = [...cached.conditions];
+  }
+}
+
+// M23 — Render the sync banner. Builds a dismissible card listing every
+// diff entry. No changes = no banner. The banner sits below the
+// character header so it's noticed but doesn't block the sheet.
+function renderSyncBanner(character, diff) {
+  let banner = document.getElementById('sync-banner');
+  if (!banner) {
+    banner = document.createElement('div');
+    banner.id = 'sync-banner';
+    banner.className = 'sync-banner';
+    const charMeta = document.getElementById('char-meta');
+    if (charMeta?.parentNode) charMeta.parentNode.insertBefore(banner, charMeta.nextSibling);
+  }
+  if (diff.length === 0) {
+    banner.innerHTML = `<div class="sync-banner-head"><strong>Re-synced ${escapeHtml(character.name)}</strong> — no changes detected.</div>`;
+    banner.dataset.empty = 'true';
+  } else {
+    delete banner.dataset.empty;
+    const items = diff.slice(0, 12).map(d => `<li>${escapeHtml(describeDiff(d))}</li>`).join('');
+    const overflow = diff.length > 12 ? `<li class="sync-overflow">…and ${diff.length - 12} more change${diff.length - 12 === 1 ? '' : 's'}</li>` : '';
+    banner.innerHTML = `
+      <div class="sync-banner-head">
+        <strong>Re-synced ${escapeHtml(character.name)}</strong> — ${diff.length} change${diff.length === 1 ? '' : 's'} detected.
+        <button class="sync-banner-dismiss" type="button" aria-label="Dismiss">✕</button>
+      </div>
+      <ul class="sync-banner-list">${items}${overflow}</ul>
+    `;
+  }
+  banner.hidden = false;
+}
+
+document.addEventListener('click', (e) => {
+  if (!e.target.matches('.sync-banner-dismiss')) return;
+  const banner = document.getElementById('sync-banner');
+  if (banner) banner.hidden = true;
+});
 
 /**
  * Wrap a non-2xx /api/import response into an actionable Error. Most

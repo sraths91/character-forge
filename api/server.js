@@ -84,6 +84,12 @@ app.post('/api/import', importLimiter, async (req, res) => {
     const parsed = parseCharacter(raw);
     if (!parsed.id) parsed.id = String(raw.id ?? Date.now());
 
+    // M23 — capture the previous parsed_json BEFORE overwriting so the
+    // client can diff and render a "what changed" banner. Falsy when
+    // this is the character's first import (no prior row).
+    const before = getCharacterByDdbId(parsed.id);
+    const previous = before?.parsed || null;
+
     upsertCharacter({
       ddbId: parsed.id,
       name: parsed.name,
@@ -92,7 +98,7 @@ app.post('/api/import', importLimiter, async (req, res) => {
       source
     });
 
-    res.json({ character: parsed, source });
+    res.json({ character: parsed, previous, source });
   } catch (err) {
     const status = err.status || (err.code === 'CHAR_NOT_FOUND' ? 404 : 500);
     res.status(status).json({
