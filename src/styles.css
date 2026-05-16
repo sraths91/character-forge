@@ -1698,6 +1698,55 @@ body.party-view-mode .actions-panel { display: block; }
   border-radius: 6px;
 }
 .aoe-status.hidden { display: none; }
+
+/* M19 — rule-chip: every reason text in roll log / hover preview /
+   action panel statuses wraps in one of these so the user can hover
+   to see the 5e rule + PHB page. Chips with a tip get an underline. */
+.rule-chip { cursor: default; }
+.rule-chip-has-tip {
+  text-decoration: underline dotted rgba(255,255,255,0.35);
+  text-underline-offset: 2px;
+  cursor: help;
+}
+.rule-chip-has-tip:hover {
+  text-decoration-color: var(--accent, #60a5fa);
+}
+
+/* M22 — Turn coach tips inside the actions panel */
+.actions-coach {
+  margin: 0 0 12px;
+  padding: 8px 10px;
+  background: rgba(96, 165, 250, 0.08);
+  border: 1px solid rgba(96, 165, 250, 0.30);
+  border-radius: 8px;
+}
+.actions-coach .actions-section-head {
+  color: var(--accent, #60a5fa);
+  margin-bottom: 6px;
+}
+.coach-tips {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.coach-tip {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  font-size: 0.82rem;
+  color: var(--text);
+  line-height: 1.35;
+}
+.coach-tip.coach-tip-warning  { color: #fbbf24; }
+.coach-tip.coach-tip-boon     { color: #4ade80; }
+.coach-tip.coach-tip-feature  { color: #c4b5fd; }
+.coach-tip.coach-tip-positional { color: #fcd34d; }
+.coach-tip.coach-tip-common   { color: var(--text-dim); }
+.coach-tip.coach-tip-limited-use { color: var(--text-dim); font-style: italic; }
+.coach-icon { font-size: 0.95rem; flex-shrink: 0; }
 .action-row-head {
   display: flex;
   justify-content: space-between;

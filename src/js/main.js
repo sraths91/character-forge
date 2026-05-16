@@ -20,6 +20,8 @@ import { resolveAttack } from './scene/combat-resolver.js';
 import { factionLists } from './scene/grid-rules.js';
 import { buildActionsFor } from './scene/actions-panel.js';
 import { templateCells, entitiesInTemplate } from './scene/aoe.js';
+import { tooltipFor } from './scene/rules-reference.js';
+import { buildTurnTips } from './scene/turn-coach.js';
 
 const $ = (id) => document.getElementById(id);
 const status = $('status');
@@ -463,16 +465,16 @@ function updateAttackPreview(hit, clientX, clientY) {
   parts.push(`<div class="preview-line preview-mode preview-mode-${verdict.d20.mode}">${escapeHtml(modeLabel)}</div>`);
 
   if (verdict.blockers.length) {
-    parts.push(`<div class="preview-blockers">${verdict.blockers.map(b => `⛔ ${escapeHtml(b)}`).join('<br/>')}</div>`);
+    parts.push(`<div class="preview-blockers">${verdict.blockers.map(b => `⛔ ${reasonChip(b)}`).join('<br/>')}</div>`);
   } else {
     if (verdict.d20.advantage.length) {
-      parts.push(`<div class="preview-reasons preview-adv">Adv: ${verdict.d20.advantage.map(escapeHtml).join('; ')}</div>`);
+      parts.push(`<div class="preview-reasons preview-adv">Adv: ${verdict.d20.advantage.map(reasonChip).join('; ')}</div>`);
     }
     if (verdict.d20.disadvantage.length) {
-      parts.push(`<div class="preview-reasons preview-dis">Dis: ${verdict.d20.disadvantage.map(escapeHtml).join('; ')}</div>`);
+      parts.push(`<div class="preview-reasons preview-dis">Dis: ${verdict.d20.disadvantage.map(reasonChip).join('; ')}</div>`);
     }
     if (verdict.autoCrit) {
-      parts.push(`<div class="preview-reasons preview-crit">⚡ Auto-crit: ${escapeHtml(verdict.autoCritReason)}</div>`);
+      parts.push(`<div class="preview-reasons preview-crit">⚡ Auto-crit: ${reasonChip(verdict.autoCritReason)}</div>`);
     }
   }
 
@@ -1075,10 +1077,10 @@ function appendAttackLog({ attackerName, targetName, weaponName, verdict, atk, d
     ? `<div class="roll-line">Damage: ${escapeHtml(verdict.damage.dice)} (rolls ${dmgRoll.rolls.join(',')}) = <strong>${dmgRoll.total}</strong>${verdict.damage.damageType ? ' ' + escapeHtml(verdict.damage.damageType) : ''}</div>`
     : '';
   const reasonsHtml = [];
-  if (verdict.d20.advantage.length) reasonsHtml.push(`<span class="reason-adv">Adv: ${verdict.d20.advantage.map(escapeHtml).join(', ')}</span>`);
-  if (verdict.d20.disadvantage.length) reasonsHtml.push(`<span class="reason-dis">Dis: ${verdict.d20.disadvantage.map(escapeHtml).join(', ')}</span>`);
-  if (verdict.d20.overrideApplied) reasonsHtml.push(`<span class="reason-override">Override: ${escapeHtml(verdict.d20.mode)}</span>`);
-  if (verdict.autoCritReason) reasonsHtml.push(`<span class="reason-crit">${escapeHtml(verdict.autoCritReason)}</span>`);
+  if (verdict.d20.advantage.length) reasonsHtml.push(`<span class="reason-adv">Adv: ${verdict.d20.advantage.map(reasonChip).join(', ')}</span>`);
+  if (verdict.d20.disadvantage.length) reasonsHtml.push(`<span class="reason-dis">Dis: ${verdict.d20.disadvantage.map(reasonChip).join(', ')}</span>`);
+  if (verdict.d20.overrideApplied) reasonsHtml.push(`<span class="reason-override">${reasonChip('Override: ' + verdict.d20.mode)}</span>`);
+  if (verdict.autoCritReason) reasonsHtml.push(`<span class="reason-crit">${reasonChip(verdict.autoCritReason)}</span>`);
   const reasonsBlock = reasonsHtml.length ? `<div class="roll-reasons">${reasonsHtml.join(' · ')}</div>` : '';
 
   // M12 — Attack-bonus breakdown (every part: STR mod, prof, +N items/feats).
@@ -1346,9 +1348,33 @@ function renderActionsPanel() {
 
   if (result.blockers.length) {
     blockersEl.hidden = false;
-    blockersEl.innerHTML = result.blockers.map(b => `⛔ ${escapeHtml(b)}`).join(' · ');
+    blockersEl.innerHTML = result.blockers.map(b => `⛔ ${reasonChip(b)}`).join(' · ');
   } else {
     blockersEl.hidden = true;
+  }
+
+  // M22 — Turn coach: surface the top ~5 opportunities for the active
+  // entity at the head of the panel. Updates with every rerender, so
+  // the list responds to drag, condition toggle, and turn advance.
+  const coachWrap = document.getElementById('actions-coach');
+  const coachList = document.getElementById('coach-tips-list');
+  if (coachWrap && coachList) {
+    const tips = buildTurnTips({
+      entity: augmentedSubject, kind: subject.kind,
+      scene: currentScene, party, monsters, max: 5
+    });
+    if (tips.length === 0) {
+      coachWrap.hidden = true;
+      coachList.innerHTML = '';
+    } else {
+      coachWrap.hidden = false;
+      coachList.innerHTML = tips.map(t => `
+        <li class="coach-tip coach-tip-${t.kind}">
+          <span class="coach-icon">${escapeHtml(t.icon || '•')}</span>
+          <span class="coach-text">${escapeHtml(t.text)}</span>
+        </li>
+      `).join('');
+    }
   }
 
   // Attacks
@@ -1363,7 +1389,7 @@ function renderActionsPanel() {
       const targets = a.targetsInRange.length;
       const status = a.available
         ? `<span class="action-status ok">${targets} target${targets === 1 ? '' : 's'} ${a.isRanged ? 'in range' : 'in reach'}</span>`
-        : `<span class="action-status off">${escapeHtml(a.blockReason || 'unavailable')}</span>`;
+        : `<span class="action-status off">${reasonChip(a.blockReason || 'unavailable')}</span>`;
       const hints = a.hints.length
         ? `<div class="action-hints">${a.hints.map(h => `<span class="action-hint">✨ ${escapeHtml(h)}</span>`).join(' ')}</div>`
         : '';
@@ -1417,7 +1443,7 @@ function renderActionsPanel() {
             meta.push(`<span class="action-status ok">${s.targetsInRange.length} target${s.targetsInRange.length === 1 ? '' : 's'} in range</span>`);
           }
         } else {
-          meta.push(`<span class="action-status off">${escapeHtml(s.blockReason || 'unavailable')}</span>`);
+          meta.push(`<span class="action-status off">${reasonChip(s.blockReason || 'unavailable')}</span>`);
         }
         row.innerHTML = `
           <div class="action-row-head">
@@ -1477,8 +1503,8 @@ function renderActionsPanel() {
     const row = document.createElement('div');
     row.className = `action-row ${c.available ? 'available' : 'unavailable'}`;
     const status = c.available
-      ? (c.blockReason ? `<span class="action-status warn">${escapeHtml(c.blockReason)}</span>` : '')
-      : `<span class="action-status off">${escapeHtml(c.blockReason || 'unavailable')}</span>`;
+      ? (c.blockReason ? `<span class="action-status warn">${reasonChip(c.blockReason)}</span>` : '')
+      : `<span class="action-status off">${reasonChip(c.blockReason || 'unavailable')}</span>`;
     row.innerHTML = `
       <div class="action-row-head">
         <span class="action-name">${escapeHtml(c.name)}</span>
@@ -2299,6 +2325,17 @@ function setStatus(msg, kind, hint) {
   } else {
     status.textContent = msg;
   }
+}
+
+// M19 — Reason chip: wraps a reason string in a <span> with a hover
+// tooltip explaining the 5e rule it came from. Returns just the escaped
+// text when no rule is registered, so callers always get a safe string.
+function reasonChip(reason) {
+  if (reason == null) return '';
+  const text = escapeHtml(String(reason));
+  const tip = tooltipFor(String(reason));
+  if (!tip) return `<span class="rule-chip">${text}</span>`;
+  return `<span class="rule-chip rule-chip-has-tip" title="${escapeHtml(tip)}">${text}</span>`;
 }
 
 function escapeHtml(s) {
