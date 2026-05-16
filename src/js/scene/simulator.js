@@ -28,6 +28,7 @@ import { rollAttack, rollDamage } from './combat-roll.js';
 import { deriveAC, deriveWeaponAttack } from './pc-stats.js';
 import { MONSTER_PRESETS } from './monster-presets.js';
 import { factionLists } from './grid-rules.js';
+import { planMovement, occupiedCellsOf } from './movement.js';
 
 /**
  * Small mulberry32 PRNG. Pure JS, deterministic, fast. Seed in (0, 2^32).
@@ -165,6 +166,31 @@ function runOneIteration({ party, monsters, scene, maxRounds, rng }) {
 function runOneAttack(attacker, enemies, allies, scene, rng) {
   const target = pickTarget(enemies);
   if (!target) return;
+
+  // M31 — Movement step before the attack. Compute the attacker's
+  // current position + target's position; if not in reach for the
+  // primary weapon, advance up to the entity's speed (default 30 ft).
+  // Updates the attacker's in-memory position so subsequent rounds
+  // see the new placement and so the resolver computes distance from
+  // the post-movement cell.
+  const attackerPos = attacker._position || attacker.position;
+  const targetPos   = target._position   || target.position;
+  if (attackerPos && targetPos) {
+    const weapon = attacker.kind === 'pc' ? attacker.weapon : { name: attacker.attack?.name };
+    const occupied = occupiedCellsOf({
+      party: allies, monsters: enemies,
+      excludeId: attacker.id
+    });
+    const next = planMovement({
+      from: attackerPos, to: targetPos, weapon,
+      speedFt: 30, occupied,
+      bounds: { cols: scene?.cols || 99, rows: scene?.rows || 99 }
+    });
+    if (next && (next.col !== attackerPos.col || next.row !== attackerPos.row)) {
+      if (attacker.kind === 'pc') attacker._position = next;
+      else attacker.position = next;
+    }
+  }
 
   // Build the resolver context. For PCs we use deriveWeaponAttack; for
   // monsters we use the preset attack record directly.

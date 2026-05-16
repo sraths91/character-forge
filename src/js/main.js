@@ -35,6 +35,7 @@ import { buildSceneSnapshot, restoreSceneFromSnapshot } from './scene/scene-snap
 import {
   buildPartyArenaScene, partyEndStateOf, rollPartyInitiative
 } from './scene/versus.js';
+import { planMovement } from './scene/movement.js';
 
 const $ = (id) => document.getElementById(id);
 const status = $('status');
@@ -575,14 +576,57 @@ function currentPartyEndState() {
   });
 }
 
-// Helper: invokes the same combat flow used by manual play, then
-// dispatches a synthetic pointer click on the target cell so the
-// existing pointerdown handler fires the attack with full M11/M27
-// effect playback.
+// Helper: invokes the same combat flow used by manual play, but FIRST
+// runs a movement step so the attacker closes the distance when out
+// of reach. The movement is persisted on the scene (PC positions in
+// scene.positions, monster.position on the instance) so subsequent
+// rounds see the new placement, the M27 lunge effect fires from the
+// new cell, and the M11 resolver computes reach from the post-move
+// position.
 function attackInVersus(attackerHit, targetHit) {
+  versusMoveBeforeAttack(attackerHit, targetHit);
   combat.attacker = { id: attackerHit.entity.id, kind: attackerHit.kind };
   combat.mode = 'pick-target';
   runAttackPrompt(targetHit.kind, targetHit.entity);
+}
+
+function versusMoveBeforeAttack(attackerHit, targetHit) {
+  const attackerPos = attackerHit.kind === 'pc'
+    ? currentScene.positions?.[String(attackerHit.entity.id)]
+    : attackerHit.entity.position;
+  const targetPos = targetHit.kind === 'pc'
+    ? currentScene.positions?.[String(targetHit.entity.id)]
+    : targetHit.entity.position;
+  if (!attackerPos || !targetPos) return;
+  const weapon = attackerHit.kind === 'pc'
+    ? (attackerHit.entity.equipment?.mainhand || null)
+    : { name: MONSTER_PRESETS[attackerHit.entity.presetSlug]?.attack?.name };
+  const occupied = versusOccupiedCells(attackerHit.entity.id);
+  const next = planMovement({
+    from: attackerPos, to: targetPos, weapon,
+    speedFt: 30, occupied,
+    bounds: { cols: currentScene.cols, rows: currentScene.rows }
+  });
+  if (!next || (next.col === attackerPos.col && next.row === attackerPos.row)) return;
+  if (attackerHit.kind === 'pc') {
+    currentScene.positions = { ...(currentScene.positions || {}), [String(attackerHit.entity.id)]: next };
+  } else {
+    attackerHit.entity.position = next;
+  }
+}
+
+function versusOccupiedCells(excludeId) {
+  const out = new Set();
+  for (const pc of partyComposedCharacters) {
+    if (String(pc.id) === String(excludeId)) continue;
+    const pos = currentScene.positions?.[String(pc.id)];
+    if (pos) out.add(`${pos.col},${pos.row}`);
+  }
+  for (const m of (currentScene.monsters || [])) {
+    if (String(m.id) === String(excludeId)) continue;
+    if (m.position) out.add(`${m.position.col},${m.position.row}`);
+  }
+  return out;
 }
 
 function endVersusFight(outcome, rounds) {
