@@ -24,6 +24,7 @@
 
 import { scoreConsideration } from './considerations.js';
 import { profileFor } from './profiles.js';
+import { profileForEntity } from './infer.js';
 import { chebyshevFeet } from '../grid-rules.js';
 
 function posOf(e) { return e?._position || e?.position || null; }
@@ -50,7 +51,9 @@ function alive(e) { return e && hpOf(e) > 0; }
  *           score:number, breakdown:Array<{name:string,raw:number,weighted:number}>}}
  */
 export function chooseAction({ self, slug, enemies, allies, rng = Math.random } = {}) {
-  const profile = profileFor(slug || self?.presetSlug);
+  // M32.2: prefer a per-entity override (Open5e-inferred profile attached
+  // at spawn) over the slug-based lookup.
+  const profile = profileForEntity(self) || profileFor(slug || self?.presetSlug);
   const archetype = profile.archetype;
   const liveEnemies = (enemies || []).filter(alive);
   if (liveEnemies.length === 0) {

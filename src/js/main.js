@@ -37,6 +37,7 @@ import {
 } from './scene/versus.js';
 import { planMovement } from './scene/movement.js';
 import { chooseAction, fleeTargetCell, formatBreakdown } from './scene/ai/profile.js';
+import { inferProfile } from './scene/ai/infer.js';
 
 const $ = (id) => document.getElementById(id);
 const status = $('status');
@@ -1109,6 +1110,13 @@ function spawnMonsterFromPreset(slug, opts = {}) {
   if (overrides.maxHp)    merged.defaultHp = { max: overrides.maxHp };
   if (overrides.spritePresetSlug) merged.slug = overrides.spritePresetSlug;
   addMonsterInstance(currentScene, merged);
+  // M32.2 — If this was spawned from an Open5e creature, attach the
+  // inferred profile to the *just-added* instance so chooseAction picks
+  // it up instead of the visual preset's profile.
+  if (overrides.openStat) {
+    const last = currentScene.monsters[currentScene.monsters.length - 1];
+    if (last) last._aiProfile = inferProfile(overrides.openStat);
+  }
   saveScene(currentScene);
   rerender();
 }
@@ -1158,7 +1166,12 @@ async function searchMonstersOnline(query) {
       btn.addEventListener('click', () => {
         const spritePreset = matchPresetForOpen5e(r.name, r.type);
         spawnMonsterFromPreset(spritePreset, {
-          overrides: { name: r.name, maxHp: r.hp || undefined }
+          overrides: {
+            name: r.name,
+            maxHp: r.hp || undefined,
+            // Pass the full summary through so M32 can infer an AI profile
+            openStat: { slug: r.slug, name: r.name, type: r.type, cr: r.cr, hp: r.hp }
+          }
         });
         wrap.hidden = true;
       });
