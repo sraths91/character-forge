@@ -100,3 +100,85 @@ function weaponOf(entity) {
   if (entity._presetSlug || entity.presetSlug) return null;
   return null;
 }
+
+// =====================================================================
+// M33.1 — Shield (1st-level wizard/sorcerer reaction, PHB p275)
+//
+// Cast as a reaction when you are hit by an attack: +5 AC against that
+// triggering attack (and against any attacks until your next turn).
+// Consumes one 1st-level spell slot.
+//
+// In the simulator we evaluate Shield AFTER the d20 lands but BEFORE
+// damage applies: if the attacker's total >= target.ac AND
+// total < target.ac + 5, Shield converts a hit into a miss. If
+// total >= target.ac + 5, Shield can't save us, so we don't waste the
+// slot.
+// =====================================================================
+
+/**
+ * Whether `target` would cast Shield to block this hit. Pure check —
+ * caller is responsible for consuming the slot + reaction if true.
+ */
+export function shouldCastShield({ target, attackerTotal, targetAc } = {}) {
+  if (!hasReactionAvailable(target)) return false;
+  if (!hasShieldSpell(target)) return false;
+  if ((target._lvl1Slots ?? 0) <= 0) return false;
+  // Only fires when it would actually convert a hit into a miss.
+  // Crit hits ignore Shield: crits hit regardless of AC.
+  if (attackerTotal < targetAc) return false;
+  if (attackerTotal >= targetAc + 5) return false;
+  return true;
+}
+
+/** Spend a 1st-level slot + the reaction. */
+export function consumeShield(target) {
+  if (!target) return;
+  consumeReaction(target);
+  target._lvl1Slots = Math.max(0, (target._lvl1Slots ?? 0) - 1);
+  target._shieldActive = true;
+}
+
+/** Does this PC know Shield? Reads the DDB-parsed spell list. */
+export function hasShieldSpell(entity) {
+  const ref = entity?.ref || entity;
+  if (!ref) return false;
+  const spells = ref.spells;
+  if (!spells) return false;
+  if (Array.isArray(spells)) return spells.some(matchShield);
+  if (typeof spells === 'object') {
+    for (const v of Object.values(spells)) {
+      if (Array.isArray(v) && v.some(matchShield)) return true;
+    }
+  }
+  return false;
+}
+function matchShield(s) {
+  if (!s) return false;
+  const name = typeof s === 'string' ? s : (s.name || '');
+  return /^shield$/i.test(String(name).trim());
+}
+
+// 5e PHB spell-slot table — 1st-level slots per class level. Rough but
+// adequate for v1: full casters peak at 4 lvl-1 slots; half-casters
+// don't get any until level 2.
+const FULL_CASTER_LVL1 = [0, 2, 3, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4];
+const HALF_CASTER_LVL1 = [0, 0, 2, 3, 3, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4];
+const FULL_CASTERS = new Set(['wizard', 'sorcerer', 'bard', 'cleric', 'druid', 'warlock']);
+const HALF_CASTERS = new Set(['paladin', 'ranger', 'artificer']);
+
+/**
+ * Estimate the PC's starting 1st-level spell slot pool. Used by the
+ * simulator to seed `_lvl1Slots` on each entity wrapper. Returns 0 for
+ * non-casters; doesn't account for multiclassing-rule slot stacking.
+ */
+export function lvl1SlotsForPc(pc) {
+  const classes = pc?.classes || [];
+  let best = 0;
+  for (const c of classes) {
+    const name = String(c?.name || '').toLowerCase();
+    const lvl = Math.max(0, Math.min(20, c?.level || 0));
+    if (FULL_CASTERS.has(name)) best = Math.max(best, FULL_CASTER_LVL1[lvl] || 0);
+    else if (HALF_CASTERS.has(name)) best = Math.max(best, HALF_CASTER_LVL1[lvl] || 0);
+  }
+  return best;
+}

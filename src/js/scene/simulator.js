@@ -31,7 +31,8 @@ import { factionLists } from './grid-rules.js';
 import { planMovement, occupiedCellsOf } from './movement.js';
 import { chooseAction, fleeTargetCell } from './ai/profile.js';
 import {
-  resetReactionsForAll, consumeReaction, detectOpportunityAttacks
+  resetReactionsForAll, consumeReaction, detectOpportunityAttacks,
+  shouldCastShield, consumeShield, lvl1SlotsForPc
 } from './reactions.js';
 
 /**
@@ -114,7 +115,9 @@ function runOneIteration({ party, monsters, scene, maxRounds, rng }) {
     _position: p._position,
     damageDealt: 0,
     combatMods: p.combatMods || [],
-    _reactionUsed: false   // M33
+    _reactionUsed: false,        // M33.0
+    _lvl1Slots: lvl1SlotsForPc(p), // M33.1 — Shield + other lvl-1 reactions
+    _shieldActive: false
   }));
   const mons = monsters.map(m => {
     const preset = MONSTER_PRESETS[m.presetSlug] || {};
@@ -304,6 +307,14 @@ function runOneAttack(attacker, enemies, allies, scene, rng) {
   } else {
     atk = rollAttack({ bonus: finalBonus, advantage: verdict.d20.mode, targetAC: target.ac }, rng);
   }
+  // M33.1 — Shield reaction (target casts AFTER the roll lands).
+  // Cantrips of self-cast Shield convert a marginal hit into a miss.
+  if (atk.hit && !atk.crit && target.kind === 'pc' &&
+      shouldCastShield({ target, attackerTotal: atk.total, targetAc: target.ac })) {
+    consumeShield(target);
+    atk.hit = false;
+    atk.shielded = true;
+  }
   if (!atk.hit) return;
   const dmg = rollDamage(finalDmgDice, { crit: atk.crit }, rng);
   target.hp = Math.max(0, target.hp - dmg.total);
@@ -367,6 +378,12 @@ function runReactionAttack(attacker, target, targetBeforePos, scene, rng) {
   const atk = verdict.autoCrit
     ? { hit: true, crit: true, total: 20 + verdict.attackBonus.total }
     : rollAttack({ bonus: verdict.attackBonus.total, advantage: verdict.d20.mode, targetAC: target.ac }, rng);
+  // M33.1 — OA can also be Shield-blocked.
+  if (atk.hit && !atk.crit && target.kind === 'pc' &&
+      shouldCastShield({ target, attackerTotal: atk.total, targetAc: target.ac })) {
+    consumeShield(target);
+    atk.hit = false;
+  }
   if (!atk.hit) return;
   const dmg = rollDamage(verdict.damage.dice, { crit: atk.crit }, rng);
   target.hp = Math.max(0, target.hp - dmg.total);

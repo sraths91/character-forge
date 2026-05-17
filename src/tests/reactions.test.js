@@ -2,7 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert';
 import {
   resetReaction, resetReactionsForAll, hasReactionAvailable, consumeReaction,
-  detectOpportunityAttacks
+  detectOpportunityAttacks,
+  shouldCastShield, consumeShield, hasShieldSpell, lvl1SlotsForPc
 } from '../js/scene/reactions.js';
 
 // ---------- Reaction budget ----------
@@ -141,9 +142,108 @@ test('M33.0: monster attack object is treated as a melee weapon for reach', () =
   assert.strictEqual(out.length, 1);
 });
 
+// ---------- M33.1: Shield reaction ----------
+
+function shieldTarget({ slots = 1, used = false, ac = 15, ref = { spells: [{ name: 'Shield' }] } } = {}) {
+  return { id: 't1', kind: 'pc', ac, ref, _lvl1Slots: slots, _reactionUsed: used };
+}
+
+test('M33.1: hasShieldSpell — array form', () => {
+  assert.strictEqual(hasShieldSpell({ ref: { spells: [{ name: 'Shield' }] } }), true);
+  assert.strictEqual(hasShieldSpell({ ref: { spells: [{ name: 'Magic Missile' }] } }), false);
+});
+
+test('M33.1: hasShieldSpell — keyed-by-level form', () => {
+  assert.strictEqual(hasShieldSpell({ ref: { spells: { 1: [{ name: 'Shield' }] } } }), true);
+});
+
+test('M33.1: hasShieldSpell — string list', () => {
+  assert.strictEqual(hasShieldSpell({ ref: { spells: ['Shield', 'Magic Missile'] } }), true);
+});
+
+test('M33.1: shouldCastShield fires when total ≤ ac+4 and hits', () => {
+  const t = shieldTarget({ ac: 15 });
+  assert.strictEqual(shouldCastShield({ target: t, attackerTotal: 17, targetAc: 15 }), true);
+});
+
+test('M33.1: shouldCastShield does NOT fire when attacker missed already', () => {
+  const t = shieldTarget({ ac: 15 });
+  assert.strictEqual(shouldCastShield({ target: t, attackerTotal: 13, targetAc: 15 }), false);
+});
+
+test('M33.1: shouldCastShield does NOT fire when attacker overshoots (saving a slot)', () => {
+  const t = shieldTarget({ ac: 15 });
+  assert.strictEqual(shouldCastShield({ target: t, attackerTotal: 21, targetAc: 15 }), false);
+});
+
+test('M33.1: shouldCastShield does NOT fire when no reaction available', () => {
+  const t = shieldTarget({ used: true });
+  assert.strictEqual(shouldCastShield({ target: t, attackerTotal: 17, targetAc: 15 }), false);
+});
+
+test('M33.1: shouldCastShield does NOT fire when no 1st-level slots remain', () => {
+  const t = shieldTarget({ slots: 0 });
+  assert.strictEqual(shouldCastShield({ target: t, attackerTotal: 17, targetAc: 15 }), false);
+});
+
+test('M33.1: shouldCastShield does NOT fire when target lacks Shield in spell list', () => {
+  const t = shieldTarget({ ref: { spells: [{ name: 'Magic Missile' }] } });
+  assert.strictEqual(shouldCastShield({ target: t, attackerTotal: 17, targetAc: 15 }), false);
+});
+
+test('M33.1: consumeShield burns one slot AND the reaction', () => {
+  const t = shieldTarget({ slots: 3 });
+  consumeShield(t);
+  assert.strictEqual(t._lvl1Slots, 2);
+  assert.strictEqual(t._reactionUsed, true);
+  assert.strictEqual(t._shieldActive, true);
+});
+
+test('M33.1: lvl1SlotsForPc — wizard 1 → 2 slots', () => {
+  assert.strictEqual(lvl1SlotsForPc({ classes: [{ name: 'Wizard', level: 1 }] }), 2);
+});
+
+test('M33.1: lvl1SlotsForPc — wizard 5 → 4 slots', () => {
+  assert.strictEqual(lvl1SlotsForPc({ classes: [{ name: 'Wizard', level: 5 }] }), 4);
+});
+
+test('M33.1: lvl1SlotsForPc — paladin 1 → 0 (half-caster, no slots yet)', () => {
+  assert.strictEqual(lvl1SlotsForPc({ classes: [{ name: 'Paladin', level: 1 }] }), 0);
+});
+
+test('M33.1: lvl1SlotsForPc — fighter 5 → 0 (non-caster)', () => {
+  assert.strictEqual(lvl1SlotsForPc({ classes: [{ name: 'Fighter', level: 5 }] }), 0);
+});
+
 // ---------- Simulator-level integration ----------
 
 import { simulateEncounter } from '../js/scene/simulator.js';
+
+test('M33.1: simulator — wizard with Shield takes less damage than the same wizard without it', () => {
+  function wizard({ withShield }) {
+    return {
+      id: 'wiz', name: 'Tactical Wizard', _position: { col: 1, row: 1 },
+      hp: { current: 20, max: 20 },
+      equipment: { mainhand: { name: 'Dagger' } },
+      abilityScores: { STR: 8, DEX: 14, CON: 12, INT: 16, WIS: 10, CHA: 10 },
+      abilityModifiers: { STR: -1, DEX: 2, CON: 1, INT: 3, WIS: 0, CHA: 0 },
+      classes: [{ name: 'Wizard', level: 5 }],
+      conditions: [],
+      spells: withShield ? [{ name: 'Shield' }] : []
+    };
+  }
+  const monsters = () => [
+    { id: 'b1', presetSlug: 'bandit', name: 'B1', hp: { current: 11, max: 11 }, position: { col: 2, row: 1 }, conditions: [] },
+    { id: 'b2', presetSlug: 'bandit', name: 'B2', hp: { current: 11, max: 11 }, position: { col: 1, row: 2 }, conditions: [] }
+  ];
+  const opts = { scene: { cols: 8, rows: 5 }, iterations: 200, maxRounds: 10, seed: 7 };
+  const without = simulateEncounter({ party: [wizard({ withShield: false })], monsters: monsters(), ...opts });
+  const with_   = simulateEncounter({ party: [wizard({ withShield: true  })], monsters: monsters(), ...opts });
+  const dmgWithout = 20 - (without.entities.find(e => e.id === 'wiz').avgFinalHp);
+  const dmgWith    = 20 - (with_.entities.find(e => e.id === 'wiz').avgFinalHp);
+  assert.ok(dmgWith < dmgWithout,
+    `Shield should reduce avg damage taken (without=${dmgWithout.toFixed(2)}, with=${dmgWith.toFixed(2)})`);
+});
 
 test('M33.0: simulator integration — encounter still resolves with OAs active', () => {
   // 2 PCs adjacent to 2 monsters; over many runs the OAs should fire
