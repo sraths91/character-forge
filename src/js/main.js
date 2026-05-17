@@ -31,6 +31,10 @@ import { buildTurnTips } from './scene/turn-coach.js';
 import { resolveSpellSave } from './scene/save-rolls.js';
 import { simulateEncounter } from './scene/simulator.js';
 import { calibrateEncounter } from './scene/calibrator.js';
+import {
+  createRecorder as createFightRecorder, archiveReplay, listReplays,
+  getReplayById, filterEvents, summarizeReplay
+} from './scene/fight-recorder.js';
 import { diffCharacters, describeDiff } from './character/diff-character.js';
 import { buildSceneSnapshot, restoreSceneFromSnapshot } from './scene/scene-snapshot.js';
 import {
@@ -607,7 +611,17 @@ async function runVersusPartyAuto() {
   const order = versusInitiative.slice();   // captured at fight start
   const stepDelay = 950;                    // ms between turns
 
+  // M36 — Spin up a recorder for this fight so the user can replay it.
+  currentFightRecorder = createFightRecorder({
+    participants: [
+      ...partyComposedCharacters.map(p => ({ id: p.id, name: p.name, kind: 'pc', hp: p.hp })),
+      ...(currentScene.monsters || []).map(m => ({ id: m.id, name: m.name, kind: 'monster', hp: m.hp }))
+    ]
+  });
+  currentFightRecorder.start();
+
   for (let round = 1; round <= 30; round++) {
+    currentFightRecorder.setRound(round);
     // M33.0 — refresh every combatant's reaction at the top of the round.
     resetReactionsForAll(partyComposedCharacters);
     resetReactionsForAll(currentScene.monsters || []);
@@ -631,6 +645,12 @@ async function runVersusPartyAuto() {
       if (plan && plan.kind === 'flee') {
         runVersusFlee(entity, target.entity);
         logVersusAiPlan(entity, plan);
+        currentFightRecorder.record({
+          type: 'note',
+          actorId: entity.id, actorName: entity.name || 'Monster',
+          summary: `${entity.name} flees (${plan.archetype})`,
+          detail: { plan }
+        });
         await new Promise(f => setTimeout(f, stepDelay));
         const verdict0 = currentPartyEndState();
         if (verdict0) return endVersusFight(verdict0, round);
@@ -638,7 +658,25 @@ async function runVersusPartyAuto() {
       }
 
       if (plan) logVersusAiPlan(entity, plan);
+      const beforeTargetHp = versusHpOf(target.entity, target.kind);
       attackInVersus({ kind: entry.entityKind, entity }, { kind: target.kind, entity: target.entity });
+      const afterTargetHp = versusHpOf(target.entity, target.kind);
+      currentFightRecorder.record({
+        type: 'attack',
+        actorId: entity.id, actorName: entity.name || '?',
+        targetId: target.entity.id, targetName: target.entity.name || '?',
+        summary: `${entity.name} attacks ${target.entity.name}` +
+          (afterTargetHp < beforeTargetHp ? ` for ${beforeTargetHp - afterTargetHp} dmg` : ' — miss'),
+        detail: { dmg: beforeTargetHp - afterTargetHp, plan }
+      });
+      if (afterTargetHp <= 0 && beforeTargetHp > 0) {
+        currentFightRecorder.record({
+          type: 'death',
+          actorId: target.entity.id, actorName: target.entity.name || '?',
+          summary: `${target.entity.name} falls`,
+          detail: {}
+        });
+      }
       await new Promise(f => setTimeout(f, stepDelay));
 
       const verdict = currentPartyEndState();
@@ -949,9 +987,14 @@ function versusOccupiedCells(excludeId) {
 
 function endVersusFight(outcome, rounds) {
   const status = document.getElementById('versus-status');
+  // M36 — finalize + archive the recording, then surface the replay UI.
+  if (currentFightRecorder) {
+    currentFightRecorder.finalize(outcome);
+    archiveReplay(currentFightRecorder.getReplay());
+    currentFightRecorder = null;
+    renderReplayPanel();
+  }
   if (!status) return;
-  // M29 outcomes: 'party-wins' | 'monsters-win' | 'draw' (single-entity
-  // legacy 'pc-wins' / 'monster-wins' fall through to the same banners).
   if (outcome === 'draw') {
     status.textContent = `Stalemate after ${rounds} rounds.`;
     return;
@@ -960,6 +1003,78 @@ function endVersusFight(outcome, rounds) {
   const label = partyWon ? '🏆 Party wins' : '💀 Monsters win';
   status.textContent = `${label} in ${rounds} round${rounds === 1 ? '' : 's'}.`;
 }
+
+// M36 — Currently-recording fight. Lives at module scope so the auto-
+// fight loop, attack helpers, and end handler can all reach it.
+let currentFightRecorder = null;
+
+/**
+ * M36 — Render the post-fight replay panel into #versus-replay. Pulls
+ * the most recent replay from history; offers a dropdown for older
+ * fights and filter chips for event types.
+ */
+function renderReplayPanel(opts = {}) {
+  const wrap = document.getElementById('versus-replay');
+  if (!wrap) return;
+  const replays = listReplays();
+  if (replays.length === 0) { wrap.hidden = true; return; }
+  wrap.hidden = false;
+
+  const selectedId = opts.selectedId || replays[0].id;
+  const selectedFilters = opts.filters || activeReplayFilters;
+  activeReplayFilters = selectedFilters;
+  const replay = getReplayById(selectedId) || replays[0];
+  const counts = summarizeReplay(replay);
+  const events = filterEvents(replay, selectedFilters.size ? [...selectedFilters] : null);
+
+  const replayOptions = replays.map(r => {
+    const label = `${replayShortLabel(r)} — ${r.outcome || 'in progress'}`;
+    return `<option value="${escapeHtml(r.id)}"${r.id === replay.id ? ' selected' : ''}>${escapeHtml(label)}</option>`;
+  }).join('');
+  const filterButtons = ['attack', 'reaction', 'spell', 'heal', 'death'].map(t => {
+    const active = selectedFilters.has(t) ? ' replay-filter-active' : '';
+    return `<button class="replay-filter${active}" data-replay-filter="${t}" type="button">${t} (${counts[t] || 0})</button>`;
+  }).join('');
+  const eventRows = events.map(e => {
+    const kindClass = `replay-event replay-event-${escapeHtml(e.type)}`;
+    return `<li class="${kindClass}"><span class="replay-event-round">r${e.round}</span> ${escapeHtml(e.summary)}</li>`;
+  }).join('');
+
+  wrap.innerHTML = `
+    <div class="replay-head">
+      <strong>Replay</strong>
+      <select class="replay-picker" id="replay-picker">${replayOptions}</select>
+    </div>
+    <div class="replay-filters">${filterButtons}<button class="replay-filter replay-filter-clear" data-replay-filter="__clear">all</button></div>
+    <ol class="replay-events">${eventRows || '<li class="replay-empty">No events.</li>'}</ol>
+  `;
+}
+
+function replayShortLabel(r) {
+  const date = new Date(r.startedAt);
+  const hh = String(date.getHours()).padStart(2, '0');
+  const mm = String(date.getMinutes()).padStart(2, '0');
+  return `${hh}:${mm} (${r.rounds}r)`;
+}
+
+let activeReplayFilters = new Set();   // M36.1 — UI state for filter chips
+
+document.addEventListener('click', (e) => {
+  const filter = e.target?.dataset?.replayFilter;
+  if (!filter) return;
+  if (filter === '__clear') {
+    activeReplayFilters.clear();
+  } else {
+    if (activeReplayFilters.has(filter)) activeReplayFilters.delete(filter);
+    else activeReplayFilters.add(filter);
+  }
+  const picker = document.getElementById('replay-picker');
+  renderReplayPanel({ selectedId: picker?.value, filters: activeReplayFilters });
+});
+document.addEventListener('change', (e) => {
+  if (e.target?.id !== 'replay-picker') return;
+  renderReplayPanel({ selectedId: e.target.value, filters: activeReplayFilters });
+});
 
 document.addEventListener('click', (e) => {
   if (e.target.id === 'versus-start')     { startVersusFight();   return; }

@@ -2126,6 +2126,97 @@ body.party-view-mode .versus-panel:not([hidden]) { display: block; }
   color: var(--text-dim);
 }
 
+/* M36 — Fight replay / history panel */
+.versus-replay {
+  margin-top: 10px;
+  padding: 10px 12px;
+  background: var(--surface, #15151a);
+  border: 1px solid var(--border, #2a2a32);
+  border-radius: 8px;
+}
+.replay-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.replay-head strong { font-size: 0.85rem; }
+.replay-picker {
+  background: var(--surface-2, #1f1f26);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 3px 6px;
+  font-family: var(--mono, ui-monospace);
+  font-size: 0.74rem;
+}
+.replay-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.replay-filter {
+  font-size: 0.7rem;
+  padding: 3px 8px;
+  border-radius: 12px;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  cursor: pointer;
+  font-family: var(--mono, ui-monospace);
+}
+.replay-filter-active {
+  background: #818cf8;
+  border-color: #818cf8;
+  color: #1f1d10;
+  font-weight: 700;
+}
+.replay-filter-clear {
+  margin-left: auto;
+  border-style: dashed;
+}
+.replay-events {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 260px;
+  overflow-y: auto;
+  font-size: 0.76rem;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.replay-event {
+  padding: 3px 6px;
+  border-left: 3px solid transparent;
+  border-radius: 3px;
+}
+.replay-event-round    { border-left-color: #6b7280; opacity: 0.85; font-weight: 600; }
+.replay-event-attack   { border-left-color: #4ade80; }
+.replay-event-reaction { border-left-color: #f59e0b; }
+.replay-event-spell    { border-left-color: #a855f7; }
+.replay-event-heal     { border-left-color: #34d399; }
+.replay-event-death    { border-left-color: #ef4444; }
+.replay-event-end      { border-left-color: #fbbf24; font-weight: 600; }
+.replay-event-note     { border-left-color: #818cf8; opacity: 0.85; }
+.replay-event-round { color: var(--text-dim); }
+.replay-event-round.replay-event-round { padding-top: 6px; }
+.replay-event-round span.replay-event-round,
+.replay-event > .replay-event-round {
+  display: inline-block;
+  width: 28px;
+  font-family: var(--mono, ui-monospace);
+  font-size: 0.68rem;
+  color: var(--text-dim);
+  margin-right: 4px;
+}
+.replay-empty {
+  padding: 8px;
+  color: var(--text-dim);
+  font-style: italic;
+}
+
 /* M23 — Re-sync banner shown after a re-import detects changes */
 .sync-banner {
   margin: 10px 0;
