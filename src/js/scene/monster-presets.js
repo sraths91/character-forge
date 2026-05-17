@@ -135,6 +135,16 @@ export const MONSTER_PRESETS = {
     equipment: { mainhand: { name: 'Dagger' }, cloak: { name: 'Black Cloak' } },
     defaultHp: { max: 16 }, ac: 12,
     attack: { name: 'Dagger', bonus: 4, dice: '1d4+2' }
+  },
+  // M37 — Innate-casting showcase preset. Body/head fall back to LPC
+  // assets that exist; the visual is approximate (we don't have a dragon
+  // sprite). Stats lifted from MM Young Red Dragon (downscaled for
+  // arena-fight pacing).
+  'young-dragon': {
+    slug: 'young-dragon', name: 'Young Dragon',
+    body: 'muscular', headRace: 'troll', skinTone: 'red', hairStyle: 'balding',
+    defaultHp: { max: 80 }, ac: 17,
+    attack: { name: 'Claws', bonus: 7, dice: '2d6+4' }
   }
 };
 
@@ -158,7 +168,8 @@ export const MONSTER_DEFAULT_SAVES = {
   gnoll:         { STR: +2, DEX:  0, CON: +1, INT: -2, WIS:  0, CHA: -2 },
   ratfolk:       { STR: -2, DEX: +3, CON:  0, INT:  0, WIS:  0, CHA: -2 },
   'cult-fanatic':   { STR:  0, DEX: +1, CON:  0, INT:  0, WIS: +3, CHA:  0 },
-  'kobold-sorcerer':{ STR: -2, DEX: +2, CON:  0, INT:  0, WIS:  0, CHA: +3 }
+  'kobold-sorcerer':{ STR: -2, DEX: +2, CON:  0, INT:  0, WIS:  0, CHA: +3 },
+  'young-dragon':   { STR: +4, DEX:  0, CON: +4, INT: +1, WIS: +2, CHA: +3 }
 };
 
 /** Save bonus for a monster instance against a given stat ('DEX' etc.). */

@@ -124,6 +124,34 @@ export const MONSTER_SPELLS = {
     bonusAction: true,
     description: 'Ranged bonus action: ally heals for 1d4 + spellcasting mod.',
     pageRef: 'PHB p250'
+  },
+
+  // M37 — Innate-cast spells. These bypass spell slots; their resource
+  // model lives in MONSTER_INNATE (at-will / per-day / recharge).
+  'charm-gaze': {
+    id: 'charm-gaze', name: 'Charm Gaze',
+    kind: 'cantrip-save',
+    level: 0,
+    range: 30,
+    saveStat: 'WIS',
+    saveOnHalf: false,
+    dice: null,
+    appliesCondition: 'charmed',
+    description: 'Target makes a WIS save or is charmed for 1 round.',
+    pageRef: 'MM Vampire Spawn'
+  },
+  'fire-breath': {
+    id: 'fire-breath', name: 'Fire Breath',
+    kind: 'leveled-save',
+    level: 0,            // innate — no slot cost, but tagged level for counterspell math
+    range: 15,           // 15ft cone (simplified to "all hostiles within 15ft")
+    saveStat: 'DEX',
+    saveOnHalf: true,
+    dice: '5d6',
+    damageType: 'Fire',
+    aoe: true,
+    description: '15ft cone — 5d6 fire, DEX half. Recharge 5-6.',
+    pageRef: 'MM Young Red Dragon'
   }
 };
 
@@ -146,11 +174,104 @@ export const MONSTER_SPELLCASTING = {
   }
 };
 
+/**
+ * M37 — Innate (non-slot) spellcasting blocks. Three resource models:
+ *   atWill   — array of spell ids the monster can cast every turn
+ *   perDay   — { N: [...spell ids] } — N uses across the encounter
+ *   recharge — { spellId: threshold } — roll d6 at start of turn;
+ *              if >= threshold, the spell recharges.
+ */
+export const MONSTER_INNATE = {
+  'vampire-spawn': {
+    ability: 'CHA', dc: 12,
+    atWill: ['charm-gaze']
+  },
+  'young-dragon': {
+    ability: 'CHA', dc: 14,
+    recharge: { 'fire-breath': 5 }   // recharge on 5-6
+  }
+};
+
 /** Pure helpers. */
 
 export function isSpellcaster(slug) { return !!MONSTER_SPELLCASTING[slug]; }
 export function spellbookFor(slug)  { return MONSTER_SPELLCASTING[slug] || null; }
 export function spellById(id)       { return MONSTER_SPELLS[id] || null; }
+export function isInnateCaster(slug) { return !!MONSTER_INNATE[slug]; }
+export function innateBlockFor(slug) { return MONSTER_INNATE[slug] || null; }
+
+/**
+ * Seed the recharge state for an innate caster. Returns a map
+ * { spellId: true } where `true` = available, `false` = waiting.
+ * All recharge spells start available (a fresh fight gets a free use).
+ */
+export function freshInnateState(slug) {
+  const block = MONSTER_INNATE[slug];
+  if (!block) return null;
+  const state = { atWill: [...(block.atWill || [])], recharges: {}, perDay: {} };
+  for (const id of Object.keys(block.recharge || {})) state.recharges[id] = true;
+  for (const uses of Object.keys(block.perDay || {})) {
+    state.perDay[uses] = block.perDay[uses].map(id => ({ id, remaining: Number(uses) }));
+  }
+  return state;
+}
+
+/**
+ * Try to roll the recharge for every cooling-down innate. Called at
+ * the start of the monster's turn. Returns the list of recharged spell
+ * ids so the caller can surface them in the roll log.
+ */
+export function rollInnateRecharges(self, rng = Math.random) {
+  const block = innateBlockFor(self?.presetSlug);
+  const state = self?._innate;
+  if (!block || !state || !block.recharge) return [];
+  const restored = [];
+  for (const [id, threshold] of Object.entries(block.recharge)) {
+    if (state.recharges[id]) continue;     // already available
+    const d6 = Math.floor(rng() * 6) + 1;
+    if (d6 >= threshold) {
+      state.recharges[id] = true;
+      restored.push(id);
+    }
+  }
+  return restored;
+}
+
+/**
+ * Can this monster cast `spell` via innate means right now? Checks
+ * at-will list, recharge availability, and per-day uses left.
+ */
+export function canInnateCast(self, spellId) {
+  const state = self?._innate;
+  if (!state) return false;
+  if (state.atWill?.includes(spellId)) return true;
+  if (state.recharges?.[spellId] === true) return true;
+  for (const tier of Object.values(state.perDay || {})) {
+    for (const slot of tier) {
+      if (slot.id === spellId && slot.remaining > 0) return true;
+    }
+  }
+  return false;
+}
+
+/** Consume one use. At-wills are free; recharge/perDay decrement. */
+export function consumeInnate(self, spellId) {
+  const state = self?._innate;
+  if (!state) return;
+  if (state.recharges?.[spellId] === true) {
+    state.recharges[spellId] = false;
+    return;
+  }
+  for (const tier of Object.values(state.perDay || {})) {
+    for (const slot of tier) {
+      if (slot.id === spellId && slot.remaining > 0) {
+        slot.remaining -= 1;
+        return;
+      }
+    }
+  }
+  // At-will: no-op
+}
 
 /** Cantrips don't consume slots; otherwise check pool. */
 export function canCastSpell(spell, slotPool) {

@@ -27,7 +27,7 @@ import { resolveAttack } from './combat-resolver.js';
 import { rollAttack, rollDamage } from './combat-roll.js';
 import { deriveAC, deriveWeaponAttack } from './pc-stats.js';
 import { MONSTER_PRESETS } from './monster-presets.js';
-import { factionLists } from './grid-rules.js';
+import { factionLists, chebyshevFeet } from './grid-rules.js';
 import { planMovement, occupiedCellsOf } from './movement.js';
 import { chooseAction, fleeTargetCell } from './ai/profile.js';
 import {
@@ -37,7 +37,9 @@ import {
   shouldCounterspell, consumeCounterspell, resolveCounterspell
 } from './reactions.js';
 import {
-  freshSlots, consumeSlot, spellById, spellbookFor, isSpellcaster
+  freshSlots, consumeSlot, spellById, spellbookFor, isSpellcaster,
+  isInnateCaster, freshInnateState, rollInnateRecharges,
+  consumeInnate
 } from './monster-spells.js';
 import {
   startConcentration, isConcentrating, dropConcentration,
@@ -145,6 +147,8 @@ function runOneIteration({ party, monsters, scene, maxRounds, rng }) {
       _reactionUsed: false,                         // M33
       _slots: isSpellcaster(m.presetSlug)            // M34
         ? freshSlots(m.presetSlug) : null,
+      _innate: isInnateCaster(m.presetSlug)          // M37
+        ? freshInnateState(m.presetSlug) : null,
       _concentrating: null
     };
   });
@@ -193,6 +197,13 @@ function runOneIteration({ party, monsters, scene, maxRounds, rng }) {
 // ---------- Per-attack ----------
 
 function runOneAttack(attacker, enemies, allies, scene, rng) {
+  // M37 — At the start of each monster's turn, roll d6 for any innate
+  // spells that are cooling down. The recharged-list isn't surfaced in
+  // the simulator path (we have no log here); main.js can read it for
+  // versus.
+  if (attacker.kind === 'monster' && attacker._innate) {
+    rollInnateRecharges(attacker, rng);
+  }
   // M32 — For monsters, ask the AI profile which enemy to engage and
   // whether to flee. PCs still use the lowest-HP rule (simulator only
   // models monster intelligence in v1; PC choice is the player's job).
@@ -277,9 +288,11 @@ function runOneAttack(attacker, enemies, allies, scene, rng) {
     }
     if (!castTarget) return;
     // M34.1 — witnesses = opposing-side PCs (the only Counterspell holders)
+    // M37 — allEnemies = the mover's hostile side for AoE save spells
     runMonsterSpell({
       attacker, target: castTarget, plan, scene, rng,
-      witnesses: enemies.filter(isAlive).filter(e => e.kind === 'pc')
+      witnesses: enemies.filter(isAlive).filter(e => e.kind === 'pc'),
+      allEnemies: enemies
     });
     return;
   }
@@ -377,20 +390,31 @@ function runOneAttack(attacker, enemies, allies, scene, rng) {
  * consumed for non-cantrips; concentration replaced if the spell needs
  * it (PHB p203 — only one at a time).
  */
-function runMonsterSpell({ attacker, target, plan, scene: _scene, rng, witnesses = [] }) {
+function runMonsterSpell({ attacker, target, plan, scene: _scene, rng, witnesses = [], allEnemies = [] }) {
   const spell = spellById(plan.spellId);
   if (!spell) return;
   const book = spellbookFor(attacker.presetSlug);
-  if (!book) return;
+  // M37 — innate-only casters have no slot book. We synthesize a
+  // minimal "book" so the rest of the function (DC + attackBonus reads)
+  // can stay unchanged.
+  const innateBook = !book && attacker._innate
+    ? { dc: 12, attackBonus: 4, abilityMod: 3 }       // safe defaults; real values come from MONSTER_INNATE if needed
+    : null;
+  const effectiveBook = book || innateBook;
+  if (!effectiveBook) return;
 
   // Concentration replacement: dropping the previous spell would clear
   // its applied conditions, but we don't track that lookup here — just
   // mark concentration ended.
   if (spell.concentration && isConcentrating(attacker)) dropConcentration(attacker);
 
-  // Slot accounting (consume regardless of whether spell goes off —
-  // Counterspell consumes the original caster's slot per RAW).
-  consumeSlot(attacker._slots, spell);
+  // M37 — resource accounting. Slot-cast spells decrement the slot pool;
+  // innates use their own atWill / recharge / perDay pools.
+  if (plan.isInnate) {
+    consumeInnate(attacker, plan.spellId);
+  } else {
+    consumeSlot(attacker._slots, spell);
+  }
 
   // M34.1 — Counterspell window: any witness (opposing-side caster) can
   // attempt to counter before the spell resolves. First successful
@@ -407,7 +431,7 @@ function runMonsterSpell({ attacker, target, plan, scene: _scene, rng, witnesses
   // M34.2 — Healing spells: roll dice + add caster's spellcasting mod.
   if (spell.kind === 'heal') {
     const dmgRoll = rollDamage(spell.dice, { crit: false }, rng);
-    const mod = spell.addsAbilityMod ? (book.abilityMod || 0) : 0;
+    const mod = spell.addsAbilityMod ? (effectiveBook.abilityMod || 0) : 0;
     const heal = dmgRoll.total + mod;
     if (target?.hpMax > 0) {
       target.hp = Math.min(target.hpMax, target.hp + heal);
@@ -437,7 +461,7 @@ function runMonsterSpell({ attacker, target, plan, scene: _scene, rng, witnesses
   if (spell.kind === 'spell-attack') {
     // Spell attack roll: 1d20 + attackBonus vs target.ac
     const atk = rollAttack({
-      bonus: book.attackBonus,
+      bonus: effectiveBook.attackBonus,
       advantage: 'normal',
       targetAC: target.ac
     }, rng);
@@ -454,10 +478,34 @@ function runMonsterSpell({ attacker, target, plan, scene: _scene, rng, witnesses
     return;
   }
 
-  // Save-based (cantrip-save or leveled-save)
+  // M37 — AoE save spells (like dragon breath) hit every hostile within
+  // the spell's range, rolling an independent save per target.
+  if (spell.aoe && allEnemies.length > 0) {
+    const center = attacker._position || attacker.position;
+    if (center) {
+      let totalDmg = 0;
+      for (const e of allEnemies) {
+        if (!isAlive(e)) continue;
+        const ep = e._position || e.position;
+        if (!ep) continue;
+        if (chebyshevFeet(center, ep) > (spell.range || 15)) continue;
+        const eBonus = saveBonusFor(e, spell.saveStat);
+        const eSave = rollSave({ bonus: eBonus, dc: effectiveBook.dc }, rng);
+        const dmgRoll = rollDamage(spell.dice, { crit: false }, rng);
+        let dmg = dmgRoll.total;
+        if (eSave.success) dmg = spell.saveOnHalf ? Math.floor(dmg / 2) : 0;
+        applyDamageToEntity(e, dmg);
+        totalDmg += dmg;
+      }
+      attacker.damageDealt += totalDmg;
+    }
+    return;
+  }
+
+  // Save-based (cantrip-save or leveled-save), single target
   const saveStat = spell.saveStat;
   const targetSaveBonus = saveBonusFor(target, saveStat);
-  const save = rollSave({ bonus: targetSaveBonus, dc: book.dc }, rng);
+  const save = rollSave({ bonus: targetSaveBonus, dc: effectiveBook.dc }, rng);
   if (spell.dice) {
     const dmgRoll = rollDamage(spell.dice, { crit: false }, rng);
     let dmg = dmgRoll.total;

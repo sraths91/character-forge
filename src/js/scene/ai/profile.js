@@ -26,7 +26,10 @@ import { scoreConsideration } from './considerations.js';
 import { profileFor } from './profiles.js';
 import { profileForEntity } from './infer.js';
 import { chebyshevFeet } from '../grid-rules.js';
-import { spellbookFor, spellById, canCastSpell } from '../monster-spells.js';
+import {
+  spellbookFor, spellById, canCastSpell,
+  innateBlockFor, canInnateCast
+} from '../monster-spells.js';
 
 function posOf(e) { return e?._position || e?.position || null; }
 function hpOf(e) {
@@ -133,20 +136,42 @@ export function chooseAction({ self, slug, enemies, allies, rng = Math.random } 
 function considerCast({ self, profile, archetype, target, enemies }) {
   const slug = self?.presetSlug || self?.ref?._presetSlug;
   const book = spellbookFor(slug);
-  if (!book) return null;
+  const innate = innateBlockFor(slug);
+  if (!book && !innate) return null;
   const castWeights = profile.castWeights || {};
   const slots = self?._slots;
-  if (!slots) return null;   // simulator hasn't seeded a slot pool
+  const knownSpells = new Set([...(book?.spells || [])]);
+  // M37 — Innate-only casters (e.g. young dragon) bypass slot lookups
+  // entirely; their spell list is the union of at-will + recharge + perDay.
+  if (innate) {
+    for (const id of (innate.atWill || [])) knownSpells.add(id);
+    for (const id of Object.keys(innate.recharge || {})) knownSpells.add(id);
+    for (const tier of Object.values(innate.perDay || {})) {
+      for (const id of tier) knownSpells.add(id);
+    }
+  }
+  if (knownSpells.size === 0) return null;
 
   // Score each spell the monster knows; pick the best one we can cast.
   let bestSpell = null;
-  for (const id of book.spells) {
+  for (const id of knownSpells) {
     const weight = castWeights[id];
     if (!weight) continue;             // profile didn't authorize this spell
     const spell = spellById(id);
     if (!spell) continue;
     if (spell.targetSide === 'ally') continue;     // M34.2: heal spells handled separately
-    if (!canCastSpell(spell, slots)) continue;
+    // M37 — Pick the resource model. Innate first (no slot cost), then slots.
+    const isInnate = innate && (
+      (innate.atWill || []).includes(id) ||
+      Object.prototype.hasOwnProperty.call(innate.recharge || {}, id) ||
+      Object.values(innate.perDay || {}).some(t => t.includes(id))
+    );
+    if (isInnate) {
+      if (!canInnateCast(self, id)) continue;
+    } else {
+      if (!slots) continue;
+      if (!canCastSpell(spell, slots)) continue;
+    }
     // Range / line-of-fire: cantrip-save & spell-attack use spell.range;
     // melee spell attacks (range 5) only when adjacent.
     if (!spellInRange(spell, self, target)) continue;
@@ -155,7 +180,7 @@ function considerCast({ self, profile, archetype, target, enemies }) {
     const aoeBoost = aoeOpportunity(spell, target, enemies);
     const score = weight + aoeBoost;
     if (!bestSpell || score > bestSpell.score) {
-      bestSpell = { id, spell, score, weight, aoeBoost };
+      bestSpell = { id, spell, score, weight, aoeBoost, isInnate };
     }
   }
   if (!bestSpell) return null;
@@ -163,6 +188,7 @@ function considerCast({ self, profile, archetype, target, enemies }) {
     kind: 'cast',
     targetId: target.id,
     spellId: bestSpell.id,
+    isInnate: bestSpell.isInnate || false,    // M37
     archetype,
     score: bestSpell.score,
     breakdown: [

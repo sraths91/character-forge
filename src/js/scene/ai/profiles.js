@@ -257,7 +257,28 @@ export const MONSTER_PROFILES = {
     signature_triggers: [
       { when: 'self_isolated', prefer: 'flee' }
     ]
+  },
+
+  // M37 — Innate-casting profiles.
+  'young-dragon': {
+    archetype: 'apex_innate',
+    considerations: {
+      distance_to_target: { weight: 0.6, curve: 'linear' },
+      target_low_hp:      { weight: 0.5, curve: 'linear' }
+    },
+    castWeights: {
+      'fire-breath': 2.0   // when available, always preferred over melee
+    },
+    retreat_below_hp: 0,
+    metagame_blind: [],
+    signature_triggers: []
   }
+};
+
+// M37 — Teach vampire-spawn its Charm Gaze innate.
+MONSTER_PROFILES['vampire-spawn'].castWeights = {
+  ...(MONSTER_PROFILES['vampire-spawn'].castWeights || {}),
+  'charm-gaze': 0.8        // soft preference; charm makes the target useless
 };
 
 
