@@ -39,7 +39,7 @@ import {
 import {
   freshSlots, consumeSlot, spellById, spellbookFor, isSpellcaster,
   isInnateCaster, freshInnateState, rollInnateRecharges,
-  consumeInnate
+  consumeInnate, applyUpcast
 } from './monster-spells.js';
 import {
   startConcentration, isConcentrating, dropConcentration,
@@ -391,8 +391,12 @@ function runOneAttack(attacker, enemies, allies, scene, rng) {
  * it (PHB p203 — only one at a time).
  */
 function runMonsterSpell({ attacker, target, plan, scene: _scene, rng, witnesses = [], allEnemies = [] }) {
-  const spell = spellById(plan.spellId);
-  if (!spell) return;
+  const baseSpell = spellById(plan.spellId);
+  if (!baseSpell) return;
+  // M40 — Upcasting: if the plan picked a higher slot level than the
+  // spell's base, scale dice/darts accordingly. Pure: applyUpcast
+  // returns a new spell-shaped object; never mutates the registry.
+  const spell = applyUpcast(baseSpell, plan.castAtLevel);
   const book = spellbookFor(attacker.presetSlug);
   // M37 — innate-only casters have no slot book. We synthesize a
   // minimal "book" so the rest of the function (DC + attackBonus reads)
@@ -410,10 +414,12 @@ function runMonsterSpell({ attacker, target, plan, scene: _scene, rng, witnesses
 
   // M37 — resource accounting. Slot-cast spells decrement the slot pool;
   // innates use their own atWill / recharge / perDay pools.
+  // M40 — slot consumption uses plan.castAtLevel so upcasted spells
+  // burn the right slot.
   if (plan.isInnate) {
     consumeInnate(attacker, plan.spellId);
   } else {
-    consumeSlot(attacker._slots, spell);
+    consumeSlot(attacker._slots, baseSpell, plan.castAtLevel);
   }
 
   // M34.1 — Counterspell window: any witness (opposing-side caster) can

@@ -55,7 +55,8 @@ import {
 } from './scene/reactions.js';
 import {
   spellById, spellbookFor,
-  innateBlockFor, freshInnateState, rollInnateRecharges, consumeInnate
+  innateBlockFor, freshInnateState, rollInnateRecharges, consumeInnate,
+  applyUpcast
 } from './scene/monster-spells.js';
 import { rollSave } from './scene/save-rolls.js';
 import { MONSTER_DEFAULT_SAVES } from './scene/monster-presets.js';
@@ -1026,8 +1027,10 @@ function runVersusOpportunityAttack(triggerer, moverHit, moverBeforePos) {
 async function castInVersus(attackerHit, plan) {
   if (!attackerHit || !plan?.spellId) return;
   const caster = attackerHit.entity;
-  const spell = spellById(plan.spellId);
-  if (!spell) return;
+  const baseSpell = spellById(plan.spellId);
+  if (!baseSpell) return;
+  // M40 — Upcast: scale dice/darts up to the chosen slot level.
+  const spell = applyUpcast(baseSpell, plan.castAtLevel);
   const book = spellbookFor(caster.presetSlug);
   const innateBook = !book && innateBlockFor(caster.presetSlug)
     ? { dc: innateBlockFor(caster.presetSlug).dc || 12, attackBonus: 4, abilityMod: 3 }
@@ -1036,12 +1039,14 @@ async function castInVersus(attackerHit, plan) {
   if (!effectiveBook) return;
 
   // Slot accounting (consume regardless of counter outcome — RAW).
+  // M40: drain the slot the AI picked, not the spell's base level.
   if (plan.isInnate) {
     caster._innate ??= freshInnateState(caster.presetSlug);
     consumeInnate(caster, plan.spellId);
   } else if (caster._slots) {
-    if (spell.level > 0 && caster._slots[spell.level] > 0) {
-      caster._slots[spell.level] -= 1;
+    const lvl = Math.max(baseSpell.level || 0, plan.castAtLevel || baseSpell.level || 0);
+    if (lvl > 0 && caster._slots[lvl] > 0) {
+      caster._slots[lvl] -= 1;
     }
   }
 
@@ -1051,7 +1056,9 @@ async function castInVersus(attackerHit, plan) {
     spellName: spell.name, targetName: plan.targetSide === 'ally'
       ? findVersusEntityById(plan.targetId)?.name
       : findVersusEntityById(plan.targetId)?.name,
-    isInnate: plan.isInnate, level: spell.level
+    isInnate: plan.isInnate,
+    level: baseSpell.level,
+    castAtLevel: plan.castAtLevel || baseSpell.level
   });
 
   // M39.1 — Counterspell witness loop. Only PCs can counter monster
@@ -1229,14 +1236,18 @@ function pcCounterMod(pc) {
   return pc.abilityModifiers?.INT ?? 0;
 }
 
-function appendCastLog({ casterName, spellName, targetName, isInnate, level }) {
+function appendCastLog({ casterName, spellName, targetName, isInnate, level, castAtLevel }) {
   const wrap = document.getElementById('roll-log');
   const list = document.getElementById('roll-log-list');
   if (!wrap || !list) return;
   wrap.hidden = false;
   const li = document.createElement('li');
   li.className = 'roll-log-entry roll-spell';
-  const tag = isInnate ? 'INNATE' : `Lvl ${level || 'cantrip'}`;
+  let tag;
+  if (isInnate) tag = 'INNATE';
+  else if (level === 0) tag = 'CANTRIP';
+  else if (castAtLevel && castAtLevel > level) tag = `Lvl ${level}→${castAtLevel}`;
+  else tag = `Lvl ${level}`;
   li.innerHTML = `
     <div class="roll-headline"><span class="spell-tag">✦ ${escapeHtml(tag)}</span> <strong>${escapeHtml(casterName)}</strong> casts <strong>${escapeHtml(spellName)}</strong>${targetName ? ` on ${escapeHtml(targetName)}` : ''}</div>
     <div class="roll-line roll-spell-tail"></div>

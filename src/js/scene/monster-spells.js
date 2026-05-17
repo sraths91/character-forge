@@ -39,6 +39,7 @@ export const MONSTER_SPELLS = {
     range: 5,        // melee spell attack
     dice: '3d10',
     damageType: 'Necrotic',
+    upcast: { extraDice: '1d10', scoreBonus: 0.3 },   // +1d10 / slot above 1st
     description: 'Melee spell attack. On hit: 3d10 necrotic damage.',
     pageRef: 'PHB p251'
   },
@@ -85,6 +86,7 @@ export const MONSTER_SPELLS = {
     darts: 3,
     perDart: '1d4+1',
     damageType: 'Force',
+    upcast: { extraDarts: 1, scoreBonus: 0.5 },   // +1 dart / slot above 1st
     description: '3 darts each dealing 1d4+1 force, no attack roll. Distribute among visible targets.',
     pageRef: 'PHB p257'
   },
@@ -110,6 +112,7 @@ export const MONSTER_SPELLS = {
     range: 5,                // touch
     dice: '1d8',             // + spellcasting ability mod
     addsAbilityMod: true,
+    upcast: { extraDice: '1d8', scoreBonus: 0.4 },   // +1d8 / slot above 1st
     description: 'Touch ally heals for 1d8 + spellcasting mod.',
     pageRef: 'PHB p230'
   },
@@ -122,6 +125,7 @@ export const MONSTER_SPELLS = {
     dice: '1d4',
     addsAbilityMod: true,
     bonusAction: true,
+    upcast: { extraDice: '1d4', scoreBonus: 0.3 },   // +1d4 / slot above 1st
     description: 'Ranged bonus action: ally heals for 1d4 + spellcasting mod.',
     pageRef: 'PHB p250'
   },
@@ -291,8 +295,59 @@ export function freshSlots(slug) {
   return { ...(book.slots || {}) };
 }
 
-/** Burn one slot. No-op for cantrips. */
-export function consumeSlot(slotPool, spell) {
+/** Burn one slot. No-op for cantrips. `castAtLevel` lets the caller
+ *  spend a higher slot (M40 upcasting); defaults to the spell's base. */
+export function consumeSlot(slotPool, spell, castAtLevel = null) {
   if (!spell || spell.level === 0) return;
-  if (slotPool[spell.level] > 0) slotPool[spell.level] -= 1;
+  const lvl = Math.max(spell.level, castAtLevel || spell.level);
+  if (slotPool[lvl] > 0) slotPool[lvl] -= 1;
+}
+
+// =====================================================================
+// M40 — Spell upcasting
+//
+// Many spells get stronger when cast with a slot above their base
+// level. The `upcast` field on each spell declares what scales:
+//   extraDice:   string  — appended to the dice expression per slot
+//                          above base (e.g. Cure Wounds adds 1d8/slot)
+//   extraDarts:  number  — Magic Missile-shaped (1 more dart per slot)
+//   scoreBonus:  number  — AI weight bump per slot above base
+//
+// `applyUpcast(spell, castAtLevel)` returns a *new* spell-shaped object
+// with the scaled dice/darts so the resolver can use it unchanged. The
+// original definition is never mutated.
+// =====================================================================
+
+export function applyUpcast(spell, castAtLevel) {
+  if (!spell) return spell;
+  const baseLevel = spell.level || 0;
+  const target = Math.max(baseLevel, castAtLevel || baseLevel);
+  const above = target - baseLevel;
+  if (above <= 0 || !spell.upcast) return spell;
+  const next = { ...spell, castAtLevel: target };
+  if (spell.upcast.extraDice && spell.dice) {
+    next.dice = mergeDicePool(spell.dice, spell.upcast.extraDice, above);
+  }
+  if (spell.upcast.extraDarts && spell.darts) {
+    next.darts = spell.darts + spell.upcast.extraDarts * above;
+  }
+  return next;
+}
+
+/**
+ * Combine a base dice expression with N copies of an extra dice spec.
+ * Same-denominator pools merge ("1d8" + 2x"1d8" → "3d8"); otherwise the
+ * extras are appended with + and the resolver sums them at roll-time.
+ */
+function mergeDicePool(base, extra, times) {
+  if (times <= 0) return base;
+  const baseM = String(base).match(/^(\d+)d(\d+)(.*)$/);
+  const extraM = String(extra).match(/^(\d+)d(\d+)(.*)$/);
+  if (baseM && extraM && baseM[2] === extraM[2] && !baseM[3] && !extraM[3]) {
+    const totalCount = Number(baseM[1]) + Number(extraM[1]) * times;
+    return `${totalCount}d${baseM[2]}`;
+  }
+  // Mixed dice or modifier present — concatenate cleanly.
+  const repeats = Array(times).fill(extra).join('+');
+  return `${base}+${repeats}`;
 }

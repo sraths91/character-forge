@@ -27,9 +27,13 @@ import { profileFor } from './profiles.js';
 import { profileForEntity } from './infer.js';
 import { chebyshevFeet } from '../grid-rules.js';
 import {
-  spellbookFor, spellById, canCastSpell,
+  spellbookFor, spellById,
   innateBlockFor, canInnateCast
 } from '../monster-spells.js';
+
+// M40 — slot-economy penalty per slot level burned above a spell's base.
+// Keep small; spells with large upcast scoreBonus will outweigh it.
+const SLOT_ECONOMY_PENALTY = 0.25;
 
 function posOf(e) { return e?._position || e?.position || null; }
 function hpOf(e) {
@@ -153,6 +157,9 @@ function considerCast({ self, profile, archetype, target, enemies }) {
   if (knownSpells.size === 0) return null;
 
   // Score each spell the monster knows; pick the best one we can cast.
+  // M40 — also score upcast variants at every available slot level so
+  // the AI can decide between e.g. Magic Missile @ 1st (3 darts) vs
+  // Magic Missile @ 3rd (5 darts).
   let bestSpell = null;
   for (const id of knownSpells) {
     const weight = castWeights[id];
@@ -166,36 +173,64 @@ function considerCast({ self, profile, archetype, target, enemies }) {
       Object.prototype.hasOwnProperty.call(innate.recharge || {}, id) ||
       Object.values(innate.perDay || {}).some(t => t.includes(id))
     );
-    if (isInnate) {
-      if (!canInnateCast(self, id)) continue;
-    } else {
-      if (!slots) continue;
-      if (!canCastSpell(spell, slots)) continue;
-    }
-    // Range / line-of-fire: cantrip-save & spell-attack use spell.range;
-    // melee spell attacks (range 5) only when adjacent.
     if (!spellInRange(spell, self, target)) continue;
     // Hold Person flavored: don't double-stack on a paralyzed target.
     if (spell.appliesCondition && (target.conditions || []).includes(spell.appliesCondition)) continue;
     const aoeBoost = aoeOpportunity(spell, target, enemies);
-    const score = weight + aoeBoost;
-    if (!bestSpell || score > bestSpell.score) {
-      bestSpell = { id, spell, score, weight, aoeBoost, isInnate };
+
+    // M40 — enumerate possible cast levels (base + each available upcast)
+    const candidates = enumerateCastLevels({ spell, self, slots, isInnate });
+    for (const castAtLevel of candidates) {
+      const upcastBonus = upcastScoreFor(spell, castAtLevel);
+      const slotPenalty = castAtLevel > spell.level
+        ? (castAtLevel - spell.level) * SLOT_ECONOMY_PENALTY : 0;
+      const score = weight + aoeBoost + upcastBonus - slotPenalty;
+      if (!bestSpell || score > bestSpell.score) {
+        bestSpell = { id, spell, castAtLevel, score, weight, aoeBoost, isInnate };
+      }
     }
   }
   if (!bestSpell) return null;
+  const upcastTrail = bestSpell.castAtLevel > bestSpell.spell.level
+    ? [{ name: `upcast_lvl${bestSpell.castAtLevel}`, raw: 1, weighted: upcastScoreFor(bestSpell.spell, bestSpell.castAtLevel) }]
+    : [];
   return {
     kind: 'cast',
     targetId: target.id,
     spellId: bestSpell.id,
+    castAtLevel: bestSpell.castAtLevel,         // M40
     isInnate: bestSpell.isInnate || false,    // M37
     archetype,
     score: bestSpell.score,
     breakdown: [
       { name: `cast:${bestSpell.spell.name}`, raw: 1, weighted: bestSpell.weight },
+      ...upcastTrail,
       ...(bestSpell.aoeBoost > 0 ? [{ name: 'crowded_target', raw: 1, weighted: bestSpell.aoeBoost }] : [])
     ]
   };
+}
+
+// M40 — Enumerate the cast levels this monster can actually cast `spell`
+// at. Innate spells always cast at their declared level (no upcasting in
+// v1) AND must be currently available (e.g. recharge spells respect
+// their cooldown). Cantrips only have one option. Leveled spells iterate
+// from base up to the highest available slot.
+function enumerateCastLevels({ spell, self, slots, isInnate }) {
+  if (isInnate) {
+    return canInnateCast(self, spell.id) ? [spell.level] : [];
+  }
+  if (spell.level === 0) return [0];               // cantrip
+  if (!slots) return [];
+  const out = [];
+  for (let lvl = spell.level; lvl <= 9; lvl++) {
+    if ((slots[lvl] || 0) > 0) out.push(lvl);
+  }
+  return out;
+}
+
+function upcastScoreFor(spell, castAtLevel) {
+  if (!spell?.upcast || castAtLevel <= spell.level) return 0;
+  return (castAtLevel - spell.level) * (spell.upcast.scoreBonus || 0.3);
 }
 
 function spellInRange(spell, self, target) {
@@ -239,30 +274,43 @@ function considerHeal({ self, profile, archetype, allies }) {
   if (!mostHurt) return null;
 
   // Score each known heal spell; require slot + range + targetSide=ally.
+  // M40 — also score upcast variants (Cure Wounds @ lvl 2 = 2d8+mod).
+  // The "more healing" justifies a higher slot more eagerly when the
+  // ally is closer to 0 hp.
   let bestSpell = null;
   for (const id of book.spells) {
     const weight = castWeights[id];
     if (!weight) continue;
     const spell = spellById(id);
     if (!spell || spell.targetSide !== 'ally') continue;
-    if (!canCastSpell(spell, slots)) continue;
     if (!spellInRange(spell, self, mostHurt)) continue;
-    // ally_bloodied boost: how wounded the target is folds into the score.
-    const score = weight + mostHurtScore * 0.5;
-    if (!bestSpell || score > bestSpell.score) {
-      bestSpell = { id, spell, score, weight };
+    const candidates = enumerateCastLevels({ spell, slots, isInnate: false });
+    for (const castAtLevel of candidates) {
+      const upcastBonus = upcastScoreFor(spell, castAtLevel) * mostHurtScore;   // M40: heals scale with how hurt
+      const slotPenalty = castAtLevel > spell.level
+        ? (castAtLevel - spell.level) * SLOT_ECONOMY_PENALTY : 0;
+      // ally_bloodied boost: how wounded the target is folds into the score.
+      const score = weight + mostHurtScore * 0.5 + upcastBonus - slotPenalty;
+      if (!bestSpell || score > bestSpell.score) {
+        bestSpell = { id, spell, castAtLevel, score, weight };
+      }
     }
   }
   if (!bestSpell) return null;
+  const upcastTrail = bestSpell.castAtLevel > bestSpell.spell.level
+    ? [{ name: `upcast_lvl${bestSpell.castAtLevel}`, raw: 1, weighted: upcastScoreFor(bestSpell.spell, bestSpell.castAtLevel) * mostHurtScore }]
+    : [];
   return {
     kind: 'cast',
     targetId: mostHurt.id,
     spellId: bestSpell.id,
+    castAtLevel: bestSpell.castAtLevel,
     targetSide: 'ally',
     archetype,
     score: bestSpell.score,
     breakdown: [
       { name: `heal:${bestSpell.spell.name}`, raw: 1, weighted: bestSpell.weight },
+      ...upcastTrail,
       { name: 'ally_bloodied', raw: mostHurtScore, weighted: mostHurtScore * 0.5 }
     ]
   };
