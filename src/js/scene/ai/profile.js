@@ -26,6 +26,7 @@ import { scoreConsideration } from './considerations.js';
 import { profileFor } from './profiles.js';
 import { profileForEntity } from './infer.js';
 import { chebyshevFeet } from '../grid-rules.js';
+import { spellbookFor, spellById, canCastSpell } from '../monster-spells.js';
 
 function posOf(e) { return e?._position || e?.position || null; }
 function hpOf(e) {
@@ -102,13 +103,84 @@ export function chooseAction({ self, slug, enemies, allies, rng = Math.random } 
     }
   }
 
-  return {
+  const meleePlan = {
     kind: 'attack',
     targetId: best.target.id,
     archetype,
     score: best.score,
     breakdown: best.breakdown
   };
+
+  // M34 — Consider casting a spell. We compare each spell's utility
+  // (per-target consideration score + the profile's castWeight for it)
+  // against the melee plan; the highest score wins. The spellbook +
+  // monster spellcasting block live on the entity; profiles describe
+  // *preferences* via `castWeights`.
+  const spellPlan = considerCast({ self, profile, archetype, target: best.target, enemies: liveEnemies });
+  if (spellPlan && spellPlan.score > meleePlan.score) return spellPlan;
+  return meleePlan;
+}
+
+/**
+ * Score the best spell `self` could cast right now against `target`.
+ * Returns null if the monster isn't a caster, has no usable spells, or
+ * no spell beats the melee score.
+ */
+function considerCast({ self, profile, archetype, target, enemies }) {
+  const slug = self?.presetSlug || self?.ref?._presetSlug;
+  const book = spellbookFor(slug);
+  if (!book) return null;
+  const castWeights = profile.castWeights || {};
+  const slots = self?._slots;
+  if (!slots) return null;   // simulator hasn't seeded a slot pool
+
+  // Score each spell the monster knows; pick the best one we can cast.
+  let bestSpell = null;
+  for (const id of book.spells) {
+    const weight = castWeights[id];
+    if (!weight) continue;             // profile didn't authorize this spell
+    const spell = spellById(id);
+    if (!spell) continue;
+    if (!canCastSpell(spell, slots)) continue;
+    // Range / line-of-fire: cantrip-save & spell-attack use spell.range;
+    // melee spell attacks (range 5) only when adjacent.
+    if (!spellInRange(spell, self, target)) continue;
+    // Hold Person flavored: don't double-stack on a paralyzed target.
+    if (spell.appliesCondition && (target.conditions || []).includes(spell.appliesCondition)) continue;
+    const aoeBoost = aoeOpportunity(spell, target, enemies);
+    const score = weight + aoeBoost;
+    if (!bestSpell || score > bestSpell.score) {
+      bestSpell = { id, spell, score, weight, aoeBoost };
+    }
+  }
+  if (!bestSpell) return null;
+  return {
+    kind: 'cast',
+    targetId: target.id,
+    spellId: bestSpell.id,
+    archetype,
+    score: bestSpell.score,
+    breakdown: [
+      { name: `cast:${bestSpell.spell.name}`, raw: 1, weighted: bestSpell.weight },
+      ...(bestSpell.aoeBoost > 0 ? [{ name: 'crowded_target', raw: 1, weighted: bestSpell.aoeBoost }] : [])
+    ]
+  };
+}
+
+function spellInRange(spell, self, target) {
+  const sp = posOf(self), tp = posOf(target);
+  if (!sp || !tp) return true;
+  const dFeet = chebyshevFeet(sp, tp);
+  return dFeet <= (spell.range ?? 5);
+}
+
+/** Tiny AoE-cluster heuristic: count hostiles within 10ft of `target`. */
+function aoeOpportunity(spell, target, enemies) {
+  if (spell.range > 5 && spell.darts) {
+    // Magic Missile-shaped: more targets = more value
+    return Math.min(0.3, (enemies.length - 1) * 0.1);
+  }
+  return 0;
 }
 
 function nearestEnemy(self, enemies) {

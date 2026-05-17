@@ -184,6 +184,7 @@ export const MONSTER_PROFILES = {
       has_adjacent_ally:   { weight: 0.5, curve: 'step' },
       distance_to_target:  { weight: 0.3, curve: 'linear' }
     },
+    castWeights: { 'sacred-flame': 0.7 },   // M34 — cantrip preference
     retreat_below_hp: 0,     // dies for the cause
     metagame_blind: [],
     signature_triggers: []
@@ -217,8 +218,47 @@ export const MONSTER_PROFILES = {
     signature_triggers: [
       { when: 'self_isolated', prefer: 'flee' }
     ]
+  },
+
+  // M34 — Spellcaster archetypes. `castWeights` map spell ids to their
+  // utility multiplier (added to the per-target score, then compared to
+  // the melee score). Higher means more eager to cast it.
+  'cult-fanatic': {
+    archetype: 'control_caster',
+    considerations: {
+      target_low_hp:      { weight: 0.6, curve: 'linear' },
+      target_is_caster:   { weight: 0.5, curve: 'step' },
+      distance_to_target: { weight: 0.2, curve: 'linear' }
+    },
+    castWeights: {
+      'hold-person':      1.2,   // save-or-suck on a target that ISN'T already locked
+      'spiritual-weapon': 0.9,
+      'inflict-wounds':   0.6,
+      'sacred-flame':     0.4
+    },
+    retreat_below_hp: 0.2,
+    metagame_blind: [],
+    signature_triggers: []
+  },
+  'kobold-sorcerer': {
+    archetype: 'glass_blaster',
+    considerations: {
+      target_low_hp:      { weight: 0.7, curve: 'linear' },
+      self_isolated:      { weight: -1.0, curve: 'step' },
+      distance_to_target: { weight: 0.4, curve: 'linear' }
+    },
+    castWeights: {
+      'magic-missile': 1.1,      // autohit, premium pick
+      'fire-bolt':     0.7
+    },
+    retreat_below_hp: 0.5,
+    metagame_blind: ['exact_hp'],
+    signature_triggers: [
+      { when: 'self_isolated', prefer: 'flee' }
+    ]
   }
 };
+
 
 /**
  * Default profile for any monster slug we haven't authored yet. Picks

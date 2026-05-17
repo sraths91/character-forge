@@ -120,6 +120,21 @@ export const MONSTER_PRESETS = {
     equipment: { mainhand: { name: 'Dagger' } },
     defaultHp: { max: 6 }, ac: 11,
     attack: { name: 'Dagger', bonus: 3, dice: '1d4+1' }
+  },
+  // M34 — Spellcaster presets.
+  'cult-fanatic': {
+    slug: 'cult-fanatic', name: 'Cult Fanatic',
+    body: 'male', headRace: 'human', skinTone: 'pale', hairStyle: 'long',
+    equipment: { mainhand: { name: 'Dagger' }, helm: { name: 'Hood' }, cloak: { name: 'Black Cloak' } },
+    defaultHp: { max: 33 }, ac: 13,
+    attack: { name: 'Dagger', bonus: 4, dice: '1d4+2' }
+  },
+  'kobold-sorcerer': {
+    slug: 'kobold-sorcerer', name: 'Kobold Sorcerer',
+    body: 'teen', headRace: 'lizard', skinTone: 'red', hairStyle: 'balding',
+    equipment: { mainhand: { name: 'Dagger' }, cloak: { name: 'Black Cloak' } },
+    defaultHp: { max: 16 }, ac: 12,
+    attack: { name: 'Dagger', bonus: 4, dice: '1d4+2' }
   }
 };
 
@@ -141,7 +156,9 @@ export const MONSTER_DEFAULT_SAVES = {
   bandit:        { STR:  0, DEX: +1, CON:  0, INT:  0, WIS:  0, CHA:  0 },
   cultist:       { STR:  0, DEX:  0, CON:  0, INT:  0, WIS: +1, CHA:  0 },
   gnoll:         { STR: +2, DEX:  0, CON: +1, INT: -2, WIS:  0, CHA: -2 },
-  ratfolk:       { STR: -2, DEX: +3, CON:  0, INT:  0, WIS:  0, CHA: -2 }
+  ratfolk:       { STR: -2, DEX: +3, CON:  0, INT:  0, WIS:  0, CHA: -2 },
+  'cult-fanatic':   { STR:  0, DEX: +1, CON:  0, INT:  0, WIS: +3, CHA:  0 },
+  'kobold-sorcerer':{ STR: -2, DEX: +2, CON:  0, INT:  0, WIS:  0, CHA: +3 }
 };
 
 /** Save bonus for a monster instance against a given stat ('DEX' etc.). */

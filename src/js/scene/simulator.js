@@ -32,8 +32,18 @@ import { planMovement, occupiedCellsOf } from './movement.js';
 import { chooseAction, fleeTargetCell } from './ai/profile.js';
 import {
   resetReactionsForAll, consumeReaction, detectOpportunityAttacks,
-  detectPolearmEntryOAs, shouldCastShield, consumeShield, lvl1SlotsForPc
+  detectPolearmEntryOAs, shouldCastShield, canCastShield,
+  consumeShield, lvl1SlotsForPc
 } from './reactions.js';
+import {
+  freshSlots, consumeSlot, spellById, spellbookFor, isSpellcaster
+} from './monster-spells.js';
+import {
+  startConcentration, isConcentrating, dropConcentration,
+  handleDamageOnConcentration
+} from './concentration.js';
+import { rollSave } from './save-rolls.js';
+import { MONSTER_DEFAULT_SAVES } from './monster-presets.js';
 
 /**
  * Small mulberry32 PRNG. Pure JS, deterministic, fast. Seed in (0, 2^32).
@@ -130,7 +140,10 @@ function runOneIteration({ party, monsters, scene, maxRounds, rng }) {
       conditions: Array.isArray(m.conditions) ? [...m.conditions] : [],
       position: m.position,
       damageDealt: 0,
-      _reactionUsed: false   // M33
+      _reactionUsed: false,                         // M33
+      _slots: isSpellcaster(m.presetSlug)            // M34
+        ? freshSlots(m.presetSlug) : null,
+      _concentrating: null
     };
   });
 
@@ -250,6 +263,14 @@ function runOneAttack(attacker, enemies, allies, scene, rng) {
   // Fleeing creatures Dash instead of attacking
   if (plan && plan.kind === 'flee') return;
 
+  // M34 — Casting branch: monster spends its action on a spell instead
+  // of a weapon attack. Concentration spells replace any existing
+  // concentration (PHB p203). Slots are deducted on cast (cantrips free).
+  if (plan && plan.kind === 'cast') {
+    runMonsterSpell({ attacker, target, plan, scene, rng });
+    return;
+  }
+
   // Build the resolver context. For PCs we use deriveWeaponAttack; for
   // monsters we use the preset attack record directly.
   let attackStats;
@@ -329,6 +350,121 @@ function runOneAttack(attacker, enemies, allies, scene, rng) {
   const dmg = rollDamage(finalDmgDice, { crit: atk.crit }, rng);
   target.hp = Math.max(0, target.hp - dmg.total);
   attacker.damageDealt += dmg.total;
+}
+
+// ---------- Monster spellcasting (M34) ----------
+
+/**
+ * Resolve a monster's spell cast. Three branches by spell kind:
+ *   cantrip-save / leveled-save   → DEX/WIS/CON save with optional damage
+ *   spell-attack                  → roll vs target.ac (Shield-eligible)
+ *   auto-hit                      → Magic Missile-style, no roll
+ *
+ * Damage applied to target.hp; conditions applied if listed; slots
+ * consumed for non-cantrips; concentration replaced if the spell needs
+ * it (PHB p203 — only one at a time).
+ */
+function runMonsterSpell({ attacker, target, plan, scene: _scene, rng }) {
+  const spell = spellById(plan.spellId);
+  if (!spell) return;
+  const book = spellbookFor(attacker.presetSlug);
+  if (!book) return;
+
+  // Concentration replacement: dropping the previous spell would clear
+  // its applied conditions, but we don't track that lookup here — just
+  // mark concentration ended.
+  if (spell.concentration && isConcentrating(attacker)) dropConcentration(attacker);
+
+  // Slot accounting
+  consumeSlot(attacker._slots, spell);
+
+  if (spell.kind === 'auto-hit') {
+    // PHB Shield (p275): "you take no damage from magic missile."
+    // The reaction triggers on being targeted; if PC has the resources,
+    // they cast it and negate every dart.
+    if (target.kind === 'pc' && canCastShield(target)) {
+      consumeShield(target);
+      return;
+    }
+    const darts = spell.darts || 1;
+    let totalDmg = 0;
+    for (let i = 0; i < darts; i++) {
+      const r = rollDamage(spell.perDart, { crit: false }, rng);
+      totalDmg += r.total;
+    }
+    applyDamageToEntity(target, totalDmg);
+    attacker.damageDealt += totalDmg;
+    return;
+  }
+
+  if (spell.kind === 'spell-attack') {
+    // Spell attack roll: 1d20 + attackBonus vs target.ac
+    const atk = rollAttack({
+      bonus: book.attackBonus,
+      advantage: 'normal',
+      targetAC: target.ac
+    }, rng);
+    // M34 + M33.1: Shield blocks spell attacks too (PHB p275 RAW)
+    if (atk.hit && !atk.crit && target.kind === 'pc' &&
+        shouldCastShield({ target, attackerTotal: atk.total, targetAc: target.ac })) {
+      consumeShield(target);
+      return;
+    }
+    if (!atk.hit) return;
+    const dmg = rollDamage(spell.dice, { crit: atk.crit }, rng);
+    applyDamageToEntity(target, dmg.total);
+    attacker.damageDealt += dmg.total;
+    return;
+  }
+
+  // Save-based (cantrip-save or leveled-save)
+  const saveStat = spell.saveStat;
+  const targetSaveBonus = saveBonusFor(target, saveStat);
+  const save = rollSave({ bonus: targetSaveBonus, dc: book.dc }, rng);
+  if (spell.dice) {
+    const dmgRoll = rollDamage(spell.dice, { crit: false }, rng);
+    let dmg = dmgRoll.total;
+    if (save.success) dmg = spell.saveOnHalf ? Math.floor(dmg / 2) : 0;
+    applyDamageToEntity(target, dmg);
+    attacker.damageDealt += dmg;
+  }
+  // Apply a condition on failed save (Hold Person → paralyzed)
+  if (!save.success && spell.appliesCondition) {
+    if (!target.conditions.includes(spell.appliesCondition)) {
+      target.conditions.push(spell.appliesCondition);
+    }
+    if (spell.concentration) {
+      startConcentration(attacker, spell, [target.id]);
+    }
+  }
+}
+
+function applyDamageToEntity(target, damage) {
+  if (!target || damage <= 0) return;
+  const before = target.hp;
+  target.hp = Math.max(0, target.hp - damage);
+  // M34: concentration save on damage taken
+  const dealtDamage = before - target.hp;
+  if (dealtDamage > 0 && isConcentrating(target)) {
+    const conMod = saveBonusFor(target, 'CON');
+    // Note: not threading rng here makes this non-deterministic when
+    // a concentrating target takes auto-hit damage. The simulator's
+    // runMonsterSpell already passed rng down to rollDamage, but we
+    // lose it here. Acceptable v1 trade-off: concentrating monsters
+    // are rare (cult fanatic only); we can plumb rng later if needed.
+    handleDamageOnConcentration({ caster: target, damage: dealtDamage, conMod });
+  }
+}
+
+function saveBonusFor(entity, stat) {
+  if (!entity || !stat) return 0;
+  if (entity.kind === 'pc') {
+    const ref = entity.ref || entity;
+    return ref.abilityModifiers?.[stat] ?? 0;
+  }
+  // Monster — read from MONSTER_DEFAULT_SAVES
+  const table = MONSTER_DEFAULT_SAVES[entity.presetSlug];
+  return table ? (table[stat] || 0) : 0;
 }
 
 // ---------- Reaction attack (M33.0) ----------

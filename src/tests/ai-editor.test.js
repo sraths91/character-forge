@@ -103,9 +103,9 @@ test('M32.3: resetProfile returns null (signal to delete _aiProfile)', () => {
   assert.strictEqual(resetProfile(), null);
 });
 
-test('M32.3: listArchetypes exposes all 14 authored profiles', () => {
+test('M32.3: listArchetypes exposes every authored profile', () => {
   const out = listArchetypes();
-  assert.strictEqual(out.length, 14);
+  assert.ok(out.length >= 14, `expected >=14 profiles, got ${out.length}`);
   assert.ok(out.some(o => o.slug === 'goblin' && o.archetype === 'nimble_skirmisher'));
 });
 

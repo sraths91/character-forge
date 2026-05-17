@@ -180,13 +180,23 @@ function weaponOf(entity) {
  * caller is responsible for consuming the slot + reaction if true.
  */
 export function shouldCastShield({ target, attackerTotal, targetAc } = {}) {
-  if (!hasReactionAvailable(target)) return false;
-  if (!hasShieldSpell(target)) return false;
-  if ((target._lvl1Slots ?? 0) <= 0) return false;
+  if (!canCastShield(target)) return false;
   // Only fires when it would actually convert a hit into a miss.
   // Crit hits ignore Shield: crits hit regardless of AC.
   if (attackerTotal < targetAc) return false;
   if (attackerTotal >= targetAc + 5) return false;
+  return true;
+}
+
+/**
+ * Lower-level predicate: does `target` have the *resources* to cast
+ * Shield right now? Used by the Magic Missile path, where the PHB text
+ * states Shield negates the spell entirely — no AC math involved.
+ */
+export function canCastShield(target) {
+  if (!hasReactionAvailable(target)) return false;
+  if (!hasShieldSpell(target)) return false;
+  if ((target._lvl1Slots ?? 0) <= 0) return false;
   return true;
 }
 
