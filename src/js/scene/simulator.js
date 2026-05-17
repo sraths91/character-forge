@@ -30,6 +30,9 @@ import { MONSTER_PRESETS } from './monster-presets.js';
 import { factionLists } from './grid-rules.js';
 import { planMovement, occupiedCellsOf } from './movement.js';
 import { chooseAction, fleeTargetCell } from './ai/profile.js';
+import {
+  resetReactionsForAll, consumeReaction, detectOpportunityAttacks
+} from './reactions.js';
 
 /**
  * Small mulberry32 PRNG. Pure JS, deterministic, fast. Seed in (0, 2^32).
@@ -110,7 +113,8 @@ function runOneIteration({ party, monsters, scene, maxRounds, rng }) {
     conditions: Array.isArray(p.conditions) ? [...p.conditions] : [],
     _position: p._position,
     damageDealt: 0,
-    combatMods: p.combatMods || []
+    combatMods: p.combatMods || [],
+    _reactionUsed: false   // M33
   }));
   const mons = monsters.map(m => {
     const preset = MONSTER_PRESETS[m.presetSlug] || {};
@@ -122,7 +126,8 @@ function runOneIteration({ party, monsters, scene, maxRounds, rng }) {
       attack: preset.attack || { name: 'Strike', bonus: 2, dice: '1d6' },
       conditions: Array.isArray(m.conditions) ? [...m.conditions] : [],
       position: m.position,
-      damageDealt: 0
+      damageDealt: 0,
+      _reactionUsed: false   // M33
     };
   });
 
@@ -132,6 +137,11 @@ function runOneIteration({ party, monsters, scene, maxRounds, rng }) {
   while (round < maxRounds) {
     round++;
     if (sideAlive(pcs) === 0 || sideAlive(mons) === 0) break;
+    // M33 — refresh every entity's reaction at the top of each round.
+    // 5e refreshes at start of *each* creature's turn, but since our
+    // simulator runs everyone once per round, top-of-round is equivalent.
+    resetReactionsForAll(pcs);
+    resetReactionsForAll(mons);
     // PCs swing first
     for (const a of pcs) {
       if (!isAlive(a)) continue;
@@ -201,13 +211,24 @@ function runOneAttack(attacker, enemies, allies, scene, rng) {
     });
     const bounds = { cols: scene?.cols || 99, rows: scene?.rows || 99 };
     const moveTarget = (plan && plan.kind === 'flee')
-      ? fleeTargetCell(attacker, target, bounds)
+      ? fleeTargetCell(attacker, target, bounds, rng)
       : targetPos;
     const next = planMovement({
       from: attackerPos, to: moveTarget, weapon,
       speedFt: 30, occupied, bounds
     });
     if (next && (next.col !== attackerPos.col || next.row !== attackerPos.row)) {
+      // M33.0 — opportunity attacks fire BEFORE the move resolves.
+      // The interrupting attack is made at the cell the mover is leaving
+      // (PHB p195: "the reaction interrupts the provoking action").
+      const triggers = detectOpportunityAttacks({
+        mover: attacker, before: attackerPos, after: next, hostiles: enemies
+      });
+      for (const { triggerer } of triggers) {
+        if (!isAlive(attacker)) break;
+        runReactionAttack(triggerer, attacker, attackerPos, scene, rng);
+        consumeReaction(triggerer);
+      }
       if (attacker.kind === 'pc') attacker._position = next;
       else attacker.position = next;
     }
@@ -285,6 +306,69 @@ function runOneAttack(attacker, enemies, allies, scene, rng) {
   }
   if (!atk.hit) return;
   const dmg = rollDamage(finalDmgDice, { crit: atk.crit }, rng);
+  target.hp = Math.max(0, target.hp - dmg.total);
+  attacker.damageDealt += dmg.total;
+}
+
+// ---------- Reaction attack (M33.0) ----------
+
+/**
+ * Run a single attack as a reaction (e.g. opportunity attack). Reuses
+ * the M11 resolver + roll pipeline but with a fixed attacker + target,
+ * computing distance from the *interrupting cell* (mover.beforePos).
+ *
+ * Damage is applied to the target's hp counter; no plan/AI involved.
+ */
+function runReactionAttack(attacker, target, targetBeforePos, scene, rng) {
+  if (!attacker || !target) return;
+  // The mover (target of the OA) is interrupted at `targetBeforePos`.
+  // We pass that as their position so the resolver computes reach
+  // distance from the cell they were in when they triggered the OA.
+  let attackStats;
+  if (attacker.kind === 'pc') {
+    const a = deriveWeaponAttack(attacker.ref, attacker.weapon);
+    attackStats = {
+      bonus: a.bonus, dice: a.dice, damageType: a.damageType,
+      parts: [{ source: attacker.weapon?.name || 'Attack', value: a.bonus }],
+      damageParts: []
+    };
+  } else {
+    attackStats = {
+      bonus: attacker.attack.bonus, dice: attacker.attack.dice,
+      damageType: null,
+      parts: [{ source: attacker.attack.name, value: attacker.attack.bonus }],
+      damageParts: []
+    };
+  }
+  const targetForResolver = {
+    ...target.ref,
+    conditions: target.conditions,
+    _position: targetBeforePos
+  };
+  const attackerForResolver = {
+    ...attacker.ref,
+    conditions: attacker.conditions,
+    _position: attacker._position || attacker.position,
+    combatMods: attacker.combatMods || attacker.ref?.combatMods || []
+  };
+  const verdict = resolveAttack({
+    attacker: attackerForResolver,
+    target: targetForResolver,
+    weapon: attacker.kind === 'pc' ? attacker.weapon : { name: attacker.attack.name },
+    scene,
+    attackerKind: attacker.kind,
+    targetKind: target.kind,
+    targetAC: target.ac,
+    advantageOverride: 'auto',
+    allies: [], hostiles: [],
+    attackStats
+  });
+  if (verdict.autoMiss) return;
+  const atk = verdict.autoCrit
+    ? { hit: true, crit: true, total: 20 + verdict.attackBonus.total }
+    : rollAttack({ bonus: verdict.attackBonus.total, advantage: verdict.d20.mode, targetAC: target.ac }, rng);
+  if (!atk.hit) return;
+  const dmg = rollDamage(verdict.damage.dice, { crit: atk.crit }, rng);
   target.hp = Math.max(0, target.hp - dmg.total);
   attacker.damageDealt += dmg.total;
 }

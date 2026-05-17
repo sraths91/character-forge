@@ -42,6 +42,9 @@ import {
   editableProfileFor, applyWeightChange, applyRetreatChange,
   applyArchetypeSwap, listArchetypes, listConsiderations
 } from './scene/ai/editor.js';
+import {
+  resetReactionsForAll, consumeReaction, detectOpportunityAttacks
+} from './scene/reactions.js';
 
 const $ = (id) => document.getElementById(id);
 const status = $('status');
@@ -524,6 +527,9 @@ async function runVersusPartyAuto() {
   const stepDelay = 950;                    // ms between turns
 
   for (let round = 1; round <= 30; round++) {
+    // M33.0 — refresh every combatant's reaction at the top of the round.
+    resetReactionsForAll(partyComposedCharacters);
+    resetReactionsForAll(currentScene.monsters || []);
     for (const entry of order) {
       if (!versusActive) return;
       const entity = resolveEntityById(entry.entityId, entry.entityKind);
@@ -686,11 +692,156 @@ function versusMoveBeforeAttack(attackerHit, targetHit) {
     bounds: { cols: currentScene.cols, rows: currentScene.rows }
   });
   if (!next || (next.col === attackerPos.col && next.row === attackerPos.row)) return;
+  // M33.0 — opportunity attacks fire BEFORE the move is applied. We
+  // build a uniform "shape" for the mover + every hostile so
+  // detectOpportunityAttacks can read positions/weapons consistently.
+  const moverShape = {
+    id: attackerHit.entity.id,
+    weapon: attackerHit.kind === 'pc' ? weapon : { name: weapon?.name }
+  };
+  const hostileShapes = buildVersusHostileShapesFor(attackerHit);
+  const triggers = detectOpportunityAttacks({
+    mover: moverShape, before: attackerPos, after: next, hostiles: hostileShapes
+  });
+  for (const { triggerer } of triggers) {
+    runVersusOpportunityAttack(triggerer, attackerHit, attackerPos);
+    consumeReaction(triggerer.live);
+    if (versusHpOf(attackerHit.entity, attackerHit.kind) <= 0) break;
+  }
   if (attackerHit.kind === 'pc') {
     currentScene.positions = { ...(currentScene.positions || {}), [String(attackerHit.entity.id)]: next };
   } else {
     attackerHit.entity.position = next;
   }
+}
+
+// M33.0 — list the live opposing-side entities relative to `attackerHit`,
+// each wrapped in a shape detectOpportunityAttacks can consume. The
+// wrapper keeps a reference back to the live entity so we can call
+// consumeReaction() and resolve the OA against the actual record.
+function buildVersusHostileShapesFor(attackerHit) {
+  if (attackerHit.kind === 'pc') {
+    return (currentScene.monsters || [])
+      .filter(m => (m.hp?.current ?? 0) > 0)
+      .map(m => ({
+        live: m,
+        kind: 'monster',
+        _position: m.position,
+        conditions: m.conditions || [],
+        _reactionUsed: !!m._reactionUsed,
+        attack: { name: MONSTER_PRESETS[m.presetSlug]?.attack?.name }
+      }));
+  }
+  return partyComposedCharacters
+    .filter(p => (p.hp?.current ?? 0) > 0)
+    .map(p => ({
+      live: p,
+      kind: 'pc',
+      _position: currentScene.positions?.[String(p.id)],
+      conditions: p.conditions || [],
+      _reactionUsed: !!p._reactionUsed,
+      weapon: p.equipment?.mainhand || null
+    }));
+}
+
+// M33.0 — Execute one opportunity attack from `triggerer` against
+// `moverHit`. The mover is interrupted at `moverBeforePos`, so we
+// resolve reach distance from that cell. Damage applied + logged.
+function runVersusOpportunityAttack(triggerer, moverHit, moverBeforePos) {
+  const moverEntity = moverHit.entity;
+  const moverKind = moverHit.kind;
+  const attackerLive = triggerer.live;
+  // Build the resolver's attacker/target objects
+  let attackStats, weapon, attackerName, attackerAc;
+  if (triggerer.kind === 'pc') {
+    const a = deriveWeaponAttack(attackerLive, triggerer.weapon);
+    attackStats = {
+      bonus: a.bonus, dice: a.dice, damageType: a.damageType,
+      parts: [{ source: triggerer.weapon?.name || 'Attack', value: a.bonus }],
+      damageParts: []
+    };
+    weapon = triggerer.weapon;
+    attackerName = attackerLive.name || 'PC';
+    attackerAc = deriveAC(attackerLive);
+  } else {
+    const preset = MONSTER_PRESETS[attackerLive.presetSlug] || {};
+    const atk = preset.attack || { name: 'Strike', bonus: 2, dice: '1d6' };
+    attackStats = {
+      bonus: atk.bonus, dice: atk.dice, damageType: null,
+      parts: [{ source: atk.name, value: atk.bonus }],
+      damageParts: []
+    };
+    weapon = { name: atk.name };
+    attackerName = attackerLive.name || 'Monster';
+    attackerAc = preset.ac ?? 12;
+  }
+
+  const targetForResolver = {
+    ...moverEntity,
+    conditions: moverEntity.conditions || [],
+    _position: moverBeforePos
+  };
+  const attackerForResolver = {
+    ...attackerLive,
+    _position: triggerer._position,
+    conditions: attackerLive.conditions || []
+  };
+  const targetAC = moverKind === 'pc' ? deriveAC(moverEntity) : (MONSTER_PRESETS[moverEntity.presetSlug]?.ac ?? 12);
+  const verdict = resolveAttack({
+    attacker: attackerForResolver,
+    target: targetForResolver,
+    weapon, scene: currentScene,
+    attackerKind: triggerer.kind,
+    targetKind: moverKind,
+    targetAC,
+    advantageOverride: 'auto',
+    allies: [], hostiles: [],
+    attackStats
+  });
+  if (verdict.autoMiss) {
+    appendReactionLog({
+      attackerName, targetName: moverEntity.name || 'Target',
+      verdict, atk: { hit: false, total: 0 }, dmg: 0
+    });
+    return;
+  }
+  const atk = verdict.autoCrit
+    ? { hit: true, crit: true, total: 20 + verdict.attackBonus.total }
+    : rollAttack({ bonus: verdict.attackBonus.total, advantage: verdict.d20.mode, targetAC }, undefined);
+  let dmgTotal = 0;
+  if (atk.hit) {
+    const dmg = rollDamage(verdict.damage.dice, { crit: atk.crit });
+    dmgTotal = dmg.total;
+    applyDamage(moverKind, moverEntity.id, dmgTotal);
+  }
+  appendReactionLog({
+    attackerName, targetName: moverEntity.name || 'Target',
+    verdict, atk, dmg: dmgTotal, weaponName: weapon?.name || 'Attack'
+  });
+  // Silence the unused-AC warning — keeps the log readable if we extend later.
+  void attackerAc;
+}
+
+function appendReactionLog({ attackerName, targetName, verdict, atk, dmg, weaponName = 'Attack' }) {
+  const wrap = document.getElementById('roll-log');
+  const list = document.getElementById('roll-log-list');
+  if (!wrap || !list) return;
+  wrap.hidden = false;
+  const li = document.createElement('li');
+  const cls = atk.crit ? 'roll-crit' : atk.hit ? 'roll-hit' : 'roll-miss';
+  li.className = `roll-log-entry roll-reaction ${cls}`;
+  const tail = atk.hit
+    ? `<strong>HIT</strong> · ${weaponName} ${verdict.damage.dice} = ${dmg} dmg`
+    : `<strong>MISS</strong>`;
+  li.innerHTML = `
+    <div class="roll-headline">
+      <span class="reaction-tag">⚡ REACTION</span>
+      ${escapeHtml(attackerName)}'s opportunity attack on ${escapeHtml(targetName)}
+    </div>
+    <div class="roll-line">${tail}</div>
+  `;
+  list.insertBefore(li, list.firstChild);
+  while (list.children.length > 20) list.removeChild(list.lastChild);
 }
 
 function versusOccupiedCells(excludeId) {

@@ -128,11 +128,14 @@ function nearestEnemy(self, enemies) {
  * on the opposite side of the grid from the threat, clamped to bounds.
  * The simulator passes this to planMovement instead of the threat's pos.
  */
-export function fleeTargetCell(self, threat, bounds = { cols: 10, rows: 10 }) {
+export function fleeTargetCell(self, threat, bounds = { cols: 10, rows: 10 }, rng = Math.random) {
   const sp = posOf(self), tp = posOf(threat);
   if (!sp || !tp) return sp;
-  const dc = Math.sign(sp.col - tp.col) || (Math.random() < 0.5 ? -1 : 1);
-  const dr = Math.sign(sp.row - tp.row) || (Math.random() < 0.5 ? -1 : 1);
+  // When the mover is axis-aligned with the threat, pick a perpendicular
+  // direction. The randomness MUST come from the supplied rng so that
+  // simulator runs stay deterministic across calls with the same seed.
+  const dc = Math.sign(sp.col - tp.col) || (rng() < 0.5 ? -1 : 1);
+  const dr = Math.sign(sp.row - tp.row) || (rng() < 0.5 ? -1 : 1);
   return {
     col: clampInt(sp.col + dc * 6, 0, (bounds.cols || 10) - 1),
     row: clampInt(sp.row + dr * 6, 0, (bounds.rows || 10) - 1)

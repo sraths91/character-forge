@@ -603,6 +603,18 @@ button.primary:disabled { opacity: 0.6; cursor: not-allowed; }
 .roll-log-entry.roll-crit { border-left-color: #fbbf24; }
 .roll-log-entry.roll-ai   { border-left-color: #818cf8; opacity: 0.92; }
 .roll-line.ai-breakdown   { color: #a5b4fc; font-style: italic; }
+.roll-log-entry.roll-reaction { border-left-color: #f59e0b; }
+.reaction-tag {
+  display: inline-block;
+  background: #f59e0b;
+  color: #1f1d10;
+  font-weight: 700;
+  font-size: 0.65rem;
+  padding: 1px 6px;
+  border-radius: 3px;
+  margin-right: 6px;
+  letter-spacing: 0.05em;
+}
 .roll-headline { font-family: var(--mono, ui-monospace); font-size: 0.78rem; }
 .roll-outcome  { font-weight: 600; }
 .roll-log-entry.roll-hit  .roll-outcome { color: #4ade80; }
