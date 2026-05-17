@@ -210,6 +210,8 @@ test('M32.1: all 14 preset slugs now have authored profiles', () => {
 });
 
 test('M32.1: skeleton/zombie/troll/cultist/minotaur never retreat', () => {
+  // The contract under test is *no flee*, not *no cast* — cultist
+  // legitimately casts Sacred Flame after M34.
   for (const slug of ['skeleton', 'zombie', 'troll', 'cultist', 'minotaur']) {
     const self = { id: 'm', presetSlug: slug, hp: 1, hpMax: 100, _position: { col: 0, row: 0 } };
     const plan = chooseAction({
@@ -217,7 +219,7 @@ test('M32.1: skeleton/zombie/troll/cultist/minotaur never retreat', () => {
       enemies: [{ id: 'pc1', hp: 30, hpMax: 30, _position: { col: 3, row: 0 } }],
       allies: [], rng: () => 0.5
     });
-    assert.strictEqual(plan.kind, 'attack', `${slug} should never flee`);
+    assert.notStrictEqual(plan.kind, 'flee', `${slug} should never flee`);
   }
 });
 
