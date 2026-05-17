@@ -32,7 +32,7 @@ import { planMovement, occupiedCellsOf } from './movement.js';
 import { chooseAction, fleeTargetCell } from './ai/profile.js';
 import {
   resetReactionsForAll, consumeReaction, detectOpportunityAttacks,
-  shouldCastShield, consumeShield, lvl1SlotsForPc
+  detectPolearmEntryOAs, shouldCastShield, consumeShield, lvl1SlotsForPc
 } from './reactions.js';
 
 /**
@@ -224,12 +224,22 @@ function runOneAttack(attacker, enemies, allies, scene, rng) {
       // M33.0 — opportunity attacks fire BEFORE the move resolves.
       // The interrupting attack is made at the cell the mover is leaving
       // (PHB p195: "the reaction interrupts the provoking action").
-      const triggers = detectOpportunityAttacks({
+      // M33.2 — Polearm Master entry-OAs use the *destination* cell so
+      // we resolve them at the cell the mover is entering.
+      const leaveTriggers = detectOpportunityAttacks({
         mover: attacker, before: attackerPos, after: next, hostiles: enemies
       });
-      for (const { triggerer } of triggers) {
+      const entryTriggers = detectPolearmEntryOAs({
+        mover: attacker, before: attackerPos, after: next, hostiles: enemies
+      });
+      for (const { triggerer } of leaveTriggers) {
         if (!isAlive(attacker)) break;
         runReactionAttack(triggerer, attacker, attackerPos, scene, rng);
+        consumeReaction(triggerer);
+      }
+      for (const { triggerer } of entryTriggers) {
+        if (!isAlive(attacker)) break;
+        runReactionAttack(triggerer, attacker, next, scene, rng);
         consumeReaction(triggerer);
       }
       if (attacker.kind === 'pc') attacker._position = next;

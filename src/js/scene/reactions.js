@@ -69,9 +69,8 @@ export function consumeReaction(entity) {
  */
 export function detectOpportunityAttacks({ mover, before, after, hostiles = [] } = {}) {
   if (!mover || !before || !after) return [];
-  // Disengage suppresses every OA from this move (PHB p192).
-  if (mover._disengaged) return [];
   if (before.col === after.col && before.row === after.row) return [];
+  const disengaged = !!mover._disengaged;
 
   const triggers = [];
   for (const h of hostiles) {
@@ -81,11 +80,72 @@ export function detectOpportunityAttacks({ mover, before, after, hostiles = [] }
     const reach = meleeReachFt(weaponOf(h));
     const wasInReach = chebyshevFeet(hp, before) <= reach;
     const isInReach  = chebyshevFeet(hp, after)  <= reach;
-    if (wasInReach && !isInReach) {
-      triggers.push({ triggerer: h, reason: 'left-reach' });
+    if (!wasInReach || isInReach) continue;
+    // M33.2 — Disengage normally suppresses every OA (PHB p192), but
+    // Sentinel (PHB p169) explicitly overrides this for hostiles within
+    // 5ft of the mover's starting cell.
+    if (disengaged) {
+      if (!hasSentinel(h) || chebyshevFeet(hp, before) > 5) continue;
+    }
+    triggers.push({ triggerer: h, reason: 'left-reach' });
+  }
+  return triggers;
+}
+
+/**
+ * M33.2 — Polearm Master entry OAs (PHB p168).
+ *
+ * "While wielding a glaive, halberd, pike, or quarterstaff, other
+ *  creatures provoke an opportunity attack from you when they enter
+ *  your reach."
+ *
+ * Detects hostiles who have the feat, are wielding a qualifying
+ * polearm, were NOT in reach at `before`, and ARE in reach at `after`.
+ */
+export function detectPolearmEntryOAs({ mover, before, after, hostiles = [] } = {}) {
+  if (!mover || !before || !after) return [];
+  if (before.col === after.col && before.row === after.row) return [];
+  const triggers = [];
+  for (const h of hostiles) {
+    if (!hasReactionAvailable(h)) continue;
+    if (!hasPolearmMaster(h)) continue;
+    const wpn = weaponOf(h);
+    if (!isPolearmWeapon(wpn)) continue;
+    const hp = h._position || h.position;
+    if (!hp) continue;
+    const reach = meleeReachFt(wpn);
+    const wasInReach = chebyshevFeet(hp, before) <= reach;
+    const isInReach  = chebyshevFeet(hp, after)  <= reach;
+    if (!wasInReach && isInReach) {
+      triggers.push({ triggerer: h, reason: 'entered-reach-PAM' });
     }
   }
   return triggers;
+}
+
+/** Read a feat-name list off any entity-shape we use. Case-insensitive. */
+function readFeats(entity) {
+  const ref = entity?.ref || entity;
+  if (!ref) return [];
+  if (Array.isArray(ref.feats)) return ref.feats;
+  if (Array.isArray(entity?.feats)) return entity.feats;
+  return [];
+}
+function hasFeat(entity, namePattern) {
+  for (const f of readFeats(entity)) {
+    const name = typeof f === 'string' ? f : (f?.name || '');
+    if (namePattern.test(String(name))) return true;
+  }
+  return false;
+}
+export function hasSentinel(entity) { return hasFeat(entity, /sentinel/i); }
+export function hasPolearmMaster(entity) { return hasFeat(entity, /polearm\s*master/i); }
+
+/** Is this weapon one of the four polearms PAM keys off? */
+export function isPolearmWeapon(weapon) {
+  if (!weapon) return false;
+  const name = String(weapon.name || '').toLowerCase();
+  return /\b(glaive|halberd|pike|quarterstaff)\b/.test(name);
 }
 
 function weaponOf(entity) {

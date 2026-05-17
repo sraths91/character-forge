@@ -2,8 +2,9 @@ import { test } from 'node:test';
 import assert from 'node:assert';
 import {
   resetReaction, resetReactionsForAll, hasReactionAvailable, consumeReaction,
-  detectOpportunityAttacks,
-  shouldCastShield, consumeShield, hasShieldSpell, lvl1SlotsForPc
+  detectOpportunityAttacks, detectPolearmEntryOAs,
+  shouldCastShield, consumeShield, hasShieldSpell, lvl1SlotsForPc,
+  hasSentinel, hasPolearmMaster, isPolearmWeapon
 } from '../js/scene/reactions.js';
 
 // ---------- Reaction budget ----------
@@ -288,4 +289,143 @@ test('M33.0: simulator integration — encounter still resolves with OAs active'
   // Party should still trounce 3 weak kobolds the majority of the time
   assert.ok(stats.partyVictories / stats.iterations > 0.5,
     `expected party win rate > 50%, got ${stats.partyVictories}/50`);
+});
+
+// =====================================================================
+// M33.2 — Sentinel + Polearm Master
+// =====================================================================
+
+test('M33.2: hasSentinel reads array-of-strings feats', () => {
+  assert.strictEqual(hasSentinel({ feats: ['Sentinel'] }), true);
+  assert.strictEqual(hasSentinel({ feats: ['Great Weapon Master'] }), false);
+});
+
+test('M33.2: hasSentinel reads array-of-objects feats', () => {
+  assert.strictEqual(hasSentinel({ feats: [{ name: 'Sentinel' }] }), true);
+});
+
+test('M33.2: hasSentinel checks ref.feats when on a wrapper', () => {
+  assert.strictEqual(hasSentinel({ ref: { feats: ['Sentinel'] } }), true);
+});
+
+test('M33.2: hasPolearmMaster detects "Polearm Master" with various casings', () => {
+  assert.strictEqual(hasPolearmMaster({ feats: ['Polearm Master'] }), true);
+  assert.strictEqual(hasPolearmMaster({ feats: ['polearm master'] }), true);
+  assert.strictEqual(hasPolearmMaster({ feats: ['POLEARMMASTER'] }), true);   // tolerates squished
+});
+
+test('M33.2: isPolearmWeapon matches the four canonical polearms', () => {
+  for (const n of ['Glaive', 'Halberd', 'Pike', 'Quarterstaff']) {
+    assert.strictEqual(isPolearmWeapon({ name: n }), true, n);
+  }
+  assert.strictEqual(isPolearmWeapon({ name: 'Longsword' }), false);
+  assert.strictEqual(isPolearmWeapon(null), false);
+});
+
+test('M33.2: Sentinel — Disengage does NOT suppress OA from a 5ft Sentinel', () => {
+  const sentinel = {
+    id: 'h1', _position: { col: 5, row: 5 },
+    weapon: { name: 'Longsword' }, feats: ['Sentinel']
+  };
+  const out = detectOpportunityAttacks({
+    mover: { id: 'm1', _disengaged: true },
+    before: { col: 5, row: 5 }, after: { col: 8, row: 5 },
+    hostiles: [sentinel]
+  });
+  assert.strictEqual(out.length, 1);
+});
+
+test('M33.2: Sentinel — Disengage still suppresses OA from a Sentinel beyond 5ft', () => {
+  // Sentinel wielding a reach weapon, mover Disengaging from 10ft away.
+  const sentinel = {
+    id: 'h1', _position: { col: 0, row: 0 },
+    weapon: { name: 'Halberd' }, feats: ['Sentinel']
+  };
+  const out = detectOpportunityAttacks({
+    mover: { id: 'm1', _disengaged: true },
+    before: { col: 2, row: 0 }, after: { col: 5, row: 0 },
+    hostiles: [sentinel]
+  });
+  assert.strictEqual(out.length, 0);
+});
+
+test('M33.2: Sentinel — non-Sentinel still gets suppressed by Disengage', () => {
+  const plain = {
+    id: 'h1', _position: { col: 5, row: 5 },
+    weapon: { name: 'Longsword' }
+  };
+  const out = detectOpportunityAttacks({
+    mover: { id: 'm1', _disengaged: true },
+    before: { col: 5, row: 5 }, after: { col: 8, row: 5 },
+    hostiles: [plain]
+  });
+  assert.strictEqual(out.length, 0);
+});
+
+test('M33.2: Polearm Master — entering reach triggers an OA', () => {
+  const pam = {
+    id: 'h1', _position: { col: 0, row: 0 },
+    weapon: { name: 'Glaive' }, feats: ['Polearm Master']
+  };
+  // Mover crosses from 15ft to 10ft (entering glaive's 10ft reach)
+  const out = detectPolearmEntryOAs({
+    mover: { id: 'm1' },
+    before: { col: 3, row: 0 }, after: { col: 2, row: 0 },
+    hostiles: [pam]
+  });
+  assert.strictEqual(out.length, 1);
+  assert.strictEqual(out[0].reason, 'entered-reach-PAM');
+});
+
+test('M33.2: Polearm Master — no trigger when already in reach', () => {
+  const pam = {
+    id: 'h1', _position: { col: 0, row: 0 },
+    weapon: { name: 'Halberd' }, feats: ['Polearm Master']
+  };
+  const out = detectPolearmEntryOAs({
+    mover: { id: 'm1' },
+    before: { col: 1, row: 0 }, after: { col: 2, row: 0 },
+    hostiles: [pam]
+  });
+  assert.strictEqual(out.length, 0);
+});
+
+test('M33.2: Polearm Master — no trigger without the feat', () => {
+  const noFeat = {
+    id: 'h1', _position: { col: 0, row: 0 },
+    weapon: { name: 'Halberd' }
+  };
+  const out = detectPolearmEntryOAs({
+    mover: { id: 'm1' },
+    before: { col: 3, row: 0 }, after: { col: 2, row: 0 },
+    hostiles: [noFeat]
+  });
+  assert.strictEqual(out.length, 0);
+});
+
+test('M33.2: Polearm Master — no trigger with a non-polearm weapon', () => {
+  const swordSentinel = {
+    id: 'h1', _position: { col: 5, row: 5 },
+    weapon: { name: 'Longsword' }, feats: ['Polearm Master']
+  };
+  const out = detectPolearmEntryOAs({
+    mover: { id: 'm1' },
+    before: { col: 8, row: 5 }, after: { col: 6, row: 5 },
+    hostiles: [swordSentinel]
+  });
+  assert.strictEqual(out.length, 0);
+});
+
+test('M33.2: Polearm Master — no trigger when hostile already used its reaction', () => {
+  const pam = {
+    id: 'h1', _position: { col: 0, row: 0 },
+    weapon: { name: 'Halberd' }, feats: ['Polearm Master'],
+    _reactionUsed: true
+  };
+  const out = detectPolearmEntryOAs({
+    mover: { id: 'm1' },
+    before: { col: 3, row: 0 }, after: { col: 2, row: 0 },
+    hostiles: [pam]
+  });
+  assert.strictEqual(out.length, 0);
 });

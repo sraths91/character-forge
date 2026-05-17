@@ -43,7 +43,8 @@ import {
   applyArchetypeSwap, listArchetypes, listConsiderations
 } from './scene/ai/editor.js';
 import {
-  resetReactionsForAll, consumeReaction, detectOpportunityAttacks
+  resetReactionsForAll, consumeReaction, detectOpportunityAttacks,
+  detectPolearmEntryOAs
 } from './scene/reactions.js';
 
 const $ = (id) => document.getElementById(id);
@@ -700,11 +701,19 @@ function versusMoveBeforeAttack(attackerHit, targetHit) {
     weapon: attackerHit.kind === 'pc' ? weapon : { name: weapon?.name }
   };
   const hostileShapes = buildVersusHostileShapesFor(attackerHit);
-  const triggers = detectOpportunityAttacks({
+  const leaveTriggers = detectOpportunityAttacks({
     mover: moverShape, before: attackerPos, after: next, hostiles: hostileShapes
   });
-  for (const { triggerer } of triggers) {
+  const entryTriggers = detectPolearmEntryOAs({
+    mover: moverShape, before: attackerPos, after: next, hostiles: hostileShapes
+  });
+  for (const { triggerer } of leaveTriggers) {
     runVersusOpportunityAttack(triggerer, attackerHit, attackerPos);
+    consumeReaction(triggerer.live);
+    if (versusHpOf(attackerHit.entity, attackerHit.kind) <= 0) break;
+  }
+  for (const { triggerer } of entryTriggers) {
+    runVersusOpportunityAttack(triggerer, attackerHit, next);
     consumeReaction(triggerer.live);
     if (versusHpOf(attackerHit.entity, attackerHit.kind) <= 0) break;
   }
