@@ -49,9 +49,17 @@ import {
 } from './scene/ai/editor.js';
 import {
   resetReactionsForAll, consumeReaction, detectOpportunityAttacks,
-  detectPolearmEntryOAs, shouldCastShield, consumeShield,
-  lvl1SlotsForPc, lvl3SlotsForPc
+  detectPolearmEntryOAs, shouldCastShield, consumeShield, canCastShield,
+  lvl1SlotsForPc, lvl3SlotsForPc,
+  shouldCounterspell, consumeCounterspell, resolveCounterspell
 } from './scene/reactions.js';
+import {
+  spellById, spellbookFor,
+  innateBlockFor, freshInnateState, rollInnateRecharges, consumeInnate
+} from './scene/monster-spells.js';
+import { rollSave } from './scene/save-rolls.js';
+import { MONSTER_DEFAULT_SAVES } from './scene/monster-presets.js';
+import { chebyshevFeet } from './scene/grid-rules.js';
 import { promptReaction } from './scene/reaction-prompt.js';
 
 const $ = (id) => document.getElementById(id);
@@ -475,6 +483,16 @@ async function startVersusFight() {
     pc._lvl1Slots = lvl1SlotsForPc(pc);
     pc._lvl3Slots = lvl3SlotsForPc(pc);
   }
+  // M39 — Seed spell resources on every spell-casting monster so the
+  // versus auto-fight can actually cast (mirrors what the simulator
+  // does at iteration start).
+  for (const m of monsterInstances) {
+    m._reactionUsed = false;
+    const book = spellbookFor(m.presetSlug);
+    if (book) m._slots = { ...(book.slots || {}) };
+    const innate = innateBlockFor(m.presetSlug);
+    if (innate) m._innate = freshInnateState(m.presetSlug);
+  }
 
   // Roll initiative once at fight start
   const pcsForInit = partyComposedCharacters;
@@ -637,6 +655,10 @@ async function runVersusPartyAuto() {
     // M33.0 — refresh every combatant's reaction at the top of the round.
     resetReactionsForAll(partyComposedCharacters);
     resetReactionsForAll(currentScene.monsters || []);
+    // M39 — roll recharge for any innate-cast monsters
+    for (const m of (currentScene.monsters || [])) {
+      if (m._innate) rollInnateRecharges(m);
+    }
     for (const entry of order) {
       if (!versusActive) return;
       const entity = resolveEntityById(entry.entityId, entry.entityKind);
@@ -671,7 +693,14 @@ async function runVersusPartyAuto() {
 
       if (plan) logVersusAiPlan(entity, plan);
       const beforeTargetHp = versusHpOf(target.entity, target.kind);
-      await attackInVersus({ kind: entry.entityKind, entity }, { kind: target.kind, entity: target.entity });
+      // M39 — Monster cast plans dispatch to the spell handler instead
+      // of the weapon-attack path. PCs and non-cast monster turns still
+      // route through attackInVersus.
+      if (plan && plan.kind === 'cast' && entry.entityKind === 'monster') {
+        await castInVersus({ kind: 'monster', entity }, plan);
+      } else {
+        await attackInVersus({ kind: entry.entityKind, entity }, { kind: target.kind, entity: target.entity });
+      }
       const afterTargetHp = versusHpOf(target.entity, target.kind);
       currentFightRecorder.record({
         type: 'attack',
@@ -985,6 +1014,258 @@ function runVersusOpportunityAttack(triggerer, moverHit, moverBeforePos) {
   });
   // Silence the unused-AC warning — keeps the log readable if we extend later.
   void attackerAc;
+}
+
+// =====================================================================
+// M39 — Live monster spellcasting in versus. Mirrors the simulator's
+// runMonsterSpell, but operates on live PC characters + scene monster
+// instances (hp shape: { current, max }). Counterspell witnesses get
+// an interactive prompt; auto-fight skips it via versusAutoMode.
+// =====================================================================
+
+async function castInVersus(attackerHit, plan) {
+  if (!attackerHit || !plan?.spellId) return;
+  const caster = attackerHit.entity;
+  const spell = spellById(plan.spellId);
+  if (!spell) return;
+  const book = spellbookFor(caster.presetSlug);
+  const innateBook = !book && innateBlockFor(caster.presetSlug)
+    ? { dc: innateBlockFor(caster.presetSlug).dc || 12, attackBonus: 4, abilityMod: 3 }
+    : null;
+  const effectiveBook = book || innateBook;
+  if (!effectiveBook) return;
+
+  // Slot accounting (consume regardless of counter outcome — RAW).
+  if (plan.isInnate) {
+    caster._innate ??= freshInnateState(caster.presetSlug);
+    consumeInnate(caster, plan.spellId);
+  } else if (caster._slots) {
+    if (spell.level > 0 && caster._slots[spell.level] > 0) {
+      caster._slots[spell.level] -= 1;
+    }
+  }
+
+  // Log the cast attempt
+  appendCastLog({
+    casterName: caster.name || 'Monster',
+    spellName: spell.name, targetName: plan.targetSide === 'ally'
+      ? findVersusEntityById(plan.targetId)?.name
+      : findVersusEntityById(plan.targetId)?.name,
+    isInnate: plan.isInnate, level: spell.level
+  });
+
+  // M39.1 — Counterspell witness loop. Only PCs can counter monster
+  // casts. Walk eligible witnesses; first acceptance wins.
+  if (spell.level >= 2 || (spell.level === 0 && !plan.isInnate)) {
+    for (const pc of partyComposedCharacters) {
+      if ((pc.hp?.current ?? 0) <= 0) continue;
+      if (!shouldCounterspell(pc, spell.level)) continue;
+      const accepted = await promptReaction({
+        title: `${pc.name || 'PC'} — Counterspell ${spell.name}?`,
+        body: `${caster.name || 'Monster'} is casting a level ${spell.level} spell.`,
+        costLabel: `1 reaction · 1 of ${pc._lvl3Slots || 0} 3rd-level slot${(pc._lvl3Slots || 0) === 1 ? '' : 's'}`,
+        defaultMs: 5000,
+        auto: !!versusAutoMode,
+        autoAnswer: true
+      });
+      if (!accepted) continue;
+      const mod = pcCounterMod(pc);
+      const result = resolveCounterspell({ spellLevel: spell.level, counterMod: mod });
+      consumeCounterspell(pc);
+      appendCounterspellLog({
+        counterName: pc.name || 'PC',
+        spellName: spell.name, level: spell.level,
+        countered: result.countered, mode: result.mode,
+        d20: result.d20, total: result.total, dc: result.dc
+      });
+      if (result.countered) {
+        rerender();
+        return;     // spell fizzles
+      }
+      break;        // failed counter still burns the witness's reaction
+    }
+  }
+
+  // Resolve the spell. Branch by kind — mirrors the simulator's
+  // runMonsterSpell logic but applies damage / conditions to live
+  // entities (hp.{current, max}).
+  await resolveVersusSpell(attackerHit, spell, plan, effectiveBook);
+  rerender();
+}
+
+async function resolveVersusSpell(attackerHit, spell, plan, effectiveBook) {
+  const target = findVersusEntityById(plan.targetId);
+  if (!target) return;
+  const caster = attackerHit.entity;
+
+  if (spell.kind === 'heal') {
+    const dmgRoll = rollDamage(spell.dice, { crit: false });
+    const mod = spell.addsAbilityMod ? (effectiveBook.abilityMod || 0) : 0;
+    const heal = dmgRoll.total + mod;
+    if (target.hp) target.hp = { ...target.hp, current: Math.min(target.hp.max, target.hp.current + heal) };
+    appendCastLogTail(`${caster.name} heals ${target.name} for ${heal}`);
+    return;
+  }
+
+  if (spell.kind === 'auto-hit') {
+    // M37 RAW: Shield negates Magic Missile entirely.
+    if (canCastShield(target)) {
+      const accepted = await promptReaction({
+        title: `${target.name} — Cast Shield vs ${spell.name}?`,
+        body: `Negates all ${spell.darts || 1} darts.`,
+        costLabel: `1 reaction · 1 of ${target._lvl1Slots || 0} 1st-level slot${(target._lvl1Slots || 0) === 1 ? '' : 's'}`,
+        defaultMs: 5000,
+        auto: !!versusAutoMode, autoAnswer: true
+      });
+      if (accepted) {
+        consumeShield(target);
+        appendCastLogTail(`${target.name} casts Shield — no damage`);
+        return;
+      }
+    }
+    let total = 0;
+    for (let i = 0; i < (spell.darts || 1); i++) {
+      total += rollDamage(spell.perDart, { crit: false }).total;
+    }
+    applyVersusDamage(target, total);
+    appendCastLogTail(`${total} ${spell.damageType || ''} damage`);
+    return;
+  }
+
+  if (spell.kind === 'spell-attack') {
+    const ac = deriveAC(target);
+    const atk = rollAttack({ bonus: effectiveBook.attackBonus, advantage: 'normal', targetAC: ac });
+    if (atk.hit && !atk.crit && shouldCastShield({ target, attackerTotal: atk.total, targetAc: ac })) {
+      const accepted = await promptReaction({
+        title: `${target.name} — Cast Shield?`,
+        body: `${caster.name}'s ${spell.name} hit by ${atk.total - ac}; +5 AC would dodge it.`,
+        costLabel: `1 reaction · 1 of ${target._lvl1Slots || 0} 1st-level slot${(target._lvl1Slots || 0) === 1 ? '' : 's'}`,
+        defaultMs: 5000,
+        auto: !!versusAutoMode, autoAnswer: true
+      });
+      if (accepted) {
+        consumeShield(target);
+        appendCastLogTail(`${target.name} casts Shield — miss`);
+        return;
+      }
+    }
+    if (!atk.hit) { appendCastLogTail(`miss`); return; }
+    const dmg = rollDamage(spell.dice, { crit: atk.crit });
+    applyVersusDamage(target, dmg.total);
+    appendCastLogTail(`${atk.crit ? 'CRIT ' : ''}${dmg.total} ${spell.damageType || ''} damage`);
+    return;
+  }
+
+  // AoE save (fire-breath) — every hostile in range rolls
+  if (spell.aoe) {
+    const center = caster.position;
+    if (!center) return;
+    let total = 0;
+    for (const pc of partyComposedCharacters) {
+      if ((pc.hp?.current ?? 0) <= 0) continue;
+      const pcPos = currentScene.positions?.[String(pc.id)];
+      if (!pcPos || chebyshevFeet(center, pcPos) > (spell.range || 15)) continue;
+      const pcMod = pc.abilityModifiers?.[spell.saveStat] ?? 0;
+      const save = rollSave({ bonus: pcMod, dc: effectiveBook.dc });
+      const dmgRoll = rollDamage(spell.dice, { crit: false });
+      let dmg = dmgRoll.total;
+      if (save.success) dmg = spell.saveOnHalf ? Math.floor(dmg / 2) : 0;
+      applyVersusDamage(pc, dmg);
+      total += dmg;
+    }
+    appendCastLogTail(`${total} total ${spell.damageType || ''} damage across the cone`);
+    return;
+  }
+
+  // Single-target save (cantrip-save / leveled-save)
+  const saveStat = spell.saveStat;
+  const targetMod = saveBonusForVersusEntity(target, saveStat);
+  const save = rollSave({ bonus: targetMod, dc: effectiveBook.dc });
+  let dmg = 0;
+  if (spell.dice) {
+    const dmgRoll = rollDamage(spell.dice, { crit: false });
+    dmg = dmgRoll.total;
+    if (save.success) dmg = spell.saveOnHalf ? Math.floor(dmg / 2) : 0;
+    applyVersusDamage(target, dmg);
+  }
+  if (!save.success && spell.appliesCondition) {
+    if (!Array.isArray(target.conditions)) target.conditions = [];
+    if (!target.conditions.includes(spell.appliesCondition)) {
+      target.conditions.push(spell.appliesCondition);
+    }
+  }
+  const saveDesc = save.success ? 'SAVE' : 'FAIL';
+  appendCastLogTail(`${saveDesc} (d20=${save.kept}${targetMod >= 0 ? '+' : ''}${targetMod}=${save.total} vs DC ${effectiveBook.dc})${dmg > 0 ? ` · ${dmg} damage` : ''}${!save.success && spell.appliesCondition ? ` · ${spell.appliesCondition}` : ''}`);
+}
+
+function findVersusEntityById(id) {
+  if (!id) return null;
+  return partyComposedCharacters.find(p => String(p.id) === String(id))
+      || (currentScene.monsters || []).find(m => String(m.id) === String(id))
+      || null;
+}
+
+function applyVersusDamage(entity, damage) {
+  if (!entity || damage <= 0 || !entity.hp) return;
+  const next = Math.max(0, entity.hp.current - damage);
+  entity.hp = { ...entity.hp, current: next };
+}
+
+function saveBonusForVersusEntity(entity, stat) {
+  if (!entity || !stat) return 0;
+  if (entity.abilityModifiers) return entity.abilityModifiers[stat] ?? 0;   // PC
+  const table = MONSTER_DEFAULT_SAVES[entity.presetSlug];
+  return table ? (table[stat] || 0) : 0;
+}
+
+function pcCounterMod(pc) {
+  const classes = pc.classes || [];
+  for (const c of classes) {
+    const name = String(c?.name || '').toLowerCase();
+    if (name === 'wizard' || name === 'artificer') return pc.abilityModifiers?.INT ?? 0;
+    if (name === 'cleric' || name === 'druid' || name === 'ranger') return pc.abilityModifiers?.WIS ?? 0;
+    if (name === 'bard' || name === 'sorcerer' || name === 'warlock' || name === 'paladin') return pc.abilityModifiers?.CHA ?? 0;
+  }
+  return pc.abilityModifiers?.INT ?? 0;
+}
+
+function appendCastLog({ casterName, spellName, targetName, isInnate, level }) {
+  const wrap = document.getElementById('roll-log');
+  const list = document.getElementById('roll-log-list');
+  if (!wrap || !list) return;
+  wrap.hidden = false;
+  const li = document.createElement('li');
+  li.className = 'roll-log-entry roll-spell';
+  const tag = isInnate ? 'INNATE' : `Lvl ${level || 'cantrip'}`;
+  li.innerHTML = `
+    <div class="roll-headline"><span class="spell-tag">✦ ${escapeHtml(tag)}</span> <strong>${escapeHtml(casterName)}</strong> casts <strong>${escapeHtml(spellName)}</strong>${targetName ? ` on ${escapeHtml(targetName)}` : ''}</div>
+    <div class="roll-line roll-spell-tail"></div>
+  `;
+  list.insertBefore(li, list.firstChild);
+  while (list.children.length > 20) list.removeChild(list.lastChild);
+}
+
+function appendCastLogTail(msg) {
+  const tail = document.querySelector('.roll-log-entry.roll-spell .roll-spell-tail');
+  if (tail) tail.textContent = msg;
+}
+
+function appendCounterspellLog({ counterName, spellName, level, countered, mode, d20, total, dc }) {
+  const wrap = document.getElementById('roll-log');
+  const list = document.getElementById('roll-log-list');
+  if (!wrap || !list) return;
+  wrap.hidden = false;
+  const li = document.createElement('li');
+  li.className = `roll-log-entry roll-reaction ${countered ? 'roll-hit' : 'roll-miss'}`;
+  const detail = mode === 'auto'
+    ? `auto-counter (lvl 3 vs lvl ${level})`
+    : `check d20=${d20}+${total - d20} vs DC ${dc} — ${countered ? 'success' : 'fail'}`;
+  li.innerHTML = `
+    <div class="roll-headline"><span class="reaction-tag">⚡ COUNTERSPELL</span> ${escapeHtml(counterName)} ${countered ? 'counters' : 'tries to counter'} ${escapeHtml(spellName)}</div>
+    <div class="roll-line">${escapeHtml(detail)}</div>
+  `;
+  list.insertBefore(li, list.firstChild);
+  while (list.children.length > 20) list.removeChild(list.lastChild);
 }
 
 function appendReactionLog({ attackerName, targetName, verdict, atk, dmg, weaponName = 'Attack' }) {

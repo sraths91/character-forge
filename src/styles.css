@@ -615,6 +615,24 @@ button.primary:disabled { opacity: 0.6; cursor: not-allowed; }
   margin-right: 6px;
   letter-spacing: 0.05em;
 }
+/* M39 — Spell cast roll-log entry */
+.roll-log-entry.roll-spell { border-left-color: #a855f7; }
+.spell-tag {
+  display: inline-block;
+  background: #a855f7;
+  color: #fafafa;
+  font-weight: 700;
+  font-size: 0.65rem;
+  padding: 1px 6px;
+  border-radius: 3px;
+  margin-right: 6px;
+  letter-spacing: 0.05em;
+}
+.roll-spell-tail {
+  font-family: var(--mono, ui-monospace);
+  font-size: 0.72rem;
+  color: var(--text-dim);
+}
 .roll-headline { font-family: var(--mono, ui-monospace); font-size: 0.78rem; }
 .roll-outcome  { font-weight: 600; }
 .roll-log-entry.roll-hit  .roll-outcome { color: #4ade80; }
