@@ -2064,6 +2064,68 @@ body.party-view-mode .versus-panel:not([hidden]) { display: block; }
   min-height: 1.4em;
 }
 
+/* M35 — Encounter difficulty calibrator panel */
+.versus-calibrator { margin-top: 10px; }
+.versus-calibrator-empty {
+  margin: 8px 0;
+  padding: 8px 12px;
+  background: rgba(0, 0, 0, 0.20);
+  border-radius: 6px;
+  font-style: italic;
+  font-size: 0.82rem;
+  color: var(--text-dim);
+}
+.cal-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  background: var(--surface, #15151a);
+  border: 1px solid var(--border, #2a2a32);
+  border-radius: 8px;
+}
+.cal-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: baseline;
+}
+.cal-headline { justify-content: space-between; }
+.cal-difficulty {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 4px;
+  font-weight: 700;
+  font-size: 0.74rem;
+  letter-spacing: 0.08em;
+  color: #1f1d10;
+}
+.cal-difficulty-trivial { background: #6b7280; color: #f3f4f6; }
+.cal-difficulty-easy    { background: #4ade80; }
+.cal-difficulty-medium  { background: #fbbf24; }
+.cal-difficulty-hard    { background: #f97316; color: #fff; }
+.cal-difficulty-deadly  { background: #ef4444; color: #fff; }
+.cal-xp {
+  font-size: 0.75rem;
+  color: var(--text-dim);
+  font-family: var(--mono, ui-monospace);
+}
+.cal-cell {
+  font-size: 0.78rem;
+  color: var(--text);
+}
+.cal-cell strong { font-family: var(--mono, ui-monospace); color: #a5b4fc; }
+.cal-win  strong { color: #4ade80; }
+.cal-loss strong { color: #f87171; }
+.cal-draw strong { color: #fbbf24; }
+.cal-meta { border-top: 1px dashed var(--border); padding-top: 6px; }
+.cal-hint {
+  margin: 4px 0 0;
+  font-size: 0.76rem;
+  font-style: italic;
+  color: var(--text-dim);
+}
+
 /* M23 — Re-sync banner shown after a re-import detects changes */
 .sync-banner {
   margin: 10px 0;

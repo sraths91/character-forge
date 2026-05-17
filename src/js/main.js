@@ -30,6 +30,7 @@ import { tooltipFor } from './scene/rules-reference.js';
 import { buildTurnTips } from './scene/turn-coach.js';
 import { resolveSpellSave } from './scene/save-rolls.js';
 import { simulateEncounter } from './scene/simulator.js';
+import { calibrateEncounter } from './scene/calibrator.js';
 import { diffCharacters, describeDiff } from './character/diff-character.js';
 import { buildSceneSnapshot, restoreSceneFromSnapshot } from './scene/scene-snapshot.js';
 import {
@@ -392,6 +393,7 @@ function addEncounterMonster(slug) {
     slug,
     name: idx === 1 ? preset.name : `${preset.name} ${idx}`
   });
+  versusCalibratorSeed = null;   // M35: invalidate cached calibration seed
   renderEncounterList();
 }
 
@@ -404,6 +406,7 @@ document.addEventListener('click', (e) => {
   const rem = e.target.dataset?.versusRemove;
   if (rem) {
     versusEncounter = versusEncounter.filter(x => x.id !== rem);
+    versusCalibratorSeed = null;   // M35
     renderEncounterList();
   }
 });
@@ -517,6 +520,83 @@ function runVersusQuickStats() {
   if (status) {
     status.textContent = `Quick stats over 200 sims: party wins ${winPct}% / loses ${lossPct}% / stalemates ${drawPct}% — avg ${stats.avgRounds.toFixed(1)} rounds.`;
   }
+}
+
+// M35 — Encounter difficulty calibrator. Runs the calibrator over the
+// current versus encounter, renders a structured DM-facing report into
+// #versus-calibrator with win rate, lethality, MVP, DMG difficulty.
+function runVersusCalibrator() {
+  const pcsWithPositions = partyComposedCharacters.map((pc, i) => ({
+    ...pc, _position: positionOf(currentScene, pc.id, i)
+  }));
+  const monsters = currentScene.monsters || [];
+  if (pcsWithPositions.length === 0 || monsters.length === 0) {
+    renderCalibratorReport({ empty: true });
+    return;
+  }
+  // Use a fixed seed so the report is reproducible inside one session;
+  // re-roll the seed when the user changes the encounter list.
+  const seed = (typeof versusCalibratorSeed === 'number') ? versusCalibratorSeed : (versusCalibratorSeed = Math.floor(Math.random() * 1e9));
+  const report = calibrateEncounter({
+    party: pcsWithPositions,
+    monsters,
+    scene: currentScene,
+    iterations: 200, maxRounds: 15, seed
+  });
+  renderCalibratorReport({ report });
+}
+let versusCalibratorSeed = null;
+
+function renderCalibratorReport({ report = null, empty = false } = {}) {
+  const wrap = document.getElementById('versus-calibrator');
+  if (!wrap) return;
+  wrap.hidden = false;
+  if (empty) {
+    wrap.innerHTML = '<p class="versus-calibrator-empty">Add at least one PC and one monster before calibrating.</p>';
+    return;
+  }
+  const winPct = Math.round(report.winRate * 100);
+  const lossPct = Math.round(report.lossRate * 100);
+  const drawPct = Math.round(report.drawRate * 100);
+  const lethalityPct = Math.round(report.lethality * 100);
+  const difficultyLabel = report.difficulty?.label || 'unknown';
+  const xp = report.difficulty?.encounterXp ?? 0;
+  const mvp = report.mvp ? `${escapeHtml(report.mvp.name)} (${report.mvp.avgDamageDealt.toFixed(1)} avg dmg)` : '—';
+  const bestKilled = report.bestKilled ? `${escapeHtml(report.bestKilled.name)} (${Math.round(report.bestKilled.deathRate * 100)}% downed)` : '—';
+
+  wrap.innerHTML = `
+    <div class="cal-card">
+      <div class="cal-row cal-headline">
+        <span class="cal-difficulty cal-difficulty-${escapeHtml(difficultyLabel)}">${escapeHtml(difficultyLabel.toUpperCase())}</span>
+        <span class="cal-xp">${xp} XP encounter</span>
+      </div>
+      <div class="cal-row cal-outcomes">
+        <span class="cal-cell cal-win"><strong>${winPct}%</strong> party wins</span>
+        <span class="cal-cell cal-loss"><strong>${lossPct}%</strong> losses</span>
+        <span class="cal-cell cal-draw"><strong>${drawPct}%</strong> stalemates</span>
+      </div>
+      <div class="cal-row">
+        <span class="cal-cell">Avg rounds <strong>${report.avgRounds.toFixed(1)}</strong></span>
+        <span class="cal-cell">Party HP lost <strong>${lethalityPct}%</strong></span>
+        <span class="cal-cell">Avg downed <strong>${report.deathToll.toFixed(1)}</strong></span>
+      </div>
+      <div class="cal-row cal-meta">
+        <span class="cal-cell">MVP: <strong>${mvp}</strong></span>
+        <span class="cal-cell">Most at risk: <strong>${bestKilled}</strong></span>
+      </div>
+      <p class="cal-hint">${escapeHtml(calibratorHint(report))}</p>
+    </div>
+  `;
+}
+
+function calibratorHint(report) {
+  const winPct = Math.round(report.winRate * 100);
+  const label = report.difficulty?.label;
+  if (winPct >= 85 && label === 'trivial') return 'Trivial — barely worth rolling.';
+  if (winPct >= 70) return 'Manageable. Party should clear it with resources to spare.';
+  if (winPct >= 40) return 'A real fight. Expect resource drain.';
+  if (winPct >= 15) return 'Punishing. Likely PC downs unless the party plays well.';
+  return 'Deadly. Add a healer or remove a monster.';
 }
 
 // M29 — Auto-fight in initiative order. Each tick: pick the next alive
@@ -882,9 +962,10 @@ function endVersusFight(outcome, rounds) {
 }
 
 document.addEventListener('click', (e) => {
-  if (e.target.id === 'versus-start')   { startVersusFight(); return; }
-  if (e.target.id === 'versus-rematch') { startVersusFight(); return; }
-  if (e.target.id === 'versus-exit')    { exitVersusFight();  return; }
+  if (e.target.id === 'versus-start')     { startVersusFight();   return; }
+  if (e.target.id === 'versus-rematch')   { startVersusFight();   return; }
+  if (e.target.id === 'versus-exit')      { exitVersusFight();    return; }
+  if (e.target.id === 'versus-calibrate') { runVersusCalibrator(); return; }
 });
 
 document.addEventListener('click', (e) => {
