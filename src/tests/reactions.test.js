@@ -3,8 +3,10 @@ import assert from 'node:assert';
 import {
   resetReaction, resetReactionsForAll, hasReactionAvailable, consumeReaction,
   detectOpportunityAttacks, detectPolearmEntryOAs,
-  shouldCastShield, consumeShield, hasShieldSpell, lvl1SlotsForPc,
-  hasSentinel, hasPolearmMaster, isPolearmWeapon
+  shouldCastShield, consumeShield, hasShieldSpell, lvl1SlotsForPc, lvl3SlotsForPc,
+  hasSentinel, hasPolearmMaster, isPolearmWeapon,
+  hasCounterspell, canCastCounterspell, consumeCounterspell,
+  shouldCounterspell, resolveCounterspell
 } from '../js/scene/reactions.js';
 
 // ---------- Reaction budget ----------
@@ -429,3 +431,102 @@ test('M33.2: Polearm Master — no trigger when hostile already used its reactio
   });
   assert.strictEqual(out.length, 0);
 });
+
+// =====================================================================
+// M34.1 — Counterspell
+// =====================================================================
+
+const counterspellWiz = (overrides = {}) => ({
+  ref: { spells: [{ name: 'Counterspell' }, { name: 'Fireball' }] },
+  _reactionUsed: false,
+  _lvl3Slots: 1,
+  kind: 'pc',
+  ...overrides
+});
+
+test('M34.1: hasCounterspell — recognises spell in array & object form', () => {
+  assert.strictEqual(hasCounterspell({ ref: { spells: [{ name: 'Counterspell' }] } }), true);
+  assert.strictEqual(hasCounterspell({ ref: { spells: { '3': [{ name: 'Counterspell' }] } } }), true);
+  assert.strictEqual(hasCounterspell({ ref: { spells: [{ name: 'Fireball' }] } }), false);
+  assert.strictEqual(hasCounterspell({}), false);
+});
+
+test('M34.1: canCastCounterspell — requires reaction + spell + 3rd-level slot', () => {
+  assert.strictEqual(canCastCounterspell(counterspellWiz()), true);
+  assert.strictEqual(canCastCounterspell(counterspellWiz({ _reactionUsed: true })), false);
+  assert.strictEqual(canCastCounterspell(counterspellWiz({ _lvl3Slots: 0 })), false);
+  assert.strictEqual(canCastCounterspell({ ref: { spells: [] }, _lvl3Slots: 1 }), false);
+});
+
+test('M34.1: consumeCounterspell burns slot + reaction', () => {
+  const w = counterspellWiz({ _lvl3Slots: 2 });
+  consumeCounterspell(w);
+  assert.strictEqual(w._lvl3Slots, 1);
+  assert.strictEqual(w._reactionUsed, true);
+});
+
+test('M34.1: shouldCounterspell — fires for leveled spells lvl >= 2', () => {
+  const w = counterspellWiz();
+  assert.strictEqual(shouldCounterspell(w, 0), false);    // cantrip
+  assert.strictEqual(shouldCounterspell(w, 1), false);    // 1st-level filler
+  assert.strictEqual(shouldCounterspell(w, 2), true);
+  assert.strictEqual(shouldCounterspell(w, 3), true);
+  assert.strictEqual(shouldCounterspell(w, 9), true);
+});
+
+test('M34.1: resolveCounterspell — lvl <= 3 auto-counters', () => {
+  for (const level of [1, 2, 3]) {
+    const r = resolveCounterspell({ spellLevel: level, counterMod: 0 }, () => 0);
+    assert.strictEqual(r.countered, true, `level ${level}`);
+    assert.strictEqual(r.mode, 'auto');
+  }
+});
+
+test('M34.1: resolveCounterspell — lvl 4+ requires a check vs DC 10 + spellLevel', () => {
+  // d20 = 1 + mod 0 = 1 vs DC 14 → fail
+  let r = resolveCounterspell({ spellLevel: 4, counterMod: 0 }, () => 0);
+  assert.strictEqual(r.mode, 'check');
+  assert.strictEqual(r.countered, false);
+  // d20 = 20 + mod 0 = 20 vs DC 14 → success
+  r = resolveCounterspell({ spellLevel: 4, counterMod: 0 }, () => 0.99);
+  assert.strictEqual(r.countered, true);
+});
+
+test('M34.1: lvl3SlotsForPc — wizard 5 has 2 slots; wizard 4 has 0', () => {
+  assert.strictEqual(lvl3SlotsForPc({ classes: [{ name: 'Wizard', level: 5 }] }), 2);
+  assert.strictEqual(lvl3SlotsForPc({ classes: [{ name: 'Wizard', level: 4 }] }), 0);
+});
+
+test('M34.1: lvl3SlotsForPc — fighter (non-caster) returns 0', () => {
+  assert.strictEqual(lvl3SlotsForPc({ classes: [{ name: 'Fighter', level: 10 }] }), 0);
+});
+
+// Simulator-level integration: a Counterspell wizard cancels Hold Person
+test('M34.1: simulator — Counterspell wizard prevents the fanatic\'s Hold Person', () => {
+  function wizard(withCs) {
+    return {
+      id: 'wiz', name: 'Wizard', _position: { col: 1, row: 1 },
+      hp: { current: 30, max: 30 },
+      equipment: { mainhand: { name: 'Dagger' } },
+      abilityScores: { STR: 8, DEX: 12, CON: 12, INT: 16, WIS: 12, CHA: 10 },
+      abilityModifiers: { STR: -1, DEX: 1, CON: 1, INT: 3, WIS: 1, CHA: 0 },
+      classes: [{ name: 'Wizard', level: 5 }],
+      conditions: [],
+      spells: withCs ? [{ name: 'Counterspell' }] : []
+    };
+  }
+  const monsters = () => [
+    { id: 'cf1', presetSlug: 'cult-fanatic', name: 'Fanatic',
+      hp: { current: 33, max: 33 }, position: { col: 5, row: 1 }, conditions: [] }
+  ];
+  // Run both sides for many iterations; the counterspell wizard should
+  // be paralyzed/held strictly less often, so they deal MORE damage.
+  const opts = { scene: { cols: 10, rows: 5 }, iterations: 100, maxRounds: 8, seed: 3 };
+  const without = simulateEncounter({ party: [wizard(false)], monsters: monsters(), ...opts });
+  const with_   = simulateEncounter({ party: [wizard(true)],  monsters: monsters(), ...opts });
+  const withoutDmg = without.entities.find(e => e.id === 'wiz').avgDamageDealt;
+  const withDmg    = with_.entities.find(e => e.id === 'wiz').avgDamageDealt;
+  assert.ok(withDmg > withoutDmg,
+    `Counterspell wizard should deal more dmg (without=${withoutDmg.toFixed(2)}, with=${withDmg.toFixed(2)})`);
+});
+

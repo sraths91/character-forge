@@ -228,27 +228,117 @@ function matchShield(s) {
   return /^shield$/i.test(String(name).trim());
 }
 
-// 5e PHB spell-slot table — 1st-level slots per class level. Rough but
-// adequate for v1: full casters peak at 4 lvl-1 slots; half-casters
-// don't get any until level 2.
+// 5e PHB spell-slot table by spell-level + class level. Used by the
+// simulator to seed `_lvl1Slots` (Shield) and `_lvl3Slots` (Counterspell)
+// on each PC wrapper. Doesn't account for multiclass slot stacking.
 const FULL_CASTER_LVL1 = [0, 2, 3, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4];
+const FULL_CASTER_LVL3 = [0, 0, 0, 0, 0, 2, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3];
 const HALF_CASTER_LVL1 = [0, 0, 2, 3, 3, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4];
+const HALF_CASTER_LVL3 = [0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3];
 const FULL_CASTERS = new Set(['wizard', 'sorcerer', 'bard', 'cleric', 'druid', 'warlock']);
 const HALF_CASTERS = new Set(['paladin', 'ranger', 'artificer']);
 
-/**
- * Estimate the PC's starting 1st-level spell slot pool. Used by the
- * simulator to seed `_lvl1Slots` on each entity wrapper. Returns 0 for
- * non-casters; doesn't account for multiclassing-rule slot stacking.
- */
+/** Pick the slot table for a class name; returns null for non-casters. */
+function tablesFor(name) {
+  if (FULL_CASTERS.has(name)) return { lvl1: FULL_CASTER_LVL1, lvl3: FULL_CASTER_LVL3 };
+  if (HALF_CASTERS.has(name)) return { lvl1: HALF_CASTER_LVL1, lvl3: HALF_CASTER_LVL3 };
+  return null;
+}
+
+/** Estimate PC's starting 1st-level slot pool. 0 for non-casters. */
 export function lvl1SlotsForPc(pc) {
   const classes = pc?.classes || [];
   let best = 0;
   for (const c of classes) {
     const name = String(c?.name || '').toLowerCase();
+    const t = tablesFor(name);
+    if (!t) continue;
     const lvl = Math.max(0, Math.min(20, c?.level || 0));
-    if (FULL_CASTERS.has(name)) best = Math.max(best, FULL_CASTER_LVL1[lvl] || 0);
-    else if (HALF_CASTERS.has(name)) best = Math.max(best, HALF_CASTER_LVL1[lvl] || 0);
+    best = Math.max(best, t.lvl1[lvl] || 0);
   }
   return best;
+}
+
+/** Estimate PC's starting 3rd-level slot pool — needed by Counterspell. */
+export function lvl3SlotsForPc(pc) {
+  const classes = pc?.classes || [];
+  let best = 0;
+  for (const c of classes) {
+    const name = String(c?.name || '').toLowerCase();
+    const t = tablesFor(name);
+    if (!t) continue;
+    const lvl = Math.max(0, Math.min(20, c?.level || 0));
+    best = Math.max(best, t.lvl3[lvl] || 0);
+  }
+  return best;
+}
+
+// =====================================================================
+// M34.1 — Counterspell (PHB p228)
+//
+// Triggers when the caster sees a creature within 60ft start to cast a
+// spell. Spends one 3rd-level slot + reaction. Auto-counters spells of
+// level ≤ 3; higher levels require an ability check (DC 10 + spell
+// level) using the counterer's spellcasting modifier.
+//
+// In v1 the AI policy is simple: any PC who has the spell + a 3rd-level
+// slot will counter any *leveled* monster spell of level ≥ 2. Cantrips
+// (lvl 0) and 1st-level filler aren't worth the slot.
+// =====================================================================
+
+/** Does this PC know Counterspell? */
+export function hasCounterspell(entity) {
+  const ref = entity?.ref || entity;
+  if (!ref) return false;
+  const spells = ref.spells;
+  if (!spells) return false;
+  const match = (s) => /^counterspell$/i.test(typeof s === 'string' ? s : (s?.name || ''));
+  if (Array.isArray(spells)) return spells.some(match);
+  if (typeof spells === 'object') {
+    for (const v of Object.values(spells)) {
+      if (Array.isArray(v) && v.some(match)) return true;
+    }
+  }
+  return false;
+}
+
+/** Resources only: reaction + spell known + a 3rd-level slot available. */
+export function canCastCounterspell(entity) {
+  if (!hasReactionAvailable(entity)) return false;
+  if (!hasCounterspell(entity)) return false;
+  if ((entity._lvl3Slots ?? 0) <= 0) return false;
+  return true;
+}
+
+/** Burn the slot + reaction. */
+export function consumeCounterspell(entity) {
+  if (!entity) return;
+  consumeReaction(entity);
+  entity._lvl3Slots = Math.max(0, (entity._lvl3Slots ?? 0) - 1);
+}
+
+/**
+ * Policy: would this entity Counterspell a spell of `spellLevel`?
+ * v1 rule: only counter leveled spells of level >= 2.
+ */
+export function shouldCounterspell(entity, spellLevel) {
+  if (!canCastCounterspell(entity)) return false;
+  if (!Number.isFinite(spellLevel)) return false;
+  return spellLevel >= 2;
+}
+
+/**
+ * Resolve the counter check. Returns { countered: bool, mode, total?, dc? }.
+ *   mode: 'auto' (level <= 3) or 'check' (level > 3 — ability check).
+ *   For the 'check' path, the rng yields the d20; mod is the counterer's
+ *   spellcasting ability modifier (defaults to 0 if not provided).
+ */
+export function resolveCounterspell({ spellLevel, counterMod = 0 } = {}, rng = Math.random) {
+  if (spellLevel <= 3) {
+    return { countered: true, mode: 'auto' };
+  }
+  const d20 = Math.floor(rng() * 20) + 1;
+  const total = d20 + counterMod;
+  const dc = 10 + spellLevel;
+  return { countered: total >= dc, mode: 'check', d20, total, dc };
 }

@@ -33,7 +33,8 @@ import { chooseAction, fleeTargetCell } from './ai/profile.js';
 import {
   resetReactionsForAll, consumeReaction, detectOpportunityAttacks,
   detectPolearmEntryOAs, shouldCastShield, canCastShield,
-  consumeShield, lvl1SlotsForPc
+  consumeShield, lvl1SlotsForPc, lvl3SlotsForPc,
+  shouldCounterspell, consumeCounterspell, resolveCounterspell
 } from './reactions.js';
 import {
   freshSlots, consumeSlot, spellById, spellbookFor, isSpellcaster
@@ -127,6 +128,7 @@ function runOneIteration({ party, monsters, scene, maxRounds, rng }) {
     combatMods: p.combatMods || [],
     _reactionUsed: false,        // M33.0
     _lvl1Slots: lvl1SlotsForPc(p), // M33.1 — Shield + other lvl-1 reactions
+    _lvl3Slots: lvl3SlotsForPc(p), // M34.1 — Counterspell
     _shieldActive: false
   }));
   const mons = monsters.map(m => {
@@ -267,7 +269,11 @@ function runOneAttack(attacker, enemies, allies, scene, rng) {
   // of a weapon attack. Concentration spells replace any existing
   // concentration (PHB p203). Slots are deducted on cast (cantrips free).
   if (plan && plan.kind === 'cast') {
-    runMonsterSpell({ attacker, target, plan, scene, rng });
+    // M34.1 — witnesses = opposing-side PCs (the only Counterspell holders)
+    runMonsterSpell({
+      attacker, target, plan, scene, rng,
+      witnesses: enemies.filter(isAlive).filter(e => e.kind === 'pc')
+    });
     return;
   }
 
@@ -364,7 +370,7 @@ function runOneAttack(attacker, enemies, allies, scene, rng) {
  * consumed for non-cantrips; concentration replaced if the spell needs
  * it (PHB p203 — only one at a time).
  */
-function runMonsterSpell({ attacker, target, plan, scene: _scene, rng }) {
+function runMonsterSpell({ attacker, target, plan, scene: _scene, rng, witnesses = [] }) {
   const spell = spellById(plan.spellId);
   if (!spell) return;
   const book = spellbookFor(attacker.presetSlug);
@@ -375,8 +381,21 @@ function runMonsterSpell({ attacker, target, plan, scene: _scene, rng }) {
   // mark concentration ended.
   if (spell.concentration && isConcentrating(attacker)) dropConcentration(attacker);
 
-  // Slot accounting
+  // Slot accounting (consume regardless of whether spell goes off —
+  // Counterspell consumes the original caster's slot per RAW).
   consumeSlot(attacker._slots, spell);
+
+  // M34.1 — Counterspell window: any witness (opposing-side caster) can
+  // attempt to counter before the spell resolves. First successful
+  // counter wins; the rest don't get to try.
+  for (const witness of witnesses) {
+    if (!shouldCounterspell(witness, spell.level)) continue;
+    const ability = saveBonusFor(witness, abilityForCounterer(witness));
+    const result = resolveCounterspell({ spellLevel: spell.level, counterMod: ability }, rng);
+    consumeCounterspell(witness);
+    if (result.countered) return;     // spell fizzles; slot already burned
+    break;                            // failed counter still burns the reaction
+  }
 
   if (spell.kind === 'auto-hit') {
     // PHB Shield (p275): "you take no damage from magic missile."
@@ -454,6 +473,18 @@ function applyDamageToEntity(target, damage) {
     // are rare (cult fanatic only); we can plumb rng later if needed.
     handleDamageOnConcentration({ caster: target, damage: dealtDamage, conMod });
   }
+}
+
+/** Pick the spellcasting ability stat for a PC's Counterspell check. */
+function abilityForCounterer(pc) {
+  const classes = pc?.ref?.classes || [];
+  for (const c of classes) {
+    const name = String(c?.name || '').toLowerCase();
+    if (name === 'wizard' || name === 'artificer') return 'INT';
+    if (name === 'cleric' || name === 'druid' || name === 'ranger') return 'WIS';
+    if (name === 'bard' || name === 'sorcerer' || name === 'warlock' || name === 'paladin') return 'CHA';
+  }
+  return 'INT';
 }
 
 function saveBonusFor(entity, stat) {

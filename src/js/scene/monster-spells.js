@@ -87,6 +87,17 @@ export const MONSTER_SPELLS = {
     damageType: 'Force',
     description: '3 darts each dealing 1d4+1 force, no attack roll. Distribute among visible targets.',
     pageRef: 'PHB p257'
+  },
+  // M34.1 — Counterspell (PHB p228). Reaction. Triggers on seeing a
+  // creature within 60ft cast a spell. Same-or-lower level auto-counters;
+  // higher requires a spellcasting-ability check DC 10 + spell level.
+  counterspell: {
+    id: 'counterspell', name: 'Counterspell',
+    kind: 'reactive-counter',
+    level: 3,
+    range: 60,
+    description: 'Reaction: counter another creature\'s spell. Auto-counters lvl ≤ 3; otherwise an ability check vs DC 10 + spell level.',
+    pageRef: 'PHB p228'
   }
 };
 
