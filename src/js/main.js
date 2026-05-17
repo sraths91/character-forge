@@ -36,6 +36,7 @@ import {
   buildPartyArenaScene, partyEndStateOf, rollPartyInitiative
 } from './scene/versus.js';
 import { planMovement } from './scene/movement.js';
+import { chooseAction, fleeTargetCell, formatBreakdown } from './scene/ai/profile.js';
 
 const $ = (id) => document.getElementById(id);
 const status = $('status');
@@ -523,10 +524,28 @@ async function runVersusPartyAuto() {
       const entity = resolveEntityById(entry.entityId, entry.entityKind);
       if (!entity || versusHpOf(entity, entry.entityKind) <= 0) continue;
 
-      // Pick lowest-HP enemy on the opposite side
-      const target = pickLowestHpEnemy(entry.entityKind);
+      // M32 — Target selection: PCs use lowest-HP (player would, too);
+      // monsters consult their AI profile.
+      let target;
+      let plan = null;
+      if (entry.entityKind === 'monster') {
+        plan = pickVersusTargetWithProfile(entity);
+        target = plan?.target || pickLowestHpEnemy('monster');
+      } else {
+        target = pickLowestHpEnemy(entry.entityKind);
+      }
       if (!target) break;   // no enemies left, end will detect
 
+      if (plan && plan.kind === 'flee') {
+        runVersusFlee(entity, target.entity);
+        logVersusAiPlan(entity, plan);
+        await new Promise(f => setTimeout(f, stepDelay));
+        const verdict0 = currentPartyEndState();
+        if (verdict0) return endVersusFight(verdict0, round);
+        continue;
+      }
+
+      if (plan) logVersusAiPlan(entity, plan);
       attackInVersus({ kind: entry.entityKind, entity }, { kind: target.kind, entity: target.entity });
       await new Promise(f => setTimeout(f, stepDelay));
 
@@ -550,6 +569,60 @@ function resolveEntityById(id, kind) {
 function versusHpOf(entity, kind) {
   if (kind === 'pc') return entity.hp?.current ?? 0;
   return entity.hp?.current ?? 0;
+}
+
+// M32 — Monster AI: ask the profile which PC to engage (or whether to
+// flee). `monster` is a live scene-instance with .position + .hp.{current,max}.
+// Returns { kind, target: {kind:'pc', entity}, plan } or null.
+function pickVersusTargetWithProfile(monster) {
+  const enemies = partyComposedCharacters.filter(p => (p.hp?.current ?? 0) > 0);
+  if (enemies.length === 0) return null;
+  const allies = (currentScene.monsters || [])
+    .filter(m => m !== monster && (m.hp?.current ?? 0) > 0);
+  const plan = chooseAction({
+    self: monster,
+    slug: monster.presetSlug,
+    enemies,
+    allies
+  });
+  const target = enemies.find(p => String(p.id) === String(plan.targetId))
+              || enemies[0];
+  return { kind: plan.kind, plan, target: { kind: 'pc', entity: target } };
+}
+
+function runVersusFlee(monster, threat) {
+  const from = monster.position;
+  if (!from) return;
+  const occupied = versusOccupiedCells(monster.id);
+  const fleeCell = fleeTargetCell(monster, threat,
+    { cols: currentScene.cols, rows: currentScene.rows });
+  const next = planMovement({
+    from, to: fleeCell, weapon: { name: 'Dash' },
+    speedFt: 30, occupied,
+    bounds: { cols: currentScene.cols, rows: currentScene.rows }
+  });
+  if (next && (next.col !== from.col || next.row !== from.row)) {
+    monster.position = next;
+    rerender();
+  }
+}
+
+function logVersusAiPlan(monster, plan) {
+  const wrap = document.getElementById('roll-log');
+  const list = document.getElementById('roll-log-list');
+  if (!wrap || !list) return;
+  wrap.hidden = false;
+  const li = document.createElement('li');
+  li.className = 'roll-log-entry roll-ai';
+  const verbHtml = plan.kind === 'flee'
+    ? '<strong>flees</strong>'
+    : `targets <strong>focus</strong>`;
+  li.innerHTML = `
+    <div class="roll-headline">${escapeHtml(monster.name || 'Monster')} ${verbHtml} (${escapeHtml(plan.archetype)})</div>
+    <div class="roll-line ai-breakdown">${escapeHtml(formatBreakdown(plan))}</div>
+  `;
+  list.insertBefore(li, list.firstChild);
+  while (list.children.length > 20) list.removeChild(list.lastChild);
 }
 
 function pickLowestHpEnemy(attackerKind) {

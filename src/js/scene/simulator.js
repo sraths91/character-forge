@@ -29,6 +29,7 @@ import { deriveAC, deriveWeaponAttack } from './pc-stats.js';
 import { MONSTER_PRESETS } from './monster-presets.js';
 import { factionLists } from './grid-rules.js';
 import { planMovement, occupiedCellsOf } from './movement.js';
+import { chooseAction, fleeTargetCell } from './ai/profile.js';
 
 /**
  * Small mulberry32 PRNG. Pure JS, deterministic, fast. Seed in (0, 2^32).
@@ -164,15 +165,32 @@ function runOneIteration({ party, monsters, scene, maxRounds, rng }) {
 // ---------- Per-attack ----------
 
 function runOneAttack(attacker, enemies, allies, scene, rng) {
-  const target = pickTarget(enemies);
+  // M32 — For monsters, ask the AI profile which enemy to engage and
+  // whether to flee. PCs still use the lowest-HP rule (simulator only
+  // models monster intelligence in v1; PC choice is the player's job).
+  let plan = null;
+  let target;
+  if (attacker.kind === 'monster') {
+    plan = chooseAction({
+      self: attacker,
+      enemies: enemies.filter(isAlive),
+      allies: allies.filter(isAlive),
+      rng
+    });
+    attacker._lastPlan = plan;
+    if (plan.targetId) {
+      target = enemies.find(e => e.id === plan.targetId);
+    } else {
+      target = pickTarget(enemies);
+    }
+  } else {
+    target = pickTarget(enemies);
+  }
   if (!target) return;
 
-  // M31 — Movement step before the attack. Compute the attacker's
-  // current position + target's position; if not in reach for the
-  // primary weapon, advance up to the entity's speed (default 30 ft).
-  // Updates the attacker's in-memory position so subsequent rounds
-  // see the new placement and so the resolver computes distance from
-  // the post-movement cell.
+  // M31 — Movement step before the attack. M32: if the profile said
+  // 'flee', the attacker moves AWAY from the nearest threat instead of
+  // toward it, and skips the attack roll this turn.
   const attackerPos = attacker._position || attacker.position;
   const targetPos   = target._position   || target.position;
   if (attackerPos && targetPos) {
@@ -181,16 +199,22 @@ function runOneAttack(attacker, enemies, allies, scene, rng) {
       party: allies, monsters: enemies,
       excludeId: attacker.id
     });
+    const bounds = { cols: scene?.cols || 99, rows: scene?.rows || 99 };
+    const moveTarget = (plan && plan.kind === 'flee')
+      ? fleeTargetCell(attacker, target, bounds)
+      : targetPos;
     const next = planMovement({
-      from: attackerPos, to: targetPos, weapon,
-      speedFt: 30, occupied,
-      bounds: { cols: scene?.cols || 99, rows: scene?.rows || 99 }
+      from: attackerPos, to: moveTarget, weapon,
+      speedFt: 30, occupied, bounds
     });
     if (next && (next.col !== attackerPos.col || next.row !== attackerPos.row)) {
       if (attacker.kind === 'pc') attacker._position = next;
       else attacker.position = next;
     }
   }
+
+  // Fleeing creatures Dash instead of attacking
+  if (plan && plan.kind === 'flee') return;
 
   // Build the resolver context. For PCs we use deriveWeaponAttack; for
   // monsters we use the preset attack record directly.

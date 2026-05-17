@@ -601,6 +601,8 @@ button.primary:disabled { opacity: 0.6; cursor: not-allowed; }
 .roll-log-entry.roll-hit  { border-left-color: #4ade80; }
 .roll-log-entry.roll-miss { border-left-color: #f87171; opacity: 0.85; }
 .roll-log-entry.roll-crit { border-left-color: #fbbf24; }
+.roll-log-entry.roll-ai   { border-left-color: #818cf8; opacity: 0.92; }
+.roll-line.ai-breakdown   { color: #a5b4fc; font-style: italic; }
 .roll-headline { font-family: var(--mono, ui-monospace); font-size: 0.78rem; }
 .roll-outcome  { font-weight: 600; }
 .roll-log-entry.roll-hit  .roll-outcome { color: #4ade80; }
