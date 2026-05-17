@@ -198,6 +198,60 @@ test('M32: formatBreakdown produces a readable string', () => {
   assert.match(s, /target_is_caster\(\+0\.70\)/);
 });
 
+// ---------- M32.1: remaining preset profiles ----------
+
+test('M32.1: all 14 preset slugs now have authored profiles', () => {
+  const slugs = ['goblin','orc','hobgoblin','bugbear','kobold','skeleton',
+    'zombie','vampire-spawn','troll','minotaur','bandit','cultist','gnoll','ratfolk'];
+  for (const slug of slugs) {
+    const p = profileFor(slug);
+    assert.ok(p && p !== DEFAULT_PROFILE, `slug ${slug} fell back to DEFAULT_PROFILE`);
+  }
+});
+
+test('M32.1: skeleton/zombie/troll/cultist/minotaur never retreat', () => {
+  for (const slug of ['skeleton', 'zombie', 'troll', 'cultist', 'minotaur']) {
+    const self = { id: 'm', presetSlug: slug, hp: 1, hpMax: 100, _position: { col: 0, row: 0 } };
+    const plan = chooseAction({
+      self,
+      enemies: [{ id: 'pc1', hp: 30, hpMax: 30, _position: { col: 3, row: 0 } }],
+      allies: [], rng: () => 0.5
+    });
+    assert.strictEqual(plan.kind, 'attack', `${slug} should never flee`);
+  }
+});
+
+test('M32.1: ratfolk flees when isolated below 50%', () => {
+  const self = { id: 'r1', presetSlug: 'ratfolk', hp: 2, hpMax: 6, _position: { col: 5, row: 5 } };
+  const plan = chooseAction({
+    self,
+    enemies: [{ id: 'pc1', hp: 20, hpMax: 20, _position: { col: 6, row: 5 } }],
+    allies: [], rng: () => 0.5
+  });
+  assert.strictEqual(plan.kind, 'flee');
+});
+
+test('M32.1: gnoll prefers the bloodied target (Rampage flavor)', () => {
+  const self = { id: 'g1', presetSlug: 'gnoll', hp: 22, hpMax: 22, _position: { col: 1, row: 1 } };
+  const healthy = { id: 'tank', hp: 30, hpMax: 30, _position: { col: 3, row: 1 } };
+  const bloodied = { id: 'mage', hp: 4,  hpMax: 22, _position: { col: 3, row: 2 } };
+  const plan = chooseAction({
+    self, enemies: [healthy, bloodied], allies: [], rng: () => 0.99
+  });
+  assert.strictEqual(plan.targetId, 'mage');
+});
+
+test('M32.1: hobgoblin gets a pack-tactics bonus when allies are adjacent', () => {
+  const self = { id: 'h1', presetSlug: 'hobgoblin', hp: 11, hpMax: 11, _position: { col: 1, row: 1 } };
+  const ally = { id: 'h2', hp: 11, hpMax: 11, _position: { col: 4, row: 5 } };
+  const pcA = { id: 'pcA', hp: 30, hpMax: 30, _position: { col: 5, row: 5 } };  // ally adjacent
+  const pcB = { id: 'pcB', hp: 30, hpMax: 30, _position: { col: 5, row: 1 } };
+  const plan = chooseAction({
+    self, enemies: [pcA, pcB], allies: [ally], rng: () => 0.99
+  });
+  assert.strictEqual(plan.targetId, 'pcA');
+});
+
 // ---------- fleeTargetCell ----------
 
 test('M32: fleeTargetCell — moves away from threat, stays in bounds', () => {

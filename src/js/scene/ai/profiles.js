@@ -99,6 +99,124 @@ export const MONSTER_PROFILES = {
     signature_triggers: [
       { when: 'self_bloodied', prefer: 'flee' }
     ]
+  },
+
+  // M32.1 — remaining preset roster
+
+  hobgoblin: {
+    archetype: 'tactical_focuser',
+    considerations: {
+      target_low_hp:       { weight: 0.7, curve: 'linear' },
+      pack_tactics_active: { weight: 0.8, curve: 'step' },
+      target_is_caster:    { weight: 0.4, curve: 'step' },
+      distance_to_target:  { weight: 0.3, curve: 'linear' }
+    },
+    retreat_below_hp: 0.2,   // disciplined; only retreats at the brink
+    metagame_blind: ['exact_hp'],
+    signature_triggers: [
+      { when: 'ally_adjacent_to_target', prefer: 'attack' }
+    ]
+  },
+
+  bugbear: {
+    archetype: 'ambusher',
+    considerations: {
+      target_low_hp:       { weight: 0.5, curve: 'linear' },
+      target_low_ac:       { weight: 0.4, curve: 'linear' },
+      target_is_caster:    { weight: 0.5, curve: 'step' },
+      distance_to_target:  { weight: 0.4, curve: 'linear' }
+    },
+    retreat_below_hp: 0.25,
+    metagame_blind: ['exact_hp'],
+    signature_triggers: [
+      { when: 'target_isolated', prefer: 'attack' }
+    ]
+  },
+
+  skeleton: {
+    archetype: 'mindless_attacker',
+    considerations: {
+      distance_to_target: { weight: 0.9, curve: 'linear' }
+    },
+    retreat_below_hp: 0,
+    metagame_blind: [],
+    signature_triggers: []
+  },
+
+  zombie: {
+    archetype: 'braindead_grappler',
+    considerations: {
+      distance_to_target: { weight: 1.0, curve: 'linear' }
+    },
+    retreat_below_hp: 0,
+    metagame_blind: [],
+    signature_triggers: []
+  },
+
+  troll: {
+    archetype: 'regen_brute',
+    considerations: {
+      target_low_hp:      { weight: 0.4, curve: 'linear' },
+      distance_to_target: { weight: 0.8, curve: 'linear' }
+    },
+    retreat_below_hp: 0,     // regen handles the rest
+    metagame_blind: [],
+    signature_triggers: []
+  },
+
+  minotaur: {
+    archetype: 'charger',
+    considerations: {
+      distance_to_target: { weight: 1.0, curve: 'linear' },   // farther → less score, so prefers chargeable distance
+      target_low_hp:      { weight: 0.2, curve: 'linear' }
+    },
+    retreat_below_hp: 0,
+    metagame_blind: [],
+    signature_triggers: [
+      { when: 'distance_gte_2cells', prefer: 'charge' }
+    ]
+  },
+
+  cultist: {
+    archetype: 'zealot',
+    considerations: {
+      pack_tactics_active: { weight: 0.7, curve: 'step' },
+      has_adjacent_ally:   { weight: 0.5, curve: 'step' },
+      distance_to_target:  { weight: 0.3, curve: 'linear' }
+    },
+    retreat_below_hp: 0,     // dies for the cause
+    metagame_blind: [],
+    signature_triggers: []
+  },
+
+  gnoll: {
+    archetype: 'pack_hunter',
+    considerations: {
+      target_low_hp:       { weight: 1.0, curve: 'linear' },  // Rampage: love finishing kills
+      pack_tactics_active: { weight: 0.5, curve: 'step' },
+      has_adjacent_ally:   { weight: 0.4, curve: 'step' },
+      distance_to_target:  { weight: 0.2, curve: 'linear' }
+    },
+    retreat_below_hp: 0.15,  // breaks only at the very end
+    metagame_blind: ['exact_hp'],
+    signature_triggers: [
+      { when: 'target_bloodied', prefer: 'attack' }
+    ]
+  },
+
+  ratfolk: {
+    archetype: 'swarm_skirmisher',
+    considerations: {
+      pack_tactics_active: { weight: 0.9, curve: 'step' },
+      target_low_hp:       { weight: 0.5, curve: 'linear' },
+      self_isolated:       { weight: -1.0, curve: 'step' },
+      distance_to_target:  { weight: 0.3, curve: 'linear' }
+    },
+    retreat_below_hp: 0.5,
+    metagame_blind: ['exact_hp'],
+    signature_triggers: [
+      { when: 'self_isolated', prefer: 'flee' }
+    ]
   }
 };
 
