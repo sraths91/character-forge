@@ -38,6 +38,10 @@ import {
 import { planMovement } from './scene/movement.js';
 import { chooseAction, fleeTargetCell, formatBreakdown } from './scene/ai/profile.js';
 import { inferProfile } from './scene/ai/infer.js';
+import {
+  editableProfileFor, applyWeightChange, applyRetreatChange,
+  applyArchetypeSwap, listArchetypes, listConsiderations
+} from './scene/ai/editor.js';
 
 const $ = (id) => document.getElementById(id);
 const status = $('status');
@@ -1094,10 +1098,117 @@ function renderMonsterPanel() {
         <summary><span class="monster-conditions-label">Conditions</span> <span class="monster-conditions-summary">${escapeHtml(condSummary)}</span></summary>
         <div class="monster-conditions-grid">${condCheckboxes}</div>
       </details>
+      ${renderAiEditor(m)}
     `;
     list.appendChild(card);
   }
 }
+
+// M32.3 — Per-monster AI editor. Sits in each monster card; lets the
+// user pick an archetype, tune every consideration weight, and set the
+// retreat threshold. All edits write to m._aiProfile so chooseAction
+// picks them up (via profileForEntity) on the next monster turn.
+function renderAiEditor(m) {
+  const profile = editableProfileFor(m);
+  const archetypes = listArchetypes();
+  const considerationNames = listConsiderations();
+
+  const archetypeOptions = archetypes.map(a => {
+    const selected = a.archetype === profile.archetype ? ' selected' : '';
+    return `<option value="${escapeHtml(a.slug)}"${selected}>${escapeHtml(a.archetype)}</option>`;
+  }).join('');
+
+  const consRows = considerationNames.map(name => {
+    const entry = profile.considerations[name];
+    const w = entry ? (typeof entry === 'number' ? entry : entry.weight) : 0;
+    const wDisp = w >= 0 ? `+${w.toFixed(1)}` : w.toFixed(1);
+    return `
+      <div class="ai-cons-row">
+        <span class="ai-cons-name" title="${escapeHtml(name)}">${escapeHtml(name)}</span>
+        <input class="ai-cons-slider" type="range" min="-1.5" max="1.5" step="0.1"
+               value="${w}" data-ai-weight="${escapeHtml(m.id)}|${escapeHtml(name)}" />
+        <span class="ai-cons-value">${wDisp}</span>
+      </div>`;
+  }).join('');
+
+  const retreatPct = Math.round((profile.retreat_below_hp || 0) * 100);
+  return `
+    <details class="monster-ai-editor">
+      <summary>
+        <span class="ai-editor-label">AI Profile</span>
+        <span class="ai-archetype-summary">${escapeHtml(profile.archetype)}</span>
+      </summary>
+      <div class="ai-editor-body">
+        <label class="ai-row">
+          <span class="ai-row-label">Archetype</span>
+          <select data-ai-archetype="${escapeHtml(m.id)}">${archetypeOptions}</select>
+        </label>
+        <div class="ai-considerations">${consRows}</div>
+        <label class="ai-row">
+          <span class="ai-row-label">Retreat below HP</span>
+          <input type="range" min="0" max="0.95" step="0.05"
+                 value="${profile.retreat_below_hp || 0}" data-ai-retreat="${escapeHtml(m.id)}" />
+          <span class="ai-cons-value">${retreatPct}%</span>
+        </label>
+        <button class="ai-reset" type="button" data-ai-reset="${escapeHtml(m.id)}">Reset to default</button>
+      </div>
+    </details>
+  `;
+}
+
+function findMonsterInScene(id) {
+  return (currentScene.monsters || []).find(m => String(m.id) === String(id)) || null;
+}
+
+function handleAiEditorEvent(e) {
+  const t = e.target;
+  if (!t) return;
+  // Weight slider
+  if (t.dataset.aiWeight) {
+    const [id, name] = t.dataset.aiWeight.split('|');
+    const m = findMonsterInScene(id);
+    if (!m) return;
+    const weight = parseFloat(t.value);
+    m._aiProfile = applyWeightChange(editableProfileFor(m), name, weight);
+    const valSpan = t.parentElement?.querySelector('.ai-cons-value');
+    if (valSpan) valSpan.textContent = weight >= 0 ? `+${weight.toFixed(1)}` : weight.toFixed(1);
+    saveScene(currentScene);
+    return;
+  }
+  // Retreat threshold
+  if (t.dataset.aiRetreat) {
+    const m = findMonsterInScene(t.dataset.aiRetreat);
+    if (!m) return;
+    const r = parseFloat(t.value);
+    m._aiProfile = applyRetreatChange(editableProfileFor(m), r);
+    const valSpan = t.parentElement?.querySelector('.ai-cons-value');
+    if (valSpan) valSpan.textContent = `${Math.round(r * 100)}%`;
+    saveScene(currentScene);
+    return;
+  }
+  // Archetype dropdown
+  if (t.dataset.aiArchetype) {
+    const m = findMonsterInScene(t.dataset.aiArchetype);
+    if (!m) return;
+    m._aiProfile = applyArchetypeSwap(editableProfileFor(m), t.value);
+    saveScene(currentScene);
+    renderMonsterPanel();   // re-render so sliders match the new profile
+    return;
+  }
+  // Reset button
+  if (t.dataset.aiReset) {
+    const m = findMonsterInScene(t.dataset.aiReset);
+    if (!m) return;
+    delete m._aiProfile;
+    saveScene(currentScene);
+    renderMonsterPanel();
+    return;
+  }
+}
+
+document.addEventListener('input', handleAiEditorEvent);
+document.addEventListener('change', handleAiEditorEvent);
+document.addEventListener('click', handleAiEditorEvent);
 
 function spawnMonsterFromPreset(slug, opts = {}) {
   const preset = MONSTER_PRESETS[slug];
