@@ -231,6 +231,7 @@ export const MONSTER_PROFILES = {
       distance_to_target: { weight: 0.2, curve: 'linear' }
     },
     castWeights: {
+      'cure-wounds':      1.4,   // top priority when an ally is bloodied
       'hold-person':      1.2,   // save-or-suck on a target that ISN'T already locked
       'spiritual-weapon': 0.9,
       'inflict-wounds':   0.6,

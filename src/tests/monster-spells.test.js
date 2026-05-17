@@ -217,6 +217,114 @@ test('M34: simulator integration — cult fanatic deals damage to a fighter', ()
   assert.ok(fanatic.avgDamageDealt > 0, 'fanatic should deal SOME damage from spellcasting');
 });
 
+// =====================================================================
+// M34.2 — Healing spells
+// =====================================================================
+
+test('M34.2: cure-wounds + healing-word are in the library and tagged ally-side', () => {
+  for (const id of ['cure-wounds', 'healing-word']) {
+    const s = MONSTER_SPELLS[id];
+    assert.ok(s, `missing spell ${id}`);
+    assert.strictEqual(s.kind, 'heal');
+    assert.strictEqual(s.targetSide, 'ally');
+  }
+});
+
+test('M34.2: cult-fanatic spellbook now includes cure-wounds', () => {
+  assert.ok(MONSTER_SPELLCASTING['cult-fanatic'].spells.includes('cure-wounds'));
+});
+
+test('M34.2: chooseAction — cult fanatic heals a bloodied ally instead of attacking', () => {
+  const self = {
+    id: 'cf1', presetSlug: 'cult-fanatic',
+    hp: 33, hpMax: 33, _position: { col: 1, row: 1 },
+    _slots: freshSlots('cult-fanatic')
+  };
+  const bloodiedAlly = {
+    id: 'ally1', presetSlug: 'cultist',
+    hp: 2, hpMax: 9, _position: { col: 2, row: 1 }
+  };
+  const enemy = livePc('pc1', { col: 5, row: 1 });
+  const plan = chooseAction({
+    self, enemies: [enemy], allies: [bloodiedAlly], rng: () => 0.5
+  });
+  assert.strictEqual(plan.kind, 'cast');
+  assert.strictEqual(plan.spellId, 'cure-wounds');
+  assert.strictEqual(plan.targetId, 'ally1');
+  assert.strictEqual(plan.targetSide, 'ally');
+});
+
+test('M34.2: chooseAction — no heal candidate when no ally is wounded', () => {
+  const self = {
+    id: 'cf1', presetSlug: 'cult-fanatic',
+    hp: 33, hpMax: 33, _position: { col: 1, row: 1 },
+    _slots: freshSlots('cult-fanatic')
+  };
+  const fullAlly = { id: 'ally1', presetSlug: 'cultist',
+    hp: 9, hpMax: 9, _position: { col: 2, row: 1 } };
+  const plan = chooseAction({
+    self,
+    enemies: [livePc('pc1', { col: 5, row: 1 })],
+    allies: [fullAlly], rng: () => 0.5
+  });
+  assert.notStrictEqual(plan.spellId, 'cure-wounds');
+});
+
+test('M34.2: chooseAction — picks the MOST-wounded ally as the heal target', () => {
+  const self = {
+    id: 'cf1', presetSlug: 'cult-fanatic',
+    hp: 33, hpMax: 33, _position: { col: 1, row: 1 },
+    _slots: freshSlots('cult-fanatic')
+  };
+  const slightlyHurt = { id: 'a1', presetSlug: 'cultist',
+    hp: 7, hpMax: 9, _position: { col: 2, row: 1 } };
+  const dying = { id: 'a2', presetSlug: 'cultist',
+    hp: 1, hpMax: 9, _position: { col: 1, row: 2 } };
+  const plan = chooseAction({
+    self,
+    enemies: [livePc('pc1', { col: 5, row: 1 })],
+    allies: [slightlyHurt, dying], rng: () => 0.5
+  });
+  assert.strictEqual(plan.targetId, 'a2');
+});
+
+test('M34.2: simulator — cure-wounds actually restores HP across many runs', () => {
+  // Two cult fanatics positioned far from the fighter so the healer
+  // gets multiple cast windows before the fighter closes. The wounded
+  // fanatic should end up with MORE hp on average than its starting 8.
+  const party = [{
+    id: 'pc1', name: 'Fighter', _position: { col: 1, row: 1 },
+    hp: { current: 30, max: 30 },
+    equipment: { mainhand: { name: 'Longsword' } },
+    abilityScores: { STR: 16, DEX: 12, CON: 14, INT: 10, WIS: 10, CHA: 10 },
+    abilityModifiers: { STR: 3, DEX: 1, CON: 2, INT: 0, WIS: 0, CHA: 0 },
+    classes: [{ name: 'Fighter', level: 5 }],
+    conditions: []
+  }];
+  const monsters = [
+    { id: 'cf1', presetSlug: 'cult-fanatic', name: 'Hurt Fanatic',
+      hp: { current: 8, max: 33 }, position: { col: 11, row: 1 }, conditions: [] },
+    { id: 'cf2', presetSlug: 'cult-fanatic', name: 'Healer',
+      hp: { current: 33, max: 33 }, position: { col: 11, row: 2 }, conditions: [] }
+  ];
+  // Run two scenarios: with vs without cure-wounds in the healer's pool.
+  // The "with" scenario should end with strictly more avg-final-hp for cf1.
+  const opts = { scene: { cols: 14, rows: 5 }, iterations: 80, maxRounds: 5, seed: 11 };
+  const withHeal = simulateEncounter({ party, monsters, ...opts });
+  // Swap to a non-healing cult-fanatic by overriding the spellbook for
+  // this iteration: we mutate the wounded version's preset-slug to
+  // 'cultist' for the healer side so no cure-wounds is available.
+  const noHeal = simulateEncounter({
+    party, monsters: monsters.map(m =>
+      m.id === 'cf2' ? { ...m, presetSlug: 'cultist', hp: { current: 9, max: 9 } } : m),
+    ...opts
+  });
+  const hurtWith = withHeal.entities.find(e => e.id === 'cf1').avgFinalHp;
+  const hurtNo   = noHeal.entities.find(e => e.id === 'cf1').avgFinalHp;
+  assert.ok(hurtWith > hurtNo,
+    `expected cure-wounds to raise cf1 avg-final-hp (with=${hurtWith.toFixed(2)}, without=${hurtNo.toFixed(2)})`);
+});
+
 test('M34: simulator — wizard PC with Shield blocks a kobold-sorcerer Fire Bolt', () => {
   // Setup is contrived: wizard at melee-vulnerable AC with Shield.
   // We run two scenarios — wizard with vs without Shield — and the

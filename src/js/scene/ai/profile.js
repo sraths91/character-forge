@@ -117,8 +117,12 @@ export function chooseAction({ self, slug, enemies, allies, rng = Math.random } 
   // monster spellcasting block live on the entity; profiles describe
   // *preferences* via `castWeights`.
   const spellPlan = considerCast({ self, profile, archetype, target: best.target, enemies: liveEnemies });
-  if (spellPlan && spellPlan.score > meleePlan.score) return spellPlan;
-  return meleePlan;
+  // M34.2 — Also consider ally-targeted heals. The best heal plan
+  // competes with the offensive cast and the melee fall-back; highest
+  // score wins overall.
+  const healPlan = considerHeal({ self, profile, archetype, allies: allies || [] });
+  const candidates = [meleePlan, spellPlan, healPlan].filter(Boolean);
+  return candidates.reduce((acc, p) => (p.score > acc.score ? p : acc), meleePlan);
 }
 
 /**
@@ -141,6 +145,7 @@ function considerCast({ self, profile, archetype, target, enemies }) {
     if (!weight) continue;             // profile didn't authorize this spell
     const spell = spellById(id);
     if (!spell) continue;
+    if (spell.targetSide === 'ally') continue;     // M34.2: heal spells handled separately
     if (!canCastSpell(spell, slots)) continue;
     // Range / line-of-fire: cantrip-save & spell-attack use spell.range;
     // melee spell attacks (range 5) only when adjacent.
@@ -172,6 +177,69 @@ function spellInRange(spell, self, target) {
   if (!sp || !tp) return true;
   const dFeet = chebyshevFeet(sp, tp);
   return dFeet <= (spell.range ?? 5);
+}
+
+/**
+ * M34.2 — Pick the best heal-an-ally cast, if any. The candidate pool
+ * is `allies`, scored by "how wounded" they are; the spell must be in
+ * range, an ally-targeted heal, and the caster needs the slot.
+ */
+function considerHeal({ self, profile, archetype, allies }) {
+  const slug = self?.presetSlug || self?.ref?._presetSlug;
+  const book = spellbookFor(slug);
+  if (!book) return null;
+  const castWeights = profile.castWeights || {};
+  const slots = self?._slots;
+  if (!slots) return null;
+  const hurt = (allies || []).filter(a => {
+    const max = a.hpMax || a.hp?.max || 0;
+    const cur = typeof a.hp === 'number' ? a.hp : a.hp?.current;
+    return max > 0 && cur > 0 && cur < max;
+  });
+  if (hurt.length === 0) return null;
+
+  // Pick the most-wounded ally as the heal target.
+  let mostHurt = null;
+  let mostHurtScore = -1;
+  for (const a of hurt) {
+    const max = a.hpMax || a.hp?.max || 1;
+    const cur = typeof a.hp === 'number' ? a.hp : a.hp?.current;
+    const wounded = 1 - cur / max;   // 0..1
+    if (wounded > mostHurtScore) {
+      mostHurt = a;
+      mostHurtScore = wounded;
+    }
+  }
+  if (!mostHurt) return null;
+
+  // Score each known heal spell; require slot + range + targetSide=ally.
+  let bestSpell = null;
+  for (const id of book.spells) {
+    const weight = castWeights[id];
+    if (!weight) continue;
+    const spell = spellById(id);
+    if (!spell || spell.targetSide !== 'ally') continue;
+    if (!canCastSpell(spell, slots)) continue;
+    if (!spellInRange(spell, self, mostHurt)) continue;
+    // ally_bloodied boost: how wounded the target is folds into the score.
+    const score = weight + mostHurtScore * 0.5;
+    if (!bestSpell || score > bestSpell.score) {
+      bestSpell = { id, spell, score, weight };
+    }
+  }
+  if (!bestSpell) return null;
+  return {
+    kind: 'cast',
+    targetId: mostHurt.id,
+    spellId: bestSpell.id,
+    targetSide: 'ally',
+    archetype,
+    score: bestSpell.score,
+    breakdown: [
+      { name: `heal:${bestSpell.spell.name}`, raw: 1, weighted: bestSpell.weight },
+      { name: 'ally_bloodied', raw: mostHurtScore, weighted: mostHurtScore * 0.5 }
+    ]
+  };
 }
 
 /** Tiny AoE-cluster heuristic: count hostiles within 10ft of `target`. */

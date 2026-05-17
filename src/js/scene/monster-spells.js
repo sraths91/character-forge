@@ -98,6 +98,32 @@ export const MONSTER_SPELLS = {
     range: 60,
     description: 'Reaction: counter another creature\'s spell. Auto-counters lvl ≤ 3; otherwise an ability check vs DC 10 + spell level.',
     pageRef: 'PHB p228'
+  },
+  // M34.2 — Healing spells. `targetSide: 'ally'` flips chooseAction's
+  // candidate pool from enemies to allies. The heal amount uses the
+  // caster's spellcasting ability modifier (read off the spellbook).
+  'cure-wounds': {
+    id: 'cure-wounds', name: 'Cure Wounds',
+    kind: 'heal',
+    targetSide: 'ally',
+    level: 1,
+    range: 5,                // touch
+    dice: '1d8',             // + spellcasting ability mod
+    addsAbilityMod: true,
+    description: 'Touch ally heals for 1d8 + spellcasting mod.',
+    pageRef: 'PHB p230'
+  },
+  'healing-word': {
+    id: 'healing-word', name: 'Healing Word',
+    kind: 'heal',
+    targetSide: 'ally',
+    level: 1,
+    range: 60,
+    dice: '1d4',
+    addsAbilityMod: true,
+    bonusAction: true,
+    description: 'Ranged bonus action: ally heals for 1d4 + spellcasting mod.',
+    pageRef: 'PHB p250'
   }
 };
 
@@ -109,9 +135,9 @@ export const MONSTER_SPELLCASTING = {
     spells: ['sacred-flame']
   },
   'cult-fanatic': {
-    ability: 'WIS', dc: 11, attackBonus: 3,
+    ability: 'WIS', dc: 11, attackBonus: 3, abilityMod: 2,
     slots: { 1: 4, 2: 3 },
-    spells: ['sacred-flame', 'inflict-wounds', 'hold-person', 'spiritual-weapon']
+    spells: ['sacred-flame', 'inflict-wounds', 'hold-person', 'spiritual-weapon', 'cure-wounds']
   },
   'kobold-sorcerer': {
     ability: 'CHA', dc: 11, attackBonus: 3,

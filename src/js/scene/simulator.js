@@ -269,9 +269,16 @@ function runOneAttack(attacker, enemies, allies, scene, rng) {
   // of a weapon attack. Concentration spells replace any existing
   // concentration (PHB p203). Slots are deducted on cast (cantrips free).
   if (plan && plan.kind === 'cast') {
+    // M34.2 — heals target an ally, not an enemy. The chooseAction
+    // result tags targetSide='ally' for these; resolve against allies.
+    let castTarget = target;
+    if (plan.targetSide === 'ally') {
+      castTarget = allies.find(a => a.id === plan.targetId) || null;
+    }
+    if (!castTarget) return;
     // M34.1 — witnesses = opposing-side PCs (the only Counterspell holders)
     runMonsterSpell({
-      attacker, target, plan, scene, rng,
+      attacker, target: castTarget, plan, scene, rng,
       witnesses: enemies.filter(isAlive).filter(e => e.kind === 'pc')
     });
     return;
@@ -395,6 +402,17 @@ function runMonsterSpell({ attacker, target, plan, scene: _scene, rng, witnesses
     consumeCounterspell(witness);
     if (result.countered) return;     // spell fizzles; slot already burned
     break;                            // failed counter still burns the reaction
+  }
+
+  // M34.2 — Healing spells: roll dice + add caster's spellcasting mod.
+  if (spell.kind === 'heal') {
+    const dmgRoll = rollDamage(spell.dice, { crit: false }, rng);
+    const mod = spell.addsAbilityMod ? (book.abilityMod || 0) : 0;
+    const heal = dmgRoll.total + mod;
+    if (target?.hpMax > 0) {
+      target.hp = Math.min(target.hpMax, target.hp + heal);
+    }
+    return;
   }
 
   if (spell.kind === 'auto-hit') {
