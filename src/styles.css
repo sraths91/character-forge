@@ -2126,6 +2126,53 @@ body.party-view-mode .versus-panel:not([hidden]) { display: block; }
   color: var(--text-dim);
 }
 
+/* M38 — Inline reaction prompt */
+.reaction-prompt-host { margin-top: 10px; }
+.reaction-prompt {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  background: rgba(245, 158, 11, 0.08);
+  border: 1px solid #f59e0b;
+  border-radius: 8px;
+  animation: reaction-prompt-in 120ms ease-out;
+}
+@keyframes reaction-prompt-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.reaction-prompt-title { font-weight: 700; font-size: 0.85rem; color: #f59e0b; }
+.reaction-prompt-body { font-size: 0.8rem; color: var(--text); }
+.reaction-prompt-cost {
+  font-size: 0.72rem;
+  font-family: var(--mono, ui-monospace);
+  color: var(--text-dim);
+}
+.reaction-prompt-actions { display: flex; gap: 8px; align-items: center; }
+.reaction-prompt-actions button {
+  background: var(--surface-2, #1f1f26);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 5px 14px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.78rem;
+}
+.reaction-prompt-yes {
+  background: #f59e0b !important;
+  color: #1f1d10 !important;
+  border-color: #f59e0b !important;
+  font-weight: 600;
+}
+.reaction-prompt-yes:hover { background: #fbbf24 !important; }
+.reaction-prompt-timer {
+  margin-left: auto;
+  font-size: 0.72rem;
+  font-family: var(--mono, ui-monospace);
+  color: var(--text-dim);
+}
+
 /* M36 — Fight replay / history panel */
 .versus-replay {
   margin-top: 10px;

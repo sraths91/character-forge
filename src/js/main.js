@@ -49,8 +49,10 @@ import {
 } from './scene/ai/editor.js';
 import {
   resetReactionsForAll, consumeReaction, detectOpportunityAttacks,
-  detectPolearmEntryOAs
+  detectPolearmEntryOAs, shouldCastShield, consumeShield,
+  lvl1SlotsForPc, lvl3SlotsForPc
 } from './scene/reactions.js';
+import { promptReaction } from './scene/reaction-prompt.js';
 
 const $ = (id) => document.getElementById(id);
 const status = $('status');
@@ -327,6 +329,7 @@ async function setView(name) {
 
 // M28 — Versus mode state. Active fight tracking + setup wiring.
 let versusActive = false;
+let versusAutoMode = false;   // M38: bypass reaction prompts when auto-fighting
 
 // M29 — Party-versus state: list of monster slugs the user has queued
 // up as the encounter. Each entry is { id, slug, name }. id is local-
@@ -465,6 +468,14 @@ async function startVersusFight() {
   const selectedSet = new Set(pcIds.map(String));
   partyComposedCharacters = partyComposedCharacters.filter(p => selectedSet.has(String(p.id)));
 
+  // M38 — Seed reaction resources on every PC so Shield/Counterspell
+  // can fire interactively. Reset once per fight; refreshed each round.
+  for (const pc of partyComposedCharacters) {
+    pc._reactionUsed = false;
+    pc._lvl1Slots = lvl1SlotsForPc(pc);
+    pc._lvl3Slots = lvl3SlotsForPc(pc);
+  }
+
   // Roll initiative once at fight start
   const pcsForInit = partyComposedCharacters;
   versusInitiative = rollPartyInitiative({ pcs: pcsForInit, monsters: monsterInstances });
@@ -482,6 +493,7 @@ async function startVersusFight() {
   }
   rerender();
 
+  versusAutoMode = (mode === 'auto' || mode === 'quick');   // M38
   if (mode === 'quick') {
     runVersusQuickStats();
   } else if (mode === 'auto') {
@@ -659,7 +671,7 @@ async function runVersusPartyAuto() {
 
       if (plan) logVersusAiPlan(entity, plan);
       const beforeTargetHp = versusHpOf(target.entity, target.kind);
-      attackInVersus({ kind: entry.entityKind, entity }, { kind: target.kind, entity: target.entity });
+      await attackInVersus({ kind: entry.entityKind, entity }, { kind: target.kind, entity: target.entity });
       const afterTargetHp = versusHpOf(target.entity, target.kind);
       currentFightRecorder.record({
         type: 'attack',
@@ -786,14 +798,33 @@ function currentPartyEndState() {
 // rounds see the new placement, the M27 lunge effect fires from the
 // new cell, and the M11 resolver computes reach from the post-move
 // position.
-function attackInVersus(attackerHit, targetHit) {
-  versusMoveBeforeAttack(attackerHit, targetHit);
+async function attackInVersus(attackerHit, targetHit) {
+  await versusMoveBeforeAttack(attackerHit, targetHit);
   combat.attacker = { id: attackerHit.entity.id, kind: attackerHit.kind };
   combat.mode = 'pick-target';
   runAttackPrompt(targetHit.kind, targetHit.entity);
 }
 
-function versusMoveBeforeAttack(attackerHit, targetHit) {
+// M38 — Wrapper around runVersusOpportunityAttack that prompts the
+// player when a PC would burn their reaction. Returns true if the OA
+// fired, false if the player declined or auto-mode skipped it.
+async function maybeRunOaWithPrompt(triggerer, moverHit, moverBeforePos) {
+  if (!triggerer || !triggerer.live) return false;
+  if (triggerer.kind === 'pc' && !versusAutoMode) {
+    const accepted = await promptReaction({
+      title: `${triggerer.live.name || 'PC'} — opportunity attack?`,
+      body: `${moverHit.entity.name || 'Target'} is leaving your reach.`,
+      costLabel: '1 reaction',
+      defaultMs: 5000,
+      auto: false
+    });
+    if (!accepted) return false;
+  }
+  runVersusOpportunityAttack(triggerer, moverHit, moverBeforePos);
+  return true;
+}
+
+async function versusMoveBeforeAttack(attackerHit, targetHit) {
   const attackerPos = attackerHit.kind === 'pc'
     ? currentScene.positions?.[String(attackerHit.entity.id)]
     : attackerHit.entity.position;
@@ -825,15 +856,22 @@ function versusMoveBeforeAttack(attackerHit, targetHit) {
   const entryTriggers = detectPolearmEntryOAs({
     mover: moverShape, before: attackerPos, after: next, hostiles: hostileShapes
   });
+  // M38 — Prompt the player before firing a PC's own opportunity
+  // attacks. Monster OAs against a moving PC always auto-fire (the
+  // monster is AI-controlled).
   for (const { triggerer } of leaveTriggers) {
-    runVersusOpportunityAttack(triggerer, attackerHit, attackerPos);
-    consumeReaction(triggerer.live);
-    if (versusHpOf(attackerHit.entity, attackerHit.kind) <= 0) break;
+    const fired = await maybeRunOaWithPrompt(triggerer, attackerHit, attackerPos);
+    if (fired) {
+      consumeReaction(triggerer.live);
+      if (versusHpOf(attackerHit.entity, attackerHit.kind) <= 0) break;
+    }
   }
   for (const { triggerer } of entryTriggers) {
-    runVersusOpportunityAttack(triggerer, attackerHit, next);
-    consumeReaction(triggerer.live);
-    if (versusHpOf(attackerHit.entity, attackerHit.kind) <= 0) break;
+    const fired = await maybeRunOaWithPrompt(triggerer, attackerHit, next);
+    if (fired) {
+      consumeReaction(triggerer.live);
+      if (versusHpOf(attackerHit.entity, attackerHit.kind) <= 0) break;
+    }
   }
   if (attackerHit.kind === 'pc') {
     currentScene.positions = { ...(currentScene.positions || {}), [String(attackerHit.entity.id)]: next };
@@ -1906,7 +1944,7 @@ function getAC(hit) {
   return deriveAC(hit.entity);
 }
 
-function runAttackPrompt(targetKind, targetEntity) {
+async function runAttackPrompt(targetKind, targetEntity) {
   const attackerHit = findHitById(combat.attacker.id);
   const targetHit   = { kind: targetKind, entity: targetEntity };
   if (!attackerHit) {
@@ -1915,6 +1953,11 @@ function runAttackPrompt(targetKind, targetEntity) {
     rerender();
     return;
   }
+  // M38 — Refresh the attacker's reaction at the start of their turn
+  // (PHB p190: each creature regains its reaction at the start of its
+  // turn). The auto-loop refreshes everyone at top-of-round; for manual
+  // play we refresh per-turn instead.
+  if (attackerHit.entity) attackerHit.entity._reactionUsed = false;
   const attackerName = entityName(attackerHit);
   const targetName   = targetEntity.name || 'Target';
   const ac           = getAC(targetHit);
@@ -2010,6 +2053,32 @@ function runAttackPrompt(targetKind, targetEntity) {
     atk = rollAttack({ bonus: finalBonus, advantage: verdict.d20.mode, targetAC: ac });
   }
 
+  // M38 — Shield reaction prompt. Fires when a monster's attack would
+  // land on a PC by 1..5 over their AC. We pause the flow to ask;
+  // auto-fight bypasses the prompt by passing auto:true.
+  let shielded = false;
+  if (atk.hit && !atk.crit && attackerHit.kind === 'monster' && targetKind === 'pc' &&
+      shouldCastShield({ target: targetEntity, attackerTotal: atk.total, targetAc: ac })) {
+    const slots = targetEntity._lvl1Slots ?? 0;
+    const accepted = await promptReaction({
+      title: `Cast Shield? (${targetEntity.name})`,
+      body: `${attackerName}'s ${atk.total} vs your AC ${ac} — +5 AC would dodge it.`,
+      costLabel: `1 reaction · 1 of ${slots} 1st-level slot${slots === 1 ? '' : 's'}`,
+      defaultMs: 5000,
+      auto: !!versusAutoMode,
+      autoAnswer: true   // auto-fight: always cast if it would help
+    });
+    if (accepted) {
+      consumeShield(targetEntity);
+      atk.hit = false;
+      shielded = true;
+      appendReactionLog({
+        attackerName, targetName: targetEntity.name || 'PC',
+        verdict, atk: { hit: false, total: atk.total }, dmg: 0, weaponName: 'Shield ✦'
+      });
+    }
+  }
+
   let damage = 0;
   let dmgRoll = null;
   if (atk.hit) {
@@ -2017,6 +2086,7 @@ function runAttackPrompt(targetKind, targetEntity) {
     damage = dmgRoll.total;
     applyDamage(targetKind, targetEntity.id, damage);
   }
+  void shielded;
   // Feed into combat.js (animation + floating popup). Animations only
   // fire on hit since the existing pipeline expects a damage amount.
   // M27 — additionally push the per-action effect descriptors so the
