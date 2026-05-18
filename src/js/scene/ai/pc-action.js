@@ -151,7 +151,17 @@ function scoreActionsAgainst({ self, target, allies, enemies, profile }) {
     let score = perTargetBase + opt.baseScore + kindWeight;
     const featuresFired = [];
     const featureBreakdown = [];
-    // Per-feature boost: features may add value to certain options
+    // Per-feature boost: features may add value to certain options.
+    // M42.2 — Stash the rollout context on the PC so the feature's
+    // consume() can run a shallow MCTS over slot-level choices.
+    if (self) {
+      const hp = typeof target?.hp === 'number' ? target.hp : (target?.hp?.current ?? 0);
+      self._mctsTargetCtx = {
+        target,
+        roundsLeft: Math.max(1, Math.ceil(hp / 7)),   // rough turns-to-kill
+        targetDpr: undefined                          // shallowRollout estimates
+      };
+    }
     for (const f of features) {
       const boost = f.scoreBoost(opt, ctx) * (featureWeights[f.id] ?? 1);
       if (boost > 0) {

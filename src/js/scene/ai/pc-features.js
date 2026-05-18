@@ -14,6 +14,47 @@
  */
 
 import { chebyshevFeet } from '../grid-rules.js';
+import { mctsEvaluate, shallowRolloutForResource } from './mcts.js';
+
+/**
+ * M42.2 — MCTS-style slot picker for Divine Smite.
+ *
+ * Enumerates each available slot level (1..5) as a candidate, then runs
+ * a shallow rollout per candidate to estimate expected encounter
+ * value: extra damage × kill probability − slot scarcity tax. The
+ * winning slot is the one that maximizes total value.
+ *
+ * Caller (the consume() above) reads the returned slot level and
+ * decrements the pool accordingly.
+ */
+function pickSmiteSlot(pc, slots) {
+  // Target context lives on `pc._mctsTargetCtx` (stamped by the scorer
+  // just before consume). If absent we fall back to lowest-slot.
+  const targetCtx = pc._mctsTargetCtx;
+  if (!targetCtx) return null;
+  const candidates = [];
+  const slotPool = Object.values(slots).reduce((s, n) => s + (n || 0), 0);
+  for (let lvl = 1; lvl <= 5; lvl++) {
+    if ((slots[lvl] ?? 0) <= 0) continue;
+    const smiteDice = Math.min(5, 2 + (lvl - 1));   // 2..5 d8
+    // Average d8 = 4.5
+    const expectedExtraDamage = smiteDice * 4.5;
+    candidates.push({
+      id: `smite-${lvl}`, level: lvl, baseScore: 0,
+      expectedExtraDamage
+    });
+  }
+  if (candidates.length === 0) return null;
+  const ranked = mctsEvaluate({
+    candidates,
+    rollout: (cand) => shallowRolloutForResource({
+      candidate: cand,
+      ctx: { ...targetCtx, slotPool }
+    }),
+    rollouts: 4, depth: 1
+  });
+  return ranked[0].level;
+}
 
 /** Does this PC have a given class at all? */
 function hasClass(pc, name) {
@@ -175,9 +216,18 @@ export const PC_FEATURES = {
       return boost;
     },
     consume(pc) {
-      // Burns the LOWEST slot we have. We pick the slot here so the
-      // simulator can apply the right dice tier (2d8 / 3d8 / 4d8 / 5d8).
+      // Pick the slot via MCTS-style lookahead: 2d8 base + 1d8 per
+      // upcast (max 5d8). Cheap shallow rollout estimates which slot
+      // tier maximizes expected encounter value given the current
+      // target HP and slot economy. If MCTS pool is empty, falls back
+      // to the lowest available slot (cheapest baseline).
       const slots = pc._slots || {};
+      const choice = pickSmiteSlot(pc, slots);
+      if (choice && (slots[choice] ?? 0) > 0) {
+        slots[choice] -= 1;
+        pc._smiteSlotUsed = choice;
+        return;
+      }
       for (let i = 1; i <= 5; i++) {
         if ((slots[i] ?? 0) > 0) { slots[i] -= 1; pc._smiteSlotUsed = i; return; }
       }
