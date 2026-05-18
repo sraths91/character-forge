@@ -30,6 +30,8 @@ import { MONSTER_PRESETS } from './monster-presets.js';
 import { factionLists, chebyshevFeet } from './grid-rules.js';
 import { planMovement, occupiedCellsOf } from './movement.js';
 import { chooseAction, fleeTargetCell } from './ai/profile.js';
+import { choosePcAction } from './ai/pc-action.js';
+import { PC_FEATURES, resetPerTurnFlags } from './ai/pc-features.js';
 import {
   resetReactionsForAll, consumeReaction, detectOpportunityAttacks,
   detectPolearmEntryOAs, shouldCastShield, canCastShield,
@@ -128,6 +130,7 @@ function runOneIteration({ party, monsters, scene, maxRounds, rng }) {
     hpMax: p.hp?.max ?? 10,
     ac: deriveAC(p),
     weapon: p.equipment?.mainhand || null,
+    _chosenWeapon: p.equipment?.mainhand || null,   // M42 weapon-of-the-turn
     conditions: Array.isArray(p.conditions) ? [...p.conditions] : [],
     _position: p._position,
     damageDealt: 0,
@@ -135,7 +138,12 @@ function runOneIteration({ party, monsters, scene, maxRounds, rng }) {
     _reactionUsed: false,        // M33.0
     _lvl1Slots: lvl1SlotsForPc(p), // M33.1 — Shield + other lvl-1 reactions
     _lvl3Slots: lvl3SlotsForPc(p), // M34.1 — Counterspell
-    _shieldActive: false
+    _shieldActive: false,
+    // M42 — Per-encounter feature usage flags (Action Surge, Second Wind)
+    _actionSurgeUsed: 0,
+    _secondWindUsed: false,
+    _sneakAttackUsedThisTurn: false,
+    _cunningActionUsedThisTurn: false
   }));
   const mons = monsters.map(m => {
     const preset = MONSTER_PRESETS[m.presetSlug] || {};
@@ -220,9 +228,9 @@ function runOneAttack(attacker, enemies, allies, scene, rng) {
   if (attacker.kind === 'monster' && attacker._innate) {
     rollInnateRecharges(attacker, rng);
   }
-  // M32 — For monsters, ask the AI profile which enemy to engage and
-  // whether to flee. PCs still use the lowest-HP rule (simulator only
-  // models monster intelligence in v1; PC choice is the player's job).
+  // M32 — Monsters consult their AI profile.
+  // M42 — PCs do too. choosePcAction picks weapon/spell/feature and
+  // returns the same plan shape so the dispatch below stays unified.
   let plan = null;
   let target;
   if (attacker.kind === 'monster') {
@@ -239,7 +247,19 @@ function runOneAttack(attacker, enemies, allies, scene, rng) {
       target = pickTarget(enemies);
     }
   } else {
-    target = pickTarget(enemies);
+    // M42 — Per-turn AI for PCs. Resets sneak-attack/cunning-action
+    // flags first, then picks the best (weapon/spell/feature) action.
+    resetPerTurnFlags(attacker);
+    plan = choosePcAction({
+      self: attacker,
+      enemies: enemies.filter(isAlive),
+      allies: allies.filter(isAlive),
+      rng
+    });
+    attacker._lastPlan = plan;
+    if (plan?.weapon) attacker._chosenWeapon = plan.weapon;   // M42 weapon switch
+    if (plan?.targetId) target = enemies.find(e => e.id === plan.targetId);
+    else target = pickTarget(enemies);
   }
   if (!target) return;
 
@@ -291,6 +311,10 @@ function runOneAttack(attacker, enemies, allies, scene, rng) {
 
   // Fleeing creatures Dash instead of attacking
   if (plan && plan.kind === 'flee') return;
+  // M42 — Non-attack PC actions skip the resolver entirely.
+  if (plan && (plan.kind === 'dash' || plan.kind === 'dodge' || plan.kind === 'disengage')) {
+    return;
+  }
 
   // M34 — Casting branch: monster spends its action on a spell instead
   // of a weapon attack. Concentration spells replace any existing
@@ -315,14 +339,27 @@ function runOneAttack(attacker, enemies, allies, scene, rng) {
 
   // Build the resolver context. For PCs we use deriveWeaponAttack; for
   // monsters we use the preset attack record directly.
+  // M42 — PC may have switched weapons (e.g. drew a bow for a distant
+  // target). Honor the AI's chosen weapon if set; otherwise default to
+  // the mainhand we cached at fight start.
   let attackStats;
   if (attacker.kind === 'pc') {
-    const a = deriveWeaponAttack(attacker.ref, attacker.weapon);
+    const chosen = attacker._chosenWeapon || attacker.weapon;
+    const a = deriveWeaponAttack(attacker.ref, chosen);
     attackStats = {
       bonus: a.bonus, dice: a.dice, damageType: a.damageType,
-      parts: [{ source: attacker.weapon?.name || 'Attack', value: a.bonus }],
+      parts: [{ source: chosen?.name || 'Attack', value: a.bonus }],
       damageParts: []
     };
+    // M42 — Sneak Attack: when the rogue's chosen action fires this
+    // feature, add the SA dice to the damage roll. PHB p96.
+    if (plan?.featuresFired?.includes('sneak-attack')) {
+      const lvl = (attacker.ref.classes || []).find(c => /rogue/i.test(c.name))?.level || 1;
+      const saDice = Math.max(1, Math.ceil(lvl / 2));
+      attackStats.dice = `${attackStats.dice}+${saDice}d6`;
+      // Mark used so it can't fire again until next turn
+      PC_FEATURES['sneak-attack'].consume(attacker);
+    }
   } else {
     attackStats = {
       bonus: attacker.attack.bonus, dice: attacker.attack.dice,
@@ -392,6 +429,18 @@ function runOneAttack(attacker, enemies, allies, scene, rng) {
   const dmg = rollDamage(finalDmgDice, { crit: atk.crit }, rng);
   target.hp = Math.max(0, target.hp - dmg.total);
   attacker.damageDealt += dmg.total;
+
+  // M42 — Action Surge: if the AI elected to burn it on this turn,
+  // resolve a second action right now (a recursive call gated to one
+  // surge per turn). Surge gives a full second attack/cast.
+  if (plan?.featuresFired?.includes('action-surge') && !attacker._surgeFiredThisTurn) {
+    attacker._surgeFiredThisTurn = true;
+    PC_FEATURES['action-surge'].consume(attacker);
+    if (isAlive(attacker) && sideAlive(enemies) > 0) {
+      runOneAttack(attacker, enemies, allies, scene, rng);
+    }
+    attacker._surgeFiredThisTurn = false;
+  }
 }
 
 // ---------- Monster spellcasting (M34) ----------

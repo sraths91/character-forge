@@ -252,7 +252,13 @@ function considerHeal({ self, profile, archetype, allies }) {
   const castWeights = profile.castWeights || {};
   const slots = self?._slots;
   if (!slots) return null;
+  // M42 — Exclude self from the ally list. RAW lets you target yourself
+  // with Cure Wounds, but doing so makes the caster a perpetual heal
+  // sink: bloodied → self-heal → take damage → repeat, never offensively
+  // casting or attacking. A monster never picking ranged damage feels
+  // wrong even when "RAW correct".
   const hurt = (allies || []).filter(a => {
+    if (a === self || a?.id === self?.id) return false;
     const max = a.hpMax || a.hp?.max || 0;
     const cur = typeof a.hp === 'number' ? a.hp : a.hp?.current;
     return max > 0 && cur > 0 && cur < max;
