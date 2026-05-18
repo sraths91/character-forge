@@ -64,6 +64,9 @@ import { chebyshevFeet } from './scene/grid-rules.js';
 import { promptReaction } from './scene/reaction-prompt.js';
 import { createCinema } from './anim/cinema.js';
 import { buildMotion, motionForWeapon } from './anim/weapon-motions.js';
+import {
+  applyStyle, availableStyles, styleForPc, saveStyle, isStyle
+} from './anim/motion-styles.js';
 
 const $ = (id) => document.getElementById(id);
 const status = $('status');
@@ -580,8 +583,13 @@ async function playCinemaRoundForAttack(attackerHit, targetHit, dmg) {
     ? (attackerHit.entity.equipment?.mainhand || null)
     : { name: MONSTER_PRESETS[attackerHit.entity.presetSlug]?.attack?.name };
   const motionId = motionForWeapon(weapon);
-  const seq = buildMotion(motionId);
+  let seq = buildMotion(motionId);
   if (!seq) return;
+  // M43.3 — Apply the PC's chosen attack style (Quick / Standard /
+  // Power / Flourish). Monsters always use Standard for v1.
+  if (attackerHit.kind === 'pc') {
+    seq = applyStyle(seq, styleForPc(attackerHit.entity));
+  }
   // Update actor sprites to match the current attacker / defender
   await versusCinema.setActors?.({
     attacker: attackerHit.entity,
@@ -4314,6 +4322,7 @@ function renderPartyCard(character, ddbId) {
   // the card's character otherwise.
   const livePc = partyComposedCharacters.find(p => String(p.id) === String(ddbId)) || character;
   card.insertAdjacentHTML('beforeend', renderPcAiEditor(livePc));
+  card.insertAdjacentHTML('beforeend', renderAttackStylePicker(livePc));
 
   // Click the card body (not the remove button) → switch to this character
   card.addEventListener('click', () => switchToMember(ddbId));
@@ -4371,6 +4380,53 @@ function renderPcAiEditor(pc) {
     </details>
   `;
 }
+
+/**
+ * M43.3 — Attack-style dropdown for a PC card. Lists every style this
+ * character has unlocked at their current level (Quick + Standard at
+ * lvl 1, Power at lvl 3+, Flourish at lvl 5+). Persists the player's
+ * choice via saveStyle() so it survives reloads and character
+ * re-imports. The cinema (M43.2) reads this when building motions.
+ */
+function renderAttackStylePicker(pc) {
+  if (!pc?.id) return '';
+  const level = (pc.classes || []).reduce((s, c) => s + (c?.level || 0), 0) || 1;
+  const choices = availableStyles(level);
+  const current = styleForPc(pc);
+  const options = choices.map(s => {
+    const selected = s.id === current ? ' selected' : '';
+    const tier = s.minLevel > 1 ? ` (lvl ${s.minLevel}+)` : '';
+    return `<option value="${escapeHtml(s.id)}"${selected}>${escapeHtml(s.label)}${tier}</option>`;
+  }).join('');
+  return `
+    <details class="monster-ai-editor pc-style-picker">
+      <summary>
+        <span class="ai-editor-label">Attack Style</span>
+        <span class="ai-archetype-summary">${escapeHtml(choices.find(s => s.id === current)?.label || current)}</span>
+      </summary>
+      <div class="ai-editor-body">
+        <label class="ai-row">
+          <span class="ai-row-label">Style</span>
+          <select data-pc-style="${escapeHtml(pc.id)}">${options}</select>
+        </label>
+        <p class="ai-style-hint">${escapeHtml(choices.find(s => s.id === current)?.description || '')}</p>
+      </div>
+    </details>
+  `;
+}
+
+function handlePcAttackStyleEvent(e) {
+  const t = e.target;
+  if (!t || !t.dataset?.pcStyle) return;
+  const pc = findPcInParty(t.dataset.pcStyle);
+  if (!pc) return;
+  const next = t.value;
+  if (!isStyle(next)) return;
+  pc._attackStyle = next;
+  saveStyle(pc.id, next);
+  refreshParty();
+}
+document.addEventListener('change', handlePcAttackStyleEvent);
 
 function findPcInParty(id) {
   return partyComposedCharacters.find(p => String(p.id) === String(id)) || null;

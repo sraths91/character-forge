@@ -2220,6 +2220,15 @@ body.party-view-mode .versus-panel:not([hidden]) { display: block; }
   color: var(--text-dim);
 }
 
+/* M43.3 — Attack-style picker hint text */
+.ai-style-hint {
+  margin: 6px 0 0;
+  font-size: 0.7rem;
+  color: var(--text-dim);
+  font-style: italic;
+  line-height: 1.4;
+}
+
 /* M43.2 — Cinematic 1v1 stage. Hidden by default; shown only when the
    versus mode is "Cinematic" and a fight is in progress. */
 .cinema-canvas {
