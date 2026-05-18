@@ -199,6 +199,85 @@ test('M42: choosePcAction — fighter vs bloodied target picks Action Surge boos
 
 // ---------- Simulator integration ----------
 
+// ---------- M42.1: Divine Smite + Reckless Attack + Healing Word ----------
+
+test('M42.1: divine-smite — available only when paladin has slots', () => {
+  const pal = { classes: [{ name: 'Paladin', level: 5 }], _slots: { 1: 1 } };
+  assert.strictEqual(PC_FEATURES['divine-smite'].available(pal), true);
+  const exhausted = { classes: [{ name: 'Paladin', level: 5 }], _slots: { 1: 0, 2: 0 } };
+  assert.strictEqual(PC_FEATURES['divine-smite'].available(exhausted), false);
+  const lowLvl = { classes: [{ name: 'Paladin', level: 1 }], _slots: { 1: 2 } };
+  assert.strictEqual(PC_FEATURES['divine-smite'].available(lowLvl), false);
+  const fighter = { classes: [{ name: 'Fighter', level: 5 }], _slots: { 1: 2 } };
+  assert.strictEqual(PC_FEATURES['divine-smite'].available(fighter), false);
+});
+
+test('M42.1: divine-smite — boosts melee against low-HP / caster targets, lighter on grunts', () => {
+  const self = { ref: {}, hp: 30, hpMax: 30, _slots: { 1: 2, 2: 1 } };
+  const dyingTarget = { hp: 3, hpMax: 30, ref: {} };
+  const fullTarget  = { hp: 30, hpMax: 30, ref: {} };
+  const dyingBoost = PC_FEATURES['divine-smite'].scoreBoost(
+    { kind: 'melee' }, { self, target: dyingTarget }
+  );
+  const fullBoost = PC_FEATURES['divine-smite'].scoreBoost(
+    { kind: 'melee' }, { self, target: fullTarget }
+  );
+  assert.ok(dyingBoost > fullBoost,
+    `smite should value low-HP targets more (dying=${dyingBoost}, full=${fullBoost})`);
+});
+
+test('M42.1: divine-smite — consume burns the lowest available slot', () => {
+  const pal = { _slots: { 1: 0, 2: 3, 3: 1 } };
+  PC_FEATURES['divine-smite'].consume(pal);
+  assert.strictEqual(pal._slots[2], 2);
+  assert.strictEqual(pal._smiteSlotUsed, 2);
+});
+
+test('M42.1: reckless-attack — available for barbarian and consumable once per turn', () => {
+  const barb = { classes: [{ name: 'Barbarian', level: 3 }] };
+  assert.strictEqual(PC_FEATURES['reckless-attack'].available(barb), true);
+  PC_FEATURES['reckless-attack'].consume(barb);
+  assert.strictEqual(barb._recklessUsedThisTurn, true);
+  assert.strictEqual(barb._recklessUntilNextTurn, true);
+  assert.strictEqual(PC_FEATURES['reckless-attack'].available(barb), false);
+});
+
+test('M42.1: reckless-attack — only boosts melee, not ranged', () => {
+  const barb = { ref: {}, hp: 30, hpMax: 30, classes: [{ name: 'Barbarian', level: 3 }] };
+  const target = { hp: 5, hpMax: 20, ref: {} };
+  const meleeBoost = PC_FEATURES['reckless-attack'].scoreBoost(
+    { kind: 'melee' }, { self: barb, target }
+  );
+  const rangedBoost = PC_FEATURES['reckless-attack'].scoreBoost(
+    { kind: 'ranged' }, { self: barb, target }
+  );
+  assert.ok(meleeBoost > 0);
+  assert.strictEqual(rangedBoost, 0);
+});
+
+test('M42.1: simulator — paladin lvl 5 with smite out-damages lvl 1 paladin baseline', () => {
+  const paladin = (level) => ({
+    id: 'pc1', name: 'P', _position: { col: 1, row: 1 },
+    hp: { current: 30, max: 30 },
+    equipment: { mainhand: { name: 'Longsword' } },
+    abilityScores: { STR: 16, DEX: 12, CON: 14, INT: 10, WIS: 10, CHA: 14 },
+    abilityModifiers: { STR: 3, DEX: 1, CON: 2, INT: 0, WIS: 0, CHA: 2 },
+    classes: [{ name: 'Paladin', level }],
+    conditions: []
+  });
+  const tankyTarget = () => [{
+    id: 't1', presetSlug: 'goblin', name: 'Big Goblin',
+    hp: { current: 60, max: 60 }, position: { col: 2, row: 1 }, conditions: []
+  }];
+  const opts = { scene: { cols: 5, rows: 3 }, iterations: 60, maxRounds: 5, seed: 71 };
+  const withSmite = simulateEncounter({ party: [paladin(5)], monsters: tankyTarget(), ...opts });
+  const noSmite   = simulateEncounter({ party: [paladin(1)], monsters: tankyTarget(), ...opts });
+  const sDmg = withSmite.entities.find(e => e.id === 'pc1').avgDamageDealt;
+  const nDmg = noSmite.entities.find(e => e.id === 'pc1').avgDamageDealt;
+  assert.ok(sDmg > nDmg,
+    `expected smiting paladin > baseline; ${sDmg.toFixed(1)} vs ${nDmg.toFixed(1)}`);
+});
+
 test('M42: simulator — fighter PC uses Action Surge to out-damage a non-surging baseline', () => {
   // Same character vs same goblin; "with surge" runs a lvl-5 fighter
   // (has Action Surge); "without" runs lvl-1 (no surge). Expected:

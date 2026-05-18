@@ -35,7 +35,7 @@ import { PC_FEATURES, resetPerTurnFlags } from './ai/pc-features.js';
 import {
   resetReactionsForAll, consumeReaction, detectOpportunityAttacks,
   detectPolearmEntryOAs, shouldCastShield, canCastShield,
-  consumeShield, lvl1SlotsForPc, lvl3SlotsForPc,
+  consumeShield, lvl1SlotsForPc, lvl3SlotsForPc, slotsForPc,
   shouldCounterspell, consumeCounterspell, resolveCounterspell
 } from './reactions.js';
 import {
@@ -138,6 +138,7 @@ function runOneIteration({ party, monsters, scene, maxRounds, rng }) {
     _reactionUsed: false,        // M33.0
     _lvl1Slots: lvl1SlotsForPc(p), // M33.1 — Shield + other lvl-1 reactions
     _lvl3Slots: lvl3SlotsForPc(p), // M34.1 — Counterspell
+    _slots: slotsForPc(p),         // M42.1 — Smite + Healing Word + future
     _shieldActive: false,
     // M42 — Per-encounter feature usage flags (Action Surge, Second Wind)
     _actionSurgeUsed: 0,
@@ -178,6 +179,10 @@ function runOneIteration({ party, monsters, scene, maxRounds, rng }) {
     // simulator runs everyone once per round, top-of-round is equivalent.
     resetReactionsForAll(pcs);
     resetReactionsForAll(mons);
+    // M42.1 — Reckless Attack expires at start of barb's next turn.
+    // Top-of-round is the conservative approximation in our flat
+    // initiative model; the downside lingers a full round.
+    for (const p of pcs) { p._recklessUsedThisTurn = false; p._recklessUntilNextTurn = false; }
     // M41 — Refresh each legendary monster's budget at the top of every
     // round (RAW: start of its own turn). Since the simulator runs all
     // monsters once per round, top-of-round is equivalent here.
@@ -327,6 +332,11 @@ function runOneAttack(attacker, enemies, allies, scene, rng) {
       castTarget = allies.find(a => a.id === plan.targetId) || null;
     }
     if (!castTarget) return;
+    // M42.1 — PCs already have _slots seeded at fight start
+    // (via slotsForPc). Safety: lazy-init if missing.
+    if (attacker.kind === 'pc' && !attacker._slots) {
+      attacker._slots = slotsForPc(attacker.ref || attacker);
+    }
     // M34.1 — witnesses = opposing-side PCs (the only Counterspell holders)
     // M37 — allEnemies = the mover's hostile side for AoE save spells
     runMonsterSpell({
@@ -359,6 +369,13 @@ function runOneAttack(attacker, enemies, allies, scene, rng) {
       attackStats.dice = `${attackStats.dice}+${saDice}d6`;
       // Mark used so it can't fire again until next turn
       PC_FEATURES['sneak-attack'].consume(attacker);
+    }
+    // M42.1 — Reckless Attack: barbarian trades for advantage on
+    // their attack roll (resolver override below). The "all attacks
+    // against this PC have advantage" downside is set on the PC and
+    // read when monsters attack them.
+    if (plan?.featuresFired?.includes('reckless-attack')) {
+      PC_FEATURES['reckless-attack'].consume(attacker);
     }
   } else {
     attackStats = {
@@ -393,6 +410,16 @@ function runOneAttack(attacker, enemies, allies, scene, rng) {
       : allies.map(m => ({ ...m.ref, position: m.position, conditions: m.conditions, id: m.id, name: m.name }))
   });
 
+  // M42.1 — Reckless Attack overrides advantage on the barb's swing.
+  // M42.1 — Monster attacks against a reckless barb also get advantage
+  // (read via the resolver's `target._recklessUntilNextTurn` flag check
+  // — we just propagate it on the resolver target object).
+  let advantageOverride = 'auto';
+  if (attacker.kind === 'pc' && attacker._recklessUntilNextTurn) {
+    advantageOverride = 'advantage';
+  } else if (attacker.kind === 'monster' && target?._recklessUntilNextTurn) {
+    advantageOverride = 'advantage';
+  }
   const verdict = resolveAttack({
     attacker: attackerForResolver,
     target: targetForResolver,
@@ -401,7 +428,7 @@ function runOneAttack(attacker, enemies, allies, scene, rng) {
     attackerKind: attacker.kind,
     targetKind: target.kind,
     targetAC: target.ac,
-    advantageOverride: 'auto',
+    advantageOverride,
     allies: allyList,
     hostiles: hostileList,
     attackStats
@@ -429,6 +456,22 @@ function runOneAttack(attacker, enemies, allies, scene, rng) {
   const dmg = rollDamage(finalDmgDice, { crit: atk.crit }, rng);
   target.hp = Math.max(0, target.hp - dmg.total);
   attacker.damageDealt += dmg.total;
+
+  // M42.1 — Divine Smite: paladin burns a slot AFTER the hit lands,
+  // adding 2d8 + 1d8 per slot level above 1st (max 5d8), +1d8 vs
+  // fiends/undead. The slot was reserved on the entity (._smiteSlotUsed)
+  // during the AI's action choice.
+  if (attacker.kind === 'pc' && plan?.featuresFired?.includes('divine-smite')) {
+    PC_FEATURES['divine-smite'].consume(attacker);
+    const slotLevel = attacker._smiteSlotUsed || 1;
+    let smiteDice = Math.min(5, 2 + (slotLevel - 1));   // 1st→2d8, 2nd→3d8, ... 5th→5d8 (cap)
+    // +1d8 against fiends or undead (target type lookup)
+    const tType = String(target?.ref?.race?.name || target?.presetSlug || '').toLowerCase();
+    if (/fiend|devil|demon|undead|zombie|skeleton|vampire|ghoul/.test(tType)) smiteDice += 1;
+    const smiteRoll = rollDamage(`${smiteDice}d8`, { crit: atk.crit }, rng);
+    target.hp = Math.max(0, target.hp - smiteRoll.total);
+    attacker.damageDealt += smiteRoll.total;
+  }
 
   // M42 — Action Surge: if the AI elected to burn it on this turn,
   // resolve a second action right now (a recursive call gated to one
@@ -462,14 +505,18 @@ function runMonsterSpell({ attacker, target, plan, scene: _scene, rng, witnesses
   // spell's base, scale dice/darts accordingly. Pure: applyUpcast
   // returns a new spell-shaped object; never mutates the registry.
   const spell = applyUpcast(baseSpell, plan.castAtLevel);
-  const book = spellbookFor(attacker.presetSlug);
+  const book = attacker.kind === 'monster' ? spellbookFor(attacker.presetSlug) : null;
   // M37 — innate-only casters have no slot book. We synthesize a
   // minimal "book" so the rest of the function (DC + attackBonus reads)
   // can stay unchanged.
   const innateBook = !book && attacker._innate
     ? { dc: 12, attackBonus: 4, abilityMod: 3 }       // safe defaults; real values come from MONSTER_INNATE if needed
     : null;
-  const effectiveBook = book || innateBook;
+  // M42.1 — PC casters: derive a book from their class spellcasting
+  // ability. Cleric uses WIS, paladin uses CHA. Fall back to INT mod.
+  const pcBook = !book && !innateBook && attacker.kind === 'pc'
+    ? pcSpellBook(attacker) : null;
+  const effectiveBook = book || innateBook || pcBook;
   if (!effectiveBook) return;
 
   // Concentration replacement: dropping the previous spell would clear
@@ -613,6 +660,28 @@ function applyDamageToEntity(target, damage) {
 }
 
 /** Pick the spellcasting ability stat for a PC's Counterspell check. */
+/** M42.1 — Derive a spell-book shape for a PC caster (DC + attackBonus
+ *  + abilityMod) so runMonsterSpell can apply spell math uniformly. */
+function pcSpellBook(attacker) {
+  const ref = attacker.ref || attacker;
+  const classes = ref?.classes || [];
+  // Pick the first matching caster class to determine spellcasting stat.
+  let stat = 'INT';
+  for (const c of classes) {
+    const name = String(c?.name || '').toLowerCase();
+    if (name === 'cleric' || name === 'druid' || name === 'ranger') { stat = 'WIS'; break; }
+    if (name === 'bard' || name === 'sorcerer' || name === 'warlock' || name === 'paladin') { stat = 'CHA'; break; }
+    if (name === 'wizard' || name === 'artificer') { stat = 'INT'; break; }
+  }
+  const mod = ref?.abilityModifiers?.[stat] ?? 0;
+  const prof = 2 + Math.floor(((classes[0]?.level || 1) - 1) / 4);
+  return {
+    dc: 8 + prof + mod,
+    attackBonus: prof + mod,
+    abilityMod: mod
+  };
+}
+
 function abilityForCounterer(pc) {
   const classes = pc?.ref?.classes || [];
   for (const c of classes) {

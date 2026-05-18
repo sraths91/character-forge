@@ -245,6 +245,49 @@ function tablesFor(name) {
   return null;
 }
 
+/** M42.1 — Estimate PC's full spell-slot pool. Returns { 1: N, 2: M, ... }
+ *  shaped like monster `_slots`. Used by Divine Smite + Healing Word. */
+export function slotsForPc(pc) {
+  const classes = pc?.classes || [];
+  // 1st-level slot table per full-caster level (already exported). We
+  // populate 1-5 from FULL_CASTER tables and a parallel 2/4/5 tables.
+  const out = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
+  // Single-class approximation: take the deepest caster class.
+  let pickClass = null, pickLvl = 0;
+  for (const c of classes) {
+    const name = String(c?.name || '').toLowerCase();
+    if (FULL_CASTERS.has(name) || HALF_CASTERS.has(name)) {
+      if ((c.level || 0) > pickLvl) { pickClass = name; pickLvl = c.level || 0; }
+    }
+  }
+  if (!pickClass) return out;
+  // Tables below are PHB p15 / p84-85 abbreviated to lvl 1-5 slots up
+  // through character level 11 (covers the bulk of play).
+  const FULL = {
+    //         1   2   3   4   5
+    1:  { 1: 2 },
+    2:  { 1: 3 },
+    3:  { 1: 4, 2: 2 },
+    4:  { 1: 4, 2: 3 },
+    5:  { 1: 4, 2: 3, 3: 2 },
+    6:  { 1: 4, 2: 3, 3: 3 },
+    7:  { 1: 4, 2: 3, 3: 3, 4: 1 },
+    8:  { 1: 4, 2: 3, 3: 3, 4: 2 },
+    9:  { 1: 4, 2: 3, 3: 3, 4: 3, 5: 1 },
+    10: { 1: 4, 2: 3, 3: 3, 4: 3, 5: 2 },
+    11: { 1: 4, 2: 3, 3: 3, 4: 3, 5: 2 }
+  };
+  const HALF = {
+    1:  {}, 2:  { 1: 2 }, 3:  { 1: 3 }, 4:  { 1: 3 },
+    5:  { 1: 4, 2: 2 }, 6:  { 1: 4, 2: 2 }, 7:  { 1: 4, 2: 3 },
+    8:  { 1: 4, 2: 3 }, 9:  { 1: 4, 2: 3, 3: 2 }, 10: { 1: 4, 2: 3, 3: 2 },
+    11: { 1: 4, 2: 3, 3: 3 }
+  };
+  const table = FULL_CASTERS.has(pickClass) ? FULL : HALF;
+  const row = table[Math.max(1, Math.min(11, pickLvl))] || {};
+  return { ...out, ...row };
+}
+
 /** Estimate PC's starting 1st-level slot pool. 0 for non-casters. */
 export function lvl1SlotsForPc(pc) {
   const classes = pc?.classes || [];

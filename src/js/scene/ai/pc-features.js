@@ -135,6 +135,85 @@ export const PC_FEATURES = {
       return 0;
     },
     consume(pc) { pc._secondWindUsed = true; }
+  },
+
+  // M42.1 — Divine Smite (PHB p85). After a paladin lvl 2+ hits with
+  // a melee weapon attack, they may expend a spell slot to deal
+  // radiant damage (2d8 + 1d8/slot above 1st, max 5d8, +1d8 vs
+  // fiends/undead). This feature flags the attack at AI-decision time;
+  // the simulator's runOneAttack applies the dice after the hit lands.
+  'divine-smite': {
+    id: 'divine-smite',
+    label: 'Divine Smite',
+    available(pc) {
+      // Paladin lvl 2+, has at least one slot (any level — we burn the
+      // lowest-level slot that satisfies the chosen smite level)
+      if (classLevel(pc, 'Paladin') < 2) return false;
+      const slots = pc._slots || {};
+      for (let i = 1; i <= 5; i++) if ((slots[i] ?? 0) > 0) return true;
+      return false;
+    },
+    scoreBoost(option, ctx) {
+      if (option.kind !== 'melee') return 0;
+      // Smite math: 2d8 base = ~9 dmg, +1d8 per upcast. Paladins
+      // usually smite freely when they have slots to burn, more
+      // eagerly on high-value targets. Slot economy is the gate.
+      const t = ctx.target;
+      const hp = typeof t?.hp === 'number' ? t.hp : t?.hp?.current;
+      const hpMax = t?.hpMax ?? t?.hp?.max ?? 1;
+      const frac = hp > 0 ? hp / hpMax : 1;
+      const targetIsCaster = !!(t?.ref?.spells && Object.keys(t.ref.spells).length);
+      const slots = ctx.self._slots || ctx.self.ref?._slots || {};
+      const totalSlots = Object.values(slots).reduce((s, n) => s + (n || 0), 0);
+      if (totalSlots <= 0) return 0;
+      // Base fire-when-you-have-slots boost. Scales with slot supply.
+      let boost = totalSlots >= 3 ? 0.45 : totalSlots >= 2 ? 0.30 : 0.15;
+      // Kill-window bonus on top
+      if (frac <= 0.3) boost += 0.4;
+      else if (frac <= 0.5) boost += 0.2;
+      if (targetIsCaster) boost += 0.2;
+      return boost;
+    },
+    consume(pc) {
+      // Burns the LOWEST slot we have. We pick the slot here so the
+      // simulator can apply the right dice tier (2d8 / 3d8 / 4d8 / 5d8).
+      const slots = pc._slots || {};
+      for (let i = 1; i <= 5; i++) {
+        if ((slots[i] ?? 0) > 0) { slots[i] -= 1; pc._smiteSlotUsed = i; return; }
+      }
+    }
+  },
+
+  // M42.1 — Reckless Attack (PHB p48). Barbarian lvl 1+. Once per
+  // turn: a STR-based melee attack rolls with advantage; ALL attacks
+  // against the barbarian have advantage until their next turn.
+  'reckless-attack': {
+    id: 'reckless-attack',
+    label: 'Reckless Attack',
+    available(pc) {
+      return classLevel(pc, 'Barbarian') >= 1 && !pc._recklessUsedThisTurn;
+    },
+    scoreBoost(option, ctx) {
+      if (option.kind !== 'melee') return 0;
+      // Only worth the downside when offense matters. Boost when the
+      // target is bloodied (kill window) or when the barb is at full HP
+      // (can afford the return-fire advantage).
+      const t = ctx.target;
+      const hp = typeof t?.hp === 'number' ? t.hp : t?.hp?.current;
+      const hpMax = t?.hpMax ?? t?.hp?.max ?? 1;
+      const targetBloodied = hp > 0 && hp / hpMax <= 0.5;
+      const selfHp = typeof ctx.self?.hp === 'number' ? ctx.self.hp : ctx.self?.hp?.current;
+      const selfMax = ctx.self?.hpMax ?? 1;
+      const selfHealthy = selfMax > 0 && selfHp / selfMax >= 0.7;
+      if (targetBloodied || selfHealthy) return 0.6;
+      return 0;
+    },
+    consume(pc) {
+      pc._recklessUsedThisTurn = true;
+      // Resolver reads this flag to grant advantage on attack rolls AND
+      // to grant attackers advantage against this PC until next turn.
+      pc._recklessUntilNextTurn = true;
+    }
   }
 };
 

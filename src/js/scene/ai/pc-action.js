@@ -54,6 +54,13 @@ export function choosePcAction({ self, enemies, allies, rng = Math.random } = {}
       best = { ...candidate, target };
     }
   }
+  // M42.1 — Healing Word & Cure Wounds for PCs. If an ally is hurt
+  // and the PC knows a heal spell with a positive castWeight, score
+  // the heal plan and compete against the offensive plan.
+  const healPlan = considerPcHeal({ self, profile, allies: allies || [] });
+  if (healPlan && (!best || healPlan.score > best.score)) {
+    best = { ...healPlan, target: healPlan.target };
+  }
   if (!best) {
     return { kind: 'dodge', targetId: null, archetype, score: 0, breakdown: [], featuresFired: [] };
   }
@@ -83,6 +90,8 @@ export function choosePcAction({ self, enemies, allies, rng = Math.random } = {}
   return {
     kind: best.kind,
     targetId: best.target.id,
+    targetSide: best.targetSide || (best.kind === 'cast' && best.spellId
+      ? (spellById(best.spellId)?.targetSide || 'enemy') : 'enemy'),
     weapon: best.weapon,
     spellId: best.spellId,
     castAtLevel: best.castAtLevel,
@@ -121,7 +130,11 @@ function scoreActionsAgainst({ self, target, allies, enemies, profile }) {
 
   const actionWeights = profile.actionWeights || {};
   const featureWeights = profile.featureWeights || {};
-  const features = availableFeatures(self.ref || self);
+  // Features need to see both the inner character ref (for class/lvl)
+  // AND the simulator wrapper (for _slots, _actionSurgeUsed, etc.).
+  // Pass a merged shape so available() can read everything.
+  const mergedSelf = mergeSelfForFeatures(self);
+  const features = availableFeatures(mergedSelf);
 
   let bestOption = null;
 
@@ -199,6 +212,92 @@ function scoreActionsAgainst({ self, target, allies, enemies, profile }) {
   }
 
   return bestOption;
+}
+
+/**
+ * M42.1 — Score the best heal-an-ally action for `self`. Returns a
+ * plan with kind:'cast', targetSide:'ally' when worth picking; null
+ * otherwise. Mirrors monster considerHeal but for PC profile shape.
+ */
+function considerPcHeal({ self, profile, allies }) {
+  const castWeights = profile.castWeights || {};
+  const ref = self.ref || self;
+  const slots = self._slots || ref._slots || null;
+  const spellsKnown = collectSpells(ref);
+  // Find the most-wounded ally (excluding self)
+  const selfId = self.id ?? ref.id;
+  const hurt = (allies || []).filter(a => {
+    if (a === self || a?.id === selfId) return false;
+    const max = a.hpMax || a.hp?.max || 0;
+    const cur = typeof a.hp === 'number' ? a.hp : a.hp?.current;
+    return max > 0 && cur > 0 && cur < max;
+  });
+  if (hurt.length === 0) return null;
+  let mostHurt = null;
+  let mostHurtScore = -1;
+  for (const a of hurt) {
+    const max = a.hpMax || a.hp?.max || 1;
+    const cur = typeof a.hp === 'number' ? a.hp : a.hp?.current;
+    const w = 1 - cur / max;
+    if (w > mostHurtScore) { mostHurt = a; mostHurtScore = w; }
+  }
+  if (!mostHurt) return null;
+
+  // Score each known heal spell. Healing Word > Cure Wounds when the
+  // ally is bloodied + far (bonus action + 60ft range).
+  let bestSpell = null;
+  for (const sname of spellsKnown) {
+    const id = nameToSpellId(sname);
+    const w = castWeights[id];
+    if (w == null) continue;
+    const spell = spellById(id);
+    if (!spell || spell.targetSide !== 'ally') continue;
+    if (spell.level > 0 && (!slots || !canCastSpell(spell, slots))) continue;
+    const sp = posOf(self), tp = posOf(mostHurt);
+    if (sp && tp) {
+      const d = chebyshevFeet(sp, tp);
+      if (d > (spell.range || 5)) continue;
+    }
+    const kindWeight = (profile.actionWeights?.heal) ?? 1.0;
+    const score = w + mostHurtScore * 0.5 + kindWeight;
+    if (!bestSpell || score > bestSpell.score) {
+      bestSpell = { id, spell, score, weight: w };
+    }
+  }
+  if (!bestSpell) return null;
+  return {
+    kind: 'cast',
+    targetId: mostHurt.id,
+    targetSide: 'ally',
+    weapon: null,
+    spellId: bestSpell.id,
+    castAtLevel: bestSpell.spell.level,
+    featuresFired: [],
+    score: bestSpell.score,
+    breakdown: [
+      { name: `heal:${bestSpell.spell.name}`, raw: 1, weighted: bestSpell.weight },
+      { name: 'ally_bloodied', raw: mostHurtScore, weighted: mostHurtScore * 0.5 }
+    ],
+    target: mostHurt
+  };
+}
+
+/** Build a single entity view exposing both `_slots`-style runtime
+ *  state from the simulator wrapper AND the underlying character ref
+ *  (classes, equipment, spells). Features and considerations consume
+ *  this merged shape. */
+function mergeSelfForFeatures(self) {
+  if (!self) return self;
+  const ref = self.ref || self;
+  // Direct properties on the wrapper (e.g. _slots) take precedence over
+  // ref. Class data and equipment live on ref.
+  return {
+    ...ref,
+    ...self,
+    classes: self.classes || ref.classes,
+    equipment: self.equipment || ref.equipment,
+    spells: self.spells || ref.spells
+  };
 }
 
 /** Pull spells off the PC's parsed character. Handles both array and
