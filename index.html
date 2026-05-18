@@ -141,6 +141,16 @@
               <label><input type="radio" name="versus-log" value="keep" checked /><span>Save to log</span></label>
               <label><input type="radio" name="versus-log" value="reset" /><span>Fresh log each fight</span></label>
             </div>
+            <!-- M43.2 — Cinematic 1v1 toggle. When ON, each combat
+                 exchange replays in a side-on Fire-Emblem-style stage
+                 (overlays the grid). Auto-fight mode only for now. -->
+            <div class="versus-row versus-modes">
+              <span>View</span>
+              <label><input type="radio" name="versus-view" value="grid" checked /><span>Grid (default)</span></label>
+              <label><input type="radio" name="versus-view" value="cinema" /><span>Cinematic 1v1</span></label>
+            </div>
+            <!-- Cinema stage canvas — hidden until a cinema-mode fight starts -->
+            <canvas id="cinema-canvas" class="cinema-canvas" width="960" height="540" hidden></canvas>
             <div class="versus-actions">
               <button id="versus-start" class="primary" type="button">Start fight</button>
               <button id="versus-calibrate" class="secondary" type="button" title="Run 200 sims and show difficulty report">Calibrate encounter</button>

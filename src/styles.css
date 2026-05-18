@@ -2220,6 +2220,22 @@ body.party-view-mode .versus-panel:not([hidden]) { display: block; }
   color: var(--text-dim);
 }
 
+/* M43.2 — Cinematic 1v1 stage. Hidden by default; shown only when the
+   versus mode is "Cinematic" and a fight is in progress. */
+.cinema-canvas {
+  display: block;
+  width: 100%;
+  max-width: 960px;
+  height: auto;
+  margin: 12px auto;
+  background: #0d1117;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+}
+.cinema-canvas[hidden] { display: none; }
+
 /* M38 — Inline reaction prompt */
 .reaction-prompt-host { margin-top: 10px; }
 .reaction-prompt {

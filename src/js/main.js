@@ -62,6 +62,8 @@ import { rollSave } from './scene/save-rolls.js';
 import { MONSTER_DEFAULT_SAVES } from './scene/monster-presets.js';
 import { chebyshevFeet } from './scene/grid-rules.js';
 import { promptReaction } from './scene/reaction-prompt.js';
+import { createCinema } from './anim/cinema.js';
+import { buildMotion, motionForWeapon } from './anim/weapon-motions.js';
 
 const $ = (id) => document.getElementById(id);
 const status = $('status');
@@ -363,6 +365,8 @@ async function setView(name) {
 // M28 — Versus mode state. Active fight tracking + setup wiring.
 let versusActive = false;
 let versusAutoMode = false;   // M38: bypass reaction prompts when auto-fighting
+let versusCinema = null;      // M43.2: cinema controller while a cinematic fight is active
+let versusCinemaActive = false;
 
 // M29 — Party-versus state: list of monster slugs the user has queued
 // up as the encounter. Each entry is { id, slug, name }. id is local-
@@ -537,11 +541,61 @@ async function startVersusFight() {
   rerender();
 
   versusAutoMode = (mode === 'auto' || mode === 'quick');   // M38
+
+  // M43.2 — Cinematic 1v1 view. When the user picks "Cinematic" view
+  // AND auto-fight mode, mount the cinema canvas and route per-attack
+  // animations through it. Other modes use the existing grid view.
+  const view = [...document.querySelectorAll('[name="versus-view"]:checked')]
+    .map(r => r.value)[0] || 'grid';
+  versusCinemaActive = (view === 'cinema' && mode === 'auto');
+  setupVersusCinema(versusCinemaActive);
+
   if (mode === 'quick') {
     runVersusQuickStats();
   } else if (mode === 'auto') {
     runVersusPartyAuto();
   }
+}
+
+/** M43.2 — Mount or tear down the cinema canvas + controller. */
+function setupVersusCinema(active) {
+  const canvas = document.getElementById('cinema-canvas');
+  if (!canvas) return;
+  if (active) {
+    canvas.hidden = false;
+    versusCinema = createCinema({ canvas });
+  } else {
+    canvas.hidden = true;
+    versusCinema = null;
+  }
+}
+
+/** M43.2 — Play one cinema round for a versus attack. Looks up the
+ *  attacker's chosen weapon, builds the matching motion sequence, and
+ *  plays it with the resolved damage as the verdict. Awaits completion
+ *  so the auto-loop pacing reads as a series of dramatized exchanges. */
+async function playCinemaRoundForAttack(attackerHit, targetHit, dmg) {
+  if (!versusCinema) return;
+  const weapon = attackerHit.kind === 'pc'
+    ? (attackerHit.entity.equipment?.mainhand || null)
+    : { name: MONSTER_PRESETS[attackerHit.entity.presetSlug]?.attack?.name };
+  const motionId = motionForWeapon(weapon);
+  const seq = buildMotion(motionId);
+  if (!seq) return;
+  // Update actor sprites to match the current attacker / defender
+  await versusCinema.setActors?.({
+    attacker: attackerHit.entity,
+    defender: targetHit.entity
+  });
+  versusCinema.resetHp({
+    attHp: attackerHit.entity.hp?.current ?? attackerHit.entity.hp ?? 1,
+    defHp: targetHit.entity.hp?.current   ?? targetHit.entity.hp   ?? 1
+  });
+  await versusCinema.playRound(seq, {
+    victim: 'defender',
+    dmg: Math.max(0, dmg | 0),
+    miss: !dmg
+  });
 }
 
 let versusInitiative = [];
@@ -727,6 +781,14 @@ async function runVersusPartyAuto() {
         await attackInVersus({ kind: entry.entityKind, entity }, { kind: target.kind, entity: target.entity });
       }
       const afterTargetHp = versusHpOf(target.entity, target.kind);
+      // M43.2 — If cinema view is active, dramatize this exchange.
+      if (versusCinemaActive && versusCinema) {
+        await playCinemaRoundForAttack(
+          { kind: entry.entityKind, entity },
+          { kind: target.kind, entity: target.entity },
+          beforeTargetHp - afterTargetHp
+        );
+      }
       currentFightRecorder.record({
         type: 'attack',
         actorId: entity.id, actorName: entity.name || '?',
@@ -1347,6 +1409,11 @@ function endVersusFight(outcome, rounds) {
     archiveReplay(currentFightRecorder.getReplay());
     currentFightRecorder = null;
     renderReplayPanel();
+  }
+  // M43.2 — tear down the cinema stage if it was active.
+  if (versusCinemaActive) {
+    setupVersusCinema(false);
+    versusCinemaActive = false;
   }
   if (!status) return;
   if (outcome === 'draw') {
