@@ -4141,13 +4141,26 @@ async function refreshParty() {
   const ids = loadParty();
   const wrap = $('party');
   const strip = $('party-strip');
-  if (ids.length === 0) {
-    if (wrap) wrap.classList.add('hidden');
+  if (!wrap || !strip) return;
+  // Show the party section as soon as a character is loaded — even if
+  // the party is still empty — so the "+ Add current" button is
+  // reachable. Without this, the user had no UI to start a party.
+  const hasLoadedCharacter = !!originalCharacter;
+  if (ids.length === 0 && !hasLoadedCharacter) {
+    wrap.classList.add('hidden');
+    strip.innerHTML = '';
     return;
   }
-  if (!wrap || !strip) return;
   wrap.classList.remove('hidden');
   strip.innerHTML = '';
+  if (ids.length === 0) {
+    // Empty-state hint so the user understands the Add button.
+    const hint = document.createElement('div');
+    hint.className = 'party-empty';
+    hint.textContent = 'Your party is empty — click "+ Add current" to add this character.';
+    strip.appendChild(hint);
+    return;
+  }
 
   // Render all members in parallel so a slow fetch doesn't block the rest
   await Promise.all(ids.map(async (id) => {
