@@ -67,6 +67,9 @@ import { buildMotion, motionForWeapon } from './anim/weapon-motions.js';
 import {
   applyStyle, availableStyles, styleForPc, saveStyle, isStyle
 } from './anim/motion-styles.js';
+import {
+  applyModifiers, modifiersForAttack, snapshotAttackerFlags
+} from './anim/modifiers.js';
 
 const $ = (id) => document.getElementById(id);
 const status = $('status');
@@ -577,7 +580,7 @@ function setupVersusCinema(active) {
  *  attacker's chosen weapon, builds the matching motion sequence, and
  *  plays it with the resolved damage as the verdict. Awaits completion
  *  so the auto-loop pacing reads as a series of dramatized exchanges. */
-async function playCinemaRoundForAttack(attackerHit, targetHit, dmg) {
+async function playCinemaRoundForAttack(attackerHit, targetHit, dmg, opts = {}) {
   if (!versusCinema) return;
   const weapon = attackerHit.kind === 'pc'
     ? (attackerHit.entity.equipment?.mainhand || null)
@@ -589,6 +592,24 @@ async function playCinemaRoundForAttack(attackerHit, targetHit, dmg) {
   // Power / Flourish). Monsters always use Standard for v1.
   if (attackerHit.kind === 'pc') {
     seq = applyStyle(seq, styleForPc(attackerHit.entity));
+  }
+  // M43.4 — Detect which class-feature modifiers fired on this exchange
+  // by diffing pre-attack flags against the attacker's current state,
+  // then compose each modifier's overlay onto the sequence.
+  if (attackerHit.kind === 'pc') {
+    const post = snapshotAttackerFlags(attackerHit.entity);
+    const fired = modifiersForAttack({
+      pre: opts.preAttackFlags || {},
+      post,
+      attacker: attackerHit.entity
+    });
+    if (fired.length) {
+      const lvl = (attackerHit.entity.classes || [])
+        .reduce((s, c) => s + (c?.level || 0), 0) || 1;
+      seq = applyModifiers(seq, fired, {
+        level: lvl, slot: opts.smiteSlot || post._smiteSlotUsed || 1
+      });
+    }
   }
   // Update actor sprites to match the current attacker / defender
   await versusCinema.setActors?.({
@@ -780,6 +801,9 @@ async function runVersusPartyAuto() {
 
       if (plan) logVersusAiPlan(entity, plan);
       const beforeTargetHp = versusHpOf(target.entity, target.kind);
+      // M43.4 — Snapshot the attacker's per-turn feature flags BEFORE
+      // the attack so the cinema layer can diff which features fired.
+      const preAttackFlags = snapshotAttackerFlags(entity);
       // M39 — Monster cast plans dispatch to the spell handler instead
       // of the weapon-attack path. PCs and non-cast monster turns still
       // route through attackInVersus.
@@ -794,7 +818,8 @@ async function runVersusPartyAuto() {
         await playCinemaRoundForAttack(
           { kind: entry.entityKind, entity },
           { kind: target.kind, entity: target.entity },
-          beforeTargetHp - afterTargetHp
+          beforeTargetHp - afterTargetHp,
+          { preAttackFlags, smiteSlot: entity._smiteSlotUsed || null }
         );
       }
       currentFightRecorder.record({

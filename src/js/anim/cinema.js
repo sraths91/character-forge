@@ -150,10 +150,13 @@ function draw(ctx, state, seq, frame, opts) {
 
   // Effects fire as snapshots — for cinema we use a small "trail" so
   // each effect persists for ~250ms after its at-time for visibility.
+  // Sustained effects (aura) opt into a longer window via params.duration.
   for (const ef of seq.effects) {
     const age = frame.t - ef.at;
-    if (age < 0 || age > 300) continue;
-    const u = age / 300;   // 0..1 lifecycle
+    if (age < 0) continue;
+    const window = Number.isFinite(ef.params?.duration) ? ef.params.duration : 300;
+    if (age > window) continue;
+    const u = age / window;
     drawEffect(ctx, ef, u, attAnchor, defAnchor);
   }
 
@@ -274,6 +277,7 @@ function drawEffect(ctx, ef, u, att, def) {
     case 'projectile': return drawProjectile(ctx, u, att, def, ef.params);
     case 'burst':      return drawBurst(ctx, u, def, ef.params);
     case 'glyph-rise': return drawGlyphRise(ctx, u, att, ef.params);
+    case 'aura':       return drawAura(ctx, u, att, def, ef.params);
     default:           return;   // hit-pause / shake / flash handled by the engine
   }
 }
@@ -396,6 +400,38 @@ function drawBurst(ctx, u, def, params) {
   ctx.arc(def.x, def.y - 28, radius, 0, Math.PI * 2);
   ctx.stroke();
   ctx.restore();
+}
+
+/**
+ * Aura — sustained tinted glow around an actor. Used by M43.4 Rage
+ * modifier. `params.actor` selects 'attacker' | 'defender'; `params.color`
+ * sets the tint. Pulses gently over its lifetime.
+ */
+function drawAura(ctx, u, att, def, params) {
+  const anchor = params?.actor === 'defender' ? def : att;
+  const color = params?.color || '#dc2626';
+  const pulse = 0.7 + 0.3 * Math.sin(u * Math.PI * 6);
+  const radius = 26 + pulse * 4;
+  const fade = Math.sin(Math.min(1, u * 3) * Math.PI * 0.5);   // ramp in
+  const out  = u > 0.85 ? (1 - u) / 0.15 : 1;                   // ramp out
+  const alpha = 0.35 * fade * out;
+  ctx.save();
+  const grad = ctx.createRadialGradient(anchor.x, anchor.y - 28, radius * 0.2, anchor.x, anchor.y - 28, radius);
+  grad.addColorStop(0, hexWithAlpha(color, alpha));
+  grad.addColorStop(1, hexWithAlpha(color, 0));
+  ctx.fillStyle = grad;
+  ctx.beginPath();
+  ctx.arc(anchor.x, anchor.y - 28, radius, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+function hexWithAlpha(hex, a) {
+  const m = String(hex).match(/^#([0-9a-f]{6})$/i);
+  if (!m) return `rgba(220,38,38,${a})`;
+  const v = parseInt(m[1], 16);
+  const r = (v >> 16) & 0xff, g = (v >> 8) & 0xff, b = v & 0xff;
+  return `rgba(${r},${g},${b},${a})`;
 }
 
 function drawGlyphRise(ctx, u, att, params) {
