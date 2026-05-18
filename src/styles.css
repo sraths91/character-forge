@@ -1344,12 +1344,78 @@ body.party-view-mode .result {
 }
 body.party-view-mode .sprite-stage {
   align-items: flex-start;
-  overflow-x: auto;
+  /* No horizontal overflow — the canvas auto-fits below so the whole
+     grid is always visible. The user can zoom in via the controls if
+     they want a closer look at a sprite. */
+  overflow: visible;
   max-width: 100%;
+  /* Wrap the canvas in this container so we can apply a CSS zoom on
+     top of the auto-fit without breaking the layout. */
+  --bf-zoom: 1;
 }
 body.party-view-mode #sprite-canvas {
-  max-width: none;   /* override the mobile shrink */
+  /* Scale the canvas's display size to fit the parent's width while
+     preserving its intrinsic aspect ratio. The drawing buffer stays at
+     scene.cols * scene.cellSize * scene.scale; canvasEventToPixels
+     already accounts for the CSS-vs-buffer ratio so clicks resolve
+     correctly. The --bf-zoom multiplier lets users zoom past 100% via
+     the in-app zoom buttons (clamps in JS). */
+  display: block;
+  width: calc(min(100%, 100vw - 40px) * var(--bf-zoom, 1));
   height: auto;
+  max-width: calc(100% * var(--bf-zoom, 1));
+  /* Keep pixel-art crisp at any scale */
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+}
+/* When zoomed in past 100%, let the sprite stage scroll to navigate */
+body.party-view-mode .sprite-stage:has(#sprite-canvas) {
+  overflow: auto;
+}
+
+/* Battlefield zoom controls — only visible in party-view-mode. */
+.battlefield-zoom {
+  display: none;
+}
+body.party-view-mode .battlefield-zoom {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 4px 8px;
+  background: rgba(0, 0, 0, 0.30);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.bf-zoom-btn {
+  background: var(--surface-2, #1f1f26);
+  color: var(--text);
+  border: 1px solid var(--border);
+  width: 26px; height: 26px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.95rem;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.bf-zoom-btn:hover { background: #2c2c34; }
+.bf-zoom-pct {
+  min-width: 40px;
+  text-align: center;
+  font-family: var(--mono, ui-monospace);
+  font-size: 0.78rem;
+  color: var(--text-dim);
+}
+.bf-zoom-fit {
+  background: transparent;
+  color: var(--text-dim);
+  border: 1px dashed var(--border);
+  padding: 3px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.72rem;
 }
 
 /* In party view the per-character controls don't apply (each member

@@ -73,6 +73,13 @@
       <div class="sprite-stage">
         <canvas id="sprite-canvas" width="384" height="384" role="img" aria-label="Composed character sprite. Use the controls below to customize."></canvas>
         <div id="attack-preview" class="attack-preview" hidden role="tooltip" aria-live="polite"></div>
+        <!-- Battlefield zoom controls (only visible in party-view-mode). -->
+        <div id="battlefield-zoom" class="battlefield-zoom" aria-label="Battlefield zoom">
+          <button id="bf-zoom-out" class="bf-zoom-btn" type="button" title="Zoom out">−</button>
+          <span id="bf-zoom-pct" class="bf-zoom-pct">100%</span>
+          <button id="bf-zoom-in" class="bf-zoom-btn" type="button" title="Zoom in">+</button>
+          <button id="bf-zoom-fit" class="bf-zoom-fit" type="button" title="Reset to fit">Fit</button>
+        </div>
 
         <div class="export-bar">
           <label class="export-scale">

@@ -283,6 +283,30 @@ function syncTopnav() {
     b.classList.toggle('active', b.dataset.view === name));
 }
 
+// Battlefield zoom (party-view only). The CSS variable --bf-zoom on
+// .sprite-stage scales the displayed canvas; the drawing buffer stays
+// at full resolution and canvasEventToPixels already converts clicks
+// from CSS pixels back to buffer coords, so hit-testing keeps working
+// at any zoom.
+let bfZoom = 1.0;
+const BF_ZOOM_MIN = 0.5;
+const BF_ZOOM_MAX = 3.0;
+const BF_ZOOM_STEP = 0.25;
+
+function applyBfZoom(next) {
+  bfZoom = Math.max(BF_ZOOM_MIN, Math.min(BF_ZOOM_MAX, next));
+  const stage = document.querySelector('.sprite-stage');
+  if (stage) stage.style.setProperty('--bf-zoom', String(bfZoom));
+  const pct = document.getElementById('bf-zoom-pct');
+  if (pct) pct.textContent = `${Math.round(bfZoom * 100)}%`;
+}
+
+document.addEventListener('click', (e) => {
+  if (e.target?.id === 'bf-zoom-in')  applyBfZoom(bfZoom + BF_ZOOM_STEP);
+  else if (e.target?.id === 'bf-zoom-out') applyBfZoom(bfZoom - BF_ZOOM_STEP);
+  else if (e.target?.id === 'bf-zoom-fit') applyBfZoom(1.0);
+});
+
 // M9 — Top-level nav. Three views: Character (single-sprite view, the
 // default), Party (multi-character canvas), Combat (party canvas + the
 // combat panel scrolled into view and visually flagged).
