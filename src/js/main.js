@@ -4241,6 +4241,13 @@ function renderPartyCard(character, ddbId) {
   });
   card.appendChild(removeBtn);
 
+  // M42.3 — AI profile editor for this PC (manual override of AI choices).
+  // Looks up the live composed character from partyComposedCharacters
+  // (so edits actually take effect on the auto-fight); falls back to
+  // the card's character otherwise.
+  const livePc = partyComposedCharacters.find(p => String(p.id) === String(ddbId)) || character;
+  card.insertAdjacentHTML('beforeend', renderPcAiEditor(livePc));
+
   // Click the card body (not the remove button) → switch to this character
   card.addEventListener('click', () => switchToMember(ddbId));
 
@@ -4250,6 +4257,89 @@ function renderPartyCard(character, ddbId) {
 
   return card;
 }
+
+/**
+ * M42.3 — Inline AI profile editor for a PC card. Mirrors the monster
+ * version (renderAiEditor) but reads from PC_PROFILES so the dropdown
+ * shows class archetypes and the considerations slider list stays the
+ * same. Wires `data-pc-*` data attributes so the shared event handler
+ * (handlePcAiEditorEvent) can route changes back to the live PC's
+ * `_aiProfile` overlay — which profileForPc honors at decision time.
+ */
+function renderPcAiEditor(pc) {
+  if (!pc?.id) return '';
+  const profile = editableProfileFor(pc);
+  const pcArchetypes = listArchetypes('pc');
+  const considerationNames = listConsiderations();
+  const archetypeOptions = pcArchetypes.map(a => {
+    const selected = a.archetype === profile.archetype ? ' selected' : '';
+    return `<option value="${escapeHtml(a.slug)}"${selected}>${escapeHtml(a.archetype)}</option>`;
+  }).join('');
+  const consRows = considerationNames.map(name => {
+    const entry = profile.considerations[name];
+    const w = entry ? (typeof entry === 'number' ? entry : entry.weight) : 0;
+    const wDisp = w >= 0 ? `+${w.toFixed(1)}` : w.toFixed(1);
+    return `
+      <div class="ai-cons-row">
+        <span class="ai-cons-name" title="${escapeHtml(name)}">${escapeHtml(name)}</span>
+        <input class="ai-cons-slider" type="range" min="-1.5" max="1.5" step="0.1"
+               value="${w}" data-pc-weight="${escapeHtml(pc.id)}|${escapeHtml(name)}" />
+        <span class="ai-cons-value">${wDisp}</span>
+      </div>`;
+  }).join('');
+  return `
+    <details class="monster-ai-editor pc-ai-editor">
+      <summary>
+        <span class="ai-editor-label">AI Profile</span>
+        <span class="ai-archetype-summary">${escapeHtml(profile.archetype)}</span>
+      </summary>
+      <div class="ai-editor-body">
+        <label class="ai-row">
+          <span class="ai-row-label">Archetype</span>
+          <select data-pc-archetype="${escapeHtml(pc.id)}">${archetypeOptions}</select>
+        </label>
+        <div class="ai-considerations">${consRows}</div>
+        <button class="ai-reset" type="button" data-pc-reset="${escapeHtml(pc.id)}">Reset to default</button>
+      </div>
+    </details>
+  `;
+}
+
+function findPcInParty(id) {
+  return partyComposedCharacters.find(p => String(p.id) === String(id)) || null;
+}
+
+function handlePcAiEditorEvent(e) {
+  const t = e.target;
+  if (!t) return;
+  if (t.dataset?.pcWeight) {
+    const [id, name] = t.dataset.pcWeight.split('|');
+    const pc = findPcInParty(id);
+    if (!pc) return;
+    const weight = parseFloat(t.value);
+    pc._aiProfile = applyWeightChange(editableProfileFor(pc), name, weight);
+    const valSpan = t.parentElement?.querySelector('.ai-cons-value');
+    if (valSpan) valSpan.textContent = weight >= 0 ? `+${weight.toFixed(1)}` : weight.toFixed(1);
+    return;
+  }
+  if (t.dataset?.pcArchetype) {
+    const pc = findPcInParty(t.dataset.pcArchetype);
+    if (!pc) return;
+    pc._aiProfile = applyArchetypeSwap(editableProfileFor(pc), t.value);
+    refreshParty();
+    return;
+  }
+  if (t.dataset?.pcReset) {
+    const pc = findPcInParty(t.dataset.pcReset);
+    if (!pc) return;
+    delete pc._aiProfile;
+    refreshParty();
+    return;
+  }
+}
+document.addEventListener('input',  handlePcAiEditorEvent);
+document.addEventListener('change', handlePcAiEditorEvent);
+document.addEventListener('click',  handlePcAiEditorEvent);
 
 async function switchToMember(ddbId) {
   try {

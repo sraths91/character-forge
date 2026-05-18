@@ -10,6 +10,7 @@
  */
 
 import { MONSTER_PROFILES, DEFAULT_PROFILE, profileFor } from './profiles.js';
+import { PC_PROFILES, profileForPc } from './pc-profiles.js';
 import { CONSIDERATIONS } from './considerations.js';
 
 /** Deep clone of an authored profile so the editor can mutate it. */
@@ -35,10 +36,23 @@ function clone(p) { return cloneProfile(p); }
  * Return the editable profile for `entity`. If the entity already has
  * an override (_aiProfile from M32.2 inference or a prior edit), use
  * that; otherwise clone the slug's authored profile.
+ *
+ * M42.3 — Branches on kind: PCs use PC_PROFILES (class-derived),
+ * monsters use MONSTER_PROFILES (slug-derived).
  */
 export function editableProfileFor(entity) {
   if (entity?._aiProfile) return cloneProfile(entity._aiProfile);
+  if (isPcEntity(entity)) return cloneProfile(profileForPc(entity));
   return cloneProfile(profileFor(entity?.presetSlug));
+}
+
+/** Heuristic: anything with classes[] but no presetSlug is a PC. */
+function isPcEntity(entity) {
+  if (!entity) return false;
+  if (entity.kind === 'pc') return true;
+  if (entity.presetSlug) return false;
+  const ref = entity.ref || entity;
+  return Array.isArray(ref?.classes) && ref.classes.length > 0;
 }
 
 /**
@@ -69,12 +83,12 @@ export function applyRetreatChange(profile, retreat) {
 }
 
 /**
- * Swap to a different authored archetype. Returns a clone of that
- * archetype's profile. If the slug is unknown, returns the input
- * unchanged.
+ * Swap to a different authored archetype. Looks in both registries —
+ * PC class profiles and monster profiles — so the same editor UI can
+ * drive both kinds of entity.
  */
 export function applyArchetypeSwap(profile, slug) {
-  const target = MONSTER_PROFILES[slug];
+  const target = MONSTER_PROFILES[slug] || PC_PROFILES[slug];
   if (!target) return profile;
   return cloneProfile(target);
 }
@@ -86,11 +100,22 @@ export function applyArchetypeSwap(profile, slug) {
  */
 export function resetProfile() { return null; }
 
-/** All authored archetype options for the dropdown. */
-export function listArchetypes() {
-  return Object.entries(MONSTER_PROFILES).map(([slug, profile]) => ({
-    slug, archetype: profile.archetype
-  }));
+/** All authored archetype options for the dropdown.
+ *  M42.3 — `forKind` filters to PC vs monster archetypes so the editor
+ *  surfaces relevant choices only. Omit to get both. */
+export function listArchetypes(forKind = null) {
+  const out = [];
+  if (forKind !== 'pc') {
+    for (const [slug, profile] of Object.entries(MONSTER_PROFILES)) {
+      out.push({ slug, archetype: profile.archetype, kind: 'monster' });
+    }
+  }
+  if (forKind !== 'monster') {
+    for (const [slug, profile] of Object.entries(PC_PROFILES)) {
+      out.push({ slug, archetype: profile.archetype, kind: 'pc' });
+    }
+  }
+  return out;
 }
 
 /** All consideration names — used to populate the editor with every

@@ -144,9 +144,13 @@ export const DEFAULT_PC_PROFILE = {
   }
 };
 
-/** Look up the profile for `pc` based on their first class. */
+/** Look up the profile for `pc` based on their first class.
+ *  M42.3 — Honors a per-entity _aiProfile override (set by the player
+ *  via the profile editor) before falling back to the class profile. */
 export function profileForPc(pc) {
+  if (pc?._aiProfile) return pc._aiProfile;
   const ref = pc?.ref || pc;
+  if (ref?._aiProfile) return ref._aiProfile;
   const cls = String(ref?.classes?.[0]?.name || '').toLowerCase();
   return PC_PROFILES[cls] || DEFAULT_PC_PROFILE;
 }

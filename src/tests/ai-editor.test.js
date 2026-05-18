@@ -115,3 +115,47 @@ test('M32.3: listConsiderations contains the registered signal names', () => {
   assert.ok(out.includes('pack_tactics_active'));
   assert.ok(out.includes('self_isolated'));
 });
+
+// ---------- M42.3: editor now serves PCs too ----------
+
+test('M42.3: listArchetypes — forKind="pc" returns class profiles', () => {
+  const out = listArchetypes('pc');
+  const slugs = out.map(o => o.slug);
+  assert.ok(slugs.includes('fighter'));
+  assert.ok(slugs.includes('rogue'));
+  assert.ok(slugs.includes('wizard'));
+  // And does NOT include monster slugs
+  assert.ok(!slugs.includes('goblin'));
+  for (const o of out) assert.strictEqual(o.kind, 'pc');
+});
+
+test('M42.3: listArchetypes — forKind="monster" returns monster profiles only', () => {
+  const out = listArchetypes('monster');
+  const slugs = out.map(o => o.slug);
+  assert.ok(slugs.includes('goblin'));
+  assert.ok(!slugs.includes('fighter'));
+});
+
+test('M42.3: editableProfileFor — PC entity returns class archetype', () => {
+  const pc = { id: 'p1', classes: [{ name: 'Rogue', level: 5 }], kind: 'pc' };
+  const out = editableProfileFor(pc);
+  assert.strictEqual(out.archetype, 'sneak_attacker');
+});
+
+test('M42.3: editableProfileFor — PC _aiProfile overlay takes precedence', () => {
+  const overlay = {
+    archetype: 'custom_pc',
+    considerations: { target_low_hp: { weight: 0.9, curve: 'linear' } },
+    retreat_below_hp: 0
+  };
+  const pc = { id: 'p1', classes: [{ name: 'Rogue', level: 5 }], _aiProfile: overlay, kind: 'pc' };
+  const out = editableProfileFor(pc);
+  assert.strictEqual(out.archetype, 'custom_pc');
+});
+
+test('M42.3: applyArchetypeSwap — works across the PC/monster boundary', () => {
+  const pcProfile = editableProfileFor({ classes: [{ name: 'Fighter', level: 1 }] });
+  // Swap a fighter PC profile to "wizard" — should pick up PC_PROFILES.wizard
+  const swapped = applyArchetypeSwap(pcProfile, 'wizard');
+  assert.strictEqual(swapped.archetype, 'spell_economy');
+});
