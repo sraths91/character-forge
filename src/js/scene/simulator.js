@@ -42,6 +42,10 @@ import {
   consumeInnate, applyUpcast
 } from './monster-spells.js';
 import {
+  isLegendary, freshLegendaryBudget, resetLegendaryBudget,
+  chooseLegendaryAction, spendLegendaryAction
+} from './monster-legendary.js';
+import {
   startConcentration, isConcentrating, dropConcentration,
   handleDamageOnConcentration
 } from './concentration.js';
@@ -149,6 +153,8 @@ function runOneIteration({ party, monsters, scene, maxRounds, rng }) {
         ? freshSlots(m.presetSlug) : null,
       _innate: isInnateCaster(m.presetSlug)          // M37
         ? freshInnateState(m.presetSlug) : null,
+      _legendaryBudget: isLegendary(m.presetSlug)    // M41
+        ? freshLegendaryBudget(m.presetSlug) : 0,
       _concentrating: null
     };
   });
@@ -164,11 +170,21 @@ function runOneIteration({ party, monsters, scene, maxRounds, rng }) {
     // simulator runs everyone once per round, top-of-round is equivalent.
     resetReactionsForAll(pcs);
     resetReactionsForAll(mons);
+    // M41 — Refresh each legendary monster's budget at the top of every
+    // round (RAW: start of its own turn). Since the simulator runs all
+    // monsters once per round, top-of-round is equivalent here.
+    for (const m of mons) if (isAlive(m) && isLegendary(m.presetSlug)) resetLegendaryBudget(m);
     // PCs swing first
     for (const a of pcs) {
       if (!isAlive(a)) continue;
       if (isIncapacitated(a)) continue;
       runOneAttack(a, mons, pcs, scene, rng);
+      // M41 — After this PC's turn ends, any legendary monster spends
+      // available legendary budget (greedy: highest-cost first).
+      for (const lm of mons) {
+        if (!isLegendary(lm.presetSlug) || !isAlive(lm)) continue;
+        runLegendaryActions(lm, pcs, scene, rng);
+      }
       if (sideAlive(mons) === 0) break;
     }
     if (sideAlive(mons) === 0) break;
@@ -570,6 +586,68 @@ function saveBonusFor(entity, stat) {
   return table ? (table[stat] || 0) : 0;
 }
 
+// ---------- Legendary actions (M41) ----------
+
+/**
+ * Spend legendary actions at the end of an opponent's turn. Walks the
+ * monster's remaining budget; each iteration picks the highest-cost
+ * action whose budget fits. Stops when the budget is empty or no
+ * action has a valid target.
+ */
+function runLegendaryActions(monster, enemies, scene, rng) {
+  // Loop until budget exhausted or no usable action this round.
+  for (let safety = 0; safety < 4; safety++) {
+    if ((monster._legendaryBudget ?? 0) <= 0) return;
+    const pick = chooseLegendaryAction({ self: monster, enemies });
+    if (!pick) return;
+    applyLegendaryAction(monster, pick, scene, rng);
+    spendLegendaryAction(monster, pick.action);
+  }
+}
+
+function applyLegendaryAction(monster, pick, scene, rng) {
+  const { action } = pick;
+  if (action.kind === 'melee-attack') {
+    const target = pick.target;
+    if (!target || !isAlive(target)) return;
+    const atk = rollAttack({
+      bonus: action.attackBonus,
+      advantage: 'normal',
+      targetAC: target.ac
+    }, rng);
+    // M33.1: Shield can still block a legendary melee attack.
+    if (atk.hit && !atk.crit && target.kind === 'pc' &&
+        shouldCastShield({ target, attackerTotal: atk.total, targetAc: target.ac })) {
+      consumeShield(target);
+      return;
+    }
+    if (!atk.hit) return;
+    const dmg = rollDamage(action.dice, { crit: atk.crit }, rng);
+    applyDamageToEntity(target, dmg.total);
+    monster.damageDealt += dmg.total;
+    return;
+  }
+  if (action.kind === 'aoe-save') {
+    const center = monster._position || monster.position;
+    if (!center) return;
+    for (const e of (pick.targets || [])) {
+      if (!isAlive(e)) continue;
+      const ep = e._position || e.position;
+      if (!ep) continue;
+      const dist = (Math.abs(ep.col - center.col) >= Math.abs(ep.row - center.row)
+        ? Math.abs(ep.col - center.col) : Math.abs(ep.row - center.row)) * 5;
+      if (dist > action.range) continue;
+      const eBonus = saveBonusFor(e, action.saveStat);
+      const save = rollSave({ bonus: eBonus, dc: action.dc }, rng);
+      const dmgRoll = rollDamage(action.dice, { crit: false }, rng);
+      let dmg = dmgRoll.total;
+      if (save.success) dmg = Math.floor(dmg / 2);
+      applyDamageToEntity(e, dmg);
+      monster.damageDealt += dmg;
+    }
+  }
+}
+
 // ---------- Reaction attack (M33.0) ----------
 
 /**
@@ -578,6 +656,20 @@ function saveBonusFor(entity, stat) {
  * computing distance from the *interrupting cell* (mover.beforePos).
  *
  * Damage is applied to the target's hp counter; no plan/AI involved.
+ */
+// ---------- Legendary actions (M41) ----------
+
+/**
+ * Spend the legendary creature's remaining LA budget after an opposing
+ * turn. Greedy: keeps picking the best LA the budget allows until
+ * either the budget is exhausted or no more good options exist.
+ *
+ *   melee-attack — single-target d20 + damage roll against the nearest
+ *                  enemy in reach (no Shield check; LAs are tail/wing
+ *                  swipes, not weapon attacks for Shield purposes
+ *                  — simplification).
+ *   aoe-save     — every enemy in range rolls a save; half-on-save
+ *                  damage on success.
  */
 function runReactionAttack(attacker, target, targetBeforePos, scene, rng) {
   if (!attacker || !target) return;
