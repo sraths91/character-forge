@@ -103,6 +103,9 @@ export function createCinema({
   // Mutable actor refs so setActors() can swap them between rounds
   // without rebuilding the whole controller.
   let actorRefs = { attacker, defender };
+  // M44.2 — Mutable background painter so the host can swap terrains
+  // without rebuilding the controller.
+  let currentBg = drawBackground;
 
   function playRound(seq, verdict = {}) {
     const pauseAt = findHitPauseAt(seq);
@@ -125,10 +128,15 @@ export function createCinema({
       applyVerdictToState(state, frame.t, pauseAt);
       draw(ctx, state, seq, frame, {
         attacker: actorRefs.attacker, defender: actorRefs.defender,
-        drawSprite, drawBackground, scale, canvas
+        drawSprite, drawBackground: currentBg, scale, canvas
       });
     }, {});
     return ctl.promise;
+  }
+
+  /** M44.2 — Swap the background painter between rounds. */
+  function setBackground(fn) {
+    if (typeof fn === 'function') currentBg = fn;
   }
 
   /**
@@ -155,7 +163,7 @@ export function createCinema({
   }
 
   return {
-    state, playRound, setActors,
+    state, playRound, setActors, setBackground,
     /** Reset HP counters so the cinema can be reused across rounds. */
     resetHp({ attHp, defHp } = {}) {
       if (Number.isFinite(attHp)) state.attHp = attHp;

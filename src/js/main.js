@@ -74,6 +74,7 @@ import { applyPolish } from './anim/polish.js';
 import {
   preloadActorSprite, makeLpcDrawSprite, clearActorSpriteCache
 } from './anim/cinema-sprites.js';
+import { terrainFromScene, backgroundFor } from './anim/cinema-backgrounds.js';
 
 const $ = (id) => document.getElementById(id);
 const status = $('status');
@@ -575,9 +576,14 @@ function setupVersusCinema(active) {
   if (!canvas) return;
   if (active) {
     canvas.hidden = false;
+    // M44.2 — Pick the cinematic background that matches the active
+    // scene's terrain (forest, dungeon, cave, etc.). Re-bound when
+    // the player swaps the scene preset; see syncCinemaBackground().
+    const terrain = terrainFromScene(currentScene);
     versusCinema = createCinema({
       canvas,
       drawSprite: makeLpcDrawSprite(),
+      drawBackground: backgroundFor(terrain),
       // Pre-render each new actor's LPC sprite into an off-screen
       // buffer before the next round starts. Synchronous draw() then
       // paints from the cache without re-running the compositor.
@@ -3364,9 +3370,15 @@ function renderScenePresetList() {
 function applyScenePreset(slug) {
   const p = SCENE_PRESETS[slug];
   if (!p) return;
-  currentScene.map  = { ...p.map };
+  // M44.2 — Persist the preset slug so the cinema can pick the matching
+  // background without reverse-mapping the colour every time.
+  currentScene.map  = { ...p.map, preset: slug };
   currentScene.grid = { ...(currentScene.grid || {}), ...p.grid };
   saveScene(currentScene);
+  // If the cinema is mounted, swap its backdrop live.
+  if (versusCinema?.setBackground) {
+    versusCinema.setBackground(backgroundFor(slug));
+  }
   syncBattlefieldControls();
   if (viewMode === 'party') rerender();
 }
