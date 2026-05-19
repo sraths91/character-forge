@@ -105,9 +105,23 @@ export async function runOneAttack(attacker, enemies, allies, scene, rng, prompt
   // M32 — Monsters consult their AI profile.
   // M42 — PCs do too. choosePcAction picks weapon/spell/feature and
   // returns the same plan shape so the dispatch below stays unified.
+  // M45 Phase 4b.3 — Manual play bypasses AI planning via
+  // `prompts.forcePlan` — the caller hands in a pre-built plan
+  // (kind + targetId + weapon/spell) and the engine resolves it as-is.
   let plan = null;
   let target;
-  if (attacker.kind === 'monster') {
+  if (prompts.forcePlan) {
+    plan = prompts.forcePlan;
+    attacker._lastPlan = plan;
+    if (plan.weapon) attacker._chosenWeapon = plan.weapon;
+    if (plan.targetSide === 'ally') {
+      target = allies.find(a => String(a.id) === String(plan.targetId));
+    } else if (plan.targetId) {
+      target = enemies.find(e => String(e.id) === String(plan.targetId));
+    } else {
+      target = pickTarget(enemies);
+    }
+  } else if (attacker.kind === 'monster') {
     plan = chooseAction({
       self: attacker,
       enemies: enemies.filter(isAlive),

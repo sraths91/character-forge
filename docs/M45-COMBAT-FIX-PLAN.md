@@ -348,7 +348,39 @@ driven by the HP delta. Five legacy helpers
 `attackInVersus`, `castInVersus`) are no longer called from that path
 — Phase 5 cleanup will reconcile or delete them.
 
-**Phase 4b.3 — Manual-click migration (PENDING).** Replace
+**Phase 4b.3 — Manual-click weapon migration (DONE).** Manual canvas
+clicks (pick-attacker → pick-target) now dispatch weapon attacks
+through the unified engine instead of `runAttackPrompt`.
+
+Two new pieces:
+  1. `prompts.forcePlan` on the engine. When present, the engine skips
+     `chooseAction`/`choosePcAction` entirely and uses the caller's
+     pre-built plan as-is. Target resolution honors `plan.targetSide`
+     ('enemy' vs 'ally').
+  2. `runManualWeaponAttack(attackerHit, targetHit)` in main.js
+     builds a synthetic plan from the player's pick (target + the
+     attacker's current weapon, kind heuristically detected as
+     'ranged' vs 'melee' from the weapon name) and dispatches through
+     `runEngineTurn` with `interactive: true`. The interactive flag
+     swaps the engine's Shield prompt from auto-answer to the real
+     `promptReaction` dialog.
+
+The pointerdown handler at the pick-target stage now branches: when
+`combat.spell` is set, the existing spell flow (runAttackPrompt with
+its spell-attack-vs-save dispatch) still handles it. When no spell is
+queued, the weapon path goes through the engine.
+
+Result: manual weapon attacks now share the same rule spine as the
+auto-fight loop AND the simulator. Reaction handling, feature
+triggers (Sneak Attack, Reckless, Smite, Action Surge), and cinema
+dispatch are identical across all three paths.
+
+Spell-attack and spell-save manual flows are NOT yet migrated —
+deferred because the engine's cast surface assumes the planner builds
+the cast plan, and manual cast routing through `combat.spell` would
+need a more invasive refactor of the prompt's spell branches.
+
+**Phase 4b.4 — Manual-click spell migration (PENDING).** Replace
 `runVersusPartyAuto`'s per-entity-turn body with a call into
 `combat-engine.runOneAttack`. The `prompts` object plumbs through
 the player-facing reactions:

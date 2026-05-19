@@ -1136,13 +1136,21 @@ function buildEngineSides(activeEntity, activeKind) {
  * Returns the wrapper of the active entity (post-turn) so the caller
  * can introspect _lastPlan, damageDealt, etc. for logging + replay.
  */
-async function runEngineTurn(entity, entityKind) {
+async function runEngineTurn(entity, entityKind, opts = {}) {
   const { active, enemies, allies, pcWrappers, monWrappers } = buildEngineSides(entity, entityKind);
   if (!active) return null;
   const stepRng = Math.random;
   const preAttackFlags = snapshotAttackerFlags(entity);
+  // M45 Phase 4b.3 — In manual mode the player drives target/weapon
+  // selection and Shield reactions; auto-fight passes the engine's
+  // heuristic through unchanged.
+  const interactive = !!opts.interactive;
 
   const prompts = {
+    // M45 Phase 4b.3 — Force plan: manual-click attacks come in with a
+    // pre-built plan (target, weapon) so the engine skips AI planning
+    // and resolves the player's choice directly.
+    forcePlan: opts.forcePlan || null,
     // Cinema-round dispatch — fires after every weapon swing. Bridges
     // to the existing playCinemaRoundForAttack helper.
     onCinemaRound: async ({ attacker, defender, atk, dmg, crit, miss }) => {
@@ -1173,12 +1181,23 @@ async function runEngineTurn(entity, entityKind) {
         castAtLevel: plan.castAtLevel || spell.level
       });
     },
-    // Shield + Counterspell + OA prompts default to the autoAnswer so
-    // auto-fight mode never blocks. The existing reaction-prompt
-    // surface can be threaded here in a future refinement.
-    onShieldReaction: async ({ autoAnswer }) => autoAnswer,
+    // Shield reaction: interactive mode pops the existing promptReaction
+    // dialog; auto mode passes the engine's heuristic through.
+    onShieldReaction: async ({ autoAnswer, defender, atk }) => {
+      if (!interactive || defender.kind !== 'pc') return autoAnswer;
+      const slots = defender._lvl1Slots ?? 0;
+      const ac = defender.ac;
+      const accepted = await promptReaction({
+        title: `Cast Shield? (${defender.name})`,
+        body: `${atk.total || '?'} vs your AC ${ac} — +5 AC would dodge it.`,
+        costLabel: `1 reaction · 1 of ${slots} 1st-level slot${slots === 1 ? '' : 's'}`,
+        defaultMs: 5000,
+        auto: false
+      });
+      return !!accepted;
+    },
     onCounterspell:   async ({ autoAnswer }) => autoAnswer,
-    onReactionAttack: async () => true   // OAs fire by default in auto mode
+    onReactionAttack: async () => true   // OAs fire by default
   };
 
   await engineRunOneAttack(active, enemies, allies, currentScene, stepRng, prompts);
@@ -1195,6 +1214,53 @@ async function runEngineTurn(entity, entityKind) {
     if (live) writeBackMonsterFromEngine(live, w);
   }
   return active;
+}
+
+/**
+ * M45 Phase 4b.3 — Manual-click weapon attack via the unified engine.
+ *
+ * Builds a synthetic plan from the player's pick (attacker + target +
+ * the attacker's current weapon), dispatches through runEngineTurn
+ * with `interactive: true` so Shield reactions pop the real dialog,
+ * then writes back state.
+ *
+ * Returns { hit, crit, dmg } to keep parity with the legacy
+ * runAttackPrompt return shape — manual call sites that read these
+ * fields keep working unchanged.
+ */
+async function runManualWeaponAttack(attackerHit, targetHit) {
+  if (!attackerHit?.entity || !targetHit?.entity) return null;
+  const weapon = getAttackerWeapon(attackerHit);
+  // Heuristic: ranged weapons get a 'ranged' plan kind so the engine's
+  // gate logic treats range correctly. Everything else is 'melee'.
+  const wname = String(weapon?.name || '').toLowerCase();
+  const isRanged = /bow|sling|crossbow|dart|javelin|throwing/.test(wname);
+  const plan = {
+    kind: isRanged ? 'ranged' : 'melee',
+    targetId: targetHit.entity.id,
+    targetSide: 'enemy',
+    weapon,
+    featuresFired: [],
+    archetype: 'manual',
+    score: 0,
+    breakdown: []
+  };
+  // Snapshot defender HP before so we can compute dmg for the return
+  // value. The engine's onCinemaRound prompt already fires; this is
+  // just for the call-site's bookkeeping.
+  const beforeHp = targetHit.entity.hp?.current ?? 0;
+  const wrapper = await runEngineTurn(attackerHit.entity, attackerHit.kind, {
+    forcePlan: plan, interactive: true
+  });
+  const afterHp = targetHit.entity.hp?.current ?? 0;
+  const dmg = Math.max(0, beforeHp - afterHp);
+  return {
+    hit: dmg > 0,
+    crit: false,    // engine doesn't surface crit through this path yet
+    dmg,
+    total: null,
+    plan: wrapper?._lastPlan || null
+  };
 }
 
 function versusHpOf(entity, kind) {
@@ -2001,7 +2067,25 @@ canvas.addEventListener('pointerdown', (e) => {
     }
     e.preventDefault();
     hideAttackPreview();
-    runAttackPrompt(hit.kind, hit.entity);
+    // M45 Phase 4b.3 — Weapon manual attacks now dispatch through the
+    // unified combat engine via runManualWeaponAttack. Spell flows
+    // (combat.spell !== null) keep using runAttackPrompt for the
+    // spell-attack-vs-save dispatch, which the engine's manual surface
+    // doesn't model uniformly yet.
+    if (combat.spell) {
+      runAttackPrompt(hit.kind, hit.entity);
+    } else {
+      const attackerLive = resolveEntityById(combat.attacker.id, combat.attacker.kind);
+      if (attackerLive) {
+        runManualWeaponAttack(
+          { kind: combat.attacker.kind, entity: attackerLive },
+          { kind: hit.kind, entity: hit.entity }
+        ).then(() => {
+          cancelAttack();
+          rerender();
+        });
+      }
+    }
     return;
   }
 
