@@ -77,10 +77,14 @@ export function createCinema({
   canvas = null, attacker, defender,
   drawSprite = drawSpriteDefault,
   drawBackground = drawBackgroundDefault,
+  onActorsChanged = null,
   scale = 1
 } = {}) {
   const ctx = canvas?.getContext?.('2d') || null;
   const state = createCinemaState({ attacker, defender });
+  // Mutable actor refs so setActors() can swap them between rounds
+  // without rebuilding the whole controller.
+  let actorRefs = { attacker, defender };
 
   function playRound(seq, verdict = {}) {
     const pauseAt = findHitPauseAt(seq);
@@ -102,14 +106,38 @@ export function createCinema({
     const ctl = playSequence(seq, (frame) => {
       applyVerdictToState(state, frame.t, pauseAt);
       draw(ctx, state, seq, frame, {
-        attacker, defender, drawSprite, drawBackground, scale, canvas
+        attacker: actorRefs.attacker, defender: actorRefs.defender,
+        drawSprite, drawBackground, scale, canvas
       });
     }, {});
     return ctl.promise;
   }
 
+  /**
+   * M44 — Swap attacker / defender between rounds. Updates the actor
+   * refs the draw loop reads (so drawSprite gets the new entity's
+   * refInfo) and resets HP counters to the new actors' maxes. The
+   * optional onActorsChanged hook lets callers preload sprites async
+   * before the next playRound.
+   */
+  async function setActors({ attacker: a, defender: d } = {}) {
+    if (a) actorRefs.attacker = a;
+    if (d) actorRefs.defender = d;
+    state.attacker = { id: a?.id ?? state.attacker.id, name: a?.name || state.attacker.name };
+    state.defender = { id: d?.id ?? state.defender.id, name: d?.name || state.defender.name };
+    state.attHp    = a?.hpMax ?? a?.hp?.max ?? a?.hp?.current ?? state.attHp;
+    state.attHpMax = a?.hpMax ?? a?.hp?.max ?? state.attHpMax;
+    state.defHp    = d?.hpMax ?? d?.hp?.max ?? d?.hp?.current ?? state.defHp;
+    state.defHpMax = d?.hpMax ?? d?.hp?.max ?? state.defHpMax;
+    state.popups = [];
+    state.pendingDmg = null;
+    if (typeof onActorsChanged === 'function') {
+      await onActorsChanged({ attacker: actorRefs.attacker, defender: actorRefs.defender });
+    }
+  }
+
   return {
-    state, playRound,
+    state, playRound, setActors,
     /** Reset HP counters so the cinema can be reused across rounds. */
     resetHp({ attHp, defHp } = {}) {
       if (Number.isFinite(attHp)) state.attHp = attHp;

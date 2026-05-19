@@ -71,6 +71,9 @@ import {
   applyModifiers, modifiersForAttack, snapshotAttackerFlags
 } from './anim/modifiers.js';
 import { applyPolish } from './anim/polish.js';
+import {
+  preloadActorSprite, makeLpcDrawSprite, clearActorSpriteCache
+} from './anim/cinema-sprites.js';
 
 const $ = (id) => document.getElementById(id);
 const status = $('status');
@@ -564,16 +567,31 @@ async function startVersusFight() {
   }
 }
 
-/** M43.2 — Mount or tear down the cinema canvas + controller. */
+/** M43.2 — Mount or tear down the cinema canvas + controller.
+ *  M44 — Wires the LPC sprite renderer so the cinema shows real
+ *  character art instead of placeholder silhouettes. */
 function setupVersusCinema(active) {
   const canvas = document.getElementById('cinema-canvas');
   if (!canvas) return;
   if (active) {
     canvas.hidden = false;
-    versusCinema = createCinema({ canvas });
+    versusCinema = createCinema({
+      canvas,
+      drawSprite: makeLpcDrawSprite(),
+      // Pre-render each new actor's LPC sprite into an off-screen
+      // buffer before the next round starts. Synchronous draw() then
+      // paints from the cache without re-running the compositor.
+      onActorsChanged: async ({ attacker, defender }) => {
+        await Promise.all([
+          preloadActorSprite(attacker),
+          preloadActorSprite(defender)
+        ]);
+      }
+    });
   } else {
     canvas.hidden = true;
     versusCinema = null;
+    clearActorSpriteCache();
   }
 }
 

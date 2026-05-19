@@ -170,3 +170,71 @@ test('M43.2: createCinema — crits flagged on the popup record', async () => {
   assert.strictEqual(cinema.state.popups[0].crit, true);
   assert.strictEqual(cinema.state.popups[0].dmg, 18);
 });
+
+// ---------- M44: setActors ----------
+
+test('M44: createCinema — setActors swaps actor names + HP', async () => {
+  const cinema = createCinema({
+    canvas: null,
+    attacker: { id: 'a1', name: 'First', hpMax: 20 },
+    defender: { id: 'd1', name: 'Boss',  hpMax: 50 }
+  });
+  await cinema.setActors({
+    attacker: { id: 'a2', name: 'Second', hp: { max: 30 } },
+    defender: { id: 'd2', name: 'Cultist', hp: { max: 15 } }
+  });
+  assert.strictEqual(cinema.state.attacker.name, 'Second');
+  assert.strictEqual(cinema.state.defender.name, 'Cultist');
+  assert.strictEqual(cinema.state.attHpMax, 30);
+  assert.strictEqual(cinema.state.defHpMax, 15);
+  // HP resets to max on actor swap
+  assert.strictEqual(cinema.state.attHp, 30);
+  assert.strictEqual(cinema.state.defHp, 15);
+});
+
+test('M44: createCinema — setActors fires onActorsChanged hook', async () => {
+  let captured = null;
+  const cinema = createCinema({
+    canvas: null,
+    attacker: { id: 'a1', name: 'A', hpMax: 10 },
+    defender: { id: 'd1', name: 'D', hpMax: 10 },
+    onActorsChanged: async ({ attacker, defender }) => {
+      captured = { aId: attacker.id, dId: defender.id };
+    }
+  });
+  await cinema.setActors({
+    attacker: { id: 'a2', name: 'A2', hpMax: 10 },
+    defender: { id: 'd2', name: 'D2', hpMax: 10 }
+  });
+  assert.deepStrictEqual(captured, { aId: 'a2', dId: 'd2' });
+});
+
+test('M44: createCinema — setActors with partial update preserves the other side', async () => {
+  const cinema = createCinema({
+    canvas: null,
+    attacker: { id: 'a1', name: 'Keep',   hpMax: 25 },
+    defender: { id: 'd1', name: 'Replace', hpMax: 12 }
+  });
+  await cinema.setActors({
+    defender: { id: 'd2', name: 'NewFoe', hpMax: 40 }
+  });
+  assert.strictEqual(cinema.state.attacker.name, 'Keep');
+  assert.strictEqual(cinema.state.defender.name, 'NewFoe');
+  assert.strictEqual(cinema.state.defHpMax, 40);
+});
+
+test('M44: createCinema — setActors clears any pending popups + verdict', async () => {
+  const cinema = createCinema({
+    canvas: null,
+    attacker: { hpMax: 20, name: 'A' },
+    defender: { hpMax: 20, name: 'D' }
+  });
+  cinema.state.popups.push({ side: 'defender', dmg: 5, t: 100 });
+  cinema.state.pendingDmg = { victim: 'defender', dmg: 3 };
+  await cinema.setActors({
+    attacker: { id: 'a2', name: 'A2', hpMax: 20 },
+    defender: { id: 'd2', name: 'D2', hpMax: 20 }
+  });
+  assert.deepStrictEqual(cinema.state.popups, []);
+  assert.strictEqual(cinema.state.pendingDmg, null);
+});
