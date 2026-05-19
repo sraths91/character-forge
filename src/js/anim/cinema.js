@@ -466,13 +466,42 @@ function drawBash(ctx, u, att, def, params) {
   ctx.restore();
 }
 
+/**
+ * M44.4 — Quadratic-Bézier projectile arc.
+ *
+ * Three points: start at the attacker's hand-tip, end at the defender's
+ * torso, control point at the horizontal midpoint offset upward by
+ * `arcHeight`. The trail samples a slightly-earlier `u` along the same
+ * curve so the line+head reads as a connected projectile.
+ *
+ * arcHeight defaults to ~40px, scales with horizontal travel distance
+ * (longbow shots arc higher than point-blank), and is overridable via
+ * `params.arcHeight`. A flat shot (crossbow/dart) passes
+ * `arcHeight: 0`; a high-arc bow shot can pass 60+.
+ *
+ * The arrowhead rotates to match the tangent at `u` so it reads as
+ * a real projectile in flight rather than a circle stamped on a line.
+ */
 function drawProjectile(ctx, u, att, def, params) {
   const color = colorFor(params);
-  const hx = att.x + 8 + (def.x - att.x - 16) * u;
-  const hy = att.y - 30 + (def.y - att.y) * u;
-  const trailU = Math.max(0, u - 0.2);
-  const tx = att.x + 8 + (def.x - att.x - 16) * trailU;
-  const ty = att.y - 30 + (def.y - att.y) * trailU;
+  const p0 = { x: att.x + 8, y: att.y - 30 };
+  const p2 = { x: def.x - 8, y: def.y - 30 };
+  const dx = p2.x - p0.x;
+  const dy = p2.y - p0.y;
+  const dist = Math.hypot(dx, dy);
+  const baseArc = Number.isFinite(params?.arcHeight) ? params.arcHeight : 40;
+  // Scale arc height with distance so cross-stage shots arc visibly
+  // higher than point-blank ones. Clamp so a flat shot stays flat
+  // even at long range.
+  const arcHeight = baseArc * Math.min(1.5, dist / 200);
+  const p1 = { x: (p0.x + p2.x) / 2, y: (p0.y + p2.y) / 2 - arcHeight };
+
+  const head = bezierAt(u, p0, p1, p2);
+  const trailU = Math.max(0, u - 0.18);
+  const tail = bezierAt(trailU, p0, p1, p2);
+  const tangent = bezierTangent(u, p0, p1, p2);
+  const angle = Math.atan2(tangent.y, tangent.x);
+
   ctx.save();
   ctx.strokeStyle = color;
   ctx.globalAlpha = 0.85;
@@ -481,15 +510,38 @@ function drawProjectile(ctx, u, att, def, params) {
   ctx.shadowBlur = 14;
   ctx.lineCap = 'round';
   ctx.beginPath();
-  ctx.moveTo(tx, ty);
-  ctx.lineTo(hx, hy);
+  ctx.moveTo(tail.x, tail.y);
+  ctx.lineTo(head.x, head.y);
   ctx.stroke();
-  // Arrowhead
+  // Arrowhead — small triangle rotated to the tangent direction.
   ctx.fillStyle = color;
+  ctx.translate(head.x, head.y);
+  ctx.rotate(angle);
   ctx.beginPath();
-  ctx.arc(hx, hy, 4, 0, Math.PI * 2);
+  ctx.moveTo(6, 0);
+  ctx.lineTo(-4, 3);
+  ctx.lineTo(-4, -3);
+  ctx.closePath();
   ctx.fill();
   ctx.restore();
+}
+
+/** Quadratic-Bézier point at parameter t. */
+export function bezierAt(t, p0, p1, p2) {
+  const it = 1 - t;
+  return {
+    x: it * it * p0.x + 2 * it * t * p1.x + t * t * p2.x,
+    y: it * it * p0.y + 2 * it * t * p1.y + t * t * p2.y
+  };
+}
+
+/** Quadratic-Bézier tangent (dP/dt) at parameter t. */
+export function bezierTangent(t, p0, p1, p2) {
+  const it = 1 - t;
+  return {
+    x: 2 * it * (p1.x - p0.x) + 2 * t * (p2.x - p1.x),
+    y: 2 * it * (p1.y - p0.y) + 2 * t * (p2.y - p1.y)
+  };
 }
 
 function drawBurst(ctx, u, def, params) {

@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert';
 import {
   toLpcCharacter, makeLpcDrawSprite, pickActorFrame,
-  invalidateActorSprite, clearActorSpriteCache
+  invalidateActorSprite, clearActorSpriteCache, directionForActor
 } from '../js/anim/cinema-sprites.js';
 
 /** Build a lookup callback that returns a multi-frame cache entry. */
@@ -77,7 +77,10 @@ test('M44: makeLpcDrawSprite — paints the cached buffer when present', () => {
   assert.strictEqual(drew[2], -192);
 });
 
-test('M44: makeLpcDrawSprite — defender is mirrored on the x-axis', () => {
+test('M44.5: makeLpcDrawSprite — no x-mirror; both actors use positive scale', () => {
+  // The LPC sheet now handles facing via east/west rows, so the
+  // defender's sprite is drawn the same way as the attacker's — no
+  // negative x-scale flip.
   const draw = makeLpcDrawSprite({ lookup: () => fakeCacheEntry() });
   const ctxA = mockCtx();
   const ctxD = mockCtx();
@@ -86,7 +89,7 @@ test('M44: makeLpcDrawSprite — defender is mirrored on the x-axis', () => {
   const sxA = ctxA.calls.find(c => c[0] === 'scale')[1];
   const sxD = ctxD.calls.find(c => c[0] === 'scale')[1];
   assert.ok(sxA > 0, 'attacker drawn with positive x-scale');
-  assert.ok(sxD < 0, 'defender drawn mirrored (negative x-scale)');
+  assert.ok(sxD > 0, 'defender ALSO drawn with positive x-scale (no mirror)');
 });
 
 test('M44: makeLpcDrawSprite — falls back to a label when buffer is missing', () => {
@@ -245,4 +248,64 @@ test('M44.3: makeLpcDrawSprite — no red tint when phase is idle', () => {
     'idle phase must not paint the hurt tint');
   assert.ok(!ctx.calls.some(c => c[0] === 'gco' && c[1] === 'source-atop'),
     'idle phase must not switch composite to source-atop');
+});
+
+// ---------- M44.5: directional facing ----------
+
+test('M44.5: directionForActor — attacker → east, defender → west', () => {
+  assert.strictEqual(directionForActor('attacker'), 'east');
+  assert.strictEqual(directionForActor('defender'), 'west');
+});
+
+test('M44.5: directionForActor — unknown actor falls back to south', () => {
+  assert.strictEqual(directionForActor('narrator'), 'south');
+  assert.strictEqual(directionForActor(null), 'south');
+});
+
+test('M44.5: makeLpcDrawSprite — lookup receives the actor direction', () => {
+  const seen = [];
+  const lookup = (id, direction) => {
+    seen.push({ id, direction });
+    return fakeCacheEntry();
+  };
+  const draw = makeLpcDrawSprite({ lookup });
+  draw(mockCtx(), 'attacker', { x: 0, y: 0 }, { scale: 1 }, { id: 'p1' });
+  draw(mockCtx(), 'defender', { x: 0, y: 0 }, { scale: 1 }, { id: 'm1' });
+  // The attacker's lookup must have been called with direction='east',
+  // the defender's with direction='west'. This is what makes the LPC
+  // sheet pick the correct row for each role.
+  assert.deepStrictEqual(seen, [
+    { id: 'p1', direction: 'east' },
+    { id: 'm1', direction: 'west' }
+  ]);
+});
+
+test('M44.5: directional cache — separate entries per direction', async () => {
+  // We can't easily exercise the async preloadActorSprite headlessly
+  // (no DOM canvas), so this test asserts the *signature* of the
+  // direction-aware lookup. A direction-keyed cache hit beats a
+  // south-keyed fallback when both exist.
+  const directionAwareLookup = (id, direction) => ({
+    frames: new Map([[0, { width: 1, height: 1, _which: direction }]])
+  });
+  const draw = makeLpcDrawSprite({ lookup: directionAwareLookup });
+  const calls = [];
+  const ctx = {
+    calls,
+    save: () => calls.push(['save']),
+    restore: () => calls.push(['restore']),
+    translate: () => {},
+    rotate: () => {},
+    scale: () => {},
+    drawImage: (img) => calls.push(['drawImage', img._which]),
+    fillText: () => {},
+    set globalAlpha(v) {}, get globalAlpha() { return 1; },
+    set imageSmoothingEnabled(v) {},
+    set fillStyle(v) {}, set font(v) {}, set textAlign(v) {},
+    set globalCompositeOperation(v) {}, get globalCompositeOperation() { return 'source-over'; }
+  };
+  draw(ctx, 'attacker', { x: 0, y: 0 }, { scale: 1, _phase: 'idle', _t: 0 }, { id: 'p1' });
+  draw(ctx, 'defender', { x: 0, y: 0 }, { scale: 1, _phase: 'idle', _t: 0 }, { id: 'p1' });
+  const drewWhich = calls.filter(c => c[0] === 'drawImage').map(c => c[1]);
+  assert.deepStrictEqual(drewWhich, ['east', 'west']);
 });

@@ -167,8 +167,11 @@ function buildBowDraw(opts = {}) {
   addKey(s, { at: 790,  actor: 'defender', x: 0 });
   addKey(s, { at: 810,  actor: 'defender', x: 10 });   // impact
   addKey(s, { at: 1050, actor: 'defender', x: 0 });
-  // Effect: projectile fires at release, travels for ~350ms, lands at 800
-  addEffect(s, { at: 430, type: 'projectile', params: { damageType: dmgType, travelMs: 350 } });
+  // Effect: projectile fires at release, travels for ~350ms, lands at 800.
+  // M44.4 — Bows shoot a high parabolic arc. The arcHeight here is the
+  // base; the cinema renderer scales it by horizontal travel distance
+  // so cross-stage shots arc visibly higher than point-blank.
+  addEffect(s, { at: 430, type: 'projectile', params: { damageType: dmgType, travelMs: 350, arcHeight: 60 } });
   addEffect(s, { at: 800, type: 'shake', params: { amplitude: 3 } });
   insertHitPause(s, 800, 160);
   s.meta = { kind: 'ranged', weaponClass: 'bow' };
@@ -208,7 +211,9 @@ function buildStaffCast(opts = {}) {
   // Multi-stage effect: glyph rises during the cast, projectile launches,
   // burst on impact. Flash adds dramatic emphasis.
   addEffect(s, { at: 400,  type: 'glyph-rise',    params: { damageType: dmgType } });
-  addEffect(s, { at: 700,  type: 'projectile',    params: { damageType: dmgType, travelMs: 220 } });
+  // M44.4 — Spell darts arc moderately (lower than a bow shot; reads
+  // as a directed bolt rather than a thrown stone).
+  addEffect(s, { at: 700,  type: 'projectile',    params: { damageType: dmgType, travelMs: 220, arcHeight: 20 } });
   addEffect(s, { at: 900,  type: 'burst',         params: { damageType: dmgType } });
   addEffect(s, { at: 900,  type: 'flash',         params: { intensity: 0.5 } });
   addEffect(s, { at: 920,  type: 'shake',         params: { amplitude: 4 } });

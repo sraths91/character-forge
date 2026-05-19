@@ -40,8 +40,25 @@ const ACTOR_FRAMES = [FRAME_IDLE_A, FRAME_IDLE_B, FRAME_WINDUP, FRAME_STRIKE, FR
 // Idle bob period in ms — alternation between IDLE_A and IDLE_B.
 const IDLE_BOB_MS = 280;
 
-// id → { frames: Map<frameIdx, Canvas>, scale, direction }
+// M44.5 — Cache keyed by `${id}|${direction}` so the same entity can
+// be pre-rendered in both east-facing (attacker) and west-facing
+// (defender) directions without one overwriting the other. The
+// composite key also lets us swap an actor between rounds and have
+// them re-face if their role changes.
+// `${id}|${direction}` → { frames: Map<frameIdx, Canvas>, scale, direction }
 const cache = new Map();
+function cacheKey(id, direction) { return `${id}|${direction || 'south'}`; }
+
+/**
+ * M44.5 — Map cinema role → LPC sheet direction.
+ *   attacker (left side, faces RIGHT)  → 'east'
+ *   defender (right side, faces LEFT)  → 'west'
+ */
+export function directionForActor(actor) {
+  if (actor === 'attacker') return 'east';
+  if (actor === 'defender') return 'west';
+  return 'south';
+}
 
 /**
  * Normalize an attacker/defender entity into a character record the
@@ -71,11 +88,9 @@ export function toLpcCharacter(entity) {
 export async function preloadActorSprite(entity, { scale = 3, direction = 'south' } = {}) {
   const character = toLpcCharacter(entity);
   if (!character || !character.id) return null;
-  const key = String(character.id);
+  const key = cacheKey(character.id, direction);
   const cached = cache.get(key);
-  if (cached && cached.scale === scale && cached.direction === direction) {
-    return cached;
-  }
+  if (cached && cached.scale === scale) return cached;
   const frames = new Map();
   for (const idx of ACTOR_FRAMES) {
     const off = makeOffscreenCanvas();
@@ -111,11 +126,15 @@ export function pickActorFrame(snapshot = {}, actor = 'attacker') {
 
 /** Build a drawSprite(ctx, actor, anchor, snapshot, refInfo) callback
  *  that paints the pre-rendered LPC bitmap for each actor. `lookup`
- *  is a function id → cache entry (defaults to the module cache). */
+ *  is a function (id, direction) → cache entry (defaults to the
+ *  module cache). M44.5 — direction is derived from `actor` (attacker
+ *  → east, defender → west) so the LPC sheet handles facing
+ *  directly instead of the previous x-mirror hack. */
 export function makeLpcDrawSprite({ lookup = defaultLookup } = {}) {
   return function drawSprite(ctx, actor, anchor, snapshot, refInfo) {
     const id = refInfo?.id ?? null;
-    const entry = id != null ? lookup(id) : null;
+    const direction = directionForActor(actor);
+    const entry = id != null ? lookup(id, direction) : null;
     const frameIdx = pickActorFrame(snapshot, actor);
     const buf = entry?.frames?.get(frameIdx)
              || entry?.frames?.get(FRAME_IDLE_A)
@@ -135,8 +154,8 @@ export function makeLpcDrawSprite({ lookup = defaultLookup } = {}) {
     ctx.translate(anchor.x, anchor.y);
     ctx.rotate(snapshot.rotation || 0);
     const s = snapshot.scale || 1;
-    // Mirror defender so they face the attacker
-    ctx.scale(actor === 'defender' ? -s : s, s);
+    // M44.5 — No x-mirror. East row faces right; west row faces left.
+    ctx.scale(s, s);
     ctx.globalAlpha = snapshot.alpha ?? 1;
     ctx.imageSmoothingEnabled = false;
     // Anchor the sprite by its feet so the floor line passes through
@@ -175,13 +194,27 @@ export function makeLpcDrawSprite({ lookup = defaultLookup } = {}) {
   };
 }
 
-function defaultLookup(id) {
-  return cache.get(String(id)) || null;
+function defaultLookup(id, direction) {
+  if (id == null) return null;
+  // M44.5 — Direction-aware lookup. Falls back to a south-facing
+  // entry if a directional one isn't cached (preload should populate
+  // east/west; this fallback keeps drawSprite functional during the
+  // brief async preload window).
+  const direct = cache.get(cacheKey(id, direction));
+  if (direct) return direct;
+  return cache.get(cacheKey(id, 'south'))
+      || cache.get(cacheKey(id, 'east'))
+      || cache.get(cacheKey(id, 'west'))
+      || null;
 }
 
-/** Drop a single actor's cached buffer (e.g. when an actor swaps out). */
+/** Drop every cached entry for `id` (all directions). */
 export function invalidateActorSprite(id) {
-  if (id != null) cache.delete(String(id));
+  if (id == null) return;
+  const idStr = String(id);
+  for (const key of [...cache.keys()]) {
+    if (key.startsWith(idStr + '|')) cache.delete(key);
+  }
 }
 
 /** Drop every cached buffer. */

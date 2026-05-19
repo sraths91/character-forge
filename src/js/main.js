@@ -591,10 +591,13 @@ function setupVersusCinema(active) {
       // Pre-render each new actor's LPC sprite into an off-screen
       // buffer before the next round starts. Synchronous draw() then
       // paints from the cache without re-running the compositor.
+      // M44.5 — Attacker pre-renders east-facing; defender west-facing.
+      // The LPC sheet handles facing directly so the cinema draws no
+      // longer x-mirror the defender.
       onActorsChanged: async ({ attacker, defender }) => {
         await Promise.all([
-          preloadActorSprite(attacker),
-          preloadActorSprite(defender)
+          preloadActorSprite(attacker, { direction: 'east' }),
+          preloadActorSprite(defender, { direction: 'west' })
         ]);
       }
     });
