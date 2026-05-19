@@ -75,6 +75,13 @@ import {
   preloadActorSprite, makeLpcDrawSprite, clearActorSpriteCache
 } from './anim/cinema-sprites.js';
 import { terrainFromScene, backgroundFor } from './anim/cinema-backgrounds.js';
+// M45 Phase 2 — Wire the PC AI planner into the live auto-fight loop.
+// The simulator has used this since M42; the live runner just never
+// asked. choosePcAction returns a plan with the chosen weapon, target,
+// and feature list — we honor `_chosenWeapon` in getAttackerWeapon.
+import { choosePcAction } from './scene/ai/pc-action.js';
+import { resetPerTurnFlags } from './scene/ai/pc-features.js';
+import { slotsForPc } from './scene/reactions.js';
 
 const $ = (id) => document.getElementById(id);
 const status = $('status');
@@ -817,15 +824,25 @@ async function runVersusPartyAuto() {
       const entity = resolveEntityById(entry.entityId, entry.entityKind);
       if (!entity || versusHpOf(entity, entry.entityKind) <= 0) continue;
 
-      // M32 — Target selection: PCs use lowest-HP (player would, too);
-      // monsters consult their AI profile.
+      // M32 — Target selection: monsters consult their AI profile.
+      // M45 Phase 2 — PCs now also run through their AI planner so
+      // weapon switching, feature use, and spell selection are honored
+      // in the live runner the same way the simulator's been doing
+      // since M42. The plan carries weapon + target; we persist
+      // _chosenWeapon onto the entity so getAttackerWeapon honors it
+      // through the runAttackPrompt path.
       let target;
       let plan = null;
       if (entry.entityKind === 'monster') {
         plan = pickVersusTargetWithProfile(entity);
         target = plan?.target || pickLowestHpEnemy('monster');
       } else {
-        target = pickLowestHpEnemy(entry.entityKind);
+        const pcIndex = partyComposedCharacters.indexOf(entity);
+        prepareLivePcForPlanning(entity, pcIndex);
+        plan = planForLivePc(entity);
+        if (plan?.weapon) entity._chosenWeapon = plan.weapon;
+        entity._lastPlan = plan;
+        target = resolvePlanTarget(plan) || pickLowestHpEnemy(entry.entityKind);
       }
       // M45 Phase 1 — When there's no live target, one side has been
       // wiped. End the fight HERE; the previous "break with no verdict
@@ -899,6 +916,11 @@ async function runVersusPartyAuto() {
           detail: {}
         });
       }
+      // M45 Phase 2 — Clear the AI-chosen weapon so the NEXT turn
+      // re-evaluates from scratch. Without this, the choice would
+      // leak forward (e.g. a bow against a long-range enemy this
+      // turn → bow against an adjacent enemy next turn).
+      if (entry.entityKind === 'pc') entity._chosenWeapon = null;
       await new Promise(f => setTimeout(f, stepDelay));
 
       const verdict = currentPartyEndState();
@@ -921,6 +943,80 @@ async function runVersusPartyAuto() {
 function resolveEntityById(id, kind) {
   if (kind === 'pc') return partyComposedCharacters.find(p => String(p.id) === String(id));
   return (currentScene.monsters || []).find(m => String(m.id) === String(id));
+}
+
+/**
+ * M45 Phase 2 — Prepare a live PC entity for the AI planner.
+ *
+ * choosePcAction reads the same fields the simulator wraps onto its
+ * per-iteration PC copy: _position, _slots, per-turn feature flags.
+ * The live PC record doesn't carry those by default, so we lazy-init
+ * them here. Mutates the entity (safe — these are session-scoped
+ * runtime flags, never persisted).
+ */
+function prepareLivePcForPlanning(pc, index) {
+  if (!pc) return pc;
+  pc._position = positionOf(currentScene, pc.id, index);
+  if (!pc._slots) pc._slots = slotsForPc(pc);
+  resetPerTurnFlags(pc);
+  return pc;
+}
+
+/**
+ * M45 Phase 2 — Build the PC AI plan for a live PC turn.
+ *
+ * Mirrors the simulator's call site: gather live enemies + allies,
+ * snapshot positions for the gate/range checks, invoke the planner.
+ * Returns the plan (with chosen weapon, target, features) or null
+ * when the PC has no live enemies.
+ */
+function planForLivePc(pc) {
+  if (!pc) return null;
+  const enemies = (currentScene.monsters || [])
+    .filter(m => (m.hp?.current ?? 0) > 0)
+    .map(m => ({ ...m, _position: m.position }));
+  const allies = partyComposedCharacters
+    .map((p, i) => ({ ...p, _position: positionOf(currentScene, p.id, i) }))
+    .filter(p => (p.hp?.current ?? 0) > 0);
+  return choosePcAction({ self: pc, enemies, allies });
+}
+
+/**
+ * M45 Phase 2 — Resolve the actual target entity from a PC AI plan.
+ *
+ * The plan carries `targetId` + `targetSide`. Look up the live entity
+ * record on the right side (enemy = monster; ally = pc) and wrap it
+ * in the {kind, entity} shape `attackInVersus` expects.
+ */
+/**
+ * M45 Phase 2 — Format a PC AI plan as a short manual-play hint.
+ * Returns a string like "💡 AI: longbow → Goblin Boss" or empty when
+ * the plan can't be summarized (no weapon + no spell + no target).
+ * Kept short so it fits the existing one-line combat-status panel.
+ */
+function formatPcRecommendationHint(plan) {
+  if (!plan || plan.kind === 'dodge' || plan.kind === 'dash') return '';
+  // Resolve the target name without throwing
+  let targetName = '';
+  if (plan.targetId) {
+    const t = resolvePlanTarget(plan);
+    targetName = t?.entity?.name || '';
+  }
+  if (plan.kind === 'cast') {
+    return `💡 AI: cast ${plan.spellId || 'spell'}${targetName ? ' → ' + targetName : ''}`;
+  }
+  const weaponLabel = plan.weapon?.name || plan.kind;
+  return `💡 AI: ${weaponLabel}${targetName ? ' → ' + targetName : ''}`;
+}
+
+function resolvePlanTarget(plan) {
+  if (!plan?.targetId) return null;
+  if (plan.targetSide === 'ally') {
+    const pc = partyComposedCharacters.find(p => String(p.id) === String(plan.targetId));
+    return pc ? { kind: 'pc', entity: pc } : null;
+  }
+  const monster = (currentScene.monsters || []).find(m => String(m.id) === String(plan.targetId));
+  return monster ? { kind: 'monster', entity: monster } : null;
 }
 
 function versusHpOf(entity, kind) {
@@ -1663,7 +1759,21 @@ canvas.addEventListener('pointerdown', (e) => {
   if (combat.mode === 'pick-attacker') {
     if (!hit) { setCombatStatus('Click an entity to attack with — or press Esc to cancel.'); return; }
     selectAttacker(hit.entity.id, hit.kind);
-    setCombatStatus(`Attacker: ${entityName(hit)}. Click a target.`);
+    // M45 Phase 2 — When the picked attacker is a PC, run the AI planner
+    // for a non-blocking recommendation. The player still clicks
+    // whatever target they want; the hint just shows what choosePcAction
+    // would pick. Skipped for monsters (their own profile drives them
+    // and manual-click against monsters is rare).
+    let hint = '';
+    if (hit.kind === 'pc') {
+      try {
+        const pcIndex = partyComposedCharacters.indexOf(hit.entity);
+        prepareLivePcForPlanning(hit.entity, pcIndex);
+        const recPlan = planForLivePc(hit.entity);
+        hint = formatPcRecommendationHint(recPlan);
+      } catch { /* hint is purely advisory; never block the click */ }
+    }
+    setCombatStatus(`Attacker: ${entityName(hit)}. Click a target.${hint ? ' ' + hint : ''}`);
     startContinuousRender();   // selection outline animates the canvas
     rerender();
     return;
@@ -2747,7 +2857,13 @@ function appendSaveLog({ attackerName, targetName, spell, dc, stat, targetSaveBo
 // the synthetic attackStats.
 function getAttackerWeapon(hit) {
   if (!hit) return null;
-  if (hit.kind === 'pc') return hit.entity.equipment?.mainhand || null;
+  if (hit.kind === 'pc') {
+    // M45 Phase 2 — Honor the AI-chosen weapon if one was set this
+    // turn. The auto-fight loop writes _chosenWeapon from the PC AI
+    // plan; manual play leaves it null and we fall back to mainhand
+    // exactly as before.
+    return hit.entity._chosenWeapon || hit.entity.equipment?.mainhand || null;
+  }
   return null;
 }
 

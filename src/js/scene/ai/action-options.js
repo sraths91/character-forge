@@ -86,8 +86,11 @@ export function weaponsAvailableFor(entity) {
   // PC-shape: equipment + carried
   const eq = ref.equipment || {};
   if (eq.mainhand) out.push({ ...eq.mainhand, _slot: 'mainhand' });
-  if (eq.offhand && eq.offhand.name && /\b(sword|axe|dagger|mace|hammer|club)\b/i.test(eq.offhand.name)) {
-    // Treat shields / books as non-weapons (offhand exists but isn't a weapon)
+  // M45 Phase 2 — Detect "is this a weapon" by name pattern. The
+  // previous regex (sword|axe|dagger|mace|hammer|club) silently dropped
+  // off-hand spears, rapiers, scimitars, quarterstaves, sickles, etc.
+  // The widened pattern still excludes shields/books/focuses.
+  if (eq.offhand && eq.offhand.name && isWeaponName(eq.offhand.name)) {
     out.push({ ...eq.offhand, _slot: 'offhand' });
   }
   // M42 — Stowed weapons (mostly ranged) live in carried[]. The PC can
@@ -100,6 +103,21 @@ export function weaponsAvailableFor(entity) {
     }
   }
   return out;
+}
+
+/**
+ * Heuristic — is `name` a melee/finesse weapon (so the off-hand slot
+ * holds a *weapon* rather than a shield/focus/book)?
+ *
+ * Allowlist of well-known 5e weapon nouns. The check matches whole
+ * words to avoid accidental hits ("daggerward" must not match
+ * "dagger"). Conservative: a weapon NOT on this list won't be
+ * surfaced as an off-hand option until the list is widened — better
+ * to under-offer than to surface a shield as a weapon.
+ */
+export function isWeaponName(name) {
+  const n = String(name || '').toLowerCase();
+  return /\b(sword|axe|dagger|mace|hammer|club|spear|rapier|scimitar|quarterstaff|staff|sickle|trident|whip|flail|morningstar|warhammer|maul|greatsword|greataxe|longsword|shortsword|battleaxe|handaxe|warpick|pick|glaive|halberd|pike|lance|katana|cutlass|sabre|saber|estoc|stiletto|knife)\b/.test(n);
 }
 
 /** Distance + reach gate. Pure helper used by the scorer. */
