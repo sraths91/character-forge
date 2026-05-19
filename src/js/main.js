@@ -70,6 +70,10 @@ import {
 import {
   applyModifiers, modifiersForAttack, snapshotAttackerFlags
 } from './anim/modifiers.js';
+// M45 Phase 4b.2 — Live runner dispatches through the unified combat
+// engine. The engine owns rules + reactions; main.js owns prompts +
+// UI side-effects (logs, cinema, animations).
+import { runOneAttack as engineRunOneAttack } from './scene/combat-engine.js';
 import { applyPolish } from './anim/polish.js';
 import {
   preloadActorSprite, makeLpcDrawSprite, clearActorSpriteCache
@@ -824,106 +828,66 @@ async function runVersusPartyAuto() {
       const entity = resolveEntityById(entry.entityId, entry.entityKind);
       if (!entity || versusHpOf(entity, entry.entityKind) <= 0) continue;
 
-      // M32 — Target selection: monsters consult their AI profile.
-      // M45 Phase 2 — PCs now also run through their AI planner so
-      // weapon switching, feature use, and spell selection are honored
-      // in the live runner the same way the simulator's been doing
-      // since M42. The plan carries weapon + target; we persist
-      // _chosenWeapon onto the entity so getAttackerWeapon honors it
-      // through the runAttackPrompt path.
-      let target;
-      let plan = null;
-      if (entry.entityKind === 'monster') {
-        plan = pickVersusTargetWithProfile(entity);
-        target = plan?.target || pickLowestHpEnemy('monster');
-      } else {
-        const pcIndex = partyComposedCharacters.indexOf(entity);
-        prepareLivePcForPlanning(entity, pcIndex);
-        plan = planForLivePc(entity);
-        if (plan?.weapon) entity._chosenWeapon = plan.weapon;
-        entity._lastPlan = plan;
-        target = resolvePlanTarget(plan) || pickLowestHpEnemy(entry.entityKind);
-      }
-      // M45 Phase 1 — When there's no live target, one side has been
-      // wiped. End the fight HERE; the previous "break with no verdict
-      // check" walked silently to round 30 and reported a stalemate.
-      if (!target) {
+      // M45 Phase 4b.2 — Dispatch through the unified combat engine.
+      // The engine handles planning, movement, OAs, attack/cast
+      // resolution, feature triggers, and (via the onCinemaRound
+      // prompt) cinema playback. We snapshot the opposing side's HP
+      // before the turn so we can detect kills + damage deltas for
+      // logging + replay AFTER the engine writes back.
+      const opposing = entry.entityKind === 'pc'
+        ? (currentScene.monsters || [])
+        : partyComposedCharacters;
+      const hpBefore = new Map(opposing.map(o => [o.id, o.hp?.current ?? 0]));
+
+      const wrapper = await runEngineTurn(entity, entry.entityKind);
+      if (!versusActive) return;
+
+      // No active wrapper means there were no live targets — one side
+      // has been wiped. Verdict-check immediately so we don't stall
+      // the loop until round 30.
+      if (!wrapper) {
         const verdictWipe = currentPartyEndState();
         if (verdictWipe) return endVersusFight(verdictWipe, round);
         break;
       }
+      const plan = wrapper._lastPlan;
+      if (plan) logVersusAiPlan(entity, plan);
 
-      if (plan && plan.kind === 'flee') {
-        runVersusFlee(entity, target.entity);
-        logVersusAiPlan(entity, plan);
+      if (plan?.kind === 'flee') {
         currentFightRecorder.record({
           type: 'note',
           actorId: entity.id, actorName: entity.name || 'Monster',
           summary: `${entity.name} flees (${plan.archetype})`,
           detail: { plan }
         });
-        await new Promise(f => setTimeout(f, stepDelay));
-        const verdict0 = currentPartyEndState();
-        if (verdict0) return endVersusFight(verdict0, round);
-        continue;
+      } else if (plan) {
+        // Damage / death recording from the HP delta. Walks the
+        // opposing side; any entity whose HP dropped is a hit, and
+        // any whose HP hit zero is a death.
+        for (const o of opposing) {
+          const before = hpBefore.get(o.id) ?? 0;
+          const after = o.hp?.current ?? 0;
+          if (before > after) {
+            currentFightRecorder.record({
+              type: 'attack',
+              actorId: entity.id, actorName: entity.name || '?',
+              targetId: o.id, targetName: o.name || '?',
+              summary: `${entity.name} hits ${o.name} for ${before - after} dmg`,
+              detail: { dmg: before - after, plan }
+            });
+            if (after <= 0) {
+              currentFightRecorder.record({
+                type: 'death',
+                actorId: o.id, actorName: o.name || '?',
+                summary: `${o.name} falls`, detail: {}
+              });
+            }
+          }
+        }
       }
 
-      if (plan) logVersusAiPlan(entity, plan);
-      const beforeTargetHp = versusHpOf(target.entity, target.kind);
-      // M43.4 — Snapshot the attacker's per-turn feature flags BEFORE
-      // the attack so the cinema layer can diff which features fired.
-      const preAttackFlags = snapshotAttackerFlags(entity);
-      // M39 — Monster cast plans dispatch to the spell handler instead
-      // of the weapon-attack path. PCs and non-cast monster turns still
-      // route through attackInVersus.
-      let attackResult = null;
-      // M45 Phase 3 — Cast plans route through castInVersus regardless
-      // of entity kind. The handler branches internally on caster.kind
-      // for book lookup (PC uses pc-stats spellAttackBonus/spellSaveDC;
-      // monster uses the existing preset spellbook).
-      if (plan && plan.kind === 'cast') {
-        await castInVersus({ kind: entry.entityKind, entity }, plan);
-      } else {
-        attackResult = await attackInVersus({ kind: entry.entityKind, entity }, { kind: target.kind, entity: target.entity });
-      }
-      const afterTargetHp = versusHpOf(target.entity, target.kind);
-      // M43.2 — If cinema view is active, dramatize this exchange.
-      if (versusCinemaActive && versusCinema) {
-        await playCinemaRoundForAttack(
-          { kind: entry.entityKind, entity },
-          { kind: target.kind, entity: target.entity },
-          beforeTargetHp - afterTargetHp,
-          {
-            preAttackFlags,
-            smiteSlot: entity._smiteSlotUsed || null,
-            killing: afterTargetHp <= 0 && beforeTargetHp > 0,
-            // M43.6 — Thread the crit/miss signals through so the polish
-            // layer can deepen the hit-pause + flash on natural 20s.
-            crit: !!attackResult?.crit,
-            miss: attackResult ? attackResult.hit === false : false
-          }
-        );
-      }
-      currentFightRecorder.record({
-        type: 'attack',
-        actorId: entity.id, actorName: entity.name || '?',
-        targetId: target.entity.id, targetName: target.entity.name || '?',
-        summary: `${entity.name} attacks ${target.entity.name}` +
-          (afterTargetHp < beforeTargetHp ? ` for ${beforeTargetHp - afterTargetHp} dmg` : ' — miss'),
-        detail: { dmg: beforeTargetHp - afterTargetHp, plan }
-      });
-      if (afterTargetHp <= 0 && beforeTargetHp > 0) {
-        currentFightRecorder.record({
-          type: 'death',
-          actorId: target.entity.id, actorName: target.entity.name || '?',
-          summary: `${target.entity.name} falls`,
-          detail: {}
-        });
-      }
-      // M45 Phase 2 — Clear the AI-chosen weapon so the NEXT turn
-      // re-evaluates from scratch. Without this, the choice would
-      // leak forward (e.g. a bow against a long-range enemy this
-      // turn → bow against an adjacent enemy next turn).
+      // M45 Phase 2 — Clear the AI-chosen weapon so the next turn
+      // re-evaluates from scratch.
       if (entry.entityKind === 'pc') entity._chosenWeapon = null;
       await new Promise(f => setTimeout(f, stepDelay));
 
@@ -1021,6 +985,216 @@ function resolvePlanTarget(plan) {
   }
   const monster = (currentScene.monsters || []).find(m => String(m.id) === String(plan.targetId));
   return monster ? { kind: 'monster', entity: monster } : null;
+}
+
+/* =====================================================================
+ * M45 Phase 4b.2 — Live runner ↔ engine bridge.
+ *
+ * The combat engine works on per-iteration "wrappers" — flat objects
+ * with `hp: number`, `hpMax`, `ac`, `weapon`, `_position`, `_slots`,
+ * per-turn flags, etc. The live runner's records are different shapes:
+ * PCs carry `hp: { current, max }` and live in `currentScene.positions`;
+ * monsters carry `hp: { current, max }` and `position`. The bridge:
+ *
+ *   1. wrapLivePcForEngine / wrapLiveMonsterForEngine build engine
+ *      wrappers from the live records. Mutable runtime pools
+ *      (_slots, conditions[]) are SHARED by reference so engine
+ *      mutations persist back to the live entity automatically.
+ *      Scalar state (hp, position) is copied and written back after.
+ *
+ *   2. runEngineTurn(entity, entityKind) wraps the active entity +
+ *      every enemy + every ally, builds prompt callbacks bound to the
+ *      live UI (cinema, reaction dialogs, attack log), calls
+ *      engineRunOneAttack, then writes back HP / position / damage.
+ *
+ *   3. The auto-fight loop calls runEngineTurn per entity instead of
+ *      the old attackInVersus / castInVersus split. Manual-click play
+ *      still uses runAttackPrompt — the engine is auto-fight only for
+ *      v1 of this migration.
+ * ===================================================================== */
+
+function wrapLivePcForEngine(pc, idx) {
+  if (!pc) return null;
+  if (!Array.isArray(pc.conditions)) pc.conditions = [];
+  if (!pc._slots) pc._slots = slotsForPc(pc);
+  return {
+    ref: pc,
+    id: pc.id,
+    name: pc.name || 'PC',
+    kind: 'pc',
+    hp: pc.hp?.current ?? pc.hp?.max ?? 1,
+    hpMax: pc.hp?.max ?? 1,
+    ac: deriveAC(pc),
+    weapon: pc._chosenWeapon || pc.equipment?.mainhand || null,
+    _chosenWeapon: pc._chosenWeapon || null,
+    // SHARED — engine push/pop persists to the live record.
+    conditions: pc.conditions,
+    _position: positionOf(currentScene, pc.id, idx),
+    damageDealt: 0,
+    combatMods: pc.combatMods || [],
+    _reactionUsed: !!pc._reactionUsed,
+    _lvl1Slots: pc._lvl1Slots ?? lvl1SlotsForPc(pc),
+    _lvl3Slots: pc._lvl3Slots ?? lvl3SlotsForPc(pc),
+    // SHARED — slot decrements persist directly.
+    _slots: pc._slots,
+    _shieldActive: !!pc._shieldActive,
+    _actionSurgeUsed: pc._actionSurgeUsed ?? 0,
+    _secondWindUsed: !!pc._secondWindUsed,
+    _sneakAttackUsedThisTurn: !!pc._sneakAttackUsedThisTurn,
+    _cunningActionUsedThisTurn: !!pc._cunningActionUsedThisTurn,
+    _recklessUsedThisTurn: !!pc._recklessUsedThisTurn,
+    _recklessUntilNextTurn: !!pc._recklessUntilNextTurn,
+    _smiteSlotUsed: pc._smiteSlotUsed || null
+  };
+}
+
+function wrapLiveMonsterForEngine(m) {
+  if (!m) return null;
+  if (!Array.isArray(m.conditions)) m.conditions = [];
+  const preset = MONSTER_PRESETS[m.presetSlug] || {};
+  return {
+    ref: m,
+    id: m.id,
+    name: m.name || preset.name || 'Monster',
+    kind: 'monster',
+    presetSlug: m.presetSlug,
+    hp: m.hp?.current ?? m.hp?.max ?? 1,
+    hpMax: m.hp?.max ?? 1,
+    ac: preset.ac ?? 12,
+    attack: preset.attack || { name: 'Strike', bonus: 2, dice: '1d6' },
+    secondary: preset.secondary || null,
+    conditions: m.conditions,
+    position: m.position,
+    damageDealt: 0,
+    _innate: m._innate || null,
+    _slots: m._slots || null,
+    _reactionUsed: !!m._reactionUsed,
+    _legendaryBudget: m._legendaryBudget ?? 0,
+    _recklessUntilNextTurn: !!m._recklessUntilNextTurn
+  };
+}
+
+/** Copy mutated state from an engine wrapper back to its live record.
+ *  HP shape, position, slot pool, and per-turn flags. */
+function writeBackPcFromEngine(pc, wrapper) {
+  if (!pc || !wrapper) return;
+  if (pc.hp && Number.isFinite(wrapper.hp)) {
+    pc.hp = { ...pc.hp, current: Math.max(0, Math.min(pc.hp.max, wrapper.hp | 0)) };
+  }
+  if (wrapper._position) {
+    currentScene.positions = {
+      ...(currentScene.positions || {}),
+      [String(pc.id)]: wrapper._position
+    };
+  }
+  // Mutable refs are already shared (conditions, _slots); explicit copies
+  // capture state the wrapper may have set during the turn.
+  pc._reactionUsed = !!wrapper._reactionUsed;
+  pc._shieldActive = !!wrapper._shieldActive;
+  pc._actionSurgeUsed = wrapper._actionSurgeUsed ?? 0;
+  pc._secondWindUsed = !!wrapper._secondWindUsed;
+  pc._sneakAttackUsedThisTurn = !!wrapper._sneakAttackUsedThisTurn;
+  pc._cunningActionUsedThisTurn = !!wrapper._cunningActionUsedThisTurn;
+  pc._recklessUsedThisTurn = !!wrapper._recklessUsedThisTurn;
+  pc._recklessUntilNextTurn = !!wrapper._recklessUntilNextTurn;
+  pc._smiteSlotUsed = wrapper._smiteSlotUsed || null;
+  pc._lastPlan = wrapper._lastPlan || null;
+  pc._chosenWeapon = wrapper._chosenWeapon || null;
+}
+
+function writeBackMonsterFromEngine(m, wrapper) {
+  if (!m || !wrapper) return;
+  if (m.hp && Number.isFinite(wrapper.hp)) {
+    m.hp = { ...m.hp, current: Math.max(0, Math.min(m.hp.max, wrapper.hp | 0)) };
+  }
+  if (wrapper.position) m.position = wrapper.position;
+  m._reactionUsed = !!wrapper._reactionUsed;
+  m._legendaryBudget = wrapper._legendaryBudget ?? 0;
+  m._lastPlan = wrapper._lastPlan || null;
+  m._recklessUntilNextTurn = !!wrapper._recklessUntilNextTurn;
+}
+
+/** Build the wrapped enemy + ally lists from the live runner's records. */
+function buildEngineSides(activeEntity, activeKind) {
+  const pcWrappers = partyComposedCharacters
+    .filter(p => (p.hp?.current ?? 0) > 0 || p === activeEntity)
+    .map((p, _) => wrapLivePcForEngine(p, partyComposedCharacters.indexOf(p)));
+  const monWrappers = (currentScene.monsters || [])
+    .filter(m => (m.hp?.current ?? 0) > 0 || m === activeEntity)
+    .map(m => wrapLiveMonsterForEngine(m));
+  const enemies = activeKind === 'pc' ? monWrappers : pcWrappers;
+  const allies  = activeKind === 'pc' ? pcWrappers : monWrappers;
+  const active  = (activeKind === 'pc' ? pcWrappers : monWrappers)
+                    .find(w => w.id === activeEntity.id) || null;
+  return { active, enemies, allies, pcWrappers, monWrappers };
+}
+
+/**
+ * M45 Phase 4b.2 — Run one entity's turn through the unified combat
+ * engine, bridging engine events back to the live UI via prompts.
+ *
+ * Returns the wrapper of the active entity (post-turn) so the caller
+ * can introspect _lastPlan, damageDealt, etc. for logging + replay.
+ */
+async function runEngineTurn(entity, entityKind) {
+  const { active, enemies, allies, pcWrappers, monWrappers } = buildEngineSides(entity, entityKind);
+  if (!active) return null;
+  const stepRng = Math.random;
+  const preAttackFlags = snapshotAttackerFlags(entity);
+
+  const prompts = {
+    // Cinema-round dispatch — fires after every weapon swing. Bridges
+    // to the existing playCinemaRoundForAttack helper.
+    onCinemaRound: async ({ attacker, defender, atk, dmg, crit, miss }) => {
+      if (!(versusCinemaActive && versusCinema)) return;
+      const attackerLive = attacker.ref;
+      const defenderLive = defender.ref;
+      const beforeTargetHp = defender.hpMax;   // pre-attack baseline
+      await playCinemaRoundForAttack(
+        { kind: attacker.kind, entity: attackerLive },
+        { kind: defender.kind, entity: defenderLive },
+        dmg | 0,
+        {
+          preAttackFlags,
+          smiteSlot: attacker._smiteSlotUsed || null,
+          killing: defender.hp <= 0 && beforeTargetHp > 0,
+          crit: !!crit, miss: !!miss
+        }
+      );
+      void atk;
+    },
+    onCastBegin: async ({ attacker, target, spell, plan }) => {
+      appendCastLog({
+        casterName: attacker.ref.name || attacker.name,
+        spellName: spell.name,
+        targetName: target?.ref?.name || target?.name,
+        isInnate: !!plan.isInnate,
+        level: spell.level,
+        castAtLevel: plan.castAtLevel || spell.level
+      });
+    },
+    // Shield + Counterspell + OA prompts default to the autoAnswer so
+    // auto-fight mode never blocks. The existing reaction-prompt
+    // surface can be threaded here in a future refinement.
+    onShieldReaction: async ({ autoAnswer }) => autoAnswer,
+    onCounterspell:   async ({ autoAnswer }) => autoAnswer,
+    onReactionAttack: async () => true   // OAs fire by default in auto mode
+  };
+
+  await engineRunOneAttack(active, enemies, allies, currentScene, stepRng, prompts);
+
+  // Write back all wrapper state to live entities. Order matters only
+  // for the active entity (it might've been damaged by an OA before
+  // its own attack landed); we just walk every wrapper.
+  for (const w of pcWrappers) {
+    const live = partyComposedCharacters.find(p => p.id === w.id);
+    if (live) writeBackPcFromEngine(live, w);
+  }
+  for (const w of monWrappers) {
+    const live = (currentScene.monsters || []).find(m => m.id === w.id);
+    if (live) writeBackMonsterFromEngine(live, w);
+  }
+  return active;
 }
 
 function versusHpOf(entity, kind) {
@@ -4774,3 +4948,15 @@ refreshParty();
 // If the URL carries a share-link payload, consume it and auto-import.
 // Done after render bindings are set up so status messages display.
 consumeShareLink();
+
+// M45 Phase 4b.2 — The auto-fight loop now routes through
+// combat-engine.runOneAttack via runEngineTurn. The legacy helpers
+// below are no longer called from that path (each was the previous
+// auto-loop's per-action dispatcher) but remain in the file so
+// Phase 5 cleanup can review whether each is needed by a non-auto
+// code path before deletion. Silence the unused-var lint until then.
+void pickVersusTargetWithProfile;
+void runVersusFlee;
+void pickLowestHpEnemy;
+void attackInVersus;
+void castInVersus;

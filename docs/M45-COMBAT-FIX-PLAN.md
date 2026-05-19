@@ -322,7 +322,33 @@ short-circuit prompts. The simulator passes `{}`; all 932 existing
 tests pass identically. Added 7 new prompts-plumbing tests (939
 total).
 
-**Phase 4b.2 — Live runner migration (PENDING).** Replace
+**Phase 4b.2 — Live auto-fight migration (DONE).** The auto-fight
+loop's per-entity dispatch now routes through `runEngineTurn` →
+`engineRunOneAttack`. Built three layers:
+
+  1. `wrapLivePcForEngine(pc, idx)` / `wrapLiveMonsterForEngine(m)` —
+     build engine-shape wrappers from live records. Mutable runtime
+     state (conditions[], _slots) is SHARED by reference; scalar
+     state (hp, position) is copied for write-back.
+  2. `writeBackPcFromEngine(pc, wrapper)` / `writeBackMonsterFromEngine
+     (m, wrapper)` — propagate the engine's mutations back to the live
+     record's HP `{current,max}` shape, scene positions, per-turn
+     feature flags, and reaction state.
+  3. `runEngineTurn(entity, entityKind)` — build wrappers for both
+     sides, bind prompts to live UI helpers (cinema dispatch via
+     `playCinemaRoundForAttack`, cast logging via `appendCastLog`,
+     Shield/Counterspell/OA prompts default to autoAnswer), call
+     `engineRunOneAttack`, write back. Returns the active wrapper so
+     the caller can read `_lastPlan` / `damageDealt`.
+
+`runVersusPartyAuto` simplifies from ~110 lines of attack/cast
+dispatch to a single `runEngineTurn` call plus fight-recorder events
+driven by the HP delta. Five legacy helpers
+(`pickVersusTargetWithProfile`, `runVersusFlee`, `pickLowestHpEnemy`,
+`attackInVersus`, `castInVersus`) are no longer called from that path
+— Phase 5 cleanup will reconcile or delete them.
+
+**Phase 4b.3 — Manual-click migration (PENDING).** Replace
 `runVersusPartyAuto`'s per-entity-turn body with a call into
 `combat-engine.runOneAttack`. The `prompts` object plumbs through
 the player-facing reactions:
