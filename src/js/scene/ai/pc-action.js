@@ -25,6 +25,7 @@ import { availableFeatures } from './pc-features.js';
 import { scoreConsideration } from './considerations.js';
 import { chebyshevFeet } from '../grid-rules.js';
 import { spellById, canCastSpell, applyUpcast } from '../monster-spells.js';
+import { mctsEvaluate, shallowRolloutForResource } from './mcts.js';
 
 function posOf(e) { return e?._position || e?.position || null; }
 function hpOf(e)  { return typeof e?.hp === 'number' ? e.hp : (e?.hp?.current ?? 0); }
@@ -189,6 +190,10 @@ function scoreActionsAgainst({ self, target, allies, enemies, profile }) {
   // PCs cast spells from their `spells` array. We score each spell
   // available and pick the best. Cantrip range checks come from the
   // spell record; slot spells require an entity-level slot pool.
+  //
+  // M45 Phase 3 — Slot-burning spells run through mctsEvaluate so the
+  // chosen upcast tier reflects expected encounter value, not the
+  // base level. Cantrips bypass MCTS (no slot decision to make).
   const ref = self.ref || self;
   const castWeights = profile.castWeights || {};
   const slots = self._slots || ref._slots || null;
@@ -200,28 +205,114 @@ function scoreActionsAgainst({ self, target, allies, enemies, profile }) {
     if (spell.targetSide === 'ally') continue; // heal handled below
     const w = castWeights[id];
     if (w == null) continue;
-    if (spell.level > 0 && (!slots || !canCastSpell(spell, slots))) continue;
     if (distance > (spell.range || 5)) continue;
     const kindWeight = actionWeights.cast ?? 0;
-    const score = perTargetBase + w + kindWeight;
-    if (!bestOption || score > bestOption.score) {
+
+    if (spell.level === 0) {
+      // Cantrip — single candidate, score directly.
+      const score = perTargetBase + w + kindWeight;
+      if (!bestOption || score > bestOption.score) {
+        bestOption = {
+          kind: 'cast', weapon: null,
+          spellId: id, castAtLevel: 0,
+          score, featuresFired: [],
+          breakdown: [
+            ...baseBreakdown,
+            { name: 'action:cast', raw: 1, weighted: kindWeight },
+            { name: `spell:${spell.name}`, raw: 1, weighted: w }
+          ]
+        };
+      }
+      continue;
+    }
+
+    if (!slots) continue;
+    const upcastChoice = pickUpcastTier({ spell, baseScore: perTargetBase + w + kindWeight, slots, target });
+    if (!upcastChoice) continue;
+    if (!bestOption || upcastChoice.score > bestOption.score) {
       bestOption = {
-        kind: 'cast',
-        weapon: null,
-        spellId: id,
-        castAtLevel: spell.level,
-        score,
-        featuresFired: [],
+        kind: 'cast', weapon: null,
+        spellId: id, castAtLevel: upcastChoice.level,
+        score: upcastChoice.score, featuresFired: [],
         breakdown: [
           ...baseBreakdown,
           { name: 'action:cast', raw: 1, weighted: kindWeight },
-          { name: `spell:${spell.name}`, raw: 1, weighted: w }
+          { name: `spell:${spell.name}`, raw: 1, weighted: w },
+          { name: `upcast:${upcastChoice.level}`, raw: upcastChoice.mctsValue, weighted: upcastChoice.mctsValue }
         ]
       };
     }
   }
 
   return bestOption;
+}
+
+/**
+ * M45 Phase 3 — MCTS-driven upcast tier selection.
+ *
+ * For a leveled spell, enumerate every available slot tier from
+ * spell.level..5 and run a shallow rollout per candidate. Returns the
+ * winning tier with combined utility + MCTS score, or null if no slot
+ * is available.
+ *
+ * Slot scarcity is folded into the rollout's resource tax — burning
+ * the last 5th-level slot costs more "future damage" than the first.
+ * Targets with high HP favor higher tiers (more dice = more pressure);
+ * low-HP targets favor the base level (kill window already closed by
+ * the base dice).
+ */
+function pickUpcastTier({ spell, baseScore, slots, target }) {
+  const baseLevel = spell.level;
+  const candidates = [];
+  const slotPool = Object.values(slots).reduce((s, n) => s + (n || 0), 0);
+  for (let lvl = baseLevel; lvl <= 5; lvl++) {
+    if ((slots[lvl] ?? 0) <= 0) continue;
+    if (!canCastSpell({ level: lvl }, slots)) continue;
+    // Expected extra damage from upcast. The spell registry's applyUpcast
+    // is the source of truth, but a fast approximation: each tier above
+    // base adds roughly the spell's per-die value.
+    const tiersOver = lvl - baseLevel;
+    const expectedExtraDamage = approximateUpcastDamage(spell, tiersOver);
+    // Higher tiers cost more future leverage. We multiply the slot-tax
+    // by the tier so a level-5 burn is taxed harder than a level-1 burn.
+    candidates.push({
+      id: `${spell.id}-l${lvl}`,
+      level: lvl,
+      baseScore,
+      expectedExtraDamage,
+      _slotTax: lvl
+    });
+  }
+  if (candidates.length === 0) return null;
+  const ranked = mctsEvaluate({
+    candidates,
+    rollout: (cand) => shallowRolloutForResource({
+      candidate: cand,
+      ctx: { target, roundsLeft: 3, slotPool: slotPool / cand._slotTax }
+    }),
+    rollouts: 4, depth: 1
+  });
+  const best = ranked[0];
+  return {
+    level: best.level,
+    score: best.totalValue,
+    mctsValue: best.mctsValue
+  };
+}
+
+/** Rough estimate of extra damage gained from upcasting `tiersOver` tiers.
+ *  Magic Missile adds 1 dart (1d4+1 ≈ 3.5); damage spells typically add
+ *  one die at the spell's base die size. Pure approximation — the real
+ *  applyUpcast logic decides at cast time. */
+function approximateUpcastDamage(spell, tiersOver) {
+  if (tiersOver <= 0) return 0;
+  // Magic Missile-style: extra darts
+  if (spell.perDart) return tiersOver * 3.5;
+  // AoE / single-target damage: extra die of base size
+  const m = String(spell.dice || '').match(/(\d+)d(\d+)/);
+  if (!m) return tiersOver * 4;
+  const dieSize = Number(m[2]);
+  return tiersOver * ((dieSize + 1) / 2);
 }
 
 /**

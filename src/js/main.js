@@ -21,7 +21,7 @@ import {
   effectsForFeatureTrigger
 } from './scene/effects.js';
 import { rollAttack, rollDamage, describeAttack } from './scene/combat-roll.js';
-import { deriveAC, deriveAttack, deriveWeaponAttack, spellAttackBonus, saveBonus } from './scene/pc-stats.js';
+import { deriveAC, deriveAttack, deriveWeaponAttack, spellAttackBonus, spellSaveDC, saveBonus } from './scene/pc-stats.js';
 import { resolveAttack } from './scene/combat-resolver.js';
 import { factionLists } from './scene/grid-rules.js';
 import { buildActionsFor } from './scene/actions-panel.js';
@@ -877,8 +877,12 @@ async function runVersusPartyAuto() {
       // of the weapon-attack path. PCs and non-cast monster turns still
       // route through attackInVersus.
       let attackResult = null;
-      if (plan && plan.kind === 'cast' && entry.entityKind === 'monster') {
-        await castInVersus({ kind: 'monster', entity }, plan);
+      // M45 Phase 3 — Cast plans route through castInVersus regardless
+      // of entity kind. The handler branches internally on caster.kind
+      // for book lookup (PC uses pc-stats spellAttackBonus/spellSaveDC;
+      // monster uses the existing preset spellbook).
+      if (plan && plan.kind === 'cast') {
+        await castInVersus({ kind: entry.entityKind, entity }, plan);
       } else {
         attackResult = await attackInVersus({ kind: entry.entityKind, entity }, { kind: target.kind, entity: target.entity });
       }
@@ -1307,6 +1311,36 @@ function runVersusOpportunityAttack(triggerer, moverHit, moverBeforePos) {
 // an interactive prompt; auto-fight skips it via versusAutoMode.
 // =====================================================================
 
+/**
+ * M45 Phase 3 — Build the "book" — { dc, attackBonus, abilityMod } —
+ * for a caster + spell. PCs derive it from class + ability mod + prof.
+ * Monsters fall back to the preset spellbook or innate block.
+ */
+function bookForCaster(attackerHit, spell) {
+  const caster = attackerHit?.entity;
+  if (!caster) return null;
+  if (attackerHit.kind === 'pc') {
+    const sa = spellAttackBonus(caster, spell);
+    return {
+      dc: spellSaveDC(caster, spell),
+      attackBonus: sa.total,
+      abilityMod: sa.ability ? (caster.abilityModifiers?.[sa.ability] ?? 0) : 0,
+      _ability: sa.ability
+    };
+  }
+  const book = spellbookFor(caster.presetSlug);
+  if (book) return book;
+  const innate = innateBlockFor(caster.presetSlug);
+  if (innate) {
+    return {
+      dc: innate.dc || 12,
+      attackBonus: 4,
+      abilityMod: 3
+    };
+  }
+  return null;
+}
+
 async function castInVersus(attackerHit, plan) {
   if (!attackerHit || !plan?.spellId) return;
   const caster = attackerHit.entity;
@@ -1314,11 +1348,10 @@ async function castInVersus(attackerHit, plan) {
   if (!baseSpell) return;
   // M40 — Upcast: scale dice/darts up to the chosen slot level.
   const spell = applyUpcast(baseSpell, plan.castAtLevel);
-  const book = spellbookFor(caster.presetSlug);
-  const innateBook = !book && innateBlockFor(caster.presetSlug)
-    ? { dc: innateBlockFor(caster.presetSlug).dc || 12, attackBonus: 4, abilityMod: 3 }
-    : null;
-  const effectiveBook = book || innateBook;
+  // M45 Phase 3 — PC-aware book lookup. PCs use pc-stats helpers
+  // (spellAttackBonus / spellSaveDC) keyed on their own class + level.
+  // Monsters keep the existing preset spellbook lookup.
+  const effectiveBook = bookForCaster(attackerHit, spell);
   if (!effectiveBook) return;
 
   // Slot accounting (consume regardless of counter outcome — RAW).
@@ -1344,9 +1377,11 @@ async function castInVersus(attackerHit, plan) {
     castAtLevel: plan.castAtLevel || baseSpell.level
   });
 
-  // M39.1 — Counterspell witness loop. Only PCs can counter monster
-  // casts. Walk eligible witnesses; first acceptance wins.
-  if (spell.level >= 2 || (spell.level === 0 && !plan.isInnate)) {
+  // M39.1 — Counterspell witness loop. Only PCs can counter MONSTER
+  // casts (no monster counterspell support in this build). Skip the
+  // loop entirely when a PC is casting — partyComposedCharacters are
+  // the caster's allies, not their counter-witnesses.
+  if (attackerHit.kind === 'monster' && (spell.level >= 2 || (spell.level === 0 && !plan.isInnate))) {
     for (const pc of partyComposedCharacters) {
       if ((pc.hp?.current ?? 0) <= 0) continue;
       if (!shouldCounterspell(pc, spell.level)) continue;
@@ -1446,21 +1481,27 @@ async function resolveVersusSpell(attackerHit, spell, plan, effectiveBook) {
     return;
   }
 
-  // AoE save (fire-breath) — every hostile in range rolls
+  // AoE save (fire-breath / fireball cone) — every hostile in range rolls.
+  // M45 Phase 3 — Caster-kind-aware target list. Monster casters target
+  // partyComposedCharacters; PC casters target currentScene.monsters.
   if (spell.aoe) {
-    const center = caster.position;
+    const center = attackerHit.kind === 'pc'
+      ? currentScene.positions?.[String(caster.id)]
+      : caster.position;
     if (!center) return;
+    const victims = attackerHit.kind === 'pc'
+      ? (currentScene.monsters || []).filter(m => (m.hp?.current ?? 0) > 0)
+      : partyComposedCharacters.filter(p => (p.hp?.current ?? 0) > 0);
     let total = 0;
-    for (const pc of partyComposedCharacters) {
-      if ((pc.hp?.current ?? 0) <= 0) continue;
-      const pcPos = currentScene.positions?.[String(pc.id)];
-      if (!pcPos || chebyshevFeet(center, pcPos) > (spell.range || 15)) continue;
-      const pcMod = pc.abilityModifiers?.[spell.saveStat] ?? 0;
-      const save = rollSave({ bonus: pcMod, dc: effectiveBook.dc });
+    for (const v of victims) {
+      const vPos = attackerHit.kind === 'pc' ? v.position : currentScene.positions?.[String(v.id)];
+      if (!vPos || chebyshevFeet(center, vPos) > (spell.range || 15)) continue;
+      const vMod = saveBonusForVersusEntity(v, spell.saveStat);
+      const save = rollSave({ bonus: vMod, dc: effectiveBook.dc });
       const dmgRoll = rollDamage(spell.dice, { crit: false });
       let dmg = dmgRoll.total;
       if (save.success) dmg = spell.saveOnHalf ? Math.floor(dmg / 2) : 0;
-      applyVersusDamage(pc, dmg);
+      applyVersusDamage(v, dmg);
       total += dmg;
     }
     appendCastLogTail(`${total} total ${spell.damageType || ''} damage across the cone`);
@@ -2564,7 +2605,10 @@ async function runAttackPrompt(targetKind, targetEntity) {
   // entirely; that flow doesn't roll a to-hit.
   const spell = combat.spell || null;
   if (spell?.requiresSavingThrow) {
-    runSpellSavePrompt(attackerHit, { kind: targetKind, entity: targetEntity }, spell);
+    // M45 Phase 3 — Await the save-spell resolution so the auto-fight
+    // loop can sequence its post-attack verdict + cinema-round on the
+    // same timeline as weapon attacks.
+    await runSpellSavePrompt(attackerHit, { kind: targetKind, entity: targetEntity }, spell);
     return;
   }
   const attack = spell ? null : getAttackStats(attackerHit);
@@ -2751,7 +2795,7 @@ async function runAttackPrompt(targetKind, targetEntity) {
 // derived per-kind, save roll vs caster's DC, damage applied per the
 // spell's saveOnHalf policy. Mirrors the M11 flow shape so the existing
 // animation + log infrastructure works unchanged.
-function runSpellSavePrompt(attackerHit, targetHit, spell) {
+async function runSpellSavePrompt(attackerHit, targetHit, spell) {
   const attackerName = entityName(attackerHit);
   const targetName   = targetHit.entity.name || 'Target';
   const stat = spell.saveStat || 'DEX';
