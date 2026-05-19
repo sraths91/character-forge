@@ -65,6 +65,22 @@ export function phaseAt(t, impactAt) {
   return 'recover';
 }
 
+/**
+ * M44.3 — Defender swing phase. The defender has no wind-up or strike
+ * pose; instead they read the hit at impact with a brief flinch and a
+ * red tint, then return to idle.
+ *
+ *   t < impactAt          → idle (calm before the hit)
+ *   impactAt ≤ t < +220   → hurt (flinch pose + red tint overlay)
+ *   t ≥ impactAt + 220    → idle (recovery is just back to the bob)
+ */
+export function defenderPhaseAt(t, impactAt) {
+  if (!Number.isFinite(impactAt)) return 'idle';
+  if (t < impactAt) return 'idle';
+  if (t < impactAt + 220) return 'hurt';
+  return 'idle';
+}
+
 /** Find the time-ms when the sequence's primary hit-pause fires. */
 export function findHitPauseAt(seq) {
   if (!seq?.effects) return 0;
@@ -214,10 +230,9 @@ function draw(ctx, state, seq, frame, opts) {
   // still see the original x/y/rotation/scale/alpha snapshot.
   const impactAt = findHitPauseAt(seq);
   const attackerPhase = phaseAt(frame.t, impactAt);
+  const defenderPhase = defenderPhaseAt(frame.t, impactAt);
   const attSnap = { ...frame.attacker, _t: frame.t, _impactAt: impactAt, _phase: attackerPhase };
-  // Defender stays in idle for v1 — flinch is conveyed by the keyframe
-  // knockback rather than a swapped frame.
-  const defSnap = { ...frame.defender, _t: frame.t, _impactAt: impactAt, _phase: 'idle' };
+  const defSnap = { ...frame.defender, _t: frame.t, _impactAt: impactAt, _phase: defenderPhase };
   opts.drawSprite(ctx, 'attacker', attAnchor, attSnap, opts.attacker);
   opts.drawSprite(ctx, 'defender', defAnchor, defSnap, opts.defender);
 

@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert';
 import {
   createCinemaState, findHitPauseAt, applyVerdictToState, createCinema,
-  phaseAt
+  phaseAt, defenderPhaseAt
 } from '../js/anim/cinema.js';
 import { buildMotion } from '../js/anim/weapon-motions.js';
 
@@ -262,4 +262,26 @@ test('M44.1: phaseAt — well past impact reads as recover', () => {
 test('M44.1: phaseAt — non-finite impactAt safely falls back to idle', () => {
   assert.strictEqual(phaseAt(500, NaN), 'idle');
   assert.strictEqual(phaseAt(500, null), 'idle');
+});
+
+// ---------- M44.3: defenderPhaseAt ----------
+
+test('M44.3: defenderPhaseAt — pre-impact reads as idle', () => {
+  assert.strictEqual(defenderPhaseAt(0,   600), 'idle');
+  assert.strictEqual(defenderPhaseAt(599, 600), 'idle');
+});
+
+test('M44.3: defenderPhaseAt — impact moment + 220ms window reads as hurt', () => {
+  assert.strictEqual(defenderPhaseAt(600, 600), 'hurt');
+  assert.strictEqual(defenderPhaseAt(700, 600), 'hurt');
+  assert.strictEqual(defenderPhaseAt(819, 600), 'hurt');
+});
+
+test('M44.3: defenderPhaseAt — past hurt window returns to idle', () => {
+  assert.strictEqual(defenderPhaseAt(820,  600), 'idle');
+  assert.strictEqual(defenderPhaseAt(1500, 600), 'idle');
+});
+
+test('M44.3: defenderPhaseAt — non-finite impactAt safely falls back to idle', () => {
+  assert.strictEqual(defenderPhaseAt(500, NaN), 'idle');
 });

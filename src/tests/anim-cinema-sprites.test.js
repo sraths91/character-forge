@@ -6,7 +6,7 @@ import {
 } from '../js/anim/cinema-sprites.js';
 
 /** Build a lookup callback that returns a multi-frame cache entry. */
-function fakeCacheEntry(frameIndices = [0, 1, 2, 6]) {
+function fakeCacheEntry(frameIndices = [0, 1, 2, 4, 6]) {
   const frames = new Map();
   for (const i of frameIndices) frames.set(i, { width: 192, height: 192, _frame: i });
   return { frames, scale: 3, direction: 'south' };
@@ -167,4 +167,82 @@ test('M44.1: makeLpcDrawSprite — falls back to idle frame when strike frame mi
   draw(ctx, 'attacker', { x: 0, y: 0 }, { scale: 1, _phase: 'strike', _t: 0 }, { id: 'p1' });
   assert.ok(ctx.calls.some(c => c[0] === 'drawImage'),
     'should fall back to the idle-A frame rather than skipping the draw');
+});
+
+// ---------- M44.3: defender hurt frame + tint ----------
+
+test('M44.3: pickActorFrame — defender hurt phase → frame 4', () => {
+  assert.strictEqual(pickActorFrame({ _phase: 'hurt', _t: 600 }, 'defender'), 4);
+});
+
+test('M44.3: pickActorFrame — attacker hurt phase falls back to idle bob', () => {
+  // hurt is a defender-only phase; attacker hurt would mean a counter-attack
+  // scenario which v1 doesn't model.
+  const f = pickActorFrame({ _phase: 'hurt', _t: 0 }, 'attacker');
+  assert.ok(f === 0 || f === 1, `attacker should bob 0/1, got ${f}`);
+});
+
+test('M44.3: makeLpcDrawSprite — paints a red tint overlay during hurt phase', () => {
+  // Extend the mock so it captures globalCompositeOperation reads + writes.
+  const calls = [];
+  const ctx = {
+    calls,
+    canvas: { width: 200, height: 200 },
+    save: () => calls.push(['save']),
+    restore: () => calls.push(['restore']),
+    translate: (x, y) => calls.push(['translate', x, y]),
+    rotate: (r) => calls.push(['rotate', r]),
+    scale: (sx, sy) => calls.push(['scale', sx, sy]),
+    drawImage: (img, dx, dy) => calls.push(['drawImage', dx, dy, img.width, img.height]),
+    fillRect: (x, y, w, h) => calls.push(['fillRect', x, y, w, h]),
+    fillText: () => calls.push(['fillText']),
+    set globalAlpha(v) { calls.push(['globalAlpha', v]); },
+    get globalAlpha() { return 1; },
+    set imageSmoothingEnabled(v) { calls.push(['ise', v]); },
+    set fillStyle(v) { calls.push(['fillStyle', v]); },
+    set globalCompositeOperation(v) { calls.push(['gco', v]); },
+    get globalCompositeOperation() { return 'source-over'; }
+  };
+  const draw = makeLpcDrawSprite({ lookup: () => fakeCacheEntry() });
+  draw(ctx, 'defender', { x: 0, y: 0 },
+    { scale: 1, _phase: 'hurt', _t: 700, _impactAt: 600 },
+    { id: 'm1' });
+  // The hurt tint is implemented as: source-atop composite + red fillRect
+  const tintFill = ctx.calls.find(c => c[0] === 'fillStyle' && c[1] === '#ef4444');
+  const sourceAtop = ctx.calls.find(c => c[0] === 'gco' && c[1] === 'source-atop');
+  const overlayRect = ctx.calls.find(c => c[0] === 'fillRect');
+  assert.ok(tintFill, 'should set red fillStyle for the hurt tint');
+  assert.ok(sourceAtop, 'should switch to source-atop composite for the tint');
+  assert.ok(overlayRect, 'should fillRect the sprite bounds for the tint');
+});
+
+test('M44.3: makeLpcDrawSprite — no red tint when phase is idle', () => {
+  const calls = [];
+  const ctx = {
+    calls,
+    canvas: { width: 200, height: 200 },
+    save: () => calls.push(['save']),
+    restore: () => calls.push(['restore']),
+    translate: () => {},
+    rotate: () => {},
+    scale: () => {},
+    drawImage: (img, dx, dy) => calls.push(['drawImage', dx, dy]),
+    fillRect: (x, y, w, h) => calls.push(['fillRect', x, y, w, h]),
+    fillText: () => calls.push(['fillText']),
+    set globalAlpha(v) {},
+    get globalAlpha() { return 1; },
+    set imageSmoothingEnabled(v) {},
+    set fillStyle(v) { calls.push(['fillStyle', v]); },
+    set globalCompositeOperation(v) { calls.push(['gco', v]); },
+    get globalCompositeOperation() { return 'source-over'; }
+  };
+  const draw = makeLpcDrawSprite({ lookup: () => fakeCacheEntry() });
+  draw(ctx, 'defender', { x: 0, y: 0 },
+    { scale: 1, _phase: 'idle', _t: 100, _impactAt: 600 },
+    { id: 'm1' });
+  // No red fillStyle should be set
+  assert.ok(!ctx.calls.some(c => c[0] === 'fillStyle' && c[1] === '#ef4444'),
+    'idle phase must not paint the hurt tint');
+  assert.ok(!ctx.calls.some(c => c[0] === 'gco' && c[1] === 'source-atop'),
+    'idle phase must not switch composite to source-atop');
 });

@@ -23,17 +23,19 @@
 import { renderSprite } from '../sprite/compositor.js';
 import { MONSTER_PRESETS, buildMonsterCharacter } from '../scene/monster-presets.js';
 
-// M44.1 — Per-actor frame cycle. We pre-render four poses sampled
+// M44.1 — Per-actor frame cycle. We pre-render five poses sampled
 // from the LPC walk sheet:
 //   IDLE_A / IDLE_B   alternating low-amplitude bob (alive feel)
 //   WINDUP            mid-stride frame; reads as a pulled-back stance
 //   STRIKE            extreme stride; reads as a committed lunge
+//   HURT (M44.3)      off-balance stride; reads as a flinch / recoil
 // These map to LPC walk.png column indices below.
 const FRAME_IDLE_A = 0;
 const FRAME_IDLE_B = 1;
 const FRAME_WINDUP = 2;
 const FRAME_STRIKE = 6;
-const ACTOR_FRAMES = [FRAME_IDLE_A, FRAME_IDLE_B, FRAME_WINDUP, FRAME_STRIKE];
+const FRAME_HURT   = 4;
+const ACTOR_FRAMES = [FRAME_IDLE_A, FRAME_IDLE_B, FRAME_WINDUP, FRAME_STRIKE, FRAME_HURT];
 
 // Idle bob period in ms — alternation between IDLE_A and IDLE_B.
 const IDLE_BOB_MS = 280;
@@ -101,7 +103,8 @@ export function pickActorFrame(snapshot = {}, actor = 'attacker') {
     if (phase === 'windup') return FRAME_WINDUP;
     if (phase === 'strike') return FRAME_STRIKE;
   }
-  // Idle / recover / defender most phases — bob between A and B
+  if (actor === 'defender' && phase === 'hurt') return FRAME_HURT;
+  // Idle / recover / defender non-hurt phases — bob between A and B
   const half = Math.floor(t / IDLE_BOB_MS) % 2;
   return half === 0 ? FRAME_IDLE_A : FRAME_IDLE_B;
 }
@@ -140,6 +143,26 @@ export function makeLpcDrawSprite({ lookup = defaultLookup } = {}) {
     // the bottom edge. The LPC sheet is 64×64 logical, scaled up.
     const w = buf.width, h = buf.height;
     ctx.drawImage(buf, -w / 2, -h);
+    // M44.3 — Hurt flash: paint a red tint over the sprite's silhouette
+    // for the duration of the hurt phase. Uses source-atop composite so
+    // the tint only affects the painted pixels (transparent background
+    // is left alone). Intensity fades over the hurt window so the flash
+    // pulses rather than holds.
+    if (snapshot._phase === 'hurt') {
+      const t = Number.isFinite(snapshot._t) ? snapshot._t : 0;
+      const impactAt = Number.isFinite(snapshot._impactAt) ? snapshot._impactAt : t;
+      const age = Math.max(0, t - impactAt);
+      const u = Math.min(1, age / 220);
+      const alpha = 0.6 * Math.sin(u * Math.PI);   // fade in/out
+      if (alpha > 0.02) {
+        const prev = ctx.globalCompositeOperation;
+        ctx.globalCompositeOperation = 'source-atop';
+        ctx.globalAlpha = alpha;
+        ctx.fillStyle = '#ef4444';
+        ctx.fillRect(-w / 2, -h, w, h);
+        ctx.globalCompositeOperation = prev;
+      }
+    }
     ctx.restore();
     // Name label — un-rotate, un-mirror so text stays readable
     ctx.save();
