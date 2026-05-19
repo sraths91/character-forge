@@ -70,6 +70,7 @@ import {
 import {
   applyModifiers, modifiersForAttack, snapshotAttackerFlags
 } from './anim/modifiers.js';
+import { applyPolish } from './anim/polish.js';
 
 const $ = (id) => document.getElementById(id);
 const status = $('status');
@@ -596,6 +597,9 @@ async function playCinemaRoundForAttack(attackerHit, targetHit, dmg, opts = {}) 
   // M43.4 — Detect which class-feature modifiers fired on this exchange
   // by diffing pre-attack flags against the attacker's current state,
   // then compose each modifier's overlay onto the sequence.
+  const attackerLevel = attackerHit.kind === 'pc'
+    ? ((attackerHit.entity.classes || []).reduce((s, c) => s + (c?.level || 0), 0) || 1)
+    : 1;
   if (attackerHit.kind === 'pc') {
     const post = snapshotAttackerFlags(attackerHit.entity);
     const fired = modifiersForAttack({
@@ -604,13 +608,26 @@ async function playCinemaRoundForAttack(attackerHit, targetHit, dmg, opts = {}) 
       attacker: attackerHit.entity
     });
     if (fired.length) {
-      const lvl = (attackerHit.entity.classes || [])
-        .reduce((s, c) => s + (c?.level || 0), 0) || 1;
       seq = applyModifiers(seq, fired, {
-        level: lvl, slot: opts.smiteSlot || post._smiteSlotUsed || 1
+        level: attackerLevel, slot: opts.smiteSlot || post._smiteSlotUsed || 1
       });
     }
   }
+  // M43.5 — Final polish pass: crit / magical / silvered / level
+  // particle density / big-hit camera zoom / killing-blow flash.
+  const defenderMax = targetHit.entity.hp?.max
+    ?? targetHit.entity.hpMax
+    ?? (targetHit.entity.hp?.current ?? 0) + (dmg || 0);
+  seq = applyPolish(seq, {
+    level:      attackerLevel,
+    crit:       !!opts.crit,
+    dmg:        dmg | 0,
+    defenderHp: defenderMax,
+    magical:    !!weapon?.magical,
+    material:   weapon?.material || null,
+    damageType: weapon?.damageType || null,
+    killing:    !!opts.killing
+  });
   // Update actor sprites to match the current attacker / defender
   await versusCinema.setActors?.({
     attacker: attackerHit.entity,
@@ -819,7 +836,11 @@ async function runVersusPartyAuto() {
           { kind: entry.entityKind, entity },
           { kind: target.kind, entity: target.entity },
           beforeTargetHp - afterTargetHp,
-          { preAttackFlags, smiteSlot: entity._smiteSlotUsed || null }
+          {
+            preAttackFlags,
+            smiteSlot: entity._smiteSlotUsed || null,
+            killing: afterTargetHp <= 0 && beforeTargetHp > 0
+          }
         );
       }
       currentFightRecorder.record({

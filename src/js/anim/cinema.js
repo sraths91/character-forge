@@ -128,8 +128,17 @@ function draw(ctx, state, seq, frame, opts) {
   const W = opts.canvas?.width  ?? ctx.canvas.width;
   const H = opts.canvas?.height ?? ctx.canvas.height;
   const shake = frame.shake || { x: 0, y: 0 };
+  // M43.5 — Camera zoom: a `zoom` effect in the sequence pushes the
+  // entire scene in around the centre during its lifetime, then eases
+  // back out. Multiple zooms compound multiplicatively.
+  const zoom = cameraZoomAt(seq, frame.t);
   ctx.save();
   ctx.translate(shake.x | 0, shake.y | 0);
+  if (zoom !== 1) {
+    ctx.translate(W / 2, H / 2);
+    ctx.scale(zoom, zoom);
+    ctx.translate(-W / 2, -H / 2);
+  }
 
   ctx.clearRect(-50, -50, W + 100, H + 100);
   opts.drawBackground(ctx, { W, H, t: frame.t });
@@ -278,8 +287,32 @@ function drawEffect(ctx, ef, u, att, def) {
     case 'burst':      return drawBurst(ctx, u, def, ef.params);
     case 'glyph-rise': return drawGlyphRise(ctx, u, att, ef.params);
     case 'aura':       return drawAura(ctx, u, att, def, ef.params);
+    case 'sparkle':    return drawSparkle(ctx, u, att, def, ef.params);
+    case 'zoom':       return;   // applied at the canvas-transform level
     default:           return;   // hit-pause / shake / flash handled by the engine
   }
+}
+
+/**
+ * M43.5 — Compute the camera zoom scalar at time `t`. Sums every active
+ * `zoom` effect: rises during the first half of its window, eases back
+ * out during the second. Multiple zooms compound multiplicatively, so a
+ * crit + big-hit combo reads as a deeper push-in.
+ */
+function cameraZoomAt(seq, t) {
+  let scale = 1;
+  for (const ef of seq.effects || []) {
+    if (ef.type !== 'zoom') continue;
+    const dur = Number.isFinite(ef.params?.duration) ? ef.params.duration : 300;
+    const age = t - ef.at;
+    if (age < 0 || age > dur) continue;
+    const target = Math.max(1, ef.params?.scale || 1.1);
+    const u = age / dur;
+    // Triangle envelope — ramp up to mid, then back down
+    const env = u < 0.5 ? (u / 0.5) : ((1 - u) / 0.5);
+    scale *= 1 + (target - 1) * env;
+  }
+  return scale;
 }
 
 const COLOR_FOR_TYPE = {
@@ -432,6 +465,46 @@ function hexWithAlpha(hex, a) {
   const v = parseInt(m[1], 16);
   const r = (v >> 16) & 0xff, g = (v >> 8) & 0xff, b = v & 0xff;
   return `rgba(${r},${g},${b},${a})`;
+}
+
+/**
+ * M43.5 — Sparkle particle. Small 4-point star that twinkles and drifts
+ * upward between the attacker and defender. `params.seed` deterministically
+ * scatters multiple sparkles around the midpoint without an RNG.
+ */
+function drawSparkle(ctx, u, att, def, params) {
+  const color = params?.color || '#fef3c7';
+  const seed = (params?.seed | 0) || 0;
+  const size = params?.size || 4;
+  // Deterministic offset from seed — readable as a "puff" of particles
+  const ang = (seed * 137.5) * Math.PI / 180;
+  const r   = 12 + (seed % 4) * 6;
+  const mx = (att.x + def.x) / 2 + Math.cos(ang) * r;
+  const my = (att.y + def.y) / 2 - 30 + Math.sin(ang) * r * 0.5;
+  const drift = u * 14;
+  const alpha = Math.sin(u * Math.PI);   // fade in/out
+  if (alpha <= 0.02) return;
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.fillStyle = color;
+  ctx.strokeStyle = color;
+  ctx.shadowColor = color;
+  ctx.shadowBlur = 10;
+  ctx.translate(mx, my - drift);
+  ctx.rotate(u * Math.PI * 0.5);
+  // 4-point star
+  ctx.beginPath();
+  ctx.moveTo(0, -size);
+  ctx.lineTo(size * 0.35, -size * 0.35);
+  ctx.lineTo(size, 0);
+  ctx.lineTo(size * 0.35, size * 0.35);
+  ctx.lineTo(0, size);
+  ctx.lineTo(-size * 0.35, size * 0.35);
+  ctx.lineTo(-size, 0);
+  ctx.lineTo(-size * 0.35, -size * 0.35);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
 }
 
 function drawGlyphRise(ctx, u, att, params) {
