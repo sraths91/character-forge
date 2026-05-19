@@ -300,7 +300,29 @@ cluster (`applyDamageToEntity`, `saveBonusFor`, `pcSpellBook`,
 tests pass identically. The new function carries a reserved
 `prompts = {}` parameter for the live-runner migration.
 
-**Phase 4b — Live runner migration (PENDING).** Replace
+**Phase 4b.1 — Engine prompts plumbing (DONE).** Made `runOneAttack`,
+`runMonsterSpell`, and `runReactionAttack` async and threaded an
+optional `prompts` object through every reaction site:
+
+  - `onShieldReaction({ defender, atk, weapon, autoAnswer })` — fires
+    after a weapon attack lands, before damage applies
+  - `onCounterspell({ witness, caster, spell, autoAnswer })` — fires
+    once per eligible witness during the Counterspell window
+  - `onReactionAttack({ triggerer, mover, kind })` — fires for both
+    leave-OA and entry-OA triggers
+  - `onCinemaRound({ attacker, defender, plan, atk, dmg, crit, miss })`
+    — fires after every attack swing (hit or miss) so the cinema
+    motion can dramatize the exchange
+  - `onCastBegin({ attacker, target, plan, spell })` — fires on a
+    cast before resolution lands
+
+Every callback is optional and receives an `autoAnswer` field where
+relevant (the simulator's heuristic answer) so an auto-fight UI can
+short-circuit prompts. The simulator passes `{}`; all 932 existing
+tests pass identically. Added 7 new prompts-plumbing tests (939
+total).
+
+**Phase 4b.2 — Live runner migration (PENDING).** Replace
 `runVersusPartyAuto`'s per-entity-turn body with a call into
 `combat-engine.runOneAttack`. The `prompts` object plumbs through
 the player-facing reactions:

@@ -77,8 +77,24 @@ import { MONSTER_DEFAULT_SAVES } from './monster-presets.js';
  * @param {object} [prompts] — optional async callbacks for UI flows.
  *   Reserved for the live-runner migration; the simulator passes none.
  */
-export function runOneAttack(attacker, enemies, allies, scene, rng, prompts = {}) {
-  void prompts;   // reserved for live-runner migration; unused for now
+/**
+ * @typedef {object} EnginePrompts
+ * @property {function} [onShieldReaction]  — async ({ defender, atk, weapon, autoAnswer }) → boolean
+ * @property {function} [onCounterspell]    — async ({ witness, caster, spell, autoAnswer }) → boolean
+ * @property {function} [onReactionAttack]  — async ({ triggerer, mover, kind }) → boolean
+ * @property {function} [onCinemaRound]     — async ({ attacker, defender, plan, atk, dmg, crit }) → void
+ * @property {function} [onCastBegin]       — async ({ attacker, target, plan }) → void
+ *
+ * Every callback is optional. The simulator passes {} so existing tests
+ * see identical behaviour. The live runner passes real callbacks that
+ * pop reaction dialogs, dramatize cinema rounds, etc.
+ *
+ * Each callback receives an `autoAnswer` field (where applicable) — the
+ * value the simulator's heuristic would have chosen — so an auto-fight
+ * UI can short-circuit prompts when configured.
+ */
+
+export async function runOneAttack(attacker, enemies, allies, scene, rng, prompts = {}) {
   // M37 — At the start of each monster's turn, roll d6 for any innate
   // spells that are cooling down. The recharged-list isn't surfaced in
   // the simulator path (we have no log here); main.js can read it for
@@ -150,13 +166,26 @@ export function runOneAttack(attacker, enemies, allies, scene, rng, prompts = {}
       });
       for (const { triggerer } of leaveTriggers) {
         if (!isAlive(attacker)) break;
-        runReactionAttack(triggerer, attacker, attackerPos, scene, rng);
-        consumeReaction(triggerer);
+        // M45 Phase 4b — Optional prompt. Default (simulator path) is
+        // "always fire the OA"; live runner returns false to skip when
+        // the player declines to spend their reaction.
+        const fire = prompts.onReactionAttack
+          ? await prompts.onReactionAttack({ triggerer, mover: attacker, kind: 'leave' })
+          : true;
+        if (fire) {
+          await runReactionAttack(triggerer, attacker, attackerPos, scene, rng, prompts);
+          consumeReaction(triggerer);
+        }
       }
       for (const { triggerer } of entryTriggers) {
         if (!isAlive(attacker)) break;
-        runReactionAttack(triggerer, attacker, next, scene, rng);
-        consumeReaction(triggerer);
+        const fire = prompts.onReactionAttack
+          ? await prompts.onReactionAttack({ triggerer, mover: attacker, kind: 'entry' })
+          : true;
+        if (fire) {
+          await runReactionAttack(triggerer, attacker, next, scene, rng, prompts);
+          consumeReaction(triggerer);
+        }
       }
       if (attacker.kind === 'pc') attacker._position = next;
       else attacker.position = next;
@@ -180,10 +209,11 @@ export function runOneAttack(attacker, enemies, allies, scene, rng, prompts = {}
     if (attacker.kind === 'pc' && !attacker._slots) {
       attacker._slots = slotsForPc(attacker.ref || attacker);
     }
-    runMonsterSpell({
+    await runMonsterSpell({
       attacker, target: castTarget, plan, scene, rng,
       witnesses: enemies.filter(isAlive).filter(e => e.kind === 'pc'),
-      allEnemies: enemies
+      allEnemies: enemies,
+      prompts
     });
     return;
   }
@@ -274,18 +304,37 @@ export function runOneAttack(attacker, enemies, allies, scene, rng, prompts = {}
     atk = rollAttack({ bonus: finalBonus, advantage: verdict.d20.mode, targetAC: target.ac }, rng);
   }
   // M33.1 — Shield reaction (target casts AFTER the roll lands).
-  if (atk.hit && !atk.crit && target.kind === 'pc' &&
-      shouldCastShield({ target, attackerTotal: atk.total, targetAc: target.ac })) {
-    consumeShield(target);
-    atk.hit = false;
-    atk.shielded = true;
+  // M45 Phase 4b — Optional prompt. Simulator path keeps the auto-cast
+  // heuristic; live runner can override via prompts.onShieldReaction.
+  if (atk.hit && !atk.crit && target.kind === 'pc') {
+    const auto = shouldCastShield({ target, attackerTotal: atk.total, targetAc: target.ac });
+    const accepted = prompts.onShieldReaction
+      ? await prompts.onShieldReaction({
+          defender: target, atk, weapon: attacker.weapon, autoAnswer: auto
+        })
+      : auto;
+    if (accepted) {
+      consumeShield(target);
+      atk.hit = false;
+      atk.shielded = true;
+    }
   }
-  if (!atk.hit) return;
+  if (!atk.hit) {
+    // Dispatch a cinema round for the miss too — the live runner uses
+    // this to dramatize the swing even when no damage lands.
+    if (prompts.onCinemaRound) {
+      await prompts.onCinemaRound({
+        attacker, defender: target, plan, atk, dmg: 0, crit: false, miss: true
+      });
+    }
+    return;
+  }
   const dmg = rollDamage(finalDmgDice, { crit: atk.crit }, rng);
   target.hp = Math.max(0, target.hp - dmg.total);
   attacker.damageDealt += dmg.total;
 
   // M42.1 — Divine Smite
+  let smiteTotal = 0;
   if (attacker.kind === 'pc' && plan?.featuresFired?.includes('divine-smite')) {
     PC_FEATURES['divine-smite'].consume(attacker);
     const slotLevel = attacker._smiteSlotUsed || 1;
@@ -295,6 +344,16 @@ export function runOneAttack(attacker, enemies, allies, scene, rng, prompts = {}
     const smiteRoll = rollDamage(`${smiteDice}d8`, { crit: atk.crit }, rng);
     target.hp = Math.max(0, target.hp - smiteRoll.total);
     attacker.damageDealt += smiteRoll.total;
+    smiteTotal = smiteRoll.total;
+  }
+
+  // M45 Phase 4b — Dramatize the resolved exchange. Live runner uses
+  // this to play the cinema motion; simulator passes nothing.
+  if (prompts.onCinemaRound) {
+    await prompts.onCinemaRound({
+      attacker, defender: target, plan, atk,
+      dmg: dmg.total + smiteTotal, crit: !!atk.crit, miss: false
+    });
   }
 
   // M42 — Action Surge: a second action right now.
@@ -302,7 +361,7 @@ export function runOneAttack(attacker, enemies, allies, scene, rng, prompts = {}
     attacker._surgeFiredThisTurn = true;
     PC_FEATURES['action-surge'].consume(attacker);
     if (isAlive(attacker) && sideAlive(enemies) > 0) {
-      runOneAttack(attacker, enemies, allies, scene, rng);
+      await runOneAttack(attacker, enemies, allies, scene, rng, prompts);
     }
     attacker._surgeFiredThisTurn = false;
   }
@@ -312,7 +371,7 @@ export function runOneAttack(attacker, enemies, allies, scene, rng, prompts = {}
 // runMonsterSpell — spell casting (both monster + PC)
 // =====================================================================
 
-export function runMonsterSpell({ attacker, target, plan, scene: _scene, rng, witnesses = [], allEnemies = [] }) {
+export async function runMonsterSpell({ attacker, target, plan, scene: _scene, rng, witnesses = [], allEnemies = [], prompts = {} }) {
   void _scene;
   const baseSpell = spellById(plan.spellId);
   if (!baseSpell) return;
@@ -335,9 +394,21 @@ export function runMonsterSpell({ attacker, target, plan, scene: _scene, rng, wi
     consumeSlot(attacker._slots, baseSpell, plan.castAtLevel);
   }
 
-  // Counterspell window
+  // M45 Phase 4b — Cast announcement (live runner uses this to log the
+  // cast + paint the spell-cast cinema motion before resolution lands).
+  if (prompts.onCastBegin) {
+    await prompts.onCastBegin({ attacker, target, plan, spell });
+  }
+
+  // M34.1 — Counterspell witness loop. M45 Phase 4b — Optional prompt:
+  // the auto path uses the witness's heuristic, the live runner can
+  // pop a dialog asking the player whether to spend their reaction.
   for (const witness of witnesses) {
-    if (!shouldCounterspell(witness, spell.level)) continue;
+    const auto = shouldCounterspell(witness, spell.level);
+    const fire = prompts.onCounterspell
+      ? await prompts.onCounterspell({ witness, caster: attacker, spell, autoAnswer: auto })
+      : auto;
+    if (!fire) continue;
     const ability = saveBonusFor(witness, abilityForCounterer(witness));
     const result = resolveCounterspell({ spellLevel: spell.level, counterMod: ability }, rng);
     consumeCounterspell(witness);
@@ -437,7 +508,7 @@ export function runMonsterSpell({ attacker, target, plan, scene: _scene, rng, wi
 // runReactionAttack — opportunity / reaction attacks
 // =====================================================================
 
-export function runReactionAttack(attacker, target, targetBeforePos, scene, rng) {
+export async function runReactionAttack(attacker, target, targetBeforePos, scene, rng, prompts = {}) {
   if (!attacker || !target) return;
   let attackStats;
   if (attacker.kind === 'pc') {
@@ -482,10 +553,15 @@ export function runReactionAttack(attacker, target, targetBeforePos, scene, rng)
   const atk = verdict.autoCrit
     ? { hit: true, crit: true, total: 20 + verdict.attackBonus.total }
     : rollAttack({ bonus: verdict.attackBonus.total, advantage: verdict.d20.mode, targetAC: target.ac }, rng);
-  if (atk.hit && !atk.crit && target.kind === 'pc' &&
-      shouldCastShield({ target, attackerTotal: atk.total, targetAc: target.ac })) {
-    consumeShield(target);
-    atk.hit = false;
+  if (atk.hit && !atk.crit && target.kind === 'pc') {
+    const auto = shouldCastShield({ target, attackerTotal: atk.total, targetAc: target.ac });
+    const accepted = prompts.onShieldReaction
+      ? await prompts.onShieldReaction({ defender: target, atk, weapon: attacker.weapon, autoAnswer: auto })
+      : auto;
+    if (accepted) {
+      consumeShield(target);
+      atk.hit = false;
+    }
   }
   if (!atk.hit) return;
   const dmg = rollDamage(verdict.damage.dice, { crit: atk.crit }, rng);
