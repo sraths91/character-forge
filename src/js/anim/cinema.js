@@ -47,6 +47,24 @@ export function createCinemaState({ attacker, defender } = {}) {
   };
 }
 
+/**
+ * M44.1 — Classify the attacker's swing phase at time `t` relative to
+ * the sequence's impact moment. Used by the LPC sprite renderer to
+ * select an animation frame (windup → strike → recover → idle).
+ *
+ *   t < impactAt - 350         → idle (pre-fight stance)
+ *   impactAt - 350 ≤ t < -100  → windup
+ *   -100 ≤ t < impactAt + 180  → strike (impact + immediate follow-through)
+ *   t ≥ impactAt + 180         → recover (returns to idle bob)
+ */
+export function phaseAt(t, impactAt) {
+  if (!Number.isFinite(impactAt)) return 'idle';
+  if (t < impactAt - 350) return 'idle';
+  if (t < impactAt - 100) return 'windup';
+  if (t < impactAt + 180) return 'strike';
+  return 'recover';
+}
+
 /** Find the time-ms when the sequence's primary hit-pause fires. */
 export function findHitPauseAt(seq) {
   if (!seq?.effects) return 0;
@@ -182,8 +200,18 @@ function draw(ctx, state, seq, frame, opts) {
   ctx.beginPath();
   ctx.moveTo(0, baseY + 20); ctx.lineTo(W, baseY + 20); ctx.stroke();
 
-  opts.drawSprite(ctx, 'attacker', attAnchor, frame.attacker, opts.attacker);
-  opts.drawSprite(ctx, 'defender', defAnchor, frame.defender, opts.defender);
+  // M44.1 — Augment the per-actor snapshots with timing context so a
+  // sprite renderer can pick the right pose frame for the current
+  // swing phase. Pure additive — renderers that ignore these fields
+  // still see the original x/y/rotation/scale/alpha snapshot.
+  const impactAt = findHitPauseAt(seq);
+  const attackerPhase = phaseAt(frame.t, impactAt);
+  const attSnap = { ...frame.attacker, _t: frame.t, _impactAt: impactAt, _phase: attackerPhase };
+  // Defender stays in idle for v1 — flinch is conveyed by the keyframe
+  // knockback rather than a swapped frame.
+  const defSnap = { ...frame.defender, _t: frame.t, _impactAt: impactAt, _phase: 'idle' };
+  opts.drawSprite(ctx, 'attacker', attAnchor, attSnap, opts.attacker);
+  opts.drawSprite(ctx, 'defender', defAnchor, defSnap, opts.defender);
 
   // Effects fire as snapshots — for cinema we use a small "trail" so
   // each effect persists for ~250ms after its at-time for visibility.

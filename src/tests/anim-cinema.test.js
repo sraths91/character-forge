@@ -1,7 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert';
 import {
-  createCinemaState, findHitPauseAt, applyVerdictToState, createCinema
+  createCinemaState, findHitPauseAt, applyVerdictToState, createCinema,
+  phaseAt
 } from '../js/anim/cinema.js';
 import { buildMotion } from '../js/anim/weapon-motions.js';
 
@@ -237,4 +238,28 @@ test('M44: createCinema — setActors clears any pending popups + verdict', asyn
   });
   assert.deepStrictEqual(cinema.state.popups, []);
   assert.strictEqual(cinema.state.pendingDmg, null);
+});
+
+// ---------- M44.1: phaseAt ----------
+
+test('M44.1: phaseAt — pre-windup window reads as idle', () => {
+  assert.strictEqual(phaseAt(0, 600), 'idle');
+});
+
+test('M44.1: phaseAt — windup window reads as windup', () => {
+  // impactAt - 350 ≤ t < impactAt - 100
+  assert.strictEqual(phaseAt(300, 600), 'windup');
+});
+
+test('M44.1: phaseAt — impact moment reads as strike', () => {
+  assert.strictEqual(phaseAt(600, 600), 'strike');
+});
+
+test('M44.1: phaseAt — well past impact reads as recover', () => {
+  assert.strictEqual(phaseAt(900, 600), 'recover');
+});
+
+test('M44.1: phaseAt — non-finite impactAt safely falls back to idle', () => {
+  assert.strictEqual(phaseAt(500, NaN), 'idle');
+  assert.strictEqual(phaseAt(500, null), 'idle');
 });

@@ -23,7 +23,22 @@
 import { renderSprite } from '../sprite/compositor.js';
 import { MONSTER_PRESETS, buildMonsterCharacter } from '../scene/monster-presets.js';
 
-// id → { canvas, w, h, version }
+// M44.1 — Per-actor frame cycle. We pre-render four poses sampled
+// from the LPC walk sheet:
+//   IDLE_A / IDLE_B   alternating low-amplitude bob (alive feel)
+//   WINDUP            mid-stride frame; reads as a pulled-back stance
+//   STRIKE            extreme stride; reads as a committed lunge
+// These map to LPC walk.png column indices below.
+const FRAME_IDLE_A = 0;
+const FRAME_IDLE_B = 1;
+const FRAME_WINDUP = 2;
+const FRAME_STRIKE = 6;
+const ACTOR_FRAMES = [FRAME_IDLE_A, FRAME_IDLE_B, FRAME_WINDUP, FRAME_STRIKE];
+
+// Idle bob period in ms — alternation between IDLE_A and IDLE_B.
+const IDLE_BOB_MS = 280;
+
+// id → { frames: Map<frameIdx, Canvas>, scale, direction }
 const cache = new Map();
 
 /**
@@ -42,32 +57,66 @@ export function toLpcCharacter(entity) {
 }
 
 /**
- * Pre-render `entity` into an off-screen canvas. Subsequent calls for
- * the same entity (by id) reuse the cached buffer. `scale` controls
- * the LPC render scale; the cinema typically renders at 3-4 so the
- * 64×64 sprite fills a decent portion of the scene.
+ * Pre-render `entity` into off-screen canvases — one per pose frame
+ * (idle-a, idle-b, windup, strike). The draw loop then synchronously
+ * picks a frame each tick based on the swing phase.
+ *
+ * Subsequent calls for the same entity (by id) reuse the cached
+ * buffers unless scale/direction changed. `scale` controls the LPC
+ * render scale; the cinema typically renders at 3-4 so the 64×64
+ * sprite fills a decent portion of the scene.
  */
 export async function preloadActorSprite(entity, { scale = 3, direction = 'south' } = {}) {
   const character = toLpcCharacter(entity);
   if (!character || !character.id) return null;
   const key = String(character.id);
   const cached = cache.get(key);
-  if (cached && cached.scale === scale && cached.direction === direction) return cached.canvas;
-  // Off-screen canvas; renderSprite sets its dimensions.
-  const off = makeOffscreenCanvas();
-  if (!off) return null;
-  await renderSprite(off, character, { scale, direction, frameIdx: 0 });
-  cache.set(key, { canvas: off, w: off.width, h: off.height, scale, direction });
-  return off;
+  if (cached && cached.scale === scale && cached.direction === direction) {
+    return cached;
+  }
+  const frames = new Map();
+  for (const idx of ACTOR_FRAMES) {
+    const off = makeOffscreenCanvas();
+    if (!off) continue;
+    await renderSprite(off, character, { scale, direction, frameIdx: idx });
+    frames.set(idx, off);
+  }
+  if (frames.size === 0) return null;
+  const entry = { frames, scale, direction };
+  cache.set(key, entry);
+  return entry;
+}
+
+/**
+ * Pick the right LPC frame index for the current swing phase. Pure —
+ * snapshot._phase is one of 'idle'|'windup'|'strike'|'recover'; _t is
+ * the timeline ms so the idle bob alternates frame A/B on a slow loop.
+ * `actor` distinguishes attacker (cycles through windup/strike) from
+ * defender (stays in idle unless an explicit hurt phase is supplied).
+ */
+export function pickActorFrame(snapshot = {}, actor = 'attacker') {
+  const phase = snapshot._phase || 'idle';
+  const t = Number.isFinite(snapshot._t) ? snapshot._t : 0;
+  if (actor === 'attacker') {
+    if (phase === 'windup') return FRAME_WINDUP;
+    if (phase === 'strike') return FRAME_STRIKE;
+  }
+  // Idle / recover / defender most phases — bob between A and B
+  const half = Math.floor(t / IDLE_BOB_MS) % 2;
+  return half === 0 ? FRAME_IDLE_A : FRAME_IDLE_B;
 }
 
 /** Build a drawSprite(ctx, actor, anchor, snapshot, refInfo) callback
  *  that paints the pre-rendered LPC bitmap for each actor. `lookup`
- *  is a function id → buffer canvas (defaults to the module cache). */
+ *  is a function id → cache entry (defaults to the module cache). */
 export function makeLpcDrawSprite({ lookup = defaultLookup } = {}) {
   return function drawSprite(ctx, actor, anchor, snapshot, refInfo) {
     const id = refInfo?.id ?? null;
-    const buf = id != null ? lookup(id) : null;
+    const entry = id != null ? lookup(id) : null;
+    const frameIdx = pickActorFrame(snapshot, actor);
+    const buf = entry?.frames?.get(frameIdx)
+             || entry?.frames?.get(FRAME_IDLE_A)
+             || null;
     if (!buf) {
       // Fallback — a faint label so the missing sprite is debuggable
       ctx.save();
@@ -104,8 +153,7 @@ export function makeLpcDrawSprite({ lookup = defaultLookup } = {}) {
 }
 
 function defaultLookup(id) {
-  const entry = cache.get(String(id));
-  return entry?.canvas || null;
+  return cache.get(String(id)) || null;
 }
 
 /** Drop a single actor's cached buffer (e.g. when an actor swaps out). */
