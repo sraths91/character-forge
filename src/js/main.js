@@ -827,7 +827,14 @@ async function runVersusPartyAuto() {
       } else {
         target = pickLowestHpEnemy(entry.entityKind);
       }
-      if (!target) break;   // no enemies left, end will detect
+      // M45 Phase 1 — When there's no live target, one side has been
+      // wiped. End the fight HERE; the previous "break with no verdict
+      // check" walked silently to round 30 and reported a stalemate.
+      if (!target) {
+        const verdictWipe = currentPartyEndState();
+        if (verdictWipe) return endVersusFight(verdictWipe, round);
+        break;
+      }
 
       if (plan && plan.kind === 'flee') {
         runVersusFlee(entity, target.entity);
@@ -902,6 +909,11 @@ async function runVersusPartyAuto() {
       const monHp = (currentScene.monsters || []).map(m => m.hp?.current ?? 0).reduce((a, b) => a + b, 0);
       status.textContent = `Round ${round}: party HP ${pcHp}, enemy HP ${monHp}.`;
     }
+    // M45 Phase 1 — Belt-and-braces: even if every mid-round verdict
+    // check missed (e.g. an entity died from a reaction OA off the
+    // dispatch path), end-of-round is a clean place to detect a wipe.
+    const verdictEndOfRound = currentPartyEndState();
+    if (verdictEndOfRound) return endVersusFight(verdictEndOfRound, round);
   }
   endVersusFight('draw', 30);
 }

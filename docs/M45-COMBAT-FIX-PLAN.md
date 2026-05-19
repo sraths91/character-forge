@@ -342,20 +342,51 @@ After the spine is unified, sweep the items the audit surfaced:
 
 ---
 
-## Open questions for the user
+## Decisions (resolved 2026-05-18)
 
-- **Should manual-click attacks also use `choosePcAction` to
-  recommend a target/weapon?** It would surface as a "PC AI suggests
-  the longbow against this target" hint, while still letting the
-  player click their own choice. Worth doing or keep manual = manual?
-- **Should the PC AI cast IF a PC's auto-fight `mode = 'auto'` is on,
-  or only if `versusAutoMode` is on?** Right now there's a single
-  global `versusAutoMode` flag; if a user wants a hand-driven cleric
-  with auto-fighter teammates, the current shape doesn't allow it.
-- **MCTS for "should I cast now?"** — the M42.2 MCTS pool exists for
-  slot decisions. Extend it to cast/no-cast and which-spell? Worth
-  it for high-impact spells (Fireball, Banishment, Counterspell);
-  overkill for cantrips. Recommend: only for slot-burning spells.
+- **Manual-click recommendations: YES.** When the player is mid-pick
+  in manual mode, surface a non-blocking hint like *"AI suggests the
+  longbow vs. Goblin Boss — target is 40 ft, you'd take advantage
+  via Sharpshooter."* The player can ignore it. Implementation:
+  Phase 2 wires `choosePcAction` for the live runner anyway; an
+  extra render hook in the manual-attack UI reads the plan and
+  paints a hint chip into the existing pick-target panel.
+- **Per-PC toggle: NO — keep the single global `versusAutoMode`.**
+  Simpler, fewer permutations. Revisit if real users ask.
+- **MCTS scope: maximum.** Build the highest-quality AI we can.
+  Extend the M42.2 MCTS pool to cover four decision classes, not
+  just smite slot selection:
+  1. *Slot tier* for any slot-burning spell (existing — keep).
+  2. *Cast vs. swing* — should I burn a spell this turn at all?
+  3. *Which spell* — pick the best from prepared spells given the
+     situation (kill window, target type, allies in line of fire).
+  4. *Upcast level* — if casting a leveled spell, what slot tier
+     maximizes expected encounter value?
+  Rollout primitive: the unified `runOneAttack` from Phase 4 (the
+  simulator's existing path also works as a fallback before Phase 4
+  lands). Depth: shallow (2-3 plies). Branching: pruned to the top-K
+  candidates by utility score before MCTS runs — keeps the rollout
+  budget tractable while letting MCTS resolve the close calls that
+  utility scoring alone gets wrong.
+
+This pushes Phase 3 from "PC casting works" to "PC casting *plays
+well*". The architecture refactor in Phase 4 becomes load-bearing —
+without a unified `runOneAttack` rollout primitive, the MCTS quality
+caps out at "guesses".
+
+## Plan addendum — high-quality AI scope
+
+Inserted into Phase 3 and Phase 4 below:
+
+- **Phase 3** now covers: cast plan execution + MCTS-driven spell
+  selection (the four decision classes above).
+- **Phase 4** is no longer optional. It's the foundation MCTS needs
+  to look ahead with the *real* game rules instead of a simplified
+  model.
+- **New Phase 6** (post-Phase 5): tuning pass. Run the calibrator
+  (M35) against ~50 stock encounters before/after the AI changes,
+  publish win-rate + average-rounds deltas. Caps regressions where
+  the new AI is "smart but turtles" or "smart but overcommits".
 
 ---
 
