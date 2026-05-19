@@ -23,36 +23,30 @@
  * Pure module. RNG injectable for tests.
  */
 
-import { resolveAttack } from './combat-resolver.js';
 import { rollAttack, rollDamage } from './combat-roll.js';
-import { deriveAC, deriveWeaponAttack } from './pc-stats.js';
+import { deriveAC } from './pc-stats.js';
 import { MONSTER_PRESETS } from './monster-presets.js';
-import { factionLists, chebyshevFeet } from './grid-rules.js';
-import { planMovement, occupiedCellsOf } from './movement.js';
-import { chooseAction, fleeTargetCell } from './ai/profile.js';
-import { choosePcAction } from './ai/pc-action.js';
-import { PC_FEATURES, resetPerTurnFlags } from './ai/pc-features.js';
 import {
-  resetReactionsForAll, consumeReaction, detectOpportunityAttacks,
-  detectPolearmEntryOAs, shouldCastShield, canCastShield,
-  consumeShield, lvl1SlotsForPc, lvl3SlotsForPc, slotsForPc,
-  shouldCounterspell, consumeCounterspell, resolveCounterspell
+  resetReactionsForAll, shouldCastShield, consumeShield,
+  lvl1SlotsForPc, lvl3SlotsForPc, slotsForPc
 } from './reactions.js';
 import {
-  freshSlots, consumeSlot, spellById, spellbookFor, isSpellcaster,
-  isInnateCaster, freshInnateState, rollInnateRecharges,
-  consumeInnate, applyUpcast
+  freshSlots, isSpellcaster, isInnateCaster, freshInnateState
 } from './monster-spells.js';
 import {
   isLegendary, freshLegendaryBudget, resetLegendaryBudget,
   chooseLegendaryAction, spendLegendaryAction
 } from './monster-legendary.js';
-import {
-  startConcentration, isConcentrating, dropConcentration,
-  handleDamageOnConcentration
-} from './concentration.js';
 import { rollSave } from './save-rolls.js';
-import { MONSTER_DEFAULT_SAVES } from './monster-presets.js';
+// M45 Phase 4 — Combat resolution moved to a shared engine module so
+// the live runner can dispatch through the same spine without
+// re-implementing rules. Per-attack logic, spell casting, reactions,
+// and the helper cluster (saveBonusFor / isAlive / sideAlive / etc.)
+// all live in combat-engine.js now.
+import {
+  runOneAttack, applyDamageToEntity, saveBonusFor,
+  isAlive, isIncapacitated, sideAlive
+} from './combat-engine.js';
 
 /**
  * Small mulberry32 PRNG. Pure JS, deterministic, fast. Seed in (0, 2^32).
@@ -225,266 +219,6 @@ function runOneIteration({ party, monsters, scene, maxRounds, rng }) {
 
 // ---------- Per-attack ----------
 
-function runOneAttack(attacker, enemies, allies, scene, rng) {
-  // M37 — At the start of each monster's turn, roll d6 for any innate
-  // spells that are cooling down. The recharged-list isn't surfaced in
-  // the simulator path (we have no log here); main.js can read it for
-  // versus.
-  if (attacker.kind === 'monster' && attacker._innate) {
-    rollInnateRecharges(attacker, rng);
-  }
-  // M32 — Monsters consult their AI profile.
-  // M42 — PCs do too. choosePcAction picks weapon/spell/feature and
-  // returns the same plan shape so the dispatch below stays unified.
-  let plan = null;
-  let target;
-  if (attacker.kind === 'monster') {
-    plan = chooseAction({
-      self: attacker,
-      enemies: enemies.filter(isAlive),
-      allies: allies.filter(isAlive),
-      rng
-    });
-    attacker._lastPlan = plan;
-    if (plan.targetId) {
-      target = enemies.find(e => e.id === plan.targetId);
-    } else {
-      target = pickTarget(enemies);
-    }
-  } else {
-    // M42 — Per-turn AI for PCs. Resets sneak-attack/cunning-action
-    // flags first, then picks the best (weapon/spell/feature) action.
-    resetPerTurnFlags(attacker);
-    plan = choosePcAction({
-      self: attacker,
-      enemies: enemies.filter(isAlive),
-      allies: allies.filter(isAlive),
-      rng
-    });
-    attacker._lastPlan = plan;
-    if (plan?.weapon) attacker._chosenWeapon = plan.weapon;   // M42 weapon switch
-    if (plan?.targetId) target = enemies.find(e => e.id === plan.targetId);
-    else target = pickTarget(enemies);
-  }
-  if (!target) return;
-
-  // M31 — Movement step before the attack. M32: if the profile said
-  // 'flee', the attacker moves AWAY from the nearest threat instead of
-  // toward it, and skips the attack roll this turn.
-  const attackerPos = attacker._position || attacker.position;
-  const targetPos   = target._position   || target.position;
-  if (attackerPos && targetPos) {
-    const weapon = attacker.kind === 'pc' ? attacker.weapon : { name: attacker.attack?.name };
-    const occupied = occupiedCellsOf({
-      party: allies, monsters: enemies,
-      excludeId: attacker.id
-    });
-    const bounds = { cols: scene?.cols || 99, rows: scene?.rows || 99 };
-    const moveTarget = (plan && plan.kind === 'flee')
-      ? fleeTargetCell(attacker, target, bounds, rng)
-      : targetPos;
-    const next = planMovement({
-      from: attackerPos, to: moveTarget, weapon,
-      speedFt: 30, occupied, bounds
-    });
-    if (next && (next.col !== attackerPos.col || next.row !== attackerPos.row)) {
-      // M33.0 — opportunity attacks fire BEFORE the move resolves.
-      // The interrupting attack is made at the cell the mover is leaving
-      // (PHB p195: "the reaction interrupts the provoking action").
-      // M33.2 — Polearm Master entry-OAs use the *destination* cell so
-      // we resolve them at the cell the mover is entering.
-      const leaveTriggers = detectOpportunityAttacks({
-        mover: attacker, before: attackerPos, after: next, hostiles: enemies
-      });
-      const entryTriggers = detectPolearmEntryOAs({
-        mover: attacker, before: attackerPos, after: next, hostiles: enemies
-      });
-      for (const { triggerer } of leaveTriggers) {
-        if (!isAlive(attacker)) break;
-        runReactionAttack(triggerer, attacker, attackerPos, scene, rng);
-        consumeReaction(triggerer);
-      }
-      for (const { triggerer } of entryTriggers) {
-        if (!isAlive(attacker)) break;
-        runReactionAttack(triggerer, attacker, next, scene, rng);
-        consumeReaction(triggerer);
-      }
-      if (attacker.kind === 'pc') attacker._position = next;
-      else attacker.position = next;
-    }
-  }
-
-  // Fleeing creatures Dash instead of attacking
-  if (plan && plan.kind === 'flee') return;
-  // M42 — Non-attack PC actions skip the resolver entirely.
-  if (plan && (plan.kind === 'dash' || plan.kind === 'dodge' || plan.kind === 'disengage')) {
-    return;
-  }
-
-  // M34 — Casting branch: monster spends its action on a spell instead
-  // of a weapon attack. Concentration spells replace any existing
-  // concentration (PHB p203). Slots are deducted on cast (cantrips free).
-  if (plan && plan.kind === 'cast') {
-    // M34.2 — heals target an ally, not an enemy. The chooseAction
-    // result tags targetSide='ally' for these; resolve against allies.
-    let castTarget = target;
-    if (plan.targetSide === 'ally') {
-      castTarget = allies.find(a => a.id === plan.targetId) || null;
-    }
-    if (!castTarget) return;
-    // M42.1 — PCs already have _slots seeded at fight start
-    // (via slotsForPc). Safety: lazy-init if missing.
-    if (attacker.kind === 'pc' && !attacker._slots) {
-      attacker._slots = slotsForPc(attacker.ref || attacker);
-    }
-    // M34.1 — witnesses = opposing-side PCs (the only Counterspell holders)
-    // M37 — allEnemies = the mover's hostile side for AoE save spells
-    runMonsterSpell({
-      attacker, target: castTarget, plan, scene, rng,
-      witnesses: enemies.filter(isAlive).filter(e => e.kind === 'pc'),
-      allEnemies: enemies
-    });
-    return;
-  }
-
-  // Build the resolver context. For PCs we use deriveWeaponAttack; for
-  // monsters we use the preset attack record directly.
-  // M42 — PC may have switched weapons (e.g. drew a bow for a distant
-  // target). Honor the AI's chosen weapon if set; otherwise default to
-  // the mainhand we cached at fight start.
-  let attackStats;
-  if (attacker.kind === 'pc') {
-    const chosen = attacker._chosenWeapon || attacker.weapon;
-    const a = deriveWeaponAttack(attacker.ref, chosen);
-    attackStats = {
-      bonus: a.bonus, dice: a.dice, damageType: a.damageType,
-      parts: [{ source: chosen?.name || 'Attack', value: a.bonus }],
-      damageParts: []
-    };
-    // M42 — Sneak Attack: when the rogue's chosen action fires this
-    // feature, add the SA dice to the damage roll. PHB p96.
-    if (plan?.featuresFired?.includes('sneak-attack')) {
-      const lvl = (attacker.ref.classes || []).find(c => /rogue/i.test(c.name))?.level || 1;
-      const saDice = Math.max(1, Math.ceil(lvl / 2));
-      attackStats.dice = `${attackStats.dice}+${saDice}d6`;
-      // Mark used so it can't fire again until next turn
-      PC_FEATURES['sneak-attack'].consume(attacker);
-    }
-    // M42.1 — Reckless Attack: barbarian trades for advantage on
-    // their attack roll (resolver override below). The "all attacks
-    // against this PC have advantage" downside is set on the PC and
-    // read when monsters attack them.
-    if (plan?.featuresFired?.includes('reckless-attack')) {
-      PC_FEATURES['reckless-attack'].consume(attacker);
-    }
-  } else {
-    attackStats = {
-      bonus: attacker.attack.bonus, dice: attacker.attack.dice,
-      damageType: null,
-      parts: [{ source: attacker.attack.name, value: attacker.attack.bonus }],
-      damageParts: []
-    };
-  }
-
-  // factionLists wants the raw refs — we pass shallow-shapes so the
-  // resolver can read .conditions / position.
-  const attackerForResolver = {
-    ...attacker.ref,
-    conditions: attacker.conditions,
-    _position: attacker._position || attacker.position,
-    combatMods: attacker.combatMods || attacker.ref?.combatMods || []
-  };
-  const targetForResolver = {
-    ...target.ref,
-    conditions: target.conditions,
-    _position: target._position || target.position
-  };
-  const { allies: allyList, hostiles: hostileList } = factionLists({
-    attackerKind: attacker.kind,
-    attackerId: attacker.id,
-    party: attacker.kind === 'pc'
-      ? allies.map(p => ({ ...p.ref, _position: p._position, conditions: p.conditions, id: p.id, name: p.name }))
-      : enemies.map(p => ({ ...p.ref, _position: p._position, conditions: p.conditions, id: p.id, name: p.name })),
-    monsters: attacker.kind === 'pc'
-      ? enemies.map(m => ({ ...m.ref, position: m.position, conditions: m.conditions, id: m.id, name: m.name }))
-      : allies.map(m => ({ ...m.ref, position: m.position, conditions: m.conditions, id: m.id, name: m.name }))
-  });
-
-  // M42.1 — Reckless Attack overrides advantage on the barb's swing.
-  // M42.1 — Monster attacks against a reckless barb also get advantage
-  // (read via the resolver's `target._recklessUntilNextTurn` flag check
-  // — we just propagate it on the resolver target object).
-  let advantageOverride = 'auto';
-  if (attacker.kind === 'pc' && attacker._recklessUntilNextTurn) {
-    advantageOverride = 'advantage';
-  } else if (attacker.kind === 'monster' && target?._recklessUntilNextTurn) {
-    advantageOverride = 'advantage';
-  }
-  const verdict = resolveAttack({
-    attacker: attackerForResolver,
-    target: targetForResolver,
-    weapon: attacker.kind === 'pc' ? attacker.weapon : { name: attacker.attack.name },
-    scene,
-    attackerKind: attacker.kind,
-    targetKind: target.kind,
-    targetAC: target.ac,
-    advantageOverride,
-    allies: allyList,
-    hostiles: hostileList,
-    attackStats
-  });
-
-  if (verdict.autoMiss) return;   // attacker incapacitated / out of reach
-
-  const finalBonus = verdict.attackBonus.total;
-  const finalDmgDice = verdict.damage.dice;
-  let atk;
-  if (verdict.autoCrit) {
-    atk = { hit: true, crit: true, total: 20 + finalBonus };
-  } else {
-    atk = rollAttack({ bonus: finalBonus, advantage: verdict.d20.mode, targetAC: target.ac }, rng);
-  }
-  // M33.1 — Shield reaction (target casts AFTER the roll lands).
-  // Cantrips of self-cast Shield convert a marginal hit into a miss.
-  if (atk.hit && !atk.crit && target.kind === 'pc' &&
-      shouldCastShield({ target, attackerTotal: atk.total, targetAc: target.ac })) {
-    consumeShield(target);
-    atk.hit = false;
-    atk.shielded = true;
-  }
-  if (!atk.hit) return;
-  const dmg = rollDamage(finalDmgDice, { crit: atk.crit }, rng);
-  target.hp = Math.max(0, target.hp - dmg.total);
-  attacker.damageDealt += dmg.total;
-
-  // M42.1 — Divine Smite: paladin burns a slot AFTER the hit lands,
-  // adding 2d8 + 1d8 per slot level above 1st (max 5d8), +1d8 vs
-  // fiends/undead. The slot was reserved on the entity (._smiteSlotUsed)
-  // during the AI's action choice.
-  if (attacker.kind === 'pc' && plan?.featuresFired?.includes('divine-smite')) {
-    PC_FEATURES['divine-smite'].consume(attacker);
-    const slotLevel = attacker._smiteSlotUsed || 1;
-    let smiteDice = Math.min(5, 2 + (slotLevel - 1));   // 1st→2d8, 2nd→3d8, ... 5th→5d8 (cap)
-    // +1d8 against fiends or undead (target type lookup)
-    const tType = String(target?.ref?.race?.name || target?.presetSlug || '').toLowerCase();
-    if (/fiend|devil|demon|undead|zombie|skeleton|vampire|ghoul/.test(tType)) smiteDice += 1;
-    const smiteRoll = rollDamage(`${smiteDice}d8`, { crit: atk.crit }, rng);
-    target.hp = Math.max(0, target.hp - smiteRoll.total);
-    attacker.damageDealt += smiteRoll.total;
-  }
-
-  // M42 — Action Surge: if the AI elected to burn it on this turn,
-  // resolve a second action right now (a recursive call gated to one
-  // surge per turn). Surge gives a full second attack/cast.
-  if (plan?.featuresFired?.includes('action-surge') && !attacker._surgeFiredThisTurn) {
-    attacker._surgeFiredThisTurn = true;
-    PC_FEATURES['action-surge'].consume(attacker);
-    if (isAlive(attacker) && sideAlive(enemies) > 0) {
-      runOneAttack(attacker, enemies, allies, scene, rng);
-    }
-    attacker._surgeFiredThisTurn = false;
-  }
-}
 
 // ---------- Monster spellcasting (M34) ----------
 
@@ -498,211 +232,13 @@ function runOneAttack(attacker, enemies, allies, scene, rng) {
  * consumed for non-cantrips; concentration replaced if the spell needs
  * it (PHB p203 — only one at a time).
  */
-function runMonsterSpell({ attacker, target, plan, scene: _scene, rng, witnesses = [], allEnemies = [] }) {
-  const baseSpell = spellById(plan.spellId);
-  if (!baseSpell) return;
-  // M40 — Upcasting: if the plan picked a higher slot level than the
-  // spell's base, scale dice/darts accordingly. Pure: applyUpcast
-  // returns a new spell-shaped object; never mutates the registry.
-  const spell = applyUpcast(baseSpell, plan.castAtLevel);
-  const book = attacker.kind === 'monster' ? spellbookFor(attacker.presetSlug) : null;
-  // M37 — innate-only casters have no slot book. We synthesize a
-  // minimal "book" so the rest of the function (DC + attackBonus reads)
-  // can stay unchanged.
-  const innateBook = !book && attacker._innate
-    ? { dc: 12, attackBonus: 4, abilityMod: 3 }       // safe defaults; real values come from MONSTER_INNATE if needed
-    : null;
-  // M42.1 — PC casters: derive a book from their class spellcasting
-  // ability. Cleric uses WIS, paladin uses CHA. Fall back to INT mod.
-  const pcBook = !book && !innateBook && attacker.kind === 'pc'
-    ? pcSpellBook(attacker) : null;
-  const effectiveBook = book || innateBook || pcBook;
-  if (!effectiveBook) return;
 
-  // Concentration replacement: dropping the previous spell would clear
-  // its applied conditions, but we don't track that lookup here — just
-  // mark concentration ended.
-  if (spell.concentration && isConcentrating(attacker)) dropConcentration(attacker);
-
-  // M37 — resource accounting. Slot-cast spells decrement the slot pool;
-  // innates use their own atWill / recharge / perDay pools.
-  // M40 — slot consumption uses plan.castAtLevel so upcasted spells
-  // burn the right slot.
-  if (plan.isInnate) {
-    consumeInnate(attacker, plan.spellId);
-  } else {
-    consumeSlot(attacker._slots, baseSpell, plan.castAtLevel);
-  }
-
-  // M34.1 — Counterspell window: any witness (opposing-side caster) can
-  // attempt to counter before the spell resolves. First successful
-  // counter wins; the rest don't get to try.
-  for (const witness of witnesses) {
-    if (!shouldCounterspell(witness, spell.level)) continue;
-    const ability = saveBonusFor(witness, abilityForCounterer(witness));
-    const result = resolveCounterspell({ spellLevel: spell.level, counterMod: ability }, rng);
-    consumeCounterspell(witness);
-    if (result.countered) return;     // spell fizzles; slot already burned
-    break;                            // failed counter still burns the reaction
-  }
-
-  // M34.2 — Healing spells: roll dice + add caster's spellcasting mod.
-  if (spell.kind === 'heal') {
-    const dmgRoll = rollDamage(spell.dice, { crit: false }, rng);
-    const mod = spell.addsAbilityMod ? (effectiveBook.abilityMod || 0) : 0;
-    const heal = dmgRoll.total + mod;
-    if (target?.hpMax > 0) {
-      target.hp = Math.min(target.hpMax, target.hp + heal);
-    }
-    return;
-  }
-
-  if (spell.kind === 'auto-hit') {
-    // PHB Shield (p275): "you take no damage from magic missile."
-    // The reaction triggers on being targeted; if PC has the resources,
-    // they cast it and negate every dart.
-    if (target.kind === 'pc' && canCastShield(target)) {
-      consumeShield(target);
-      return;
-    }
-    const darts = spell.darts || 1;
-    let totalDmg = 0;
-    for (let i = 0; i < darts; i++) {
-      const r = rollDamage(spell.perDart, { crit: false }, rng);
-      totalDmg += r.total;
-    }
-    applyDamageToEntity(target, totalDmg);
-    attacker.damageDealt += totalDmg;
-    return;
-  }
-
-  if (spell.kind === 'spell-attack') {
-    // Spell attack roll: 1d20 + attackBonus vs target.ac
-    const atk = rollAttack({
-      bonus: effectiveBook.attackBonus,
-      advantage: 'normal',
-      targetAC: target.ac
-    }, rng);
-    // M34 + M33.1: Shield blocks spell attacks too (PHB p275 RAW)
-    if (atk.hit && !atk.crit && target.kind === 'pc' &&
-        shouldCastShield({ target, attackerTotal: atk.total, targetAc: target.ac })) {
-      consumeShield(target);
-      return;
-    }
-    if (!atk.hit) return;
-    const dmg = rollDamage(spell.dice, { crit: atk.crit }, rng);
-    applyDamageToEntity(target, dmg.total);
-    attacker.damageDealt += dmg.total;
-    return;
-  }
-
-  // M37 — AoE save spells (like dragon breath) hit every hostile within
-  // the spell's range, rolling an independent save per target.
-  if (spell.aoe && allEnemies.length > 0) {
-    const center = attacker._position || attacker.position;
-    if (center) {
-      let totalDmg = 0;
-      for (const e of allEnemies) {
-        if (!isAlive(e)) continue;
-        const ep = e._position || e.position;
-        if (!ep) continue;
-        if (chebyshevFeet(center, ep) > (spell.range || 15)) continue;
-        const eBonus = saveBonusFor(e, spell.saveStat);
-        const eSave = rollSave({ bonus: eBonus, dc: effectiveBook.dc }, rng);
-        const dmgRoll = rollDamage(spell.dice, { crit: false }, rng);
-        let dmg = dmgRoll.total;
-        if (eSave.success) dmg = spell.saveOnHalf ? Math.floor(dmg / 2) : 0;
-        applyDamageToEntity(e, dmg);
-        totalDmg += dmg;
-      }
-      attacker.damageDealt += totalDmg;
-    }
-    return;
-  }
-
-  // Save-based (cantrip-save or leveled-save), single target
-  const saveStat = spell.saveStat;
-  const targetSaveBonus = saveBonusFor(target, saveStat);
-  const save = rollSave({ bonus: targetSaveBonus, dc: effectiveBook.dc }, rng);
-  if (spell.dice) {
-    const dmgRoll = rollDamage(spell.dice, { crit: false }, rng);
-    let dmg = dmgRoll.total;
-    if (save.success) dmg = spell.saveOnHalf ? Math.floor(dmg / 2) : 0;
-    applyDamageToEntity(target, dmg);
-    attacker.damageDealt += dmg;
-  }
-  // Apply a condition on failed save (Hold Person → paralyzed)
-  if (!save.success && spell.appliesCondition) {
-    if (!target.conditions.includes(spell.appliesCondition)) {
-      target.conditions.push(spell.appliesCondition);
-    }
-    if (spell.concentration) {
-      startConcentration(attacker, spell, [target.id]);
-    }
-  }
-}
-
-function applyDamageToEntity(target, damage) {
-  if (!target || damage <= 0) return;
-  const before = target.hp;
-  target.hp = Math.max(0, target.hp - damage);
-  // M34: concentration save on damage taken
-  const dealtDamage = before - target.hp;
-  if (dealtDamage > 0 && isConcentrating(target)) {
-    const conMod = saveBonusFor(target, 'CON');
-    // Note: not threading rng here makes this non-deterministic when
-    // a concentrating target takes auto-hit damage. The simulator's
-    // runMonsterSpell already passed rng down to rollDamage, but we
-    // lose it here. Acceptable v1 trade-off: concentrating monsters
-    // are rare (cult fanatic only); we can plumb rng later if needed.
-    handleDamageOnConcentration({ caster: target, damage: dealtDamage, conMod });
-  }
-}
 
 /** Pick the spellcasting ability stat for a PC's Counterspell check. */
 /** M42.1 — Derive a spell-book shape for a PC caster (DC + attackBonus
  *  + abilityMod) so runMonsterSpell can apply spell math uniformly. */
-function pcSpellBook(attacker) {
-  const ref = attacker.ref || attacker;
-  const classes = ref?.classes || [];
-  // Pick the first matching caster class to determine spellcasting stat.
-  let stat = 'INT';
-  for (const c of classes) {
-    const name = String(c?.name || '').toLowerCase();
-    if (name === 'cleric' || name === 'druid' || name === 'ranger') { stat = 'WIS'; break; }
-    if (name === 'bard' || name === 'sorcerer' || name === 'warlock' || name === 'paladin') { stat = 'CHA'; break; }
-    if (name === 'wizard' || name === 'artificer') { stat = 'INT'; break; }
-  }
-  const mod = ref?.abilityModifiers?.[stat] ?? 0;
-  const prof = 2 + Math.floor(((classes[0]?.level || 1) - 1) / 4);
-  return {
-    dc: 8 + prof + mod,
-    attackBonus: prof + mod,
-    abilityMod: mod
-  };
-}
 
-function abilityForCounterer(pc) {
-  const classes = pc?.ref?.classes || [];
-  for (const c of classes) {
-    const name = String(c?.name || '').toLowerCase();
-    if (name === 'wizard' || name === 'artificer') return 'INT';
-    if (name === 'cleric' || name === 'druid' || name === 'ranger') return 'WIS';
-    if (name === 'bard' || name === 'sorcerer' || name === 'warlock' || name === 'paladin') return 'CHA';
-  }
-  return 'INT';
-}
 
-function saveBonusFor(entity, stat) {
-  if (!entity || !stat) return 0;
-  if (entity.kind === 'pc') {
-    const ref = entity.ref || entity;
-    return ref.abilityModifiers?.[stat] ?? 0;
-  }
-  // Monster — read from MONSTER_DEFAULT_SAVES
-  const table = MONSTER_DEFAULT_SAVES[entity.presetSlug];
-  return table ? (table[stat] || 0) : 0;
-}
 
 // ---------- Legendary actions (M41) ----------
 
@@ -789,87 +325,9 @@ function applyLegendaryAction(monster, pick, scene, rng) {
  *   aoe-save     — every enemy in range rolls a save; half-on-save
  *                  damage on success.
  */
-function runReactionAttack(attacker, target, targetBeforePos, scene, rng) {
-  if (!attacker || !target) return;
-  // The mover (target of the OA) is interrupted at `targetBeforePos`.
-  // We pass that as their position so the resolver computes reach
-  // distance from the cell they were in when they triggered the OA.
-  let attackStats;
-  if (attacker.kind === 'pc') {
-    const a = deriveWeaponAttack(attacker.ref, attacker.weapon);
-    attackStats = {
-      bonus: a.bonus, dice: a.dice, damageType: a.damageType,
-      parts: [{ source: attacker.weapon?.name || 'Attack', value: a.bonus }],
-      damageParts: []
-    };
-  } else {
-    attackStats = {
-      bonus: attacker.attack.bonus, dice: attacker.attack.dice,
-      damageType: null,
-      parts: [{ source: attacker.attack.name, value: attacker.attack.bonus }],
-      damageParts: []
-    };
-  }
-  const targetForResolver = {
-    ...target.ref,
-    conditions: target.conditions,
-    _position: targetBeforePos
-  };
-  const attackerForResolver = {
-    ...attacker.ref,
-    conditions: attacker.conditions,
-    _position: attacker._position || attacker.position,
-    combatMods: attacker.combatMods || attacker.ref?.combatMods || []
-  };
-  const verdict = resolveAttack({
-    attacker: attackerForResolver,
-    target: targetForResolver,
-    weapon: attacker.kind === 'pc' ? attacker.weapon : { name: attacker.attack.name },
-    scene,
-    attackerKind: attacker.kind,
-    targetKind: target.kind,
-    targetAC: target.ac,
-    advantageOverride: 'auto',
-    allies: [], hostiles: [],
-    attackStats
-  });
-  if (verdict.autoMiss) return;
-  const atk = verdict.autoCrit
-    ? { hit: true, crit: true, total: 20 + verdict.attackBonus.total }
-    : rollAttack({ bonus: verdict.attackBonus.total, advantage: verdict.d20.mode, targetAC: target.ac }, rng);
-  // M33.1 — OA can also be Shield-blocked.
-  if (atk.hit && !atk.crit && target.kind === 'pc' &&
-      shouldCastShield({ target, attackerTotal: atk.total, targetAc: target.ac })) {
-    consumeShield(target);
-    atk.hit = false;
-  }
-  if (!atk.hit) return;
-  const dmg = rollDamage(verdict.damage.dice, { crit: atk.crit }, rng);
-  target.hp = Math.max(0, target.hp - dmg.total);
-  attacker.damageDealt += dmg.total;
-}
 
 // ---------- Targeting + helpers ----------
 
-function pickTarget(enemies) {
-  // Lowest current HP (alive) — represents focus-fire strategy.
-  let best = null;
-  for (const e of enemies) {
-    if (!isAlive(e)) continue;
-    if (!best || e.hp < best.hp) best = e;
-  }
-  return best;
-}
-
-function isAlive(e) { return e.hp > 0; }
-function isIncapacitated(e) {
-  const c = e.conditions || [];
-  return c.includes('paralyzed') || c.includes('stunned') ||
-         c.includes('unconscious') || c.includes('petrified');
-}
-function sideAlive(side) {
-  return side.filter(e => isAlive(e) && !isIncapacitated(e)).length;
-}
 
 // ---------- Stats aggregation ----------
 

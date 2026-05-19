@@ -278,6 +278,9 @@ gets too dense: `src/js/scene/cast-runner.js`.
 
 ### Phase 4 — Convergence: collapse live + simulator onto one spine
 
+**Status: Phase 4a SHIPPED — spine extracted. Phase 4b (live-runner
+migration) is the next step.**
+
 **Goal.** A single `runOneAttack(state, plan, context)` function. Both
 the simulator and the live runner call it. UI prompts/pacing/cinema
 are *side-channels* attached via callbacks, not parallel
@@ -285,6 +288,37 @@ re-implementations.
 
 This is the architectural fix that prevents Bugs 2 and 3 from
 re-emerging in a different shape next time something is added.
+
+**Phase 4a — Spine extraction (DONE).** Moved 542 lines of rule logic
+from `simulator.js` to a new `src/js/scene/combat-engine.js`:
+`runOneAttack` (planner dispatch → movement → opportunity attacks →
+weapon attack with full feature triggers), `runMonsterSpell` (spell
+casting for both monster + PC), `runReactionAttack`, plus the helper
+cluster (`applyDamageToEntity`, `saveBonusFor`, `pcSpellBook`,
+`abilityForCounterer`, `pickTarget`, `isAlive`, `isIncapacitated`,
+`sideAlive`). Simulator now imports them back — all 916 existing
+tests pass identically. The new function carries a reserved
+`prompts = {}` parameter for the live-runner migration.
+
+**Phase 4b — Live runner migration (PENDING).** Replace
+`runVersusPartyAuto`'s per-entity-turn body with a call into
+`combat-engine.runOneAttack`. The `prompts` object plumbs through
+the player-facing reactions:
+  - `onShieldReaction({ defender, atk })` → user click to cast Shield
+  - `onCounterspell({ caster, spell, witness })` → user click to counter
+  - `onReactionAttack({ triggerer, mover })` → user click to fire OA
+  - `onCinemaRound({ attacker, defender, dmg, crit, ... })` → cinema
+    awaits each exchange so HP bars + popups time with the swing
+The simulator passes `{}` (auto-resolve everything). The live runner
+passes the real prompt functions, awaiting them where relevant.
+
+`attackInVersus` collapses from ~100 lines to ~20 (just builds the
+wrapped attacker/target shape and hands off). `runAttackPrompt` keeps
+its manual-click entry but its core resolver work becomes one call
+into the engine. Estimated: ~200 lines added in the engine for the
+prompts machinery, ~300 lines removed from main.js, +6-8 invariance
+tests asserting HP-trajectory parity between live-mode (with all
+prompts auto-resolving) and simulator-mode.
 
 **Tasks.**
 1. Identify the simulator's `runOneAttack` (or equivalent) in
