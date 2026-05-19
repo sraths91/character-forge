@@ -48,7 +48,10 @@ export function applyPolish(seq, ctx = {}) {
     out.effects.push(
       { at: impactAt,      type: 'hit-pause', params: { duration: 220, _polish: 'crit' } },
       { at: impactAt - 10, type: 'flash',     params: { intensity: 0.55 } },
-      { at: impactAt + 40, type: 'shake',     params: { amplitude: 6 } }
+      { at: impactAt + 40, type: 'shake',     params: { amplitude: 6 } },
+      // M47 — Debris shards spray from the impact on a crit.
+      { at: impactAt, type: 'particles',
+        params: { preset: 'critShards', origin: 'defender', _polish: 'crit' } }
     );
     out.meta.crit = true;
   }

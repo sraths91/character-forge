@@ -106,7 +106,13 @@ function buildSneakAttack({ base, level }) {
   const radius = 18 + Math.min(6, dice) * 4;
   patch.effects.push(
     { at: impact - 20, type: 'burst', params: { damageType: 'necrotic', radius, _modifier: 'sneak-attack' } },
-    { at: impact,       type: 'shake', params: { amplitude: 2 + Math.min(4, dice * 0.5) } }
+    { at: impact,       type: 'shake', params: { amplitude: 2 + Math.min(4, dice * 0.5) } },
+    // M47 — Shadow motes drift outward from the strike. Count scales
+    // with sneak-attack dice — more dice → more visible.
+    { at: impact, type: 'particles',
+      params: { preset: 'shadowMotes', origin: 'defender',
+                count: 8 + Math.min(8, dice * 2),
+                _modifier: 'sneak-attack' } }
   );
   patch.duration = impact + 250;
   patch.meta = { modifier: 'sneak-attack', dice };
@@ -130,6 +136,18 @@ function buildRage({ base }) {
       duration: total, _modifier: 'rage'
     }
   });
+  // M47 — Rising ember stream around the attacker during the wind-up,
+  // pulsing on the roar and again at impact. Two emitter bursts give
+  // the rage a sustained kinetic feel rather than a static aura.
+  const impact = impactTimeOf(base);
+  patch.effects.push(
+    { at: 60, type: 'particles',
+      params: { preset: 'rageEmbers', origin: 'attacker', count: 14,
+                _modifier: 'rage' } },
+    { at: Math.max(0, impact - 50), type: 'particles',
+      params: { preset: 'rageEmbers', origin: 'attacker', count: 10,
+                _modifier: 'rage' } }
+  );
   // "Roar" — attacker compresses then expands (squash & stretch).
   patch.keyframes.push(
     { at: 0,   actor: 'attacker', scale: 1.06, y: 2, easing: 'easeOut' },
@@ -183,7 +201,12 @@ function buildDivineSmite({ base, slot }) {
       params: { damageType: 'radiant', _modifier: 'divine-smite' } },
     { at: impact - 10, type: 'flash', params: { intensity } },
     { at: impact,      type: 'burst',
-      params: { damageType: 'radiant', radius: burstRadius, _modifier: 'divine-smite' } }
+      params: { damageType: 'radiant', radius: burstRadius, _modifier: 'divine-smite' } },
+    // M47 — Holy sparks scale with slot tier: a 5th-level smite
+    // explodes with more visible particles than a 1st-level.
+    { at: impact, type: 'particles',
+      params: { preset: 'smiteSparks', origin: 'defender',
+                count: 14 + tier * 4, _modifier: 'divine-smite' } }
   );
   patch.duration = impact + 300;
   patch.meta = { modifier: 'divine-smite', slot: tier };

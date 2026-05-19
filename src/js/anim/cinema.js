@@ -29,6 +29,7 @@
  */
 
 import { playSequence } from './timeline.js';
+import { createParticleSystem, presetConfig } from './particles.js';
 
 /* =====================================================================
  * Pure state machine
@@ -122,8 +123,17 @@ export function createCinema({
   // M44.2 — Mutable background painter so the host can swap terrains
   // without rebuilding the controller.
   let currentBg = drawBackground;
+  // M47 — Particle system. Lives on the controller because particles
+  // must persist across frames (spawn during one frame's effect
+  // dispatch → physics ticks until lifespan expires). resetBetween
+  // rounds so a stale ember from the last fight doesn't bleed into
+  // the next one.
+  const particles = createParticleSystem();
+  let prevFrameT = 0;
 
   function playRound(seq, verdict = {}) {
+    particles.reset();
+    prevFrameT = 0;
     const pauseAt = findHitPauseAt(seq);
     state.pendingDmg = {
       victim: verdict.victim || 'defender',
@@ -142,9 +152,14 @@ export function createCinema({
     }
     const ctl = playSequence(seq, (frame) => {
       applyVerdictToState(state, frame.t, pauseAt);
+      // M47 — Tick particles every frame in seconds since prev draw.
+      const dt = Math.max(0, (frame.t - prevFrameT) / 1000);
+      particles.tick(dt);
+      prevFrameT = frame.t;
       draw(ctx, state, seq, frame, {
         attacker: actorRefs.attacker, defender: actorRefs.defender,
-        drawSprite, drawBackground: currentBg, scale, canvas
+        drawSprite, drawBackground: currentBg, scale, canvas,
+        particles
       });
     }, {});
     return ctl.promise;
@@ -239,14 +254,35 @@ function draw(ctx, state, seq, frame, opts) {
   // Effects fire as snapshots — for cinema we use a small "trail" so
   // each effect persists for ~250ms after its at-time for visibility.
   // Sustained effects (aura) opt into a longer window via params.duration.
+  // M47 — `particles` effects spawn into the shared particle system
+  // ONCE at their `at` moment; the system itself owns the per-frame
+  // physics + draw beyond that.
   for (const ef of seq.effects) {
     const age = frame.t - ef.at;
     if (age < 0) continue;
+    if (ef.type === 'particles') {
+      // Fire-once spawn — guard against double-spawning by stamping
+      // a sentinel on the effect.
+      if (!ef._spawned) {
+        const origin = ef.params?.origin === 'attacker' ? attAnchor
+                     : ef.params?.origin === 'defender' ? defAnchor
+                     : (ef.params?.origin || defAnchor);
+        const config = ef.params?.preset
+          ? presetConfig(ef.params.preset, ef.params)
+          : ef.params;
+        if (config) opts.particles?.spawn(config, origin);
+        ef._spawned = true;
+      }
+      continue;
+    }
     const window = Number.isFinite(ef.params?.duration) ? ef.params.duration : 300;
     if (age > window) continue;
     const u = age / window;
     drawEffect(ctx, ef, u, attAnchor, defAnchor);
   }
+  // M47 — Render live particles on top of the effect primitives but
+  // beneath the HP bars + popups so UI stays readable.
+  opts.particles?.draw(ctx);
 
   drawHpBar(ctx, 'attacker', { hp: state.attHp, hpMax: state.attHpMax, name: state.attacker.name },
     { x: 24, y: 24, w: W * 0.36, h: 16 });
