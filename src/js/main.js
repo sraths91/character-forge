@@ -640,7 +640,11 @@ async function playCinemaRoundForAttack(attackerHit, targetHit, dmg, opts = {}) 
   await versusCinema.playRound(seq, {
     victim: 'defender',
     dmg: Math.max(0, dmg | 0),
-    miss: !dmg
+    crit: !!opts.crit,
+    // M43.6 — Prefer the explicit miss signal from the attack resolver
+    // (a 0-damage hit on a resistant target should NOT read as a miss).
+    // Fall back to the dmg-derived inference for legacy callers.
+    miss: opts.miss != null ? !!opts.miss : !dmg
   });
 }
 
@@ -824,10 +828,11 @@ async function runVersusPartyAuto() {
       // M39 — Monster cast plans dispatch to the spell handler instead
       // of the weapon-attack path. PCs and non-cast monster turns still
       // route through attackInVersus.
+      let attackResult = null;
       if (plan && plan.kind === 'cast' && entry.entityKind === 'monster') {
         await castInVersus({ kind: 'monster', entity }, plan);
       } else {
-        await attackInVersus({ kind: entry.entityKind, entity }, { kind: target.kind, entity: target.entity });
+        attackResult = await attackInVersus({ kind: entry.entityKind, entity }, { kind: target.kind, entity: target.entity });
       }
       const afterTargetHp = versusHpOf(target.entity, target.kind);
       // M43.2 — If cinema view is active, dramatize this exchange.
@@ -839,7 +844,11 @@ async function runVersusPartyAuto() {
           {
             preAttackFlags,
             smiteSlot: entity._smiteSlotUsed || null,
-            killing: afterTargetHp <= 0 && beforeTargetHp > 0
+            killing: afterTargetHp <= 0 && beforeTargetHp > 0,
+            // M43.6 — Thread the crit/miss signals through so the polish
+            // layer can deepen the hit-pause + flash on natural 20s.
+            crit: !!attackResult?.crit,
+            miss: attackResult ? attackResult.hit === false : false
           }
         );
       }
@@ -972,7 +981,9 @@ async function attackInVersus(attackerHit, targetHit) {
   await versusMoveBeforeAttack(attackerHit, targetHit);
   combat.attacker = { id: attackerHit.entity.id, kind: attackerHit.kind };
   combat.mode = 'pick-target';
-  runAttackPrompt(targetHit.kind, targetHit.entity);
+  // M43.6 — await + return the result so the auto-loop can thread
+  // `crit` into the cinema polish layer.
+  return await runAttackPrompt(targetHit.kind, targetHit.entity);
 }
 
 // M38 — Wrapper around runVersusOpportunityAttack that prompts the
@@ -2584,6 +2595,10 @@ async function runAttackPrompt(targetKind, targetEntity) {
   appendAttackLog({ attackerName, targetName, weaponName: label, verdict, atk, dmgRoll });
   setCombatStatus(formatAttackSummary({ attackerName, targetName, weaponName: label, verdict, atk, dmgRoll }));
   startContinuousRender();
+  // M43.6 — Surface the attack result so callers (auto-fight loop +
+  // cinema integration) can read `crit` for the polish layer. Manual-
+  // click callers ignore the return value.
+  return { hit: !!atk?.hit, crit: !!atk?.crit, dmg: damage, total: atk?.total ?? null };
 }
 
 // M21 — Spell-save resolution flow. Caster attacker, target's save bonus
