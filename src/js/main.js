@@ -21,7 +21,7 @@ import {
   effectsForFeatureTrigger
 } from './scene/effects.js';
 import { rollAttack, rollDamage, describeAttack } from './scene/combat-roll.js';
-import { deriveAC, deriveAttack, deriveWeaponAttack, spellAttackBonus, spellSaveDC, saveBonus } from './scene/pc-stats.js';
+import { deriveAC, deriveAttack, deriveWeaponAttack, spellAttackBonus, saveBonus } from './scene/pc-stats.js';
 import { resolveAttack } from './scene/combat-resolver.js';
 import { factionLists } from './scene/grid-rules.js';
 import { buildActionsFor } from './scene/actions-panel.js';
@@ -40,27 +40,20 @@ import { buildSceneSnapshot, restoreSceneFromSnapshot } from './scene/scene-snap
 import {
   buildPartyArenaScene, partyEndStateOf, rollPartyInitiative
 } from './scene/versus.js';
-import { planMovement } from './scene/movement.js';
-import { chooseAction, fleeTargetCell, formatBreakdown } from './scene/ai/profile.js';
+import { formatBreakdown } from './scene/ai/profile.js';
 import { inferProfile } from './scene/ai/infer.js';
 import {
   editableProfileFor, applyWeightChange, applyRetreatChange,
   applyArchetypeSwap, listArchetypes, listConsiderations
 } from './scene/ai/editor.js';
 import {
-  resetReactionsForAll, consumeReaction, detectOpportunityAttacks,
-  detectPolearmEntryOAs, shouldCastShield, consumeShield, canCastShield,
-  lvl1SlotsForPc, lvl3SlotsForPc,
-  shouldCounterspell, consumeCounterspell, resolveCounterspell
+  resetReactionsForAll, shouldCastShield, consumeShield,
+  lvl1SlotsForPc, lvl3SlotsForPc
 } from './scene/reactions.js';
 import {
   spellById, spellbookFor,
-  innateBlockFor, freshInnateState, rollInnateRecharges, consumeInnate,
-  applyUpcast
+  innateBlockFor, freshInnateState, rollInnateRecharges
 } from './scene/monster-spells.js';
-import { rollSave } from './scene/save-rolls.js';
-import { MONSTER_DEFAULT_SAVES } from './scene/monster-presets.js';
-import { chebyshevFeet } from './scene/grid-rules.js';
 import { promptReaction } from './scene/reaction-prompt.js';
 import { createCinema } from './anim/cinema.js';
 import { buildMotion, motionForWeapon } from './anim/weapon-motions.js';
@@ -621,7 +614,11 @@ async function playCinemaRoundForAttack(attackerHit, targetHit, dmg, opts = {}) 
   const weapon = attackerHit.kind === 'pc'
     ? (attackerHit.entity.equipment?.mainhand || null)
     : { name: MONSTER_PRESETS[attackerHit.entity.presetSlug]?.attack?.name };
-  const motionId = motionForWeapon(weapon);
+  // M45 Phase 5 — Cast plans use the staff-cast motion regardless of
+  // the caster's equipped weapon. Reading the plan kind from opts
+  // keeps the cinema's weapon-by-default behavior for plain attacks.
+  const isCast = opts.plan?.kind === 'cast';
+  const motionId = isCast ? 'staff-cast' : motionForWeapon(weapon);
   let seq = buildMotion(motionId);
   if (!seq) return;
   // M43.3 — Apply the PC's chosen attack style (Quick / Standard /
@@ -1313,38 +1310,7 @@ function versusHpOf(entity, kind) {
 // M32 — Monster AI: ask the profile which PC to engage (or whether to
 // flee). `monster` is a live scene-instance with .position + .hp.{current,max}.
 // Returns { kind, target: {kind:'pc', entity}, plan } or null.
-function pickVersusTargetWithProfile(monster) {
-  const enemies = partyComposedCharacters.filter(p => (p.hp?.current ?? 0) > 0);
-  if (enemies.length === 0) return null;
-  const allies = (currentScene.monsters || [])
-    .filter(m => m !== monster && (m.hp?.current ?? 0) > 0);
-  const plan = chooseAction({
-    self: monster,
-    slug: monster.presetSlug,
-    enemies,
-    allies
-  });
-  const target = enemies.find(p => String(p.id) === String(plan.targetId))
-              || enemies[0];
-  return { kind: plan.kind, plan, target: { kind: 'pc', entity: target } };
-}
 
-function runVersusFlee(monster, threat) {
-  const from = monster.position;
-  if (!from) return;
-  const occupied = versusOccupiedCells(monster.id);
-  const fleeCell = fleeTargetCell(monster, threat,
-    { cols: currentScene.cols, rows: currentScene.rows });
-  const next = planMovement({
-    from, to: fleeCell, weapon: { name: 'Dash' },
-    speedFt: 30, occupied,
-    bounds: { cols: currentScene.cols, rows: currentScene.rows }
-  });
-  if (next && (next.col !== from.col || next.row !== from.row)) {
-    monster.position = next;
-    rerender();
-  }
-}
 
 function logVersusAiPlan(monster, plan) {
   const wrap = document.getElementById('roll-log');
@@ -1364,22 +1330,6 @@ function logVersusAiPlan(monster, plan) {
   while (list.children.length > 20) list.removeChild(list.lastChild);
 }
 
-function pickLowestHpEnemy(attackerKind) {
-  if (attackerKind === 'pc') {
-    let best = null;
-    for (const m of (currentScene.monsters || [])) {
-      if (m.hp?.current <= 0) continue;
-      if (!best || m.hp.current < best.hp.current) best = m;
-    }
-    return best ? { kind: 'monster', entity: best } : null;
-  }
-  let best = null;
-  for (const p of partyComposedCharacters) {
-    if ((p.hp?.current ?? 0) <= 0) continue;
-    if (!best || p.hp.current < best.hp.current) best = p;
-  }
-  return best ? { kind: 'pc', entity: best } : null;
-}
 
 function currentPartyEndState() {
   return partyEndStateOf({
@@ -1395,196 +1345,20 @@ function currentPartyEndState() {
 // rounds see the new placement, the M27 lunge effect fires from the
 // new cell, and the M11 resolver computes reach from the post-move
 // position.
-async function attackInVersus(attackerHit, targetHit) {
-  await versusMoveBeforeAttack(attackerHit, targetHit);
-  combat.attacker = { id: attackerHit.entity.id, kind: attackerHit.kind };
-  combat.mode = 'pick-target';
-  // M43.6 — await + return the result so the auto-loop can thread
-  // `crit` into the cinema polish layer.
-  return await runAttackPrompt(targetHit.kind, targetHit.entity);
-}
 
 // M38 — Wrapper around runVersusOpportunityAttack that prompts the
 // player when a PC would burn their reaction. Returns true if the OA
 // fired, false if the player declined or auto-mode skipped it.
-async function maybeRunOaWithPrompt(triggerer, moverHit, moverBeforePos) {
-  if (!triggerer || !triggerer.live) return false;
-  if (triggerer.kind === 'pc' && !versusAutoMode) {
-    const accepted = await promptReaction({
-      title: `${triggerer.live.name || 'PC'} — opportunity attack?`,
-      body: `${moverHit.entity.name || 'Target'} is leaving your reach.`,
-      costLabel: '1 reaction',
-      defaultMs: 5000,
-      auto: false
-    });
-    if (!accepted) return false;
-  }
-  runVersusOpportunityAttack(triggerer, moverHit, moverBeforePos);
-  return true;
-}
 
-async function versusMoveBeforeAttack(attackerHit, targetHit) {
-  const attackerPos = attackerHit.kind === 'pc'
-    ? currentScene.positions?.[String(attackerHit.entity.id)]
-    : attackerHit.entity.position;
-  const targetPos = targetHit.kind === 'pc'
-    ? currentScene.positions?.[String(targetHit.entity.id)]
-    : targetHit.entity.position;
-  if (!attackerPos || !targetPos) return;
-  const weapon = attackerHit.kind === 'pc'
-    ? (attackerHit.entity.equipment?.mainhand || null)
-    : { name: MONSTER_PRESETS[attackerHit.entity.presetSlug]?.attack?.name };
-  const occupied = versusOccupiedCells(attackerHit.entity.id);
-  const next = planMovement({
-    from: attackerPos, to: targetPos, weapon,
-    speedFt: 30, occupied,
-    bounds: { cols: currentScene.cols, rows: currentScene.rows }
-  });
-  if (!next || (next.col === attackerPos.col && next.row === attackerPos.row)) return;
-  // M33.0 — opportunity attacks fire BEFORE the move is applied. We
-  // build a uniform "shape" for the mover + every hostile so
-  // detectOpportunityAttacks can read positions/weapons consistently.
-  const moverShape = {
-    id: attackerHit.entity.id,
-    weapon: attackerHit.kind === 'pc' ? weapon : { name: weapon?.name }
-  };
-  const hostileShapes = buildVersusHostileShapesFor(attackerHit);
-  const leaveTriggers = detectOpportunityAttacks({
-    mover: moverShape, before: attackerPos, after: next, hostiles: hostileShapes
-  });
-  const entryTriggers = detectPolearmEntryOAs({
-    mover: moverShape, before: attackerPos, after: next, hostiles: hostileShapes
-  });
-  // M38 — Prompt the player before firing a PC's own opportunity
-  // attacks. Monster OAs against a moving PC always auto-fire (the
-  // monster is AI-controlled).
-  for (const { triggerer } of leaveTriggers) {
-    const fired = await maybeRunOaWithPrompt(triggerer, attackerHit, attackerPos);
-    if (fired) {
-      consumeReaction(triggerer.live);
-      if (versusHpOf(attackerHit.entity, attackerHit.kind) <= 0) break;
-    }
-  }
-  for (const { triggerer } of entryTriggers) {
-    const fired = await maybeRunOaWithPrompt(triggerer, attackerHit, next);
-    if (fired) {
-      consumeReaction(triggerer.live);
-      if (versusHpOf(attackerHit.entity, attackerHit.kind) <= 0) break;
-    }
-  }
-  if (attackerHit.kind === 'pc') {
-    currentScene.positions = { ...(currentScene.positions || {}), [String(attackerHit.entity.id)]: next };
-  } else {
-    attackerHit.entity.position = next;
-  }
-}
 
 // M33.0 — list the live opposing-side entities relative to `attackerHit`,
 // each wrapped in a shape detectOpportunityAttacks can consume. The
 // wrapper keeps a reference back to the live entity so we can call
 // consumeReaction() and resolve the OA against the actual record.
-function buildVersusHostileShapesFor(attackerHit) {
-  if (attackerHit.kind === 'pc') {
-    return (currentScene.monsters || [])
-      .filter(m => (m.hp?.current ?? 0) > 0)
-      .map(m => ({
-        live: m,
-        kind: 'monster',
-        _position: m.position,
-        conditions: m.conditions || [],
-        _reactionUsed: !!m._reactionUsed,
-        attack: { name: MONSTER_PRESETS[m.presetSlug]?.attack?.name }
-      }));
-  }
-  return partyComposedCharacters
-    .filter(p => (p.hp?.current ?? 0) > 0)
-    .map(p => ({
-      live: p,
-      kind: 'pc',
-      _position: currentScene.positions?.[String(p.id)],
-      conditions: p.conditions || [],
-      _reactionUsed: !!p._reactionUsed,
-      weapon: p.equipment?.mainhand || null
-    }));
-}
 
 // M33.0 — Execute one opportunity attack from `triggerer` against
 // `moverHit`. The mover is interrupted at `moverBeforePos`, so we
 // resolve reach distance from that cell. Damage applied + logged.
-function runVersusOpportunityAttack(triggerer, moverHit, moverBeforePos) {
-  const moverEntity = moverHit.entity;
-  const moverKind = moverHit.kind;
-  const attackerLive = triggerer.live;
-  // Build the resolver's attacker/target objects
-  let attackStats, weapon, attackerName, attackerAc;
-  if (triggerer.kind === 'pc') {
-    const a = deriveWeaponAttack(attackerLive, triggerer.weapon);
-    attackStats = {
-      bonus: a.bonus, dice: a.dice, damageType: a.damageType,
-      parts: [{ source: triggerer.weapon?.name || 'Attack', value: a.bonus }],
-      damageParts: []
-    };
-    weapon = triggerer.weapon;
-    attackerName = attackerLive.name || 'PC';
-    attackerAc = deriveAC(attackerLive);
-  } else {
-    const preset = MONSTER_PRESETS[attackerLive.presetSlug] || {};
-    const atk = preset.attack || { name: 'Strike', bonus: 2, dice: '1d6' };
-    attackStats = {
-      bonus: atk.bonus, dice: atk.dice, damageType: null,
-      parts: [{ source: atk.name, value: atk.bonus }],
-      damageParts: []
-    };
-    weapon = { name: atk.name };
-    attackerName = attackerLive.name || 'Monster';
-    attackerAc = preset.ac ?? 12;
-  }
-
-  const targetForResolver = {
-    ...moverEntity,
-    conditions: moverEntity.conditions || [],
-    _position: moverBeforePos
-  };
-  const attackerForResolver = {
-    ...attackerLive,
-    _position: triggerer._position,
-    conditions: attackerLive.conditions || []
-  };
-  const targetAC = moverKind === 'pc' ? deriveAC(moverEntity) : (MONSTER_PRESETS[moverEntity.presetSlug]?.ac ?? 12);
-  const verdict = resolveAttack({
-    attacker: attackerForResolver,
-    target: targetForResolver,
-    weapon, scene: currentScene,
-    attackerKind: triggerer.kind,
-    targetKind: moverKind,
-    targetAC,
-    advantageOverride: 'auto',
-    allies: [], hostiles: [],
-    attackStats
-  });
-  if (verdict.autoMiss) {
-    appendReactionLog({
-      attackerName, targetName: moverEntity.name || 'Target',
-      verdict, atk: { hit: false, total: 0 }, dmg: 0
-    });
-    return;
-  }
-  const atk = verdict.autoCrit
-    ? { hit: true, crit: true, total: 20 + verdict.attackBonus.total }
-    : rollAttack({ bonus: verdict.attackBonus.total, advantage: verdict.d20.mode, targetAC }, undefined);
-  let dmgTotal = 0;
-  if (atk.hit) {
-    const dmg = rollDamage(verdict.damage.dice, { crit: atk.crit });
-    dmgTotal = dmg.total;
-    applyDamage(moverKind, moverEntity.id, dmgTotal);
-  }
-  appendReactionLog({
-    attackerName, targetName: moverEntity.name || 'Target',
-    verdict, atk, dmg: dmgTotal, weaponName: weapon?.name || 'Attack'
-  });
-  // Silence the unused-AC warning — keeps the log readable if we extend later.
-  void attackerAc;
-}
 
 // =====================================================================
 // M39 — Live monster spellcasting in versus. Mirrors the simulator's
@@ -1593,254 +1367,12 @@ function runVersusOpportunityAttack(triggerer, moverHit, moverBeforePos) {
 // an interactive prompt; auto-fight skips it via versusAutoMode.
 // =====================================================================
 
-/**
- * M45 Phase 3 — Build the "book" — { dc, attackBonus, abilityMod } —
- * for a caster + spell. PCs derive it from class + ability mod + prof.
- * Monsters fall back to the preset spellbook or innate block.
- */
-function bookForCaster(attackerHit, spell) {
-  const caster = attackerHit?.entity;
-  if (!caster) return null;
-  if (attackerHit.kind === 'pc') {
-    const sa = spellAttackBonus(caster, spell);
-    return {
-      dc: spellSaveDC(caster, spell),
-      attackBonus: sa.total,
-      abilityMod: sa.ability ? (caster.abilityModifiers?.[sa.ability] ?? 0) : 0,
-      _ability: sa.ability
-    };
-  }
-  const book = spellbookFor(caster.presetSlug);
-  if (book) return book;
-  const innate = innateBlockFor(caster.presetSlug);
-  if (innate) {
-    return {
-      dc: innate.dc || 12,
-      attackBonus: 4,
-      abilityMod: 3
-    };
-  }
-  return null;
-}
 
-async function castInVersus(attackerHit, plan) {
-  if (!attackerHit || !plan?.spellId) return;
-  const caster = attackerHit.entity;
-  const baseSpell = spellById(plan.spellId);
-  if (!baseSpell) return;
-  // M40 — Upcast: scale dice/darts up to the chosen slot level.
-  const spell = applyUpcast(baseSpell, plan.castAtLevel);
-  // M45 Phase 3 — PC-aware book lookup. PCs use pc-stats helpers
-  // (spellAttackBonus / spellSaveDC) keyed on their own class + level.
-  // Monsters keep the existing preset spellbook lookup.
-  const effectiveBook = bookForCaster(attackerHit, spell);
-  if (!effectiveBook) return;
 
-  // Slot accounting (consume regardless of counter outcome — RAW).
-  // M40: drain the slot the AI picked, not the spell's base level.
-  if (plan.isInnate) {
-    caster._innate ??= freshInnateState(caster.presetSlug);
-    consumeInnate(caster, plan.spellId);
-  } else if (caster._slots) {
-    const lvl = Math.max(baseSpell.level || 0, plan.castAtLevel || baseSpell.level || 0);
-    if (lvl > 0 && caster._slots[lvl] > 0) {
-      caster._slots[lvl] -= 1;
-    }
-  }
 
-  // Log the cast attempt
-  appendCastLog({
-    casterName: caster.name || 'Monster',
-    spellName: spell.name, targetName: plan.targetSide === 'ally'
-      ? findVersusEntityById(plan.targetId)?.name
-      : findVersusEntityById(plan.targetId)?.name,
-    isInnate: plan.isInnate,
-    level: baseSpell.level,
-    castAtLevel: plan.castAtLevel || baseSpell.level
-  });
 
-  // M39.1 — Counterspell witness loop. Only PCs can counter MONSTER
-  // casts (no monster counterspell support in this build). Skip the
-  // loop entirely when a PC is casting — partyComposedCharacters are
-  // the caster's allies, not their counter-witnesses.
-  if (attackerHit.kind === 'monster' && (spell.level >= 2 || (spell.level === 0 && !plan.isInnate))) {
-    for (const pc of partyComposedCharacters) {
-      if ((pc.hp?.current ?? 0) <= 0) continue;
-      if (!shouldCounterspell(pc, spell.level)) continue;
-      const accepted = await promptReaction({
-        title: `${pc.name || 'PC'} — Counterspell ${spell.name}?`,
-        body: `${caster.name || 'Monster'} is casting a level ${spell.level} spell.`,
-        costLabel: `1 reaction · 1 of ${pc._lvl3Slots || 0} 3rd-level slot${(pc._lvl3Slots || 0) === 1 ? '' : 's'}`,
-        defaultMs: 5000,
-        auto: !!versusAutoMode,
-        autoAnswer: true
-      });
-      if (!accepted) continue;
-      const mod = pcCounterMod(pc);
-      const result = resolveCounterspell({ spellLevel: spell.level, counterMod: mod });
-      consumeCounterspell(pc);
-      appendCounterspellLog({
-        counterName: pc.name || 'PC',
-        spellName: spell.name, level: spell.level,
-        countered: result.countered, mode: result.mode,
-        d20: result.d20, total: result.total, dc: result.dc
-      });
-      if (result.countered) {
-        rerender();
-        return;     // spell fizzles
-      }
-      break;        // failed counter still burns the witness's reaction
-    }
-  }
 
-  // Resolve the spell. Branch by kind — mirrors the simulator's
-  // runMonsterSpell logic but applies damage / conditions to live
-  // entities (hp.{current, max}).
-  await resolveVersusSpell(attackerHit, spell, plan, effectiveBook);
-  rerender();
-}
 
-async function resolveVersusSpell(attackerHit, spell, plan, effectiveBook) {
-  const target = findVersusEntityById(plan.targetId);
-  if (!target) return;
-  const caster = attackerHit.entity;
-
-  if (spell.kind === 'heal') {
-    const dmgRoll = rollDamage(spell.dice, { crit: false });
-    const mod = spell.addsAbilityMod ? (effectiveBook.abilityMod || 0) : 0;
-    const heal = dmgRoll.total + mod;
-    if (target.hp) target.hp = { ...target.hp, current: Math.min(target.hp.max, target.hp.current + heal) };
-    appendCastLogTail(`${caster.name} heals ${target.name} for ${heal}`);
-    return;
-  }
-
-  if (spell.kind === 'auto-hit') {
-    // M37 RAW: Shield negates Magic Missile entirely.
-    if (canCastShield(target)) {
-      const accepted = await promptReaction({
-        title: `${target.name} — Cast Shield vs ${spell.name}?`,
-        body: `Negates all ${spell.darts || 1} darts.`,
-        costLabel: `1 reaction · 1 of ${target._lvl1Slots || 0} 1st-level slot${(target._lvl1Slots || 0) === 1 ? '' : 's'}`,
-        defaultMs: 5000,
-        auto: !!versusAutoMode, autoAnswer: true
-      });
-      if (accepted) {
-        consumeShield(target);
-        appendCastLogTail(`${target.name} casts Shield — no damage`);
-        return;
-      }
-    }
-    let total = 0;
-    for (let i = 0; i < (spell.darts || 1); i++) {
-      total += rollDamage(spell.perDart, { crit: false }).total;
-    }
-    applyVersusDamage(target, total);
-    appendCastLogTail(`${total} ${spell.damageType || ''} damage`);
-    return;
-  }
-
-  if (spell.kind === 'spell-attack') {
-    const ac = deriveAC(target);
-    const atk = rollAttack({ bonus: effectiveBook.attackBonus, advantage: 'normal', targetAC: ac });
-    if (atk.hit && !atk.crit && shouldCastShield({ target, attackerTotal: atk.total, targetAc: ac })) {
-      const accepted = await promptReaction({
-        title: `${target.name} — Cast Shield?`,
-        body: `${caster.name}'s ${spell.name} hit by ${atk.total - ac}; +5 AC would dodge it.`,
-        costLabel: `1 reaction · 1 of ${target._lvl1Slots || 0} 1st-level slot${(target._lvl1Slots || 0) === 1 ? '' : 's'}`,
-        defaultMs: 5000,
-        auto: !!versusAutoMode, autoAnswer: true
-      });
-      if (accepted) {
-        consumeShield(target);
-        appendCastLogTail(`${target.name} casts Shield — miss`);
-        return;
-      }
-    }
-    if (!atk.hit) { appendCastLogTail(`miss`); return; }
-    const dmg = rollDamage(spell.dice, { crit: atk.crit });
-    applyVersusDamage(target, dmg.total);
-    appendCastLogTail(`${atk.crit ? 'CRIT ' : ''}${dmg.total} ${spell.damageType || ''} damage`);
-    return;
-  }
-
-  // AoE save (fire-breath / fireball cone) — every hostile in range rolls.
-  // M45 Phase 3 — Caster-kind-aware target list. Monster casters target
-  // partyComposedCharacters; PC casters target currentScene.monsters.
-  if (spell.aoe) {
-    const center = attackerHit.kind === 'pc'
-      ? currentScene.positions?.[String(caster.id)]
-      : caster.position;
-    if (!center) return;
-    const victims = attackerHit.kind === 'pc'
-      ? (currentScene.monsters || []).filter(m => (m.hp?.current ?? 0) > 0)
-      : partyComposedCharacters.filter(p => (p.hp?.current ?? 0) > 0);
-    let total = 0;
-    for (const v of victims) {
-      const vPos = attackerHit.kind === 'pc' ? v.position : currentScene.positions?.[String(v.id)];
-      if (!vPos || chebyshevFeet(center, vPos) > (spell.range || 15)) continue;
-      const vMod = saveBonusForVersusEntity(v, spell.saveStat);
-      const save = rollSave({ bonus: vMod, dc: effectiveBook.dc });
-      const dmgRoll = rollDamage(spell.dice, { crit: false });
-      let dmg = dmgRoll.total;
-      if (save.success) dmg = spell.saveOnHalf ? Math.floor(dmg / 2) : 0;
-      applyVersusDamage(v, dmg);
-      total += dmg;
-    }
-    appendCastLogTail(`${total} total ${spell.damageType || ''} damage across the cone`);
-    return;
-  }
-
-  // Single-target save (cantrip-save / leveled-save)
-  const saveStat = spell.saveStat;
-  const targetMod = saveBonusForVersusEntity(target, saveStat);
-  const save = rollSave({ bonus: targetMod, dc: effectiveBook.dc });
-  let dmg = 0;
-  if (spell.dice) {
-    const dmgRoll = rollDamage(spell.dice, { crit: false });
-    dmg = dmgRoll.total;
-    if (save.success) dmg = spell.saveOnHalf ? Math.floor(dmg / 2) : 0;
-    applyVersusDamage(target, dmg);
-  }
-  if (!save.success && spell.appliesCondition) {
-    if (!Array.isArray(target.conditions)) target.conditions = [];
-    if (!target.conditions.includes(spell.appliesCondition)) {
-      target.conditions.push(spell.appliesCondition);
-    }
-  }
-  const saveDesc = save.success ? 'SAVE' : 'FAIL';
-  appendCastLogTail(`${saveDesc} (d20=${save.kept}${targetMod >= 0 ? '+' : ''}${targetMod}=${save.total} vs DC ${effectiveBook.dc})${dmg > 0 ? ` · ${dmg} damage` : ''}${!save.success && spell.appliesCondition ? ` · ${spell.appliesCondition}` : ''}`);
-}
-
-function findVersusEntityById(id) {
-  if (!id) return null;
-  return partyComposedCharacters.find(p => String(p.id) === String(id))
-      || (currentScene.monsters || []).find(m => String(m.id) === String(id))
-      || null;
-}
-
-function applyVersusDamage(entity, damage) {
-  if (!entity || damage <= 0 || !entity.hp) return;
-  const next = Math.max(0, entity.hp.current - damage);
-  entity.hp = { ...entity.hp, current: next };
-}
-
-function saveBonusForVersusEntity(entity, stat) {
-  if (!entity || !stat) return 0;
-  if (entity.abilityModifiers) return entity.abilityModifiers[stat] ?? 0;   // PC
-  const table = MONSTER_DEFAULT_SAVES[entity.presetSlug];
-  return table ? (table[stat] || 0) : 0;
-}
-
-function pcCounterMod(pc) {
-  const classes = pc.classes || [];
-  for (const c of classes) {
-    const name = String(c?.name || '').toLowerCase();
-    if (name === 'wizard' || name === 'artificer') return pc.abilityModifiers?.INT ?? 0;
-    if (name === 'cleric' || name === 'druid' || name === 'ranger') return pc.abilityModifiers?.WIS ?? 0;
-    if (name === 'bard' || name === 'sorcerer' || name === 'warlock' || name === 'paladin') return pc.abilityModifiers?.CHA ?? 0;
-  }
-  return pc.abilityModifiers?.INT ?? 0;
-}
 
 function appendCastLog({ casterName, spellName, targetName, isInnate, level, castAtLevel }) {
   const wrap = document.getElementById('roll-log');
@@ -1862,28 +1394,7 @@ function appendCastLog({ casterName, spellName, targetName, isInnate, level, cas
   while (list.children.length > 20) list.removeChild(list.lastChild);
 }
 
-function appendCastLogTail(msg) {
-  const tail = document.querySelector('.roll-log-entry.roll-spell .roll-spell-tail');
-  if (tail) tail.textContent = msg;
-}
 
-function appendCounterspellLog({ counterName, spellName, level, countered, mode, d20, total, dc }) {
-  const wrap = document.getElementById('roll-log');
-  const list = document.getElementById('roll-log-list');
-  if (!wrap || !list) return;
-  wrap.hidden = false;
-  const li = document.createElement('li');
-  li.className = `roll-log-entry roll-reaction ${countered ? 'roll-hit' : 'roll-miss'}`;
-  const detail = mode === 'auto'
-    ? `auto-counter (lvl 3 vs lvl ${level})`
-    : `check d20=${d20}+${total - d20} vs DC ${dc} — ${countered ? 'success' : 'fail'}`;
-  li.innerHTML = `
-    <div class="roll-headline"><span class="reaction-tag">⚡ COUNTERSPELL</span> ${escapeHtml(counterName)} ${countered ? 'counters' : 'tries to counter'} ${escapeHtml(spellName)}</div>
-    <div class="roll-line">${escapeHtml(detail)}</div>
-  `;
-  list.insertBefore(li, list.firstChild);
-  while (list.children.length > 20) list.removeChild(list.lastChild);
-}
 
 function appendReactionLog({ attackerName, targetName, verdict, atk, dmg, weaponName = 'Attack' }) {
   const wrap = document.getElementById('roll-log');
@@ -1907,19 +1418,6 @@ function appendReactionLog({ attackerName, targetName, verdict, atk, dmg, weapon
   while (list.children.length > 20) list.removeChild(list.lastChild);
 }
 
-function versusOccupiedCells(excludeId) {
-  const out = new Set();
-  for (const pc of partyComposedCharacters) {
-    if (String(pc.id) === String(excludeId)) continue;
-    const pos = currentScene.positions?.[String(pc.id)];
-    if (pos) out.add(`${pos.col},${pos.row}`);
-  }
-  for (const m of (currentScene.monsters || [])) {
-    if (String(m.id) === String(excludeId)) continue;
-    if (m.position) out.add(`${m.position.col},${m.position.row}`);
-  }
-  return out;
-}
 
 function endVersusFight(outcome, rounds) {
   const status = document.getElementById('versus-status');
@@ -5086,14 +4584,3 @@ refreshParty();
 // Done after render bindings are set up so status messages display.
 consumeShareLink();
 
-// M45 Phase 4b.2 — The auto-fight loop now routes through
-// combat-engine.runOneAttack via runEngineTurn. The legacy helpers
-// below are no longer called from that path (each was the previous
-// auto-loop's per-action dispatcher) but remain in the file so
-// Phase 5 cleanup can review whether each is needed by a non-auto
-// code path before deletion. Silence the unused-var lint until then.
-void pickVersusTargetWithProfile;
-void runVersusFlee;
-void pickLowestHpEnemy;
-void attackInVersus;
-void castInVersus;

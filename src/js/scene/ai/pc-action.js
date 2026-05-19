@@ -359,7 +359,12 @@ function considerPcHeal({ self, profile, allies }) {
       const d = chebyshevFeet(sp, tp);
       if (d > (spell.range || 5)) continue;
     }
-    const kindWeight = (profile.actionWeights?.heal) ?? 1.0;
+    // M45 Phase 5 — Heal weight now defaults to 0 (matching every
+    // other action kind) so profiles that don't opt in don't favour
+    // healing over offense for mildly wounded allies. Profiles that
+    // want healing must set actionWeights.heal explicitly (the support
+    // archetype defaults to a positive value).
+    const kindWeight = (profile.actionWeights?.heal) ?? 0;
     const score = w + mostHurtScore * 0.5 + kindWeight;
     if (!bestSpell || score > bestSpell.score) {
       bestSpell = { id, spell, score, weight: w };

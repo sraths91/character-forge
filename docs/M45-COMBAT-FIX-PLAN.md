@@ -469,9 +469,9 @@ prompts auto-resolving) and simulator-mode.
 This is the most architecturally valuable phase but also the riskiest.
 Recommend doing this with a green test suite at every commit.
 
-### Phase 5 — Polish + bug-cleanup
+### Phase 5 — Polish + bug-cleanup (DONE)
 
-After the spine is unified, sweep the items the audit surfaced:
+Cleanup pass after the spine is unified:
 
 1. `runSpellSavePrompt` async (already covered in Phase 3e).
 2. Deduplicate the reaction-refresh paths
