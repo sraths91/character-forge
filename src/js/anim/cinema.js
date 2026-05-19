@@ -217,16 +217,36 @@ function draw(ctx, state, seq, frame, opts) {
   // entire scene in around the centre during its lifetime, then eases
   // back out. Multiple zooms compound multiplicatively.
   const zoom = cameraZoomAt(seq, frame.t);
+  // M48 — Parallax factors. Far layer moves at ~30% of camera zoom,
+  // near layer at ~85%. When zoom = 1 (no camera push) both factors
+  // collapse to 1 and parallax adds zero cost. Big-hit zooms (1.10
+  // crit / 1.18 critical+killing) produce a visible depth offset.
+  const farFactor  = 1 + (zoom - 1) * 0.30;
+  const nearFactor = 1 + (zoom - 1) * 0.85;
+
   ctx.save();
   ctx.translate(shake.x | 0, shake.y | 0);
+  ctx.clearRect(-50, -50, W + 100, H + 100);
+
+  // M48 — Background layers at different parallax factors.
+  const bg = opts.drawBackground;
+  const layered = bg && typeof bg.paintFar === 'function' && typeof bg.paintNear === 'function';
+  if (layered) {
+    paintAtZoom(ctx, farFactor,  W, H, (c) => bg.paintFar(c,  { W, H, t: frame.t }));
+    paintAtZoom(ctx, nearFactor, W, H, (c) => bg.paintNear(c, { W, H, t: frame.t }));
+  } else if (typeof bg === 'function') {
+    // Legacy single-pass background — apply full zoom to it
+    paintAtZoom(ctx, zoom, W, H, (c) => bg(c, { W, H, t: frame.t }));
+  }
+
+  // Apply the full camera zoom for everything that follows (actors,
+  // effects, particles). HP bars + popups paint after restore() so
+  // they stay un-zoomed.
   if (zoom !== 1) {
     ctx.translate(W / 2, H / 2);
     ctx.scale(zoom, zoom);
     ctx.translate(-W / 2, -H / 2);
   }
-
-  ctx.clearRect(-50, -50, W + 100, H + 100);
-  opts.drawBackground(ctx, { W, H, t: frame.t });
 
   // Anchor positions: attacker bottom-left third, defender bottom-right third.
   const baseY = H * 0.62;
@@ -414,6 +434,23 @@ function drawEffect(ctx, ef, u, att, def) {
  * out during the second. Multiple zooms compound multiplicatively, so a
  * crit + big-hit combo reads as a deeper push-in.
  */
+/**
+ * M48 — Paint with a centred scale transform applied around the canvas
+ * centre, then restore. Used to render each parallax layer at its own
+ * zoom factor without leaking the transform to subsequent layers.
+ * When factor = 1 the save/restore + transform calls are skipped
+ * entirely so the no-zoom path stays as cheap as it was pre-parallax.
+ */
+function paintAtZoom(ctx, factor, W, H, paintFn) {
+  if (factor === 1) { paintFn(ctx); return; }
+  ctx.save();
+  ctx.translate(W / 2, H / 2);
+  ctx.scale(factor, factor);
+  ctx.translate(-W / 2, -H / 2);
+  paintFn(ctx);
+  ctx.restore();
+}
+
 function cameraZoomAt(seq, t) {
   let scale = 1;
   for (const ef of seq.effects || []) {

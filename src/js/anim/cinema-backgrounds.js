@@ -1,21 +1,26 @@
 /**
  * M44.2 — Terrain-keyed cinema backgrounds.
+ * M48 — Split into far / near parallax layers.
  *
- * The cinema renderer (M43.2) accepts a `drawBackground(ctx, {W, H, t})`
- * callback. The default is a neutral dark vignette. This module ships
- * eight cinematic backgrounds keyed to the eight built-in scene presets
+ * The cinema renderer (M43.2) accepts a `drawBackground` callback.
+ * The default is a neutral dark vignette. This module ships eight
+ * cinematic backdrops keyed to the eight built-in scene presets
  * (grass, dungeon, tavern, forest, desert, snow, swamp, cave) so the
  * cinema reflects the encounter's setting.
  *
- * Each painter is pure-canvas — no images, no async loads. They render
- * a layered horizon (sky tint → distant silhouette → ground gradient →
- * floor line) so the actors stand on something readable rather than a
- * flat color.
+ * Each background is exposed as a callable function (legacy single-
+ * pass form, paints far + near in order) AND carries `.paintFar` /
+ * `.paintNear` method properties for the M48 parallax mode. The cinema
+ * checks for these methods to enable two-layer rendering:
+ *   - far layer  — sky gradient, distant silhouettes, mountains, walls,
+ *                  ceiling stalactites, etc. Scrolls SLOWLY with camera
+ *                  zoom (~30% of camera factor).
+ *   - near layer — ground tier, grass tufts, planks, stalagmites, floor
+ *                  line. Scrolls FASTER (~85% of camera factor) so the
+ *                  ground keeps pace with the actors.
  *
- * Detection:
- *   1. scene.map.preset (explicit slug) takes precedence
- *   2. fall back to a reverse color map (matches SCENE_PRESETS colours)
- *   3. ultimate fallback is 'grass'
+ * Detection in terrainFromScene(scene): scene.map.preset (explicit
+ * slug) → reverse-map by SCENE_PRESETS colour → fall back to grass.
  */
 
 import { SCENE_PRESETS } from '../scene/scene-state.js';
@@ -42,8 +47,7 @@ export function backgroundFor(terrainSlug) {
 }
 
 /* =====================================================================
- * Background painters — pure (ctx, {W, H, t}) → void
- * Each paints sky → distant silhouette → ground → floor.
+ * Shared helpers
  * ===================================================================== */
 
 function paintLinear(ctx, x0, y0, x1, y1, stops) {
@@ -60,8 +64,27 @@ function floorLine(ctx, W, H, color = 'rgba(255,255,255,0.10)') {
   ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
 }
 
-/** Grass field — green ground, blue-grey overcast sky. */
-export const BG_GRASS = (ctx, { W, H }) => {
+/**
+ * Wrap a far + near pair into a single callable that paints both in
+ * order. Mounts paintFar / paintNear method properties on the wrapper
+ * so a parallax-aware cinema layer can read them.
+ */
+function makeLayered(paintFar, paintNear) {
+  const combined = (ctx, opts) => {
+    paintFar(ctx, opts);
+    paintNear(ctx, opts);
+  };
+  combined.paintFar = paintFar;
+  combined.paintNear = paintNear;
+  return combined;
+}
+
+/* =====================================================================
+ * Background painters — each split into far + near layers
+ * ===================================================================== */
+
+/* ---- Grass field — green ground, blue-grey overcast sky. ---- */
+function grassFar(ctx, { W, H }) {
   ctx.fillStyle = paintLinear(ctx, 0, 0, 0, H, [
     [0,    '#5e7b8a'],
     [0.55, '#7a8b78'],
@@ -69,17 +92,19 @@ export const BG_GRASS = (ctx, { W, H }) => {
     [1,    '#22381f']
   ]);
   ctx.fillRect(0, 0, W, H);
-  // A few darker grass tufts at floor line
+}
+function grassNear(ctx, { W, H }) {
   ctx.fillStyle = 'rgba(20,40,20,0.45)';
   for (let i = 0; i < 12; i++) {
     const x = (i * (W / 12)) + ((i * 37) % 40);
     ctx.fillRect(x, H * 0.62 + 18, 6, 4);
   }
   floorLine(ctx, W, H);
-};
+}
+export const BG_GRASS = makeLayered(grassFar, grassNear);
 
-/** Dungeon — grey stone with torchlit warm haze. */
-export const BG_DUNGEON = (ctx, { W, H }) => {
+/* ---- Dungeon — grey stone with torchlit warm haze. ---- */
+function dungeonFar(ctx, { W, H }) {
   ctx.fillStyle = paintLinear(ctx, 0, 0, 0, H, [
     [0,    '#1a1418'],
     [0.45, '#2a2226'],
@@ -103,11 +128,14 @@ export const BG_DUNGEON = (ctx, { W, H }) => {
   torch.addColorStop(1, 'rgba(248,166,76,0)');
   ctx.fillStyle = torch;
   ctx.fillRect(0, 0, W, H);
+}
+function dungeonNear(ctx, { W, H }) {
   floorLine(ctx, W, H, 'rgba(255,255,255,0.06)');
-};
+}
+export const BG_DUNGEON = makeLayered(dungeonFar, dungeonNear);
 
-/** Tavern — warm wood tones, fireplace glow. */
-export const BG_TAVERN = (ctx, { W, H }) => {
+/* ---- Tavern — warm wood tones, fireplace glow. ---- */
+function tavernFar(ctx, { W, H }) {
   ctx.fillStyle = paintLinear(ctx, 0, 0, 0, H, [
     [0,    '#2a1f12'],
     [0.5,  '#3a2a18'],
@@ -115,24 +143,28 @@ export const BG_TAVERN = (ctx, { W, H }) => {
     [1,    '#2d1c10']
   ]);
   ctx.fillRect(0, 0, W, H);
-  // Wood plank lines on the floor
-  ctx.strokeStyle = 'rgba(0,0,0,0.32)';
-  ctx.lineWidth = 1;
-  for (let i = 1; i < 6; i++) {
-    const y = H * 0.62 + i * 14;
-    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
-  }
   // Fireplace glow from the right
   const fire = ctx.createRadialGradient(W * 0.82, H * 0.4, 0, W * 0.82, H * 0.4, W * 0.45);
   fire.addColorStop(0, 'rgba(255,140,40,0.30)');
   fire.addColorStop(1, 'rgba(255,140,40,0)');
   ctx.fillStyle = fire;
   ctx.fillRect(0, 0, W, H);
+}
+function tavernNear(ctx, { W, H }) {
+  // Wood plank lines on the floor — these belong near, they move
+  // with the foreground.
+  ctx.strokeStyle = 'rgba(0,0,0,0.32)';
+  ctx.lineWidth = 1;
+  for (let i = 1; i < 6; i++) {
+    const y = H * 0.62 + i * 14;
+    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
+  }
   floorLine(ctx, W, H, 'rgba(255,200,140,0.10)');
-};
+}
+export const BG_TAVERN = makeLayered(tavernFar, tavernNear);
 
-/** Forest — dense trees, dappled green light. */
-export const BG_FOREST = (ctx, { W, H }) => {
+/* ---- Forest — dense trees, dappled green light. ---- */
+function forestFar(ctx, { W, H }) {
   ctx.fillStyle = paintLinear(ctx, 0, 0, 0, H, [
     [0,    '#1c2a1e'],
     [0.55, '#2a4030'],
@@ -154,11 +186,14 @@ export const BG_FOREST = (ctx, { W, H }) => {
   canopy.addColorStop(1, 'rgba(80,140,60,0)');
   ctx.fillStyle = canopy;
   ctx.fillRect(0, 0, W, H * 0.4);
+}
+function forestNear(ctx, { W, H }) {
   floorLine(ctx, W, H, 'rgba(180,220,140,0.12)');
-};
+}
+export const BG_FOREST = makeLayered(forestFar, forestNear);
 
-/** Desert — sand dunes, hot amber sky. */
-export const BG_DESERT = (ctx, { W, H }) => {
+/* ---- Desert — sand dunes, hot amber sky. ---- */
+function desertFar(ctx, { W, H }) {
   ctx.fillStyle = paintLinear(ctx, 0, 0, 0, H, [
     [0,    '#f4c277'],
     [0.5,  '#e6a45c'],
@@ -175,11 +210,14 @@ export const BG_DESERT = (ctx, { W, H }) => {
   ctx.lineTo(0, H * 0.62);
   ctx.closePath();
   ctx.fill();
+}
+function desertNear(ctx, { W, H }) {
   floorLine(ctx, W, H, 'rgba(255,255,255,0.18)');
-};
+}
+export const BG_DESERT = makeLayered(desertFar, desertNear);
 
-/** Snowfield — pale gradient + distant mountain silhouettes. */
-export const BG_SNOW = (ctx, { W, H }) => {
+/* ---- Snowfield — pale gradient + distant mountain silhouettes. ---- */
+function snowFar(ctx, { W, H }) {
   ctx.fillStyle = paintLinear(ctx, 0, 0, 0, H, [
     [0,    '#a8c4d4'],
     [0.5,  '#cad9e0'],
@@ -201,12 +239,14 @@ export const BG_SNOW = (ctx, { W, H }) => {
   ctx.lineTo(0,        H * 0.62);
   ctx.closePath();
   ctx.fill();
-  // Light snow fall — animated specks
+}
+function snowNear(ctx, { W, H }) {
   floorLine(ctx, W, H, 'rgba(0,0,0,0.10)');
-};
+}
+export const BG_SNOW = makeLayered(snowFar, snowNear);
 
-/** Swamp — murky green water + low fog. */
-export const BG_SWAMP = (ctx, { W, H }) => {
+/* ---- Swamp — murky green water + low fog. ---- */
+function swampFar(ctx, { W, H }) {
   ctx.fillStyle = paintLinear(ctx, 0, 0, 0, H, [
     [0,    '#2a3a2a'],
     [0.5,  '#3a4a32'],
@@ -214,7 +254,7 @@ export const BG_SWAMP = (ctx, { W, H }) => {
     [1,    '#1e2818']
   ]);
   ctx.fillRect(0, 0, W, H);
-  // Bent trees / reeds
+  // Bent trees / reeds in the mid-distance
   ctx.strokeStyle = 'rgba(0,0,0,0.5)';
   ctx.lineWidth = 2;
   for (let i = 0; i < 9; i++) {
@@ -231,11 +271,14 @@ export const BG_SWAMP = (ctx, { W, H }) => {
   fog.addColorStop(1, 'rgba(200,210,180,0)');
   ctx.fillStyle = fog;
   ctx.fillRect(0, H * 0.55, W, H * 0.2);
+}
+function swampNear(ctx, { W, H }) {
   floorLine(ctx, W, H, 'rgba(180,200,140,0.12)');
-};
+}
+export const BG_SWAMP = makeLayered(swampFar, swampNear);
 
-/** Cave — deep blue stone + stalagmite silhouettes. */
-export const BG_CAVE = (ctx, { W, H }) => {
+/* ---- Cave — deep blue stone + stalagmite silhouettes. ---- */
+function caveFar(ctx, { W, H }) {
   ctx.fillStyle = paintLinear(ctx, 0, 0, 0, H, [
     [0,    '#0a0a14'],
     [0.5,  '#181830'],
@@ -243,7 +286,7 @@ export const BG_CAVE = (ctx, { W, H }) => {
     [1,    '#080810']
   ]);
   ctx.fillRect(0, 0, W, H);
-  // Stalactites from ceiling
+  // Stalactites from ceiling — these are far (above and behind actors)
   ctx.fillStyle = 'rgba(0,0,0,0.7)';
   for (let i = 0; i < 8; i++) {
     const x = (i * (W / 8)) + ((i * 23) % 30);
@@ -256,7 +299,17 @@ export const BG_CAVE = (ctx, { W, H }) => {
     ctx.closePath();
     ctx.fill();
   }
-  // Stalagmites from floor
+  // Cool blue glow
+  const glow = ctx.createRadialGradient(W * 0.5, H * 0.5, 0, W * 0.5, H * 0.5, W * 0.6);
+  glow.addColorStop(0, 'rgba(80,120,200,0.10)');
+  glow.addColorStop(1, 'rgba(80,120,200,0)');
+  ctx.fillStyle = glow;
+  ctx.fillRect(0, 0, W, H);
+}
+function caveNear(ctx, { W, H }) {
+  // Stalagmites at the floor line — near layer, they should move
+  // with the foreground.
+  ctx.fillStyle = 'rgba(0,0,0,0.7)';
   for (let i = 0; i < 6; i++) {
     const x = (i * (W / 6)) + 30;
     const w = 22 + ((i * 13) % 14);
@@ -269,14 +322,9 @@ export const BG_CAVE = (ctx, { W, H }) => {
     ctx.closePath();
     ctx.fill();
   }
-  // Cool blue glow
-  const glow = ctx.createRadialGradient(W * 0.5, H * 0.5, 0, W * 0.5, H * 0.5, W * 0.6);
-  glow.addColorStop(0, 'rgba(80,120,200,0.10)');
-  glow.addColorStop(1, 'rgba(80,120,200,0)');
-  ctx.fillStyle = glow;
-  ctx.fillRect(0, 0, W, H);
   floorLine(ctx, W, H, 'rgba(180,200,255,0.10)');
-};
+}
+export const BG_CAVE = makeLayered(caveFar, caveNear);
 
 export const BACKGROUNDS = {
   grass:   BG_GRASS,
