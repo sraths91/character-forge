@@ -380,7 +380,38 @@ deferred because the engine's cast surface assumes the planner builds
 the cast plan, and manual cast routing through `combat.spell` would
 need a more invasive refactor of the prompt's spell branches.
 
-**Phase 4b.4 — Manual-click spell migration (PENDING).** Replace
+**Phase 4b.4 — Manual-click spell migration (DONE).** Manual spell
+casts now try the engine first. When the player picks a spell + a
+target, `runManualCast(attackerHit, targetHit, spell)` resolves the
+spell to a `monster-spells.js` registry entry (by `.id` if present,
+else via `nameToSpellId(spell.name)`), builds a synthetic cast plan
+(kind:'cast', spellId, castAtLevel, targetSide:heal-aware), and
+dispatches through `runEngineTurn` with `interactive: true`.
+
+Spells that don't translate to the registry (homebrew, edge cases
+without a matching slug) fall back to the legacy `runAttackPrompt`
+path — `combat.spell` is restored if the engine couldn't route.
+
+`nameToSpellId` was exported from `pc-action.js` so the live runner
+shares the same name→slug rule as the AI planner.
+
+Result: manual play now matches auto-fight and simulator behavior
+for every spell in the shared registry — Counterspell windows,
+Shield reactions, AoE positioning, slot accounting, concentration
+all flow through the same code path. Save-spell DC + damage routing
+inside the engine's spell branch handles the spell-save case
+uniformly (no separate `runSpellSavePrompt` invocation needed for
+engine-routed casts).
+
+**Phase 4 complete.** The simulator, auto-fight loop, and manual
+canvas-click all dispatch attacks + casts through a single
+`combat-engine.runOneAttack` spine with prompt callbacks for the
+player-facing UI. Five legacy helpers remain in main.js
+(`pickVersusTargetWithProfile`, `runVersusFlee`, `pickLowestHpEnemy`,
+`attackInVersus`, `castInVersus`) marked with `void` references
+pending Phase 5 cleanup. The non-engine `runAttackPrompt` /
+`runSpellSavePrompt` path still serves as a fallback for spells
+without registry coverage.
 `runVersusPartyAuto`'s per-entity-turn body with a call into
 `combat-engine.runOneAttack`. The `prompts` object plumbs through
 the player-facing reactions:

@@ -83,7 +83,7 @@ import { terrainFromScene, backgroundFor } from './anim/cinema-backgrounds.js';
 // The simulator has used this since M42; the live runner just never
 // asked. choosePcAction returns a plan with the chosen weapon, target,
 // and feature list — we honor `_chosenWeapon` in getAttackerWeapon.
-import { choosePcAction } from './scene/ai/pc-action.js';
+import { choosePcAction, nameToSpellId } from './scene/ai/pc-action.js';
 import { resetPerTurnFlags } from './scene/ai/pc-features.js';
 import { slotsForPc } from './scene/reactions.js';
 
@@ -1263,6 +1263,48 @@ async function runManualWeaponAttack(attackerHit, targetHit) {
   };
 }
 
+/**
+ * M45 Phase 4b.4 — Manual-click spell cast via the unified engine.
+ *
+ * Resolves the queued spell from `combat.spell` to a registry entry
+ * (by id or by name-to-slug), builds a synthetic cast plan
+ * (kind:'cast', spellId, castAtLevel, targetSide), and dispatches
+ * through runEngineTurn. Falls back to the legacy runAttackPrompt
+ * path when the spell doesn't translate (e.g. homebrew spells with
+ * no registry entry).
+ *
+ * Returns true if the engine path handled the cast; false if the
+ * caller should fall back to runAttackPrompt.
+ */
+async function runManualCast(attackerHit, targetHit, spell) {
+  if (!attackerHit?.entity || !targetHit?.entity || !spell) return false;
+  // Resolve the spell to a registry entry. PC spell records carry a
+  // .name; the AI's nameToSpellId helper produces the same slug the
+  // monster-spells registry uses.
+  const id = spell.id || nameToSpellId(spell.name);
+  if (!id) return false;
+  const registrySpell = spellById(id);
+  if (!registrySpell) return false;
+  // Heals target an ally; everything else targets the chosen entity.
+  const isHeal = registrySpell.kind === 'heal' || registrySpell.targetSide === 'ally';
+  const plan = {
+    kind: 'cast',
+    spellId: id,
+    castAtLevel: spell.castAtLevel || registrySpell.level || 0,
+    targetId: targetHit.entity.id,
+    targetSide: isHeal ? 'ally' : 'enemy',
+    weapon: null,
+    featuresFired: [],
+    archetype: 'manual',
+    score: 0,
+    breakdown: []
+  };
+  await runEngineTurn(attackerHit.entity, attackerHit.kind, {
+    forcePlan: plan, interactive: true
+  });
+  return true;
+}
+
 function versusHpOf(entity, kind) {
   if (kind === 'pc') return entity.hp?.current ?? 0;
   return entity.hp?.current ?? 0;
@@ -2067,24 +2109,35 @@ canvas.addEventListener('pointerdown', (e) => {
     }
     e.preventDefault();
     hideAttackPreview();
-    // M45 Phase 4b.3 — Weapon manual attacks now dispatch through the
-    // unified combat engine via runManualWeaponAttack. Spell flows
-    // (combat.spell !== null) keep using runAttackPrompt for the
-    // spell-attack-vs-save dispatch, which the engine's manual surface
-    // doesn't model uniformly yet.
-    if (combat.spell) {
-      runAttackPrompt(hit.kind, hit.entity);
-    } else {
-      const attackerLive = resolveEntityById(combat.attacker.id, combat.attacker.kind);
-      if (attackerLive) {
-        runManualWeaponAttack(
-          { kind: combat.attacker.kind, entity: attackerLive },
-          { kind: hit.kind, entity: hit.entity }
-        ).then(() => {
+    // M45 Phase 4b.3 — Manual weapon attacks dispatch through the
+    // engine. M45 Phase 4b.4 — Manual spell casts try the engine
+    // first; spells without a registry entry fall back to the legacy
+    // runAttackPrompt path (which handles the spell-attack-vs-save
+    // dispatch directly).
+    const attackerLive = resolveEntityById(combat.attacker.id, combat.attacker.kind);
+    if (!attackerLive) { runAttackPrompt(hit.kind, hit.entity); return; }
+    const attackerHit = { kind: combat.attacker.kind, entity: attackerLive };
+    const targetHit   = { kind: hit.kind, entity: hit.entity };
+    const queuedSpell = combat.spell;
+    if (queuedSpell) {
+      // Reset combat.spell BEFORE engine dispatch so the engine's
+      // cinema/log handlers don't double-fire spell-mode logic.
+      combat.spell = null;
+      runManualCast(attackerHit, targetHit, queuedSpell).then(handled => {
+        if (handled) {
           cancelAttack();
           rerender();
-        });
-      }
+        } else {
+          // Engine couldn't route — restore the spell + fall back.
+          combat.spell = queuedSpell;
+          runAttackPrompt(hit.kind, hit.entity);
+        }
+      });
+    } else {
+      runManualWeaponAttack(attackerHit, targetHit).then(() => {
+        cancelAttack();
+        rerender();
+      });
     }
     return;
   }

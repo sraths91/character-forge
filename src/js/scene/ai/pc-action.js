@@ -416,8 +416,10 @@ function collectSpells(ref) {
   return out.filter(Boolean);
 }
 
-/** Convert a human spell name to our spell-id slug. */
-function nameToSpellId(name) {
+/** Convert a human spell name to our spell-id slug. Exported so the
+ *  live runner's manual-cast path can resolve registry entries
+ *  consistently with the AI planner. */
+export function nameToSpellId(name) {
   return String(name || '').toLowerCase()
     .replace(/['']/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
 }
