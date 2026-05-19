@@ -22,6 +22,7 @@
 
 import { renderSprite } from '../sprite/compositor.js';
 import { MONSTER_PRESETS, buildMonsterCharacter } from '../scene/monster-presets.js';
+import { actorStateAt } from './fsm.js';
 
 // M44.1 — Per-actor frame cycle. We pre-render five poses sampled
 // from the LPC walk sheet:
@@ -105,11 +106,13 @@ export async function preloadActorSprite(entity, { scale = 3, direction = 'south
 }
 
 /**
- * Pick the right LPC frame index for the current swing phase. Pure —
- * snapshot._phase is one of 'idle'|'windup'|'strike'|'recover'; _t is
- * the timeline ms so the idle bob alternates frame A/B on a slow loop.
+ * Pick the right LPC frame index for the current swing phase. Pure.
  * `actor` distinguishes attacker (cycles through windup/strike) from
  * defender (stays in idle unless an explicit hurt phase is supplied).
+ *
+ * Returns just the current frame index. For the M46 cross-fade
+ * renderer, use `pickActorFrameBlended` instead — it returns the
+ * previous frame + blend factor alongside.
  */
 export function pickActorFrame(snapshot = {}, actor = 'attacker') {
   const phase = snapshot._phase || 'idle';
@@ -124,6 +127,30 @@ export function pickActorFrame(snapshot = {}, actor = 'attacker') {
   return half === 0 ? FRAME_IDLE_A : FRAME_IDLE_B;
 }
 
+/**
+ * M46 — Frame interpolation: return the current frame, the previous
+ * frame, and a 0..1 blend factor. The renderer cross-fades the two
+ * sprite frames at the given blend, turning what was a 5fps pose
+ * cycle into perceptually-smooth motion.
+ *
+ * Delegates to the actor FSM (src/js/anim/fsm.js). Snapshot must
+ * carry _t and _impactAt so the FSM can classify the phase.
+ */
+export function pickActorFrameBlended(snapshot = {}, actor = 'attacker') {
+  const t = Number.isFinite(snapshot._t) ? snapshot._t : 0;
+  // Pass non-finite impactAt straight through so the FSM's phase
+  // classifier can fall back to 'idle' instead of mis-computing a
+  // recover/strike window relative to a zero impact moment.
+  const impactAt = snapshot._impactAt;
+  const state = actorStateAt(actor, t, impactAt);
+  return {
+    frame: state.pose,
+    prevFrame: state.prevPose,
+    blend: state.blend,
+    phase: state.phase
+  };
+}
+
 /** Build a drawSprite(ctx, actor, anchor, snapshot, refInfo) callback
  *  that paints the pre-rendered LPC bitmap for each actor. `lookup`
  *  is a function (id, direction) → cache entry (defaults to the
@@ -135,10 +162,16 @@ export function makeLpcDrawSprite({ lookup = defaultLookup } = {}) {
     const id = refInfo?.id ?? null;
     const direction = directionForActor(actor);
     const entry = id != null ? lookup(id, direction) : null;
-    const frameIdx = pickActorFrame(snapshot, actor);
-    const buf = entry?.frames?.get(frameIdx)
+    // M46 — Frame interpolation. Pick BOTH the current pose and the
+    // pose we're transitioning from, plus a 0..1 blend. Snap-cut
+    // callers (legacy pickActorFrame) still work: blend=1 means
+    // "fully on current frame" which renders identically to the
+    // single-frame path.
+    const blended = pickActorFrameBlended(snapshot, actor);
+    const buf = entry?.frames?.get(blended.frame)
              || entry?.frames?.get(FRAME_IDLE_A)
              || null;
+    const prevBuf = entry?.frames?.get(blended.prevFrame) || null;
     if (!buf) {
       // Fallback — a faint label so the missing sprite is debuggable
       ctx.save();
@@ -154,33 +187,82 @@ export function makeLpcDrawSprite({ lookup = defaultLookup } = {}) {
     ctx.translate(anchor.x, anchor.y);
     ctx.rotate(snapshot.rotation || 0);
     const s = snapshot.scale || 1;
+    // M46 — Squash-stretch on defender impact. For the first 120ms
+    // of hurt, scale Y down and X up briefly so the body compresses
+    // on the hit (anticipation principle in reverse — the hit itself
+    // is the squash) then bounces back. Subtle: 12% deformation at
+    // peak. Attacker doesn't squash.
+    let sx = s, sy = s;
+    if (actor === 'defender' && snapshot._phase === 'hurt') {
+      const t = Number.isFinite(snapshot._t) ? snapshot._t : 0;
+      const impactAt = Number.isFinite(snapshot._impactAt) ? snapshot._impactAt : t;
+      const age = Math.max(0, t - impactAt);
+      if (age < 120) {
+        const u = age / 120;
+        // Triangle envelope — peak at u=0.5, zero at u=0 and u=1
+        const env = u < 0.5 ? u * 2 : (1 - u) * 2;
+        const squash = env * 0.12;
+        sx = s * (1 + squash);
+        sy = s * (1 - squash);
+      }
+    }
     // M44.5 — No x-mirror. East row faces right; west row faces left.
-    ctx.scale(s, s);
-    ctx.globalAlpha = snapshot.alpha ?? 1;
+    ctx.scale(sx, sy);
     ctx.imageSmoothingEnabled = false;
     // Anchor the sprite by its feet so the floor line passes through
     // the bottom edge. The LPC sheet is 64×64 logical, scaled up.
     const w = buf.width, h = buf.height;
+    const baseAlpha = snapshot.alpha ?? 1;
+    // M46 — Cross-fade: draw the previous-pose frame first at
+    // (1 - blend), then the current pose at blend. When blend = 1
+    // (held pose) only the current pose draws; when blend = 0.5
+    // (mid-transition) both render at half alpha and read as a
+    // smooth tween between the two poses. prevBuf may be null
+    // during the brief preload window — fall through to current
+    // frame only.
+    if (prevBuf && blended.blend < 1 && prevBuf !== buf) {
+      ctx.globalAlpha = baseAlpha * (1 - blended.blend);
+      ctx.drawImage(prevBuf, -w / 2, -h);
+    }
+    ctx.globalAlpha = baseAlpha * (prevBuf && prevBuf !== buf ? blended.blend : 1);
     ctx.drawImage(buf, -w / 2, -h);
-    // M44.3 — Hurt flash: paint a red tint over the sprite's silhouette
-    // for the duration of the hurt phase. Uses source-atop composite so
-    // the tint only affects the painted pixels (transparent background
-    // is left alone). Intensity fades over the hurt window so the flash
-    // pulses rather than holds.
+    ctx.globalAlpha = baseAlpha;
+    // M44.3 + M46 — Hurt overlay: two-stage tint on the defender's
+    // silhouette during the hurt phase.
+    //   t in [0, 60ms]   : WHITE silhouette flash — the "punch" frame
+    //                       that emphasises the impact. Fast in/out.
+    //   t in [40, 220ms] : red tint pulse (existing).
+    // Both use source-atop so transparent background is left alone.
+    // The windows overlap briefly at 40-60ms so the white→red
+    // transition reads as a smooth shift rather than a snap-cut.
     if (snapshot._phase === 'hurt') {
       const t = Number.isFinite(snapshot._t) ? snapshot._t : 0;
       const impactAt = Number.isFinite(snapshot._impactAt) ? snapshot._impactAt : t;
       const age = Math.max(0, t - impactAt);
-      const u = Math.min(1, age / 220);
-      const alpha = 0.6 * Math.sin(u * Math.PI);   // fade in/out
-      if (alpha > 0.02) {
-        const prev = ctx.globalCompositeOperation;
-        ctx.globalCompositeOperation = 'source-atop';
-        ctx.globalAlpha = alpha;
-        ctx.fillStyle = '#ef4444';
-        ctx.fillRect(-w / 2, -h, w, h);
-        ctx.globalCompositeOperation = prev;
+      const prev = ctx.globalCompositeOperation;
+      // M46 — White punch frame
+      if (age < 80) {
+        const u = age / 80;
+        const whiteAlpha = 0.85 * (1 - u) * (u < 0.5 ? u * 2 : 1);
+        if (whiteAlpha > 0.02) {
+          ctx.globalCompositeOperation = 'source-atop';
+          ctx.globalAlpha = whiteAlpha;
+          ctx.fillStyle = '#ffffff';
+          ctx.fillRect(-w / 2, -h, w, h);
+        }
       }
+      // Red hurt pulse (kicks in around the time the white fades out).
+      if (age > 30) {
+        const u = Math.min(1, (age - 30) / 190);
+        const alpha = 0.6 * Math.sin(u * Math.PI);
+        if (alpha > 0.02) {
+          ctx.globalCompositeOperation = 'source-atop';
+          ctx.globalAlpha = alpha;
+          ctx.fillStyle = '#ef4444';
+          ctx.fillRect(-w / 2, -h, w, h);
+        }
+      }
+      ctx.globalCompositeOperation = prev;
     }
     ctx.restore();
     // Name label — un-rotate, un-mirror so text stays readable

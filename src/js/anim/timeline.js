@@ -74,8 +74,10 @@ export function playSequence(seq, render, opts = {}) {
       // Sprite snapshots
       const att = sampleSprite(seq, 'attacker', now);
       const def = sampleSprite(seq, 'defender', now);
-      // Dynamic shake — decays each frame after the impulse
-      if (nextShake) nextShake = decayShake(nextShake);
+      // Dynamic shake — decays each frame after the impulse. M46:
+      // pass the timeline-relative `now` so the damped-sine curve
+      // can compute its elapsed time from the impulse's startedAt.
+      if (nextShake) nextShake = decayShake(nextShake, now);
       render({
         attacker: att, defender: def,
         effects: fired, hitPauseUntil: nextHitPause,
@@ -115,17 +117,46 @@ function nowMs() {
   return Date.now();
 }
 
-function shakeAt(params, _now) {
+function shakeAt(params, now) {
   return {
     x: 0, y: 0,
     amplitude: params.amplitude ?? 4,
-    decay: params.decay ?? 0.85
+    decay: params.decay ?? 0.85,
+    // M46 — Damped-sine shake. Track the impulse start so the
+    // perturbation follows `amp * sin(2π·t·freq) * exp(-t·decay)`
+    // instead of fresh-random per frame. Reads as a real impact
+    // shudder rather than camera jitter.
+    startedAt: now,
+    freq: params.freq ?? 26,     // Hz — fast enough to read as kinetic
+    dampPerSec: params.dampPerSec ?? 8
   };
 }
 
-function decayShake(s) {
+function decayShake(s, now = nowMs()) {
   if (!s || s.amplitude < 0.1) return null;
-  // Pseudo-random shake offset, decaying per frame
+  // M46 — Damped-sine displacement. Random-jitter shake is still here
+  // as a fallback (old call sites without startedAt) but the typical
+  // path uses the kinetic curve.
+  if (Number.isFinite(s.startedAt)) {
+    const tSec = Math.max(0, (now - s.startedAt) / 1000);
+    const envelope = Math.exp(-tSec * s.dampPerSec);
+    const phase = 2 * Math.PI * s.freq * tSec;
+    const swing = Math.sin(phase);
+    // Vertical component lags the horizontal by 90° so the shake
+    // traces a small Lissajous-ish curve rather than a straight line —
+    // looks more like a real impact thump.
+    const swingY = Math.sin(phase + Math.PI / 2) * 0.6;
+    const live = s.amplitude * envelope;
+    if (live < 0.1) return null;
+    return {
+      x: swing * live,
+      y: swingY * live,
+      amplitude: s.amplitude, decay: s.decay,
+      startedAt: s.startedAt, freq: s.freq, dampPerSec: s.dampPerSec
+    };
+  }
+  // Legacy random-jitter path (kept for tests / callers without
+  // a startedAt clock).
   return {
     x: (Math.random() * 2 - 1) * s.amplitude,
     y: (Math.random() * 2 - 1) * s.amplitude,
