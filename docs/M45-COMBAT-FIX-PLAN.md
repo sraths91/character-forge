@@ -528,10 +528,20 @@ Inserted into Phase 3 and Phase 4 below:
 - **Phase 4** is no longer optional. It's the foundation MCTS needs
   to look ahead with the *real* game rules instead of a simplified
   model.
-- **New Phase 6** (post-Phase 5): tuning pass. Run the calibrator
-  (M35) against ~50 stock encounters before/after the AI changes,
-  publish win-rate + average-rounds deltas. Caps regressions where
-  the new AI is "smart but turtles" or "smart but overcommits".
+- **Phase 6 — Calibrator tuning pass (DONE).** Built
+  `scripts/m45-calibrator-suite.js` — a Node script that crosses 3
+  stock parties (low/mid/high level) against 11 stock monster
+  lineups and prints a markdown table of win-rate / loss-rate /
+  draw-rate / avg-rounds / lethality / deaths / DMG difficulty per
+  cell. Regenerate with
+  `node scripts/m45-calibrator-suite.js > docs/M45-CALIBRATOR-RESULTS.md`.
+  Headline numbers (33 encounters × 100 iters, seed 1): mean win
+  rate 84%, mean lethality 29%, mean rounds 4.5. Mid + high parties
+  clear every encounter near 100%; low party scales 60-90% on its
+  DMG-easy bracket and 1-4% on deadly. Two follow-up items flagged
+  in the results doc — both calibrator-side, not AI bugs: missing
+  `monsterXp(slug)` entries for several monsters, and zombies not
+  modelling Undead Fortitude.
 
 ---
 
