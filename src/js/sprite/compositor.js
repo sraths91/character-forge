@@ -1,6 +1,7 @@
 import { FRAME, SLOT_COLORS, SLOT_BOXES, buildRenderPlan, getFrame } from './lpc-config.js';
 import { loadImage } from './image-cache.js';
 import { generateItemSprite, rarityToAuraTier } from './item-generator.js';
+import { paintGeneratedBackground } from '../scene/map-render.js';
 
 // Tier ranks: higher beats lower. Used to pick the single character-level aura.
 const RARITY_RANK = {
@@ -87,6 +88,15 @@ export async function renderBattleScene(canvas, characters, scene, opts = {}) {
       const img = await loadCachedImage(scene.map.image);
       drawImageCover(ctx, img, totalW, totalH);
     } catch { /* fall back to the colour we already painted */ }
+  } else if (scene.map?.kind === 'generated') {
+    // Procedural terrain. Painted once to an offscreen canvas keyed by
+    // (biome, seed, dims) and blitted here — so the per-frame combat
+    // loop pays one drawImage, not a full repaint. Fallback colour
+    // first in case the offscreen build is unavailable (headless).
+    ctx.fillStyle = scene.map.color || '#3d5a3d';
+    ctx.fillRect(0, 0, totalW, totalH);
+    const off = getGeneratedMapCanvas(scene, totalW, totalH, cellPx);
+    if (off) ctx.drawImage(off, 0, 0);
   } else if (scene.map?.kind === 'color') {
     ctx.fillStyle = scene.map.color || '#3d5a3d';
     ctx.fillRect(0, 0, totalW, totalH);
@@ -517,6 +527,52 @@ function renderGlyphRise(ctx, e, t, cellPx) {
   ctx.fillStyle = e.color;
   ctx.fillText(e.glyph || '✨', c.x, y);
   ctx.restore();
+}
+
+// Procedural map cache. The generated terrain is painted ONCE to an
+// offscreen canvas keyed by the inputs that change pixels (biome, seed,
+// dimensions, cell size); the per-frame render loop then blits it with
+// a single drawImage. Reroll → new seed → new key → one repaint. LRU
+// capped so memory stays bounded across many scenes / rerolls.
+const _genMapCache = new Map();
+const _GEN_MAP_CACHE_MAX = 8;
+
+/**
+ * Return a cached offscreen canvas holding the painted generated map
+ * for `scene`, building it on a miss. Returns null if a canvas can't be
+ * created (no DOM) so the caller falls back to the flat colour fill.
+ */
+function getGeneratedMapCanvas(scene, totalW, totalH, cellPx) {
+  const biome = scene.map?.biome || 'grass';
+  const seed = scene.map?.seed >>> 0;
+  const key = `${biome}|${seed}|${scene.cols}x${scene.rows}|${cellPx}`;
+  const hit = _genMapCache.get(key);
+  if (hit) {
+    // Refresh LRU recency.
+    _genMapCache.delete(key);
+    _genMapCache.set(key, hit);
+    return hit;
+  }
+  let off;
+  if (typeof document !== 'undefined' && document.createElement) {
+    off = document.createElement('canvas');
+  } else if (typeof OffscreenCanvas !== 'undefined') {
+    off = new OffscreenCanvas(totalW, totalH);
+  } else {
+    return null;
+  }
+  off.width = totalW;
+  off.height = totalH;
+  const offCtx = off.getContext('2d');
+  if (!offCtx) return null;
+  paintGeneratedBackground(offCtx, scene, cellPx);
+  _genMapCache.set(key, off);
+  // Evict oldest if over budget.
+  if (_genMapCache.size > _GEN_MAP_CACHE_MAX) {
+    const oldest = _genMapCache.keys().next().value;
+    _genMapCache.delete(oldest);
+  }
+  return off;
 }
 
 // M2.5 — Image cache. Decoded HTMLImageElements keyed by data-url so
