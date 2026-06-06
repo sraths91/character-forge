@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert';
 import {
-  BIOMES, isBiome, listBiomes, generateMapModel
+  BIOMES, BIOME_STRUCTURE, isBiome, listBiomes, generateMapModel
 } from '../js/scene/map-generator.js';
 import { SCENE_PRESETS } from '../js/scene/scene-state.js';
 
@@ -125,11 +125,85 @@ test('map-generator: features stay in bounds + one per cell', () => {
   }
 });
 
-test('map-generator: model exposes phase-2/3 arrays (empty for now)', () => {
+test('map-generator: structures array still empty (Phase 3)', () => {
   const m = generateMapModel({ biome: 'grass', cols: 5, rows: 5, seed: 1 });
-  assert.deepStrictEqual(m.rivers, []);
-  assert.deepStrictEqual(m.paths, []);
   assert.deepStrictEqual(m.structures, []);
+});
+
+// ---------- Phase 2: rivers + paths + bridges ----------
+
+test('map-generator: BIOME_STRUCTURE covers every biome', () => {
+  for (const slug of listBiomes()) {
+    assert.ok(BIOME_STRUCTURE[slug], `missing structure for ${slug}`);
+    assert.match(BIOME_STRUCTURE[slug].river, /^#[0-9a-f]{6}$/i);
+    assert.match(BIOME_STRUCTURE[slug].path, /^#[0-9a-f]{6}$/i);
+  }
+});
+
+test('map-generator: rivers/paths counts match the biome budget', () => {
+  for (const slug of listBiomes()) {
+    const m = generateMapModel({ biome: slug, cols: 14, rows: 10, seed: 5 });
+    assert.strictEqual(m.rivers.length, BIOME_STRUCTURE[slug].rivers, `${slug} rivers`);
+    assert.strictEqual(m.paths.length, BIOME_STRUCTURE[slug].paths, `${slug} paths`);
+  }
+});
+
+test('map-generator: a river is a polyline that flows downhill overall', () => {
+  // swamp has 2 rivers; check the first descends from source to mouth.
+  const m = generateMapModel({ biome: 'swamp', cols: 16, rows: 12, seed: 21 });
+  assert.ok(m.rivers.length >= 1);
+  const r = m.rivers[0].points;
+  assert.ok(r.length >= 2, 'river has points');
+  // Every point in bounds.
+  for (const p of r) {
+    assert.ok(p.x >= 0 && p.x <= 16 && p.y >= 0 && p.y <= 12, `river point OOB ${p.x},${p.y}`);
+  }
+  // Source should be no lower than the mouth (gradient descent).
+  assert.ok(m.elevation(r[0].x, r[0].y) >= m.elevation(r[r.length - 1].x, r[r.length - 1].y) - 0.15,
+    'river should not flow strongly uphill');
+});
+
+test('map-generator: a path spans the map edge to edge', () => {
+  const m = generateMapModel({ biome: 'grass', cols: 16, rows: 10, seed: 9 });
+  assert.ok(m.paths.length >= 1);
+  const p = m.paths[0].points;
+  const first = p[0], last = p[p.length - 1];
+  // One coordinate of each endpoint sits on an edge.
+  const onEdge = (pt) => pt.x <= 0.5 || pt.x >= 15.5 || pt.y <= 0.5 || pt.y >= 9.5;
+  assert.ok(onEdge(first) && onEdge(last), 'path endpoints should touch edges');
+});
+
+test('map-generator: deterministic rivers + paths', () => {
+  const a = generateMapModel({ biome: 'forest', cols: 14, rows: 10, seed: 77 });
+  const b = generateMapModel({ biome: 'forest', cols: 14, rows: 10, seed: 77 });
+  assert.deepStrictEqual(a.rivers, b.rivers);
+  assert.deepStrictEqual(a.paths, b.paths);
+  assert.deepStrictEqual(a.bridges, b.bridges);
+});
+
+test('map-generator: features never sit on a river', () => {
+  const m = generateMapModel({ biome: 'forest', cols: 16, rows: 12, seed: 3 });
+  for (const f of m.features) {
+    for (const river of m.rivers) {
+      for (const p of river.points) {
+        const d = Math.hypot(f.x - p.x, f.y - p.y);
+        assert.ok(d > 0.5, `feature ${f.type} too close to river (${d.toFixed(2)})`);
+      }
+    }
+  }
+});
+
+test('map-generator: bridges (when present) carry x/y/angle', () => {
+  // Scan a few seeds to find a path×river crossing.
+  let found = null;
+  for (let s = 1; s < 40 && !found; s++) {
+    const m = generateMapModel({ biome: 'grass', cols: 16, rows: 12, seed: s });
+    if (m.bridges.length) found = m.bridges[0];
+  }
+  if (found) {
+    assert.ok(Number.isFinite(found.x) && Number.isFinite(found.y));
+    assert.ok(Number.isFinite(found.angle));
+  }
 });
 
 test('map-generator: unknown biome falls back to grass', () => {

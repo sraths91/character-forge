@@ -52,12 +52,125 @@ export function paintMapModel(ctx, model, { cellPx } = {}) {
   const px = cellPx || 64;
 
   paintGround(ctx, model, px);
-  // Phase 2 will paint model.rivers + model.paths here.
+  // Paths under rivers so a bridge reads as crossing over the water.
+  for (const path of (model.paths || [])) drawPath(ctx, path, px, model);
+  for (const river of (model.rivers || [])) drawRiver(ctx, river, px, model);
+  for (const bridge of (model.bridges || [])) drawBridge(ctx, bridge, px, model);
   // Phase 3 will paint model.structures here.
   for (const f of model.features) {
     drawFeature(ctx, f, px);
   }
   paintVignette(ctx, model, px);
+}
+
+/* =====================================================================
+ * Waterways + roads (Phase 2)
+ * ===================================================================== */
+
+/** Trace a smoothed path through the polyline using quadratic curves
+ *  through segment midpoints — no corners. */
+function ribbonPath(ctx, pts, px) {
+  if (pts.length < 2) return;
+  ctx.beginPath();
+  ctx.moveTo(pts[0].x * px, pts[0].y * px);
+  for (let i = 1; i < pts.length - 1; i++) {
+    const mx = (pts[i].x + pts[i + 1].x) / 2 * px;
+    const my = (pts[i].y + pts[i + 1].y) / 2 * px;
+    ctx.quadraticCurveTo(pts[i].x * px, pts[i].y * px, mx, my);
+  }
+  const last = pts[pts.length - 1];
+  ctx.lineTo(last.x * px, last.y * px);
+}
+
+/** River — dark bank stroke, water body, lighter centre highlight. */
+function drawRiver(ctx, river, px, model) {
+  const pts = river.points;
+  if (!pts || pts.length < 2) return;
+  const color = model.structure?.river || model.zoneFill('water')[1];
+  const w = (river.width || 0.42) * px;
+  ctx.save();
+  ctx.lineJoin = 'round';
+  ctx.lineCap = 'round';
+  // Bank (slightly wider, darker, soft).
+  ribbonPath(ctx, pts, px);
+  ctx.strokeStyle = darken(color, 18);
+  ctx.lineWidth = w * 1.35;
+  ctx.globalAlpha = 0.85;
+  ctx.stroke();
+  // Water body.
+  ribbonPath(ctx, pts, px);
+  ctx.strokeStyle = color;
+  ctx.lineWidth = w;
+  ctx.globalAlpha = 0.95;
+  ctx.stroke();
+  // Centre highlight (current).
+  ribbonPath(ctx, pts, px);
+  ctx.strokeStyle = lighten(color, 24);
+  ctx.lineWidth = Math.max(1, w * 0.3);
+  ctx.globalAlpha = 0.4;
+  ctx.stroke();
+  ctx.restore();
+}
+
+/** Path/road — soft dirt or stone ribbon with a faint darker edge. */
+function drawPath(ctx, path, px, model) {
+  const pts = path.points;
+  if (!pts || pts.length < 2) return;
+  const color = model.structure?.path || '#7d6b48';
+  const w = (path.width || 0.3) * px;
+  ctx.save();
+  ctx.lineJoin = 'round';
+  ctx.lineCap = 'round';
+  // Edge.
+  ribbonPath(ctx, pts, px);
+  ctx.strokeStyle = darken(color, 16);
+  ctx.lineWidth = w * 1.3;
+  ctx.globalAlpha = 0.6;
+  ctx.stroke();
+  // Surface.
+  ribbonPath(ctx, pts, px);
+  ctx.strokeStyle = color;
+  ctx.lineWidth = w;
+  ctx.globalAlpha = 0.8;
+  ctx.stroke();
+  // Trodden centre.
+  ribbonPath(ctx, pts, px);
+  ctx.strokeStyle = lighten(color, 12);
+  ctx.lineWidth = Math.max(1, w * 0.4);
+  ctx.globalAlpha = 0.45;
+  ctx.stroke();
+  ctx.restore();
+}
+
+/** Bridge — wooden planks spanning the water where a path crosses. */
+function drawBridge(ctx, bridge, px, model) {
+  const x = bridge.x * px, y = bridge.y * px;
+  const ang = bridge.angle || 0;
+  const len = px * 1.4, half = px * 0.55;
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(ang);
+  // Deck.
+  ctx.fillStyle = '#6b4a26';
+  ctx.fillRect(-len / 2, -half, len, half * 2);
+  // Plank lines across the span.
+  ctx.strokeStyle = 'rgba(0,0,0,0.35)';
+  ctx.lineWidth = Math.max(1, px * 0.04);
+  const planks = 6;
+  for (let i = 1; i < planks; i++) {
+    const lx = -len / 2 + (len / planks) * i;
+    ctx.beginPath();
+    ctx.moveTo(lx, -half); ctx.lineTo(lx, half);
+    ctx.stroke();
+  }
+  // Rails.
+  ctx.strokeStyle = '#7d5630';
+  ctx.lineWidth = Math.max(1, px * 0.06);
+  ctx.beginPath();
+  ctx.moveTo(-len / 2, -half); ctx.lineTo(len / 2, -half);
+  ctx.moveTo(-len / 2, half);  ctx.lineTo(len / 2, half);
+  ctx.stroke();
+  ctx.restore();
 }
 
 /* =====================================================================

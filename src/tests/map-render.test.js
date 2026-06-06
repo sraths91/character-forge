@@ -14,10 +14,13 @@ function mockCtx() {
     canvas: { width: 640, height: 448 },
     save: () => rec('save'),
     restore: () => rec('restore'),
+    translate: () => {},
+    rotate: () => {},
     beginPath: () => rec('beginPath'),
     closePath: () => {},
     moveTo: () => {},
     lineTo: () => {},
+    quadraticCurveTo: () => {},
     arc: () => rec('arc'),
     ellipse: () => rec('ellipse'),
     fill: () => rec('fill'),
@@ -30,6 +33,7 @@ function mockCtx() {
     set strokeStyle(v) {},
     set lineWidth(v) {},
     set lineCap(v) {},
+    set lineJoin(v) {},
     set shadowColor(v) {},
     set shadowBlur(v) {},
     set globalAlpha(v) {},
@@ -102,4 +106,31 @@ test('map-render: paintGeneratedBackground tolerates missing fields + null', () 
   assert.doesNotThrow(() =>
     paintGeneratedBackground(ctx, { cols: 5, rows: 5, map: { kind: 'generated' } }, 40));
   assert.doesNotThrow(() => paintGeneratedBackground(ctx, null, 48));
+});
+
+// ---------- Phase 2: rivers + paths + bridges ----------
+
+test('map-render: a river biome strokes a ribbon (quadratic curves)', () => {
+  const ctx = mockCtx();
+  // swamp guarantees rivers; force a curve-bearing model.
+  const model = generateMapModel({ biome: 'swamp', cols: 16, rows: 12, seed: 21 });
+  assert.ok(model.rivers.length > 0);
+  // Track curve usage by spying through a curve counter on the mock.
+  let curves = 0, strokes = 0;
+  ctx.quadraticCurveTo = () => { curves++; };
+  ctx.lineTo = () => {};
+  const origStroke = ctx.stroke;
+  ctx.stroke = () => { strokes++; origStroke(); };
+  paintMapModel(ctx, model, { cellPx: 48 });
+  assert.ok(curves > 0, 'river ribbon should use quadratic curves');
+  assert.ok(strokes > 0, 'river ribbon should stroke');
+});
+
+test('map-render: a no-river indoor biome still paints fine', () => {
+  const ctx = mockCtx();
+  ctx.quadraticCurveTo = () => {};
+  const model = generateMapModel({ biome: 'tavern', cols: 10, rows: 7, seed: 1 });
+  assert.strictEqual(model.rivers.length, 0);
+  assert.strictEqual(model.paths.length, 0);
+  assert.doesNotThrow(() => paintMapModel(ctx, model, { cellPx: 48 }));
 });

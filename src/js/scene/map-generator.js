@@ -184,6 +184,24 @@ export const BIOMES = {
 const FALLBACK_BIOME = 'grass';
 const ZONE_ORDER = ['water', 'shore', 'low', 'mid', 'high'];
 
+/**
+ * Per-biome structural budget (M49 Phase 2): how many rivers + paths a
+ * map of this biome gets, and the colours for the path ribbon (river
+ * colour derives from the biome's water-zone fill). Indoor biomes
+ * (tavern) get neither; dungeon gets a corridor-style path but no
+ * river; desert is arid so rivers are rare.
+ */
+export const BIOME_STRUCTURE = {
+  grass:   { rivers: 1, paths: 1, river: '#41707a', path: '#7d6b48' },
+  forest:  { rivers: 1, paths: 1, river: '#2f5560', path: '#6e5a3a' },
+  dungeon: { rivers: 0, paths: 1, river: '#26323a', path: '#3a3a42' },
+  cave:    { rivers: 1, paths: 0, river: '#214049', path: '#34303c' },
+  tavern:  { rivers: 0, paths: 0, river: '#3a2418', path: '#5e3716' },
+  desert:  { rivers: 0, paths: 1, river: '#5fa0a8', path: '#a98c54' },
+  snow:    { rivers: 1, paths: 1, river: '#86abbd', path: '#aebcc2' },
+  swamp:   { rivers: 2, paths: 0, river: '#33463a', path: '#4a5436' }
+};
+
 /** Is `biome` a known generator biome? */
 export function isBiome(biome) {
   return Object.prototype.hasOwnProperty.call(BIOMES, biome);
@@ -237,9 +255,33 @@ export function generateMapModel({ biome, cols, rows, seed } = {}) {
     return 'high';
   };
 
+  // --- Pass 3: rivers (gradient descent downhill) -----------------
+  const struct = BIOME_STRUCTURE[slug] || BIOME_STRUCTURE.grass;
+  const rivers = [];
+  for (let i = 0; i < struct.rivers; i++) {
+    const poly = traceRiver(elevation, C, R, sd, i, lv.water);
+    if (poly.length >= 2) rivers.push({ points: poly, width: 0.42 + 0.12 * i });
+  }
+
+  // --- Pass 4: paths (edge-to-edge meander) -----------------------
+  const paths = [];
+  for (let i = 0; i < struct.paths; i++) {
+    const poly = tracePath(C, R, sd, i);
+    if (poly.length >= 2) paths.push({ points: poly, width: 0.30 });
+  }
+
+  // --- Pass 4b: bridges where a path crosses a river --------------
+  const bridges = [];
+  for (const path of paths) {
+    for (const river of rivers) {
+      const hit = polylineCrossing(path.points, river.points);
+      if (hit) bridges.push(hit);
+    }
+  }
+
   // --- Pass 6: region-aware detail scatter ------------------------
-  // (Rivers/paths/structures land in later phases; the model exposes
-  // empty arrays now so the renderer + callers are stable.)
+  // Scatter, then drop anything sitting on a river/path so water and
+  // roads stay clear (no trees growing mid-stream).
   const features = [];
   for (let row = 0; row < R; row++) {
     for (let col = 0; col < C; col++) {
@@ -256,12 +298,14 @@ export function generateMapModel({ biome, cols, rows, seed } = {}) {
         if (roll > chance) continue;
         const jx = hashCell(sd + 7, col, row) - 0.5;
         const jy = hashCell(sd + 13, col, row) - 0.5;
+        const fx = col + 0.5 + jx * 0.5;
+        const fy = row + 0.5 + jy * 0.5;
+        // Keep clear of rivers (1 cell) + paths (0.7 cell).
+        if (nearPolylines(rivers, fx, fy, 1.0) || nearPolylines(paths, fx, fy, 0.7)) break;
         const variant = Math.floor(hashCell(sd + 3, col, row) * f.palette.length);
         features.push({
           type: f.type, zone,
-          col, row,
-          x: col + 0.5 + jx * 0.5,
-          y: row + 0.5 + jy * 0.5,
+          col, row, x: fx, y: fy,
           r: Math.min(0.46, f.r),
           variant,
           color: f.palette[variant] || f.palette[0]
@@ -276,15 +320,156 @@ export function generateMapModel({ biome, cols, rows, seed } = {}) {
     cols: C, rows: R, seed: sd,
     levels: lv,
     zones: spec.zones,
+    structure: struct,
     elevation, moisture, zoneAt,
     zoneFill: (zone) => spec.zones[zone]?.fill || spec.zones.low.fill,
     zoneEdge: (zone) => spec.zones[zone]?.edge || spec.zones.low.edge,
-    rivers: [],       // Phase 2
-    paths: [],        // Phase 2
+    rivers,
+    paths,
+    bridges,
     structures: [],   // Phase 3
     features
   };
 }
+
+/* =====================================================================
+ * River + path tracing (Phase 2)
+ * ===================================================================== */
+
+/**
+ * Trace one river by gradient descent on the elevation field: start at
+ * the highest of several sampled candidate points, then step downhill
+ * (negative gradient) with meander + momentum until reaching an edge or
+ * running out of steps. Returns a polyline in cell space.
+ */
+function traceRiver(elevation, C, R, sd, idx, waterLevel) {
+  // Source: sample candidate points, pick the highest (rivers spring
+  // from high ground).
+  let best = null, bestE = -1;
+  for (let k = 0; k < 28; k++) {
+    const x = 0.5 + hashCell(sd + idx * 97 + k, k, 3) * (C - 1);
+    const y = 0.5 + hashCell(sd + idx * 131 + k, 5, k) * (R - 1);
+    const e = elevation(x, y);
+    if (e > bestE) { bestE = e; best = { x, y }; }
+  }
+  const pts = [best];
+  let heading = null;
+  const maxSteps = C + R + 24;
+  const h = 0.6, stepLen = 0.7;
+  for (let s = 0; s < maxSteps; s++) {
+    const p = pts[pts.length - 1];
+    // Steepest-descent direction (central difference).
+    const gx = elevation(p.x + h, p.y) - elevation(p.x - h, p.y);
+    const gy = elevation(p.x, p.y + h) - elevation(p.x, p.y - h);
+    let dx = -gx, dy = -gy;
+    let mag = Math.hypot(dx, dy);
+    if (mag < 1e-4) { dx = (hashCell(sd, s, idx) - 0.5); dy = (hashCell(sd, idx, s) - 0.5); mag = Math.hypot(dx, dy) || 1; }
+    dx /= mag; dy /= mag;
+    // Meander: perpendicular wobble from noise.
+    const wob = (hashCell(sd + idx * 7, Math.floor(p.x * 2.5), Math.floor(p.y * 2.5)) - 0.5) * 0.9;
+    dx += -dy * wob; dy += dx * wob;
+    // Momentum so the channel curves rather than zig-zags.
+    if (heading) { dx = dx * 0.55 + heading.x * 0.45; dy = dy * 0.55 + heading.y * 0.45; }
+    const mm = Math.hypot(dx, dy) || 1; dx /= mm; dy /= mm;
+    heading = { x: dx, y: dy };
+    const np = { x: p.x + dx * stepLen, y: p.y + dy * stepLen };
+    if (np.x <= 0 || np.x >= C || np.y <= 0 || np.y >= R) {
+      pts.push({ x: clamp(np.x, 0, C), y: clamp(np.y, 0, R) });
+      break;
+    }
+    pts.push(np);
+  }
+  return pts;
+}
+
+/**
+ * Trace one path edge-to-edge as a smooth meander. Picks opposite edges
+ * (left↔right or top↔bottom by parity) and jittered waypoints between,
+ * then samples the Catmull-Rom-ish curve into a dense polyline.
+ */
+function tracePath(C, R, sd, idx) {
+  const horizontal = hashCell(sd + idx * 53, 1, idx) < 0.6;   // mostly L→R roads
+  const ctrl = [];
+  const N = 4;   // waypoints incl. endpoints
+  for (let i = 0; i <= N; i++) {
+    const t = i / N;
+    if (horizontal) {
+      const x = t * C;
+      const y = R * (0.25 + 0.5 * hashCell(sd + idx * 61, i, 7));
+      ctrl.push({ x, y });
+    } else {
+      const y = t * R;
+      const x = C * (0.25 + 0.5 * hashCell(sd + idx * 61, 9, i));
+      ctrl.push({ x, y });
+    }
+  }
+  // Sample a smooth curve through the control points.
+  const pts = [];
+  const steps = Math.max(8, (horizontal ? C : R) * 2);
+  for (let s = 0; s <= steps; s++) {
+    const u = (s / steps) * (ctrl.length - 1);
+    const i = Math.min(ctrl.length - 2, Math.floor(u));
+    const f = u - i;
+    pts.push({ x: smoothPt(ctrl, i, f, 'x'), y: smoothPt(ctrl, i, f, 'y') });
+  }
+  return pts;
+}
+
+/** Catmull-Rom interpolation of one axis between control points i,i+1. */
+function smoothPt(ctrl, i, f, axis) {
+  const p0 = ctrl[Math.max(0, i - 1)][axis];
+  const p1 = ctrl[i][axis];
+  const p2 = ctrl[i + 1][axis];
+  const p3 = ctrl[Math.min(ctrl.length - 1, i + 2)][axis];
+  const f2 = f * f, f3 = f2 * f;
+  return 0.5 * ((2 * p1) + (-p0 + p2) * f + (2 * p0 - 5 * p1 + 4 * p2 - p3) * f2 + (-p0 + 3 * p1 - 3 * p2 + p3) * f3);
+}
+
+/** First crossing point between two polylines, or null. */
+function polylineCrossing(a, b) {
+  for (let i = 0; i < a.length - 1; i++) {
+    for (let j = 0; j < b.length - 1; j++) {
+      const p = segIntersect(a[i], a[i + 1], b[j], b[j + 1]);
+      if (p) {
+        const ang = Math.atan2(a[i + 1].y - a[i].y, a[i + 1].x - a[i].x);
+        return { x: p.x, y: p.y, angle: ang };
+      }
+    }
+  }
+  return null;
+}
+
+function segIntersect(p1, p2, p3, p4) {
+  const d = (p2.x - p1.x) * (p4.y - p3.y) - (p2.y - p1.y) * (p4.x - p3.x);
+  if (Math.abs(d) < 1e-9) return null;
+  const t = ((p3.x - p1.x) * (p4.y - p3.y) - (p3.y - p1.y) * (p4.x - p3.x)) / d;
+  const u = ((p3.x - p1.x) * (p2.y - p1.y) - (p3.y - p1.y) * (p2.x - p1.x)) / d;
+  if (t < 0 || t > 1 || u < 0 || u > 1) return null;
+  return { x: p1.x + t * (p2.x - p1.x), y: p1.y + t * (p2.y - p1.y) };
+}
+
+/** Is (x,y) within `dist` cells of any point on any polyline? */
+function nearPolylines(lines, x, y, dist) {
+  const d2 = dist * dist;
+  for (const ln of lines) {
+    const pts = ln.points;
+    for (let i = 0; i < pts.length - 1; i++) {
+      if (distToSeg2(x, y, pts[i], pts[i + 1]) <= d2) return true;
+    }
+  }
+  return false;
+}
+
+function distToSeg2(px, py, a, b) {
+  const dx = b.x - a.x, dy = b.y - a.y;
+  const len2 = dx * dx + dy * dy;
+  let t = len2 > 0 ? ((px - a.x) * dx + (py - a.y) * dy) / len2 : 0;
+  t = clamp(t, 0, 1);
+  const cx = a.x + t * dx, cy = a.y + t * dy;
+  return (px - cx) * (px - cx) + (py - cy) * (py - cy);
+}
+
+function clamp(v, lo, hi) { return v < lo ? lo : v > hi ? hi : v; }
 
 /* ----- helpers ----- */
 
