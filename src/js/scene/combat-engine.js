@@ -113,7 +113,12 @@ export async function runOneAttack(attacker, enemies, allies, scene, rng, prompt
   if (prompts.forcePlan) {
     plan = prompts.forcePlan;
     attacker._lastPlan = plan;
-    if (plan.weapon) attacker._chosenWeapon = plan.weapon;
+    // M51.1 — Set BOTH the resolution weapon (_chosenWeapon) AND the
+    // display/movement weapon (attacker.weapon) so a player-chosen weapon
+    // (e.g. the warhammer) drives reach, the to-hit/damage in the log,
+    // and the cinema — not just the damage roll. Without updating
+    // attacker.weapon the log mislabeled the swing with the mainhand.
+    if (plan.weapon) { attacker._chosenWeapon = plan.weapon; attacker.weapon = plan.weapon; }
     if (plan.targetSide === 'ally') {
       target = allies.find(a => String(a.id) === String(plan.targetId));
     } else if (plan.targetId) {
@@ -145,7 +150,9 @@ export async function runOneAttack(attacker, enemies, allies, scene, rng, prompt
       rng
     });
     attacker._lastPlan = plan;
-    if (plan?.weapon) attacker._chosenWeapon = plan.weapon;
+    // M51.1 — keep the display/movement weapon in sync with the AI's pick
+    // so weapon switches show correctly in the live cinema + attack log.
+    if (plan?.weapon) { attacker._chosenWeapon = plan.weapon; attacker.weapon = plan.weapon; }
     if (plan?.targetId) target = enemies.find(e => e.id === plan.targetId);
     else target = pickTarget(enemies);
   }

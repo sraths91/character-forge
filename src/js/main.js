@@ -1257,9 +1257,13 @@ async function runEngineTurn(entity, entityKind, opts = {}) {
  * runAttackPrompt return shape — manual call sites that read these
  * fields keep working unchanged.
  */
-async function runManualWeaponAttack(attackerHit, targetHit) {
+async function runManualWeaponAttack(attackerHit, targetHit, weaponOverride = null) {
   if (!attackerHit?.entity || !targetHit?.entity) return null;
-  const weapon = getAttackerWeapon(attackerHit);
+  // M51.1 — the player can arm a specific weapon by clicking its row in
+  // the Actions panel (beginWeaponAttack sets combat.weapon). When set,
+  // it overrides the mainhand default so e.g. a Cleric can swing the
+  // warhammer instead of the equipped shortsword.
+  const weapon = weaponOverride || getAttackerWeapon(attackerHit);
   // Heuristic: ranged weapons get a 'ranged' plan kind so the engine's
   // gate logic treats range correctly. Everything else is 'melee'.
   const wname = String(weapon?.name || '').toLowerCase();
@@ -1664,7 +1668,10 @@ canvas.addEventListener('pointerdown', (e) => {
         }
       });
     } else {
-      runManualWeaponAttack(attackerHit, targetHit).then(() => {
+      // M51.1 — honor a player-armed weapon (combat.weapon), else mainhand.
+      const chosenWeapon = combat.weapon || null;
+      combat.weapon = null;
+      runManualWeaponAttack(attackerHit, targetHit, chosenWeapon).then(() => {
         cancelAttack();
         rerender();
       });
@@ -2859,6 +2866,7 @@ document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && combat.mode !== 'idle') {
     cancelAttack();
     combat.spell = null;
+    combat.weapon = null;
     hideAttackPreview();
     setCombatStatus('Cancelled.');
     rerender();
@@ -3110,6 +3118,13 @@ function renderActionsPanel() {
         </div>
         ${hints}
       `;
+      // M51.1 — Click an available weapon row to attack with THAT weapon
+      // (enters pick-target mode). Without this the manual attack always
+      // used the mainhand, so a Cleric couldn't choose the warhammer.
+      if (a.available && a.weapon) {
+        row.addEventListener('click', () => beginWeaponAttack(subject, a.weapon));
+        row.classList.add('action-row-clickable');
+      }
       attackList.appendChild(row);
     }
   }
@@ -3231,8 +3246,22 @@ function renderActionsPanel() {
 function beginSpellAttack(subject, spell) {
   beginAttack();
   selectAttacker(subject.entity.id, subject.kind);
+  combat.weapon = null;     // mutually exclusive with a queued weapon
   combat.spell = spell;     // ← extension to the M11/M4 combat state
   setCombatStatus(`${subject.entity.name} casts ${spell.name} — click a target.`);
+  rerender();
+}
+
+// M51.1 — Weapon attack: arm a specific weapon (e.g. the warhammer) and
+// enter pick-target mode. Mirrors beginSpellAttack; the pointer-down
+// handler reads combat.weapon and passes it to runManualWeaponAttack so
+// the player's pick overrides the mainhand default.
+function beginWeaponAttack(subject, weapon) {
+  beginAttack();
+  selectAttacker(subject.entity.id, subject.kind);
+  combat.spell = null;      // mutually exclusive with a queued spell
+  combat.weapon = weapon;
+  setCombatStatus(`${subject.entity.name} readies ${weapon?.name || 'their weapon'} — click a target.`);
   rerender();
 }
 
