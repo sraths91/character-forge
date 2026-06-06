@@ -21,6 +21,7 @@
 import { generateMapModel } from './map-generator.js';
 import { makeValueNoise2D, fbm2D } from './noise.js';
 import { applyAtmosphere } from './map-grade.js';
+import { getHeroSprite, HERO_CONTENT_FRACTION } from './hero-sprites.js';
 
 /**
  * Paint a full generated map for `scene` onto `ctx`.
@@ -851,11 +852,14 @@ function drawFeature(ctx, f, px) {
   const y = f.y * px;
   const r = f.r * px;
   switch (f.type) {
-    case 'tree':    return drawTree(ctx, x, y, r, f.color);
-    case 'bush':    return drawBush(ctx, x, y, r, f.color);
+    // M50 Phase C — hero features stamp a baked high-detail sprite (with
+    // rotation/scale variety) when the atlas is available; otherwise they
+    // fall back to the lightweight inline draw (headless/tests).
+    case 'tree':    return drawHero(ctx, 'tree', x, y, r, f, () => drawTree(ctx, x, y, r, f.color));
+    case 'rock':    return drawHero(ctx, 'rock', x, y, r, f, () => drawRock(ctx, x, y, r, f.color));
+    case 'bush':    return drawHero(ctx, 'bush', x, y, r, f, () => drawBush(ctx, x, y, r, f.color));
     case 'water':   return drawWater(ctx, x, y, r, f.color);
     case 'lily':    return drawLily(ctx, x, y, r, f.color);
-    case 'rock':    return drawRock(ctx, x, y, r, f.color);
     case 'rubble':  return drawRubble(ctx, x, y, r, f.color);
     case 'crack':   return drawCrack(ctx, x, y, r, f.color);
     case 'crystal': return drawCrystal(ctx, x, y, r, f.color);
@@ -870,6 +874,29 @@ function drawFeature(ctx, f, px) {
     case 'rug':     return drawRug(ctx, x, y, r, f.color);
     default:        return drawSoftBlob(ctx, x, y, r, f.color, 0.5);
   }
+}
+
+/**
+ * M50 Phase C — stamp a baked hero sprite for a feature, with per-feature
+ * rotation + scale variety hashed from its cell. Falls back to the inline
+ * draw (`fallback`) when the atlas is unavailable (headless/tests).
+ */
+function drawHero(ctx, kind, x, y, r, f, fallback) {
+  // Variant + jitter from the feature's stable cell hash.
+  const variant = Math.floor(hashFloat(101, f.col, f.row) * 3);
+  const sprite = getHeroSprite(kind, variant, f.color);
+  if (!sprite) { fallback(); return; }
+  const rot = (hashFloat(202, f.col, f.row) - 0.5) * 0.5;   // ±0.25 rad
+  const scl = 0.9 + 0.35 * hashFloat(303, f.col, f.row);     // size variety
+  // The baked canopy fills HERO_CONTENT_FRACTION of the sprite; scale the
+  // stamp so the canopy ≈ the feature's intended diameter.
+  const size = (2 * r * scl) / (HERO_CONTENT_FRACTION * 2);
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(rot);
+  ctx.imageSmoothingEnabled = true;
+  ctx.drawImage(sprite, -size / 2, -size / 2, size, size);
+  ctx.restore();
 }
 
 /** Soft radial blob — gradient center→transparent. The painterly base. */
