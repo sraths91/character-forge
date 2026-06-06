@@ -193,9 +193,9 @@ const ZONE_ORDER = ['water', 'shore', 'low', 'mid', 'high'];
  */
 export const BIOME_STRUCTURE = {
   grass:   { rivers: 1, paths: 1, river: '#41707a', path: '#7d6b48',
-             structures: { count: 1, types: ['ruin', 'campfire', 'hut'] } },
+             structures: { count: 2, types: ['cottage', 'house', 'ruin', 'campfire', 'well'] } },
   forest:  { rivers: 1, paths: 1, river: '#2f5560', path: '#6e5a3a',
-             structures: { count: 1, types: ['ruin', 'campfire', 'hut'] } },
+             structures: { count: 1, types: ['cottage', 'ruin', 'campfire', 'tower'] } },
   dungeon: { rivers: 0, paths: 1, river: '#26323a', path: '#3a3a42',
              structures: { count: 2, types: ['pillars', 'ruin', 'altar'] } },
   cave:    { rivers: 1, paths: 0, river: '#214049', path: '#34303c',
@@ -203,11 +203,22 @@ export const BIOME_STRUCTURE = {
   tavern:  { rivers: 0, paths: 0, river: '#3a2418', path: '#5e3716',
              structures: { count: 2, types: ['furniture'] } },
   desert:  { rivers: 0, paths: 1, river: '#5fa0a8', path: '#a98c54',
-             structures: { count: 1, types: ['ruin', 'tent'] } },
+             structures: { count: 1, types: ['ruin', 'tent', 'courtyard'] } },
   snow:    { rivers: 1, paths: 1, river: '#86abbd', path: '#aebcc2',
-             structures: { count: 1, types: ['hut', 'ruin'] } },
+             structures: { count: 1, types: ['cottage', 'ruin', 'tower'] } },
   swamp:   { rivers: 2, paths: 0, river: '#33463a', path: '#4a5436',
-             structures: { count: 1, types: ['hut', 'ruin'] } }
+             structures: { count: 1, types: ['cottage', 'ruin', 'tent'] } }
+};
+
+/**
+ * Footprint sizes per structure type (cells). Larger types (house,
+ * courtyard) get a roomier lot; the placer caps any footprint to leave
+ * combat room on the map.
+ */
+const STRUCT_SIZE = {
+  cottage:   [3, 3], house: [4, 4], courtyard: [5, 5], tower: [3, 3],
+  well: [2, 2], hut: [3, 3], ruin: [3, 3], campfire: [3, 3],
+  tent: [2, 2], pillars: [3, 3], altar: [2, 2], furniture: [3, 3]
 };
 
 /** Is `biome` a known generator biome? */
@@ -475,10 +486,14 @@ function placeStructures(elevation, C, R, sd, struct, rivers, paths, lv) {
   const out = [];
   if (!cfg || !cfg.count || C < 5 || R < 5) return out;
   const types = cfg.types || ['ruin'];
+  // Cap any footprint to ~⅓ of the map so combat space remains.
+  const maxW = Math.max(2, Math.floor(C / 3));
+  const maxH = Math.max(2, Math.floor(R / 3));
   for (let i = 0; i < cfg.count; i++) {
     const type = types[Math.floor(hashCell(sd + i * 211, 1, i) * types.length)] || 'ruin';
-    const w = 2 + Math.floor(hashCell(sd + i * 7, 2, i) * 2);   // 2..3
-    const h = 2 + Math.floor(hashCell(sd + i * 11, 3, i) * 2);
+    const size = STRUCT_SIZE[type] || [3, 3];
+    const w = Math.min(maxW, size[0]);
+    const h = Math.min(maxH, size[1]);
     if (C - w - 2 < 1 || R - h - 2 < 1) continue;
     let best = null, bestScore = -1;
     for (let k = 0; k < 48; k++) {
@@ -499,13 +514,103 @@ function placeStructures(elevation, C, R, sd, struct, rivers, paths, lv) {
       if (score > bestScore) { bestScore = score; best = { col, row }; }
     }
     if (!best) continue;
-    out.push({
+    // Door faces the nearest path if one is close, else faces down
+    // (toward the viewer) — a believable approach side.
+    const cc = best.col + w / 2, cr = best.row + h / 2;
+    const doorSide = nearPolylines(paths, cc, cr, 2.2) ? pathSide(paths, cc, cr) : 'S';
+    const s = {
       type, col: best.col, row: best.row, w, h,
       variant: Math.floor(hashCell(sd + i * 3, 7, i) * 3),
-      angle: (hashCell(sd + i * 17, 8, i) - 0.5) * 0.2   // slight tilt
-    });
+      angle: isCutaway(type) ? 0 : (hashCell(sd + i * 17, 8, i) - 0.5) * 0.16,
+      doorSide
+    };
+    // Interior layout for cutaway buildings (rooms + door + furniture).
+    if (isCutaway(type)) s.layout = computeBuildingLayout(type, w, h, sd + i * 53, doorSide);
+    out.push(s);
   }
   return out;
+}
+
+/** Cutaway = roofless interior shown (cottage/house/courtyard/tower). */
+function isCutaway(type) {
+  return type === 'cottage' || type === 'house' || type === 'courtyard' || type === 'tower';
+}
+
+/** Which side of (cc,cr) the nearest path lies on → door faces it. */
+function pathSide(paths, cc, cr) {
+  let bestD = Infinity, bestPt = null;
+  for (const ln of paths) {
+    for (const p of ln.points) {
+      const d = (p.x - cc) * (p.x - cc) + (p.y - cr) * (p.y - cr);
+      if (d < bestD) { bestD = d; bestPt = p; }
+    }
+  }
+  if (!bestPt) return 'S';
+  const dx = bestPt.x - cc, dy = bestPt.y - cr;
+  if (Math.abs(dx) > Math.abs(dy)) return dx > 0 ? 'E' : 'W';
+  return dy > 0 ? 'S' : 'N';
+}
+
+/**
+ * Deterministic interior layout in cell-local coordinates (0..w, 0..h).
+ * Returns { rooms:[{x,y,w,h}], door:{side,x,y}, furniture:[{type,x,y}] }.
+ * Rooms come from one binary split (1–2 rooms); furniture is chosen per
+ * room from a small palette. Pure — same inputs, same layout.
+ */
+function computeBuildingLayout(type, w, h, sd, doorSide) {
+  if (type === 'courtyard') {
+    // Open yard: no interior rooms; a well or garden at the centre.
+    return {
+      rooms: [{ x: 0.5, y: 0.5, w: w - 1, h: h - 1 }],
+      door: doorPoint(doorSide, w, h),
+      furniture: [{ type: 'well', x: w / 2, y: h / 2 }],
+      open: true
+    };
+  }
+  if (type === 'tower') {
+    return {
+      rooms: [{ x: 0.4, y: 0.4, w: w - 0.8, h: h - 0.8 }],
+      door: doorPoint(doorSide, w, h),
+      furniture: [{ type: 'stair', x: w / 2, y: h / 2 }],
+      round: true
+    };
+  }
+  // cottage / house — split into rooms.
+  const rooms = [];
+  const splitV = hashCell(sd, 1, 1) < 0.5;
+  const nRooms = type === 'house' ? 2 : (hashCell(sd, 2, 2) < 0.5 ? 2 : 1);
+  if (nRooms === 1) {
+    rooms.push({ x: 0.45, y: 0.45, w: w - 0.9, h: h - 0.9 });
+  } else if (splitV) {
+    const cut = w * (0.4 + 0.2 * hashCell(sd, 3, 3));
+    rooms.push({ x: 0.45, y: 0.45, w: cut - 0.45, h: h - 0.9 });
+    rooms.push({ x: cut + 0.05, y: 0.45, w: w - cut - 0.5, h: h - 0.9 });
+  } else {
+    const cut = h * (0.4 + 0.2 * hashCell(sd, 3, 3));
+    rooms.push({ x: 0.45, y: 0.45, w: w - 0.9, h: cut - 0.45 });
+    rooms.push({ x: 0.45, y: cut + 0.05, w: w - 0.9, h: h - cut - 0.5 });
+  }
+  // Furniture: room 0 gets a hearth + table; room 1 (if any) a bed.
+  const furniture = [];
+  const palette = [['hearth', 'table'], ['bed', 'barrel']];
+  rooms.forEach((rm, ri) => {
+    const set = palette[Math.min(ri, palette.length - 1)];
+    set.forEach((ft, fi) => {
+      const fx = rm.x + rm.w * (0.3 + 0.4 * hashCell(sd + ri * 7 + fi * 3, fi, ri));
+      const fy = rm.y + rm.h * (0.3 + 0.4 * hashCell(sd + ri * 11 + fi * 5, ri, fi));
+      furniture.push({ type: ft, x: fx, y: fy });
+    });
+  });
+  return { rooms, door: doorPoint(doorSide, w, h), furniture };
+}
+
+function doorPoint(side, w, h) {
+  switch (side) {
+    case 'N': return { side, x: w / 2, y: 0.3 };
+    case 'E': return { side, x: w - 0.3, y: h / 2 };
+    case 'W': return { side, x: 0.3, y: h / 2 };
+    default:  return { side: 'S', x: w / 2, y: h - 0.3 };
+  }
 }
 
 function overlapsRect(rects, col, row, w, h) {

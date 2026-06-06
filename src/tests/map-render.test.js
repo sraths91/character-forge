@@ -28,6 +28,7 @@ function mockCtx() {
     stroke: () => rec('stroke'),
     fillRect: (x, y, w, h) => rec('fillRect', x, y, w, h),
     strokeRect: () => rec('strokeRect'),
+    rect: () => {},
     createLinearGradient: () => { rec('linearGradient'); return grad(); },
     createRadialGradient: () => { rec('radialGradient'); return grad(); },
     set fillStyle(v) { rec('fillStyle', v); },

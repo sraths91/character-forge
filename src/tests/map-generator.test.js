@@ -195,6 +195,64 @@ test('map-generator: tiny maps skip structures gracefully', () => {
   assert.deepStrictEqual(m.structures, []);
 });
 
+// ---------- M50 Phase B: building variety + interiors ----------
+
+test('map-generator: cutaway buildings carry a deterministic layout', () => {
+  // Scan grass seeds until a cottage/house appears (grass offers both).
+  let found = null;
+  for (let s = 1; s < 60 && !found; s++) {
+    const m = generateMapModel({ biome: 'grass', cols: 18, rows: 12, seed: s });
+    found = m.structures.find(st => st.type === 'cottage' || st.type === 'house');
+    if (found) {
+      assert.ok(found.layout, 'cutaway should have a layout');
+      assert.ok(Array.isArray(found.layout.rooms) && found.layout.rooms.length >= 1, 'rooms');
+      assert.ok(found.layout.door && found.layout.door.side, 'door side');
+      assert.ok(Array.isArray(found.layout.furniture), 'furniture');
+      // Determinism: same seed → identical layout.
+      const m2 = generateMapModel({ biome: 'grass', cols: 18, rows: 12, seed: s });
+      const found2 = m2.structures.find(st => st.type === found.type && st.col === found.col && st.row === found.row);
+      assert.deepStrictEqual(found.layout, found2.layout);
+    }
+  }
+  assert.ok(found, 'expected a cottage/house across grass seeds');
+});
+
+test('map-generator: furniture + rooms stay inside the footprint', () => {
+  for (let s = 1; s < 30; s++) {
+    const m = generateMapModel({ biome: 'grass', cols: 18, rows: 12, seed: s });
+    for (const st of m.structures) {
+      if (!st.layout) continue;
+      for (const f of st.layout.furniture) {
+        assert.ok(f.x >= 0 && f.x <= st.w && f.y >= 0 && f.y <= st.h,
+          `${st.type} furniture OOB (${f.x},${f.y}) in ${st.w}x${st.h}`);
+      }
+      for (const rm of st.layout.rooms) {
+        assert.ok(rm.x >= 0 && rm.x + rm.w <= st.w + 0.01 && rm.y >= 0 && rm.y + rm.h <= st.h + 0.01,
+          `${st.type} room OOB`);
+      }
+    }
+  }
+});
+
+test('map-generator: structure footprints capped to ~1/3 of the map', () => {
+  const m = generateMapModel({ biome: 'grass', cols: 9, rows: 9, seed: 4 });
+  for (const st of m.structures) {
+    assert.ok(st.w <= 3 && st.h <= 3, `footprint ${st.w}x${st.h} too big for 9x9`);
+  }
+});
+
+test('map-generator: courtyard/tower flagged open/round', () => {
+  let cy = null, tw = null;
+  for (let s = 1; s < 80 && (!cy || !tw); s++) {
+    const d = generateMapModel({ biome: 'desert', cols: 18, rows: 12, seed: s });
+    cy = cy || d.structures.find(st => st.type === 'courtyard');
+    const f = generateMapModel({ biome: 'forest', cols: 18, rows: 12, seed: s });
+    tw = tw || f.structures.find(st => st.type === 'tower');
+  }
+  if (cy) assert.strictEqual(cy.layout.open, true);
+  if (tw) assert.strictEqual(tw.layout.round, true);
+});
+
 // ---------- Phase 2: rivers + paths + bridges ----------
 
 test('map-generator: BIOME_STRUCTURE covers every biome', () => {

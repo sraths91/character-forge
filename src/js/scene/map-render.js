@@ -410,6 +410,11 @@ function drawStructure(ctx, s, px) {
   switch (s.type) {
     case 'hut':       drawHut(ctx, w, h, s.variant); break;
     case 'cabin':     drawHut(ctx, w, h, s.variant); break;
+    case 'cottage':   drawCutaway(ctx, w, h, s, px); break;
+    case 'house':     drawCutaway(ctx, w, h, s, px); break;
+    case 'courtyard': drawCourtyard(ctx, w, h, s, px); break;
+    case 'tower':     drawTower(ctx, w, h, s, px); break;
+    case 'well':      drawWell(ctx, w, h, px); break;
     case 'ruin':      drawRuin(ctx, w, h, s.variant); break;
     case 'campfire':  drawCampfire(ctx, w, h); break;
     case 'pillars':   drawPillars(ctx, w, h, s); break;
@@ -418,6 +423,173 @@ function drawStructure(ctx, s, px) {
     case 'furniture': drawFurniture(ctx, w, h, s.variant); break;
     default:          drawRuin(ctx, w, h, s.variant);
   }
+  ctx.restore();
+}
+
+/* ----- M50 Phase B — cutaway buildings (roofless interiors) ----- */
+
+/**
+ * Cutaway cottage/house: stone-or-timber outer walls, a wooden floor,
+ * interior room dividers, a door gap, and furniture — drawn from the
+ * top with no roof, the VTT convention for explorable buildings. Coords
+ * arrive centred at origin; the layout is in cell-local (0..w,0..h).
+ */
+function drawCutaway(ctx, w, h, s, px) {
+  const L = -w / 2, T = -h / 2;
+  const lay = s.layout || { rooms: [], door: { side: 'S', x: w / (2 * px), y: 0 }, furniture: [] };
+  const wallT = Math.max(3, px * 0.16);   // wall thickness
+  const wallC = ['#7c7268', '#857a5c', '#6e6a64'][s.variant % 3];
+  const floorC = '#9a7a4e';
+  // Floor.
+  ctx.fillStyle = floorC;
+  roundRectPath(ctx, L + wallT, T + wallT, w - wallT * 2, h - wallT * 2, px * 0.05);
+  ctx.fill();
+  // Plank lines on the floor.
+  ctx.strokeStyle = 'rgba(0,0,0,0.14)'; ctx.lineWidth = 1;
+  for (let yy = T + wallT * 2; yy < T + h - wallT; yy += px * 0.35) {
+    ctx.beginPath(); ctx.moveTo(L + wallT, yy); ctx.lineTo(L + w - wallT, yy); ctx.stroke();
+  }
+  // Outer walls (ring) with a darker outer edge + lit inner edge.
+  ctx.fillStyle = wallC;
+  ringRect(ctx, L, T, w, h, wallT);
+  ctx.fillStyle = 'rgba(0,0,0,0.22)';
+  ringRect(ctx, L, T, w, h, wallT * 0.4);   // outer shadow lip
+  ctx.fillStyle = 'rgba(255,255,255,0.12)';
+  ringRect(ctx, L + wallT * 0.7, T + wallT * 0.7, w - wallT * 1.4, h - wallT * 1.4, wallT * 0.3);
+  // Interior room dividers.
+  ctx.strokeStyle = wallC; ctx.lineWidth = wallT * 0.7; ctx.lineCap = 'butt';
+  const rooms = lay.rooms || [];
+  for (let i = 1; i < rooms.length; i++) {
+    const a = rooms[i - 1], b = rooms[i];
+    // shared edge — vertical split if x differs, else horizontal
+    if (Math.abs(a.x - b.x) > Math.abs(a.y - b.y)) {
+      const xx = L + (b.x) * px;
+      ctx.beginPath(); ctx.moveTo(xx, T + wallT); ctx.lineTo(xx, T + h - wallT); ctx.stroke();
+    } else {
+      const yy = T + (b.y) * px;
+      ctx.beginPath(); ctx.moveTo(L + wallT, yy); ctx.lineTo(L + w - wallT, yy); ctx.stroke();
+    }
+  }
+  // Door gap — clear a notch in the wall on the door side + a threshold.
+  drawDoor(ctx, L, T, w, h, wallT, lay.door, floorC);
+  // Furniture.
+  for (const f of (lay.furniture || [])) drawFurnitureItem(ctx, L + f.x * px, T + f.y * px, px, f.type);
+}
+
+/** Filled rectangular ring (wall band) of thickness t. */
+function ringRect(ctx, x, y, w, h, t) {
+  ctx.beginPath();
+  ctx.rect(x, y, w, h);
+  ctx.rect(x + t, y + t, w - t * 2, h - t * 2);
+  ctx.fill('evenodd');
+}
+
+function drawDoor(ctx, L, T, w, h, wallT, door, floorC) {
+  const gap = Math.min(w, h) * 0.28;
+  ctx.fillStyle = floorC;
+  ctx.save();
+  if (door.side === 'N') ctx.fillRect(-gap / 2, T, gap, wallT + 1);
+  else if (door.side === 'S') ctx.fillRect(-gap / 2, T + h - wallT - 1, gap, wallT + 1);
+  else if (door.side === 'W') ctx.fillRect(L, -gap / 2, wallT + 1, gap);
+  else ctx.fillRect(L + w - wallT - 1, -gap / 2, wallT + 1, gap);
+  // Threshold mat.
+  ctx.fillStyle = 'rgba(60,40,24,0.5)';
+  if (door.side === 'N' || door.side === 'S') ctx.fillRect(-gap / 2, (door.side === 'N' ? T + wallT : T + h - wallT - gap * 0.5), gap, gap * 0.5);
+  else ctx.fillRect((door.side === 'W' ? L + wallT : L + w - wallT - gap * 0.5), -gap / 2, gap * 0.5, gap);
+  ctx.restore();
+}
+
+/** A single furniture item. */
+function drawFurnitureItem(ctx, x, y, px, type) {
+  ctx.save();
+  ctx.translate(x, y);
+  switch (type) {
+    case 'bed':
+      ctx.fillStyle = '#8a3b3b'; roundRectPath(ctx, -px * 0.22, -px * 0.3, px * 0.44, px * 0.6, px * 0.06); ctx.fill();
+      ctx.fillStyle = '#e8e0d0'; roundRectPath(ctx, -px * 0.2, -px * 0.28, px * 0.4, px * 0.22, px * 0.04); ctx.fill();
+      break;
+    case 'table':
+      ctx.fillStyle = '#6e4a28'; roundRectPath(ctx, -px * 0.2, -px * 0.14, px * 0.4, px * 0.28, px * 0.04); ctx.fill();
+      ctx.strokeStyle = 'rgba(255,255,255,0.15)'; ctx.lineWidth = 1; ctx.strokeRect(-px * 0.16, -px * 0.1, px * 0.32, px * 0.2);
+      break;
+    case 'hearth':
+      ctx.fillStyle = '#5a5650'; roundRectPath(ctx, -px * 0.2, -px * 0.18, px * 0.4, px * 0.36, 2); ctx.fill();
+      ctx.fillStyle = '#ffb13b'; ctx.beginPath(); ctx.arc(0, 0, px * 0.1, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#ffe08a'; ctx.beginPath(); ctx.arc(0, -px * 0.02, px * 0.05, 0, Math.PI * 2); ctx.fill();
+      break;
+    case 'barrel':
+      ctx.fillStyle = '#6e4a26'; ctx.beginPath(); ctx.arc(0, 0, px * 0.14, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = '#3a2a18'; ctx.lineWidth = Math.max(1, px * 0.02);
+      ctx.beginPath(); ctx.arc(0, 0, px * 0.14, 0, Math.PI * 2); ctx.stroke();
+      ctx.beginPath(); ctx.arc(0, 0, px * 0.08, 0, Math.PI * 2); ctx.stroke();
+      break;
+    case 'well':
+      drawWell(ctx, px * 1.4, px * 1.4, px); break;
+    case 'stair':
+      ctx.fillStyle = '#4a4a52';
+      for (let i = 0; i < 4; i++) { ctx.fillRect(-px * 0.25, -px * 0.25 + i * px * 0.13, px * 0.5, px * 0.1); }
+      break;
+    default:
+      ctx.fillStyle = '#6e4a26'; ctx.beginPath(); ctx.arc(0, 0, px * 0.12, 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.restore();
+}
+
+/** Courtyard — outer wall ring with a gate, an open yard, a central well. */
+function drawCourtyard(ctx, w, h, s, px) {
+  const L = -w / 2, T = -h / 2;
+  const wallT = Math.max(4, px * 0.18);
+  // Packed-earth yard.
+  ctx.fillStyle = '#7c6a4a';
+  ctx.fillRect(L + wallT, T + wallT, w - wallT * 2, h - wallT * 2);
+  // Wall ring.
+  ctx.fillStyle = '#8a8276';
+  ringRect(ctx, L, T, w, h, wallT);
+  ctx.fillStyle = 'rgba(0,0,0,0.2)';
+  ringRect(ctx, L, T, w, h, wallT * 0.35);
+  // Gate.
+  const door = (s.layout && s.layout.door) || { side: 'S' };
+  drawDoor(ctx, L, T, w, h, wallT, door, '#7c6a4a');
+  // Central well + a couple of crates.
+  drawWell(ctx, px * 1.3, px * 1.3, px);
+  drawFurnitureItem(ctx, L + w * 0.28, T + h * 0.3, px, 'barrel');
+  drawFurnitureItem(ctx, L + w * 0.72, T + h * 0.7, px, 'barrel');
+}
+
+/** Tower — round stone wall + interior floor + a central stair. */
+function drawTower(ctx, w, h, s, px) {
+  const r = Math.min(w, h) / 2;
+  const wallT = Math.max(4, px * 0.2);
+  // Outer wall.
+  ctx.fillStyle = '#76726a';
+  ctx.beginPath(); ctx.arc(0, 0, r - 2, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = 'rgba(0,0,0,0.25)';
+  ctx.beginPath(); ctx.arc(0, 0, r - 2, 0, Math.PI * 2); ctx.arc(0, 0, r - wallT * 0.35, 0, Math.PI * 2, true); ctx.fill('evenodd');
+  // Interior floor.
+  ctx.fillStyle = '#5a5046';
+  ctx.beginPath(); ctx.arc(0, 0, r - wallT, 0, Math.PI * 2); ctx.fill();
+  // Inner-wall lit edge.
+  ctx.strokeStyle = 'rgba(255,255,255,0.12)'; ctx.lineWidth = wallT * 0.3;
+  ctx.beginPath(); ctx.arc(0, 0, r - wallT, 0, Math.PI * 2); ctx.stroke();
+  // Spiral stair.
+  drawFurnitureItem(ctx, 0, 0, px, 'stair');
+}
+
+/** Well — round stone rim + dark water + a little roof post. */
+function drawWell(ctx, w, h, px) {
+  const r = Math.min(w, h) * 0.32;
+  ctx.save();
+  ctx.fillStyle = '#8a8276';
+  ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = '#2a3a44';
+  ctx.beginPath(); ctx.arc(0, 0, r * 0.62, 0, Math.PI * 2); ctx.fill();
+  if (ctx.createRadialGradient) {
+    const g = ctx.createRadialGradient(-r * 0.2, -r * 0.2, 0, 0, 0, r * 0.62);
+    g.addColorStop(0, 'rgba(120,160,180,0.5)'); g.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(0, 0, r * 0.62, 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.strokeStyle = '#5a4a30'; ctx.lineWidth = Math.max(1, px * 0.04);
+  ctx.beginPath(); ctx.moveTo(-r, -r); ctx.lineTo(r, r); ctx.stroke();
   ctx.restore();
 }
 
