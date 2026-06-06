@@ -74,71 +74,37 @@ test('M48: combined call invokes far then near in order', () => {
 });
 
 // ---------- Layer content separation ----------
+// M52 — the rich per-terrain detail (silhouettes, hero-sprite props,
+// textured ground, atmospheric grade) is now BAKED into an offscreen
+// real-canvas buffer and blitted via drawImage. In a headless mock-ctx
+// environment (no offscreen canvas) the painters fall back to a cheap
+// gradient (far) + floor line (near). These tests assert that fallback
+// CONTRACT — the layer split (far = sky backdrop, near = ground/floor)
+// — since the baked content can only be exercised with a real canvas
+// (see the Playwright visual pass).
 
-test('M48: grass far paints the sky/ground gradient; near paints tufts + floor line', () => {
-  const bg = BACKGROUNDS.grass;
-  const farCtx = mockCtx();
-  const nearCtx = mockCtx();
-  bg.paintFar(farCtx, { W: 800, H: 480, t: 0 });
-  bg.paintNear(nearCtx, { W: 800, H: 480, t: 0 });
-  // Far creates a linear gradient (the sky→ground swatch)
-  assert.ok(farCtx.calls.some(c => c[0] === 'createLinearGradient'),
-    'far layer should create the gradient');
-  // Near strokes (the floor line)
-  assert.ok(nearCtx.calls.some(c => c[0] === 'stroke'),
-    'near layer should stroke the floor line');
+test('M52: far layer paints a sky backdrop for every terrain (fallback)', () => {
+  for (const [slug, bg] of Object.entries(BACKGROUNDS)) {
+    const ctx = mockCtx();
+    bg.paintFar(ctx, { W: 800, H: 480, t: 0 });
+    assert.ok(ctx.calls.some(c => c[0] === 'createLinearGradient'),
+      `${slug} far should create the sky gradient`);
+    assert.ok(ctx.calls.some(c => c[0] === 'fillRect'),
+      `${slug} far should fill the backdrop`);
+  }
 });
 
-test('M48: cave far has stalactites (ceiling); near has stalagmites (floor)', () => {
-  // Stalactites are 8 triangles at the top; stalagmites are 6 at the
-  // floor. Both use moveTo (top y or floor y respectively) followed
-  // by 2× lineTo + closePath. We just verify FAR has more moveTo
-  // calls than near, since 8 stalactites > 6 stalagmites.
-  const bg = BACKGROUNDS.cave;
-  const farCtx = mockCtx();
-  const nearCtx = mockCtx();
-  bg.paintFar(farCtx, { W: 800, H: 480, t: 0 });
-  bg.paintNear(nearCtx, { W: 800, H: 480, t: 0 });
-  const farMoves  = farCtx.calls.filter(c => c[0] === 'moveTo').length;
-  const nearMoves = nearCtx.calls.filter(c => c[0] === 'moveTo').length;
-  // Far: 8 stalactites + 1 gradient (which doesn't use moveTo) ≥ 8.
-  // Near: 6 stalagmites + 1 floor line = 7.
-  assert.ok(farMoves >= 8, `expected ≥ 8 moveTo in cave far; got ${farMoves}`);
-  assert.ok(nearMoves >= 6, `expected ≥ 6 moveTo in cave near; got ${nearMoves}`);
-});
-
-test('M48: dungeon far paints the brick band + torch haze; near is just the floor line', () => {
-  const bg = BACKGROUNDS.dungeon;
-  const farCtx = mockCtx();
-  const nearCtx = mockCtx();
-  bg.paintFar(farCtx, { W: 800, H: 480, t: 0 });
-  bg.paintNear(nearCtx, { W: 800, H: 480, t: 0 });
-  // Far should have many strokeRect calls (brick band) + a radial
-  // gradient (torch haze).
-  assert.ok(farCtx.calls.filter(c => c[0] === 'strokeRect').length >= 10,
-    'far should paint the brick wall band');
-  assert.ok(farCtx.calls.some(c => c[0] === 'createRadialGradient'),
-    'far should paint the torch haze');
-  // Near is minimal — just the floor line stroke.
-  assert.ok(nearCtx.calls.some(c => c[0] === 'stroke'),
-    'near should stroke the floor line');
-  // Near should have NO strokeRect (no brick wall)
-  assert.ok(!nearCtx.calls.some(c => c[0] === 'strokeRect'),
-    'near should not paint the brick band');
-});
-
-test('M48: tavern far has the fireplace glow; near has the wood planks', () => {
-  const bg = BACKGROUNDS.tavern;
-  const farCtx = mockCtx();
-  const nearCtx = mockCtx();
-  bg.paintFar(farCtx, { W: 800, H: 480, t: 0 });
-  bg.paintNear(nearCtx, { W: 800, H: 480, t: 0 });
-  assert.ok(farCtx.calls.some(c => c[0] === 'createRadialGradient'),
-    'far should create the fireplace radial glow');
-  // Near: 5 wood plank lines = 5 stroke calls (plus floor line = 6)
-  const nearStrokes = nearCtx.calls.filter(c => c[0] === 'stroke').length;
-  assert.ok(nearStrokes >= 5,
-    `near should stroke wood planks + floor line; got ${nearStrokes}`);
+test('M52: near layer strokes the floor line and is NOT the sky backdrop', () => {
+  for (const [slug, bg] of Object.entries(BACKGROUNDS)) {
+    const ctx = mockCtx();
+    bg.paintNear(ctx, { W: 800, H: 480, t: 0 });
+    assert.ok(ctx.calls.some(c => c[0] === 'stroke'),
+      `${slug} near should stroke the floor line`);
+    // The near fallback is the ground/floor only — it must NOT repaint
+    // the full sky gradient that belongs to the far layer.
+    assert.ok(!ctx.calls.some(c => c[0] === 'createLinearGradient'),
+      `${slug} near should not repaint the far sky gradient`);
+  }
 });
 
 // ---------- Smoke test: every painter runs without throwing ----------
