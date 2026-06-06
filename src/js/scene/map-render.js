@@ -82,33 +82,43 @@ function ribbonPath(ctx, pts, px) {
   ctx.lineTo(last.x * px, last.y * px);
 }
 
-/** River — dark bank stroke, water body, lighter centre highlight. */
+/** River — layered for depth: wet/foam bank → shallow edge → deep
+ *  centre → drifting surface ripples. Reads as real water, not paint. */
 function drawRiver(ctx, river, px, model) {
   const pts = river.points;
   if (!pts || pts.length < 2) return;
-  const color = model.structure?.river || model.zoneFill('water')[1];
+  const deep = model.structure?.river || model.zoneFill('water')[1];
+  const shallow = lighten(deep, 30);
+  const foam = lighten(deep, 58);
   const w = (river.width || 0.42) * px;
   ctx.save();
   ctx.lineJoin = 'round';
   ctx.lineCap = 'round';
-  // Bank (slightly wider, darker, soft).
+  // Damp bank / foam halo (widest, soft).
   ribbonPath(ctx, pts, px);
-  ctx.strokeStyle = darken(color, 18);
-  ctx.lineWidth = w * 1.35;
-  ctx.globalAlpha = 0.85;
-  ctx.stroke();
-  // Water body.
+  ctx.strokeStyle = foam; ctx.globalAlpha = 0.45; ctx.lineWidth = w * 1.55; ctx.stroke();
+  // Shallow water (lighter, fills most of the channel).
   ribbonPath(ctx, pts, px);
-  ctx.strokeStyle = color;
-  ctx.lineWidth = w;
-  ctx.globalAlpha = 0.95;
-  ctx.stroke();
-  // Centre highlight (current).
+  ctx.strokeStyle = shallow; ctx.globalAlpha = 0.96; ctx.lineWidth = w * 1.12; ctx.stroke();
+  // Deep channel (darker, narrow core) → depth read.
   ribbonPath(ctx, pts, px);
-  ctx.strokeStyle = lighten(color, 24);
-  ctx.lineWidth = Math.max(1, w * 0.3);
-  ctx.globalAlpha = 0.4;
-  ctx.stroke();
+  ctx.strokeStyle = deep; ctx.globalAlpha = 1; ctx.lineWidth = w * 0.62; ctx.stroke();
+  // Surface ripples — short cross-current arcs catching light.
+  ctx.strokeStyle = foam; ctx.globalAlpha = 0.4;
+  ctx.lineWidth = Math.max(1, w * 0.07);
+  for (let i = 1; i < pts.length - 1; i += 2) {
+    const p = pts[i];
+    const dx = pts[i + 1].x - pts[i - 1].x;
+    const dy = pts[i + 1].y - pts[i - 1].y;
+    const len = Math.hypot(dx, dy) || 1;
+    const nx = -dy / len, ny = dx / len;   // perpendicular (cross-flow)
+    const cxp = p.x * px, cyp = p.y * px;
+    const rw = w * 0.32;
+    ctx.beginPath();
+    ctx.moveTo(cxp - nx * rw, cyp - ny * rw);
+    ctx.quadraticCurveTo(cxp + dx / len * rw * 0.6, cyp + dy / len * rw * 0.6, cxp + nx * rw, cyp + ny * rw);
+    ctx.stroke();
+  }
   ctx.restore();
 }
 
@@ -177,40 +187,140 @@ function drawBridge(ctx, bridge, px) {
  * Painterly ground
  * ===================================================================== */
 
+// Per-biome ground texture family for the detail pass.
+const GROUND_TEXTURE = {
+  grass: 'grass', forest: 'grass', swamp: 'grass',
+  desert: 'sand', snow: 'snow', cave: 'stone', dungeon: 'stone', tavern: 'wood'
+};
+
 function paintGround(ctx, model, px) {
   const W = model.cols * px;
   const H = model.rows * px;
-  // Build the biome's continuous elevation→colour ramp once.
   const ramp = buildRamp(model);
-  // A fine grain texture sampler for per-tile jitter.
+  // High-fidelity path: render the smooth colour field into a small
+  // offscreen buffer, then upscale with bilinear smoothing → buttery
+  // gradients with NO blocky stair-steps at zone edges. A full-res
+  // detail pass then stamps material texture (grass blades, sand grain,
+  // stone speckle) so the ground reads as a surface, not a wash.
+  const ds = 7;   // field downscale: 1 buffer texel per ~7 screen px
+  const bw = Math.max(2, Math.ceil(W / ds));
+  const bh = Math.max(2, Math.ceil(H / ds));
+  const buf = makeBuffer(bw, bh);
+  if (buf && buf.getContext) {
+    const bctx = buf.getContext('2d');
+    const img = bctx.createImageData(bw, bh);
+    const d = img.data;
+    for (let y = 0; y < bh; y++) {
+      for (let x = 0; x < bw; x++) {
+        const cx = (x / bw) * model.cols;
+        const cy = (y / bh) * model.rows;
+        const e = model.elevation(cx, cy);
+        const m = model.moisture(cx, cy);
+        const rgb = tintByMoisture(sampleRamp(ramp, e), m);
+        const i = (y * bw + x) * 4;
+        d[i] = rgb.r; d[i + 1] = rgb.g; d[i + 2] = rgb.b; d[i + 3] = 255;
+      }
+    }
+    bctx.putImageData(img, 0, 0);
+    ctx.save();
+    ctx.imageSmoothingEnabled = true;
+    ctx.drawImage(buf, 0, 0, bw, bh, 0, 0, W, H);
+    ctx.restore();
+    paintGroundDetail(ctx, model, px, W, H);
+    return;
+  }
+  // Coarse fallback (headless/tests): tiled fills, no buffer needed.
   const grain = makeValueNoise2D((model.seed ^ 0x1b56c4f9) >>> 0);
-
-  // Sub-cell tile resolution. Smaller tiles = smoother gradient. px/8
-  // reads as a smooth wash on a one-time paint while staying bounded
-  // (~6k tiles on a 12x8 map at 64px cells).
   const tile = Math.max(3, Math.round(px / 8));
-  const cols = Math.ceil(W / tile);
-  const rows = Math.ceil(H / tile);
-
   ctx.save();
-  for (let ty = 0; ty < rows; ty++) {
-    for (let tx = 0; tx < cols; tx++) {
+  for (let ty = 0; ty * tile < H; ty++) {
+    for (let tx = 0; tx * tile < W; tx++) {
       const cx = (tx * tile + tile / 2) / px;
       const cy = (ty * tile + tile / 2) / px;
-      const e = model.elevation(cx, cy);
-      const m = model.moisture(cx, cy);
-      let rgb = sampleRamp(ramp, e);
-      // Moisture tint: wetter → cooler/greener, drier → warmer/paler.
-      rgb = tintByMoisture(rgb, m);
-      // Fine grain — subtle ±brightness so flat areas aren't dead-flat.
-      // Sampled at higher frequency than the tile grid so it reads as
-      // texture, not blocks.
+      const rgb = tintByMoisture(sampleRamp(ramp, model.elevation(cx, cy)), model.moisture(cx, cy));
       const g = (fbm2D(grain, cx * 5.3, cy * 5.3, { octaves: 2 }) - 0.5) * 11;
       ctx.fillStyle = rgbStr(addLum(rgb, g));
       ctx.fillRect(tx * tile, ty * tile, tile + 1, tile + 1);
     }
   }
   ctx.restore();
+}
+
+/**
+ * Full-res material texture stamped over the smooth field: short grass
+ * blades on grassland, grain on sand, speckle on stone, board lines on
+ * wood. Low-alpha, seeded, jittered off the grid so it reads as a
+ * surface rather than a pattern. Skipped on water (the river owns it).
+ */
+function paintGroundDetail(ctx, model, px, W, H) {
+  const fam = GROUND_TEXTURE[model.biome] || 'grass';
+  const seed = model.seed >>> 0;
+  const step = Math.max(6, px * 0.22);
+  ctx.save();
+  ctx.lineCap = 'round';
+  for (let yy = 0; yy < H; yy += step) {
+    for (let xx = 0; xx < W; xx += step) {
+      const jx = (hashFloat(seed, xx, yy) - 0.5) * step * 1.1;
+      const jy = (hashFloat(seed + 1, xx, yy) - 0.5) * step * 1.1;
+      const x = xx + jx, y = yy + jy;
+      const cx = x / px, cy = y / px;
+      const zone = model.zoneAt(cx, cy);
+      if (zone === 'water') continue;
+      const base = sampleRamp(buildRampCache(model), model.elevation(cx, cy));
+      const v = hashFloat(seed + 2, xx, yy);
+      if (fam === 'grass' && (zone === 'low' || zone === 'mid' || zone === 'shore')) {
+        stampBlade(ctx, x, y, px * 0.16, v < 0.5 ? lightenRgb(base, 26) : darkenRgb(base, 22), hashFloat(seed + 3, xx, yy));
+      } else if (fam === 'sand') {
+        stampSpeck(ctx, x, y, px * (0.04 + v * 0.05), v < 0.5 ? lightenRgb(base, 16) : darkenRgb(base, 14), 0.5);
+      } else if (fam === 'snow') {
+        if (v > 0.55) stampSpeck(ctx, x, y, px * 0.05, lightenRgb(base, 30), 0.6);
+      } else if (fam === 'stone') {
+        stampSpeck(ctx, x, y, px * (0.05 + v * 0.06), v < 0.5 ? darkenRgb(base, 16) : lightenRgb(base, 12), 0.45);
+      } else if (fam === 'wood') {
+        // faint horizontal board grain
+        ctx.globalAlpha = 0.12;
+        ctx.strokeStyle = rgbStr(darkenRgb(base, 18));
+        ctx.lineWidth = Math.max(1, px * 0.03);
+        ctx.beginPath();
+        ctx.moveTo(x - step * 0.5, y); ctx.lineTo(x + step * 0.5, y);
+        ctx.stroke();
+      }
+    }
+  }
+  ctx.restore();
+}
+
+/** A short curved grass blade pair. */
+function stampBlade(ctx, x, y, r, rgb, rot) {
+  ctx.globalAlpha = 0.5;
+  ctx.strokeStyle = rgbStr(rgb);
+  ctx.lineWidth = Math.max(1, r * 0.5);
+  const lean = (rot - 0.5) * r;
+  ctx.beginPath();
+  ctx.moveTo(x, y + r);
+  ctx.quadraticCurveTo(x + lean * 0.5, y, x + lean, y - r);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(x + r * 0.4, y + r);
+  ctx.quadraticCurveTo(x + lean * 0.5 + r * 0.3, y, x + lean + r * 0.3, y - r * 0.8);
+  ctx.stroke();
+}
+
+/** A small soft speck (sand grain / pebble / snow sparkle). */
+function stampSpeck(ctx, x, y, r, rgb, alpha) {
+  ctx.globalAlpha = alpha;
+  ctx.fillStyle = rgbStr(rgb);
+  ctx.beginPath();
+  ctx.arc(x, y, r, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+// Cache the ramp per model so the detail pass doesn't rebuild it per stamp.
+let _rampCacheModel = null, _rampCache = null;
+function buildRampCache(model) {
+  if (_rampCacheModel === model && _rampCache) return _rampCache;
+  _rampCacheModel = model; _rampCache = buildRamp(model);
+  return _rampCache;
 }
 
 /** Build elevation stops from the biome zone fills. Each zone spans
@@ -252,14 +362,25 @@ function sampleRamp(stops, e) {
   return stops[stops.length - 1].rgb;
 }
 
-/** Soft vignette so the play area draws the eye to center; very subtle. */
+/** Atmosphere pass: a gentle directional light wash (cool→warm) for
+ *  cohesion + a soft, subtle edge vignette. Kept light so it reads as
+ *  ambiance, not a heavy frame. */
 function paintVignette(ctx, model, px) {
   const W = model.cols * px, H = model.rows * px;
-  if (!ctx.createRadialGradient) return;
-  const g = ctx.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.35, W / 2, H / 2, Math.max(W, H) * 0.7);
-  g.addColorStop(0, 'rgba(0,0,0,0)');
-  g.addColorStop(1, 'rgba(0,0,0,0.22)');
+  if (!ctx.createRadialGradient || !ctx.createLinearGradient) return;
   ctx.save();
+  // Directional light — slightly brighter/warmer top-left, cooler
+  // bottom-right — unifies the per-object top-left lighting.
+  const lin = ctx.createLinearGradient(0, 0, W, H);
+  lin.addColorStop(0, 'rgba(255,244,214,0.07)');
+  lin.addColorStop(0.5, 'rgba(255,255,255,0)');
+  lin.addColorStop(1, 'rgba(10,16,30,0.10)');
+  ctx.fillStyle = lin;
+  ctx.fillRect(0, 0, W, H);
+  // Subtle edge darkening.
+  const g = ctx.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.45, W / 2, H / 2, Math.max(W, H) * 0.72);
+  g.addColorStop(0, 'rgba(0,0,0,0)');
+  g.addColorStop(1, 'rgba(8,10,16,0.13)');
   ctx.fillStyle = g;
   ctx.fillRect(0, 0, W, H);
   ctx.restore();
@@ -296,33 +417,90 @@ function drawStructure(ctx, s, px) {
   ctx.restore();
 }
 
-/** Hut/cabin — walls + pitched roof (top-down: roof rectangle with a
- *  ridge line) + a door notch. */
+/**
+ * Hut/cabin — a top-down pitched roof: stone/timber walls peeking at the
+ * eaves, two shaded roof slopes meeting at a ridge along the long axis,
+ * plank/shingle lines down each slope, an eaves shadow, and a chimney.
+ * Reads as a building, not a flat box.
+ */
 function drawHut(ctx, w, h, variant) {
-  const roofs = ['#7a4a28', '#6b5436', '#84502a'];
-  const wallC = '#caa377';
-  // Walls
+  const roofLit = ['#9a5a30', '#8a6a3e', '#a05a34'][variant % 3];
+  const roofShade = darken(roofLit, 30);
+  const ridgeRunsVertical = h >= w;   // ridge along the longer side
+  const wallC = '#b89a72';
+  // Walls (the eaves the roof overhangs) — slightly larger, with a soft
+  // drop shadow below to lift the building off the ground.
+  ctx.fillStyle = 'rgba(0,0,0,0.28)';
+  roundRectPath(ctx, -w / 2 + 3, -h / 2 + 7, w - 6, h - 6, 4);
+  ctx.fill();
   ctx.fillStyle = wallC;
-  roundRectPath(ctx, -w / 2 + 4, -h / 2 + 4, w - 8, h - 8, 4);
+  roundRectPath(ctx, -w / 2 + 3, -h / 2 + 3, w - 6, h - 6, 4);
   ctx.fill();
-  // Roof (inset)
-  ctx.fillStyle = roofs[variant % roofs.length];
-  roundRectPath(ctx, -w / 2 + 9, -h / 2 + 9, w - 18, h - 18, 3);
-  ctx.fill();
-  // Ridge line
-  ctx.strokeStyle = 'rgba(0,0,0,0.35)';
-  ctx.lineWidth = Math.max(1, w * 0.02);
+  // Roof inset over the walls.
+  const rx = -w / 2 + 8, ry = -h / 2 + 8, rw = w - 16, rh = h - 16;
+  ctx.save();
+  roundRectPath(ctx, rx, ry, rw, rh, 3);
+  ctx.clip();
+  if (ridgeRunsVertical) {
+    // Ridge vertical at x=0; left slope lit, right slope shaded.
+    paintSlope(ctx, rx, ry, rw / 2, rh, roofLit, lighten(roofLit, 14), true);
+    paintSlope(ctx, 0, ry, rw / 2 + (rx + rw), rh, roofShade, roofLit, true);
+    ctx.fillStyle = roofShade; ctx.fillRect(0, ry, rx + rw, rh);
+    paintSlope(ctx, 0, ry, rx + rw, rh, roofShade, roofLit, true);
+    // shingle rows (horizontal lines)
+    shingleLines(ctx, rx, ry, rw, rh, false);
+  } else {
+    paintSlope(ctx, rx, ry, rw, rh / 2, roofLit, lighten(roofLit, 14), false);
+    ctx.fillStyle = roofShade; ctx.fillRect(rx, 0, rw, ry + rh);
+    paintSlope(ctx, rx, 0, rw, ry + rh, roofShade, roofLit, false);
+    shingleLines(ctx, rx, ry, rw, rh, true);
+  }
+  ctx.restore();
+  // Ridge line.
+  ctx.strokeStyle = 'rgba(0,0,0,0.4)';
+  ctx.lineWidth = Math.max(1.5, w * 0.025);
   ctx.beginPath();
-  ctx.moveTo(0, -h / 2 + 10); ctx.lineTo(0, h / 2 - 10);
+  if (ridgeRunsVertical) { ctx.moveTo(0, ry); ctx.lineTo(0, ry + rh); }
+  else { ctx.moveTo(rx, 0); ctx.lineTo(rx + rw, 0); }
   ctx.stroke();
-  // Roof highlight
-  ctx.strokeStyle = 'rgba(255,255,255,0.18)';
+  // Ridge highlight.
+  ctx.strokeStyle = 'rgba(255,240,210,0.25)';
+  ctx.lineWidth = Math.max(1, w * 0.012);
   ctx.beginPath();
-  ctx.moveTo(-w / 2 + 11, -h / 2 + 11); ctx.lineTo(w / 2 - 11, -h / 2 + 11);
+  if (ridgeRunsVertical) { ctx.moveTo(-1.5, ry); ctx.lineTo(-1.5, ry + rh); }
+  else { ctx.moveTo(rx, -1.5); ctx.lineTo(rx + rw, -1.5); }
   ctx.stroke();
-  // Door
-  ctx.fillStyle = '#3a2716';
-  ctx.fillRect(-w * 0.08, h / 2 - 8, w * 0.16, 6);
+  // Chimney with a hint of smoke shadow.
+  const chx = rx + rw * 0.72, chy = ry + rh * 0.22;
+  ctx.fillStyle = '#5a4636';
+  ctx.fillRect(chx - w * 0.05, chy - w * 0.05, w * 0.1, w * 0.1);
+  ctx.fillStyle = '#3a2c20';
+  ctx.fillRect(chx - w * 0.035, chy - w * 0.035, w * 0.07, w * 0.07);
+}
+
+/** Fill a roof-slope rect with a ridge→eave gradient (ridge brighter). */
+function paintSlope(ctx, x, y, w, h, eaveColor, ridgeColor, vertical) {
+  if (!ctx.createLinearGradient) { ctx.fillStyle = eaveColor; ctx.fillRect(x, y, w, h); return; }
+  const g = vertical
+    ? ctx.createLinearGradient(x, 0, x + w, 0)
+    : ctx.createLinearGradient(0, y, 0, y + h);
+  g.addColorStop(0, ridgeColor);
+  g.addColorStop(1, eaveColor);
+  ctx.fillStyle = g;
+  ctx.fillRect(x, y, w, h);
+}
+
+/** Faint shingle/plank rows across a roof rect. */
+function shingleLines(ctx, x, y, w, h, vertical) {
+  ctx.strokeStyle = 'rgba(0,0,0,0.18)';
+  ctx.lineWidth = 1;
+  const n = 6;
+  ctx.beginPath();
+  for (let i = 1; i < n; i++) {
+    if (vertical) { const lx = x + (w / n) * i; ctx.moveTo(lx, y); ctx.lineTo(lx, y + h); }
+    else { const ly = y + (h / n) * i; ctx.moveTo(x, ly); ctx.lineTo(x + w, ly); }
+  }
+  ctx.stroke();
 }
 
 /** Ruin — broken stone walls forming a partial enclosure with gaps. */
@@ -537,35 +715,57 @@ function drawSoftBlob(ctx, x, y, r, color, alpha = 1) {
   ctx.restore();
 }
 
-/** Tree — cast shadow + radial-gradient canopy + rim highlight. */
+/**
+ * Tree — a volumetric canopy built from many overlapping foliage lobes
+ * with directional lighting (light top-left, shade bottom-right) and a
+ * soft cast shadow. Per-tree variation is hashed from position so each
+ * tree is unique but stable. Reads as real foliage from above rather
+ * than a flat disc.
+ */
 function drawTree(ctx, x, y, r, color) {
+  const dark = darken(color, 32);
+  const mid = color;
+  const light = lighten(color, 30);
   ctx.save();
-  // Cast shadow (offset, soft)
-  ctx.globalAlpha = 0.32;
-  ctx.fillStyle = '#000000';
+  // Soft cast shadow, offset down-right (light from top-left).
+  ctx.globalAlpha = 0.28;
+  ctx.fillStyle = '#0a140c';
   ctx.beginPath();
-  ctx.ellipse(x + r * 0.22, y + r * 0.28, r * 1.02, r * 0.85, 0, 0, Math.PI * 2);
+  ctx.ellipse(x + r * 0.3, y + r * 0.34, r * 1.04, r * 0.8, 0, 0, Math.PI * 2);
   ctx.fill();
   ctx.globalAlpha = 1;
-  // Canopy with volume
-  if (ctx.createRadialGradient) {
-    const g = ctx.createRadialGradient(x - r * 0.3, y - r * 0.3, r * 0.2, x, y, r);
-    g.addColorStop(0, lighten(color, 28));
-    g.addColorStop(0.6, color);
-    g.addColorStop(1, darken(color, 24));
-    ctx.fillStyle = g;
-  } else {
-    ctx.fillStyle = color;
+  // Build foliage lobes around the centre.
+  const N = 16;
+  const lobes = [];
+  for (let i = 0; i < N; i++) {
+    const a = hashFloat(i * 13 + 1, x, y) * Math.PI * 2;
+    const rad = 0.25 + 0.7 * hashFloat(i * 7 + 3, x, y);
+    const lr = r * (0.30 + 0.18 * hashFloat(i * 5 + 9, x, y));
+    lobes.push({ lx: x + Math.cos(a) * r * 0.6 * rad, ly: y + Math.sin(a) * r * 0.6 * rad, lr });
   }
-  ctx.beginPath();
-  ctx.arc(x, y, r, 0, Math.PI * 2);
-  ctx.fill();
-  // Clustered lobes for a less perfectly-round canopy
-  ctx.fillStyle = lighten(color, 12);
-  ctx.globalAlpha = 0.7;
-  for (const [dx, dy] of [[-0.45, -0.2], [0.4, -0.35], [0.15, 0.4]]) {
+  // Dark base mass.
+  ctx.fillStyle = dark;
+  for (const L of lobes) { ctx.beginPath(); ctx.arc(L.lx, L.ly, L.lr, 0, Math.PI * 2); ctx.fill(); }
+  // Mid tone, nudged toward the light.
+  ctx.fillStyle = mid;
+  for (const L of lobes) { ctx.beginPath(); ctx.arc(L.lx - r * 0.07, L.ly - r * 0.07, L.lr * 0.82, 0, Math.PI * 2); ctx.fill(); }
+  // Lit highlights on the upper-left lobes only.
+  ctx.fillStyle = light;
+  ctx.globalAlpha = 0.85;
+  for (const L of lobes) {
+    if ((L.lx - x) + (L.ly - y) < -r * 0.1) {
+      ctx.beginPath();
+      ctx.arc(L.lx - r * 0.13, L.ly - r * 0.13, L.lr * 0.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+  // A couple of dark gaps for depth.
+  ctx.globalAlpha = 0.5;
+  ctx.fillStyle = dark;
+  for (let i = 0; i < 2; i++) {
+    const a = hashFloat(i * 29 + 5, x, y) * Math.PI * 2;
     ctx.beginPath();
-    ctx.arc(x + dx * r, y + dy * r, r * 0.42, 0, Math.PI * 2);
+    ctx.arc(x + Math.cos(a) * r * 0.4, y + Math.sin(a) * r * 0.4, r * 0.16, 0, Math.PI * 2);
     ctx.fill();
   }
   ctx.restore();
@@ -727,17 +927,28 @@ function drawCrate(ctx, x, y, r, color) {
   ctx.restore();
 }
 
-/** Tuft — three short grass blades. */
+/** Tuft — a small clump of curved grass blades (denser, organic) with
+ *  a faint shadow at the base so it sits on the ground. */
 function drawTuft(ctx, x, y, r, color) {
   ctx.save();
-  ctx.strokeStyle = color;
-  ctx.lineWidth = Math.max(1, r * 0.22);
   ctx.lineCap = 'round';
-  ctx.globalAlpha = 0.85;
-  for (const a of [-0.5, 0, 0.5]) {
+  // Base shadow.
+  ctx.globalAlpha = 0.18;
+  ctx.fillStyle = '#0a140a';
+  ctx.beginPath();
+  ctx.ellipse(x, y + r * 0.55, r * 0.7, r * 0.25, 0, 0, Math.PI * 2);
+  ctx.fill();
+  const blades = 6;
+  for (let i = 0; i < blades; i++) {
+    const t = i / (blades - 1) - 0.5;        // -0.5..0.5
+    const lean = t * r * 1.4 + (hashFloat(i * 17 + 2, x, y) - 0.5) * r * 0.4;
+    const tall = r * (0.8 + 0.4 * hashFloat(i * 11 + 5, x, y));
+    ctx.strokeStyle = i % 2 ? lighten(color, 14) : darken(color, 12);
+    ctx.globalAlpha = 0.8;
+    ctx.lineWidth = Math.max(1, r * 0.16);
     ctx.beginPath();
-    ctx.moveTo(x, y + r * 0.6);
-    ctx.lineTo(x + Math.sin(a) * r, y - r * 0.7);
+    ctx.moveTo(x + t * r * 0.5, y + r * 0.5);
+    ctx.quadraticCurveTo(x + lean * 0.5, y - tall * 0.3, x + lean, y - tall);
     ctx.stroke();
   }
   ctx.restore();
@@ -829,4 +1040,32 @@ function darken(hex, amt) {
 function withAlpha(hex, a) {
   const c = hexToRgb(hex);
   return `rgba(${c.r},${c.g},${c.b},${a})`;
+}
+/** Lighten/darken an {r,g,b} directly (used by the texture pass). */
+function lightenRgb(c, amt) { return addLum(c, amt); }
+function darkenRgb(c, amt) { return addLum(c, -amt); }
+
+/**
+ * Make an offscreen canvas for the smooth-field upscale. Returns null
+ * in headless/test environments (no DOM, no OffscreenCanvas) so the
+ * caller falls back to coarse tile fills.
+ */
+function makeBuffer(w, h) {
+  if (typeof document !== 'undefined' && document.createElement) {
+    const c = document.createElement('canvas');
+    c.width = w; c.height = h;
+    return c;
+  }
+  const Off = globalThis.OffscreenCanvas;
+  if (typeof Off === 'function') return new Off(w, h);
+  return null;
+}
+
+/** Deterministic hash → [0,1) from a seed + two floats. Used for
+ *  per-feature/per-stamp variation (foliage lobes, blade lean). */
+function hashFloat(seed, x, y) {
+  let s = (Math.floor(x * 131.7) ^ Math.floor(y * 97.3) ^ Math.imul(seed | 0, 0x9e3779b1)) >>> 0;
+  s = Math.imul(s ^ (s >>> 15), s | 1);
+  s ^= s + Math.imul(s ^ (s >>> 7), s | 61);
+  return ((s ^ (s >>> 14)) >>> 0) / 4294967296;
 }

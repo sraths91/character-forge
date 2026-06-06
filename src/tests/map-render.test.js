@@ -18,6 +18,7 @@ function mockCtx() {
     rotate: () => {},
     beginPath: () => rec('beginPath'),
     closePath: () => {},
+    clip: () => {},
     moveTo: () => {},
     lineTo: () => {},
     quadraticCurveTo: () => {},
