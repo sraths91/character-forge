@@ -125,8 +125,73 @@ test('map-generator: features stay in bounds + one per cell', () => {
   }
 });
 
-test('map-generator: structures array still empty (Phase 3)', () => {
-  const m = generateMapModel({ biome: 'grass', cols: 5, rows: 5, seed: 1 });
+// ---------- Phase 3: structures ----------
+
+test('map-generator: BIOME_STRUCTURE defines structures for every biome', () => {
+  for (const slug of listBiomes()) {
+    const s = BIOME_STRUCTURE[slug].structures;
+    assert.ok(s && typeof s.count === 'number', `${slug} structures.count`);
+    assert.ok(Array.isArray(s.types) && s.types.length > 0, `${slug} structures.types`);
+  }
+});
+
+test('map-generator: structures placed within bounds + valid footprint', () => {
+  for (const slug of listBiomes()) {
+    const m = generateMapModel({ biome: slug, cols: 16, rows: 12, seed: 11 });
+    for (const s of m.structures) {
+      assert.ok(s.col >= 0 && s.col + s.w <= 16, `${slug} struct col OOB`);
+      assert.ok(s.row >= 0 && s.row + s.h <= 12, `${slug} struct row OOB`);
+      assert.ok(s.w >= 2 && s.h >= 2, `${slug} struct too small`);
+      assert.ok(BIOME_STRUCTURE[slug].structures.types.includes(s.type), `${slug} unexpected type ${s.type}`);
+    }
+  }
+});
+
+test('map-generator: structures never overlap each other', () => {
+  // dungeon places 2 — check they don't collide across seeds.
+  for (let seed = 1; seed < 25; seed++) {
+    const m = generateMapModel({ biome: 'dungeon', cols: 18, rows: 12, seed });
+    for (let i = 0; i < m.structures.length; i++) {
+      for (let j = i + 1; j < m.structures.length; j++) {
+        const a = m.structures[i], b = m.structures[j];
+        const overlap = a.col < b.col + b.w && a.col + a.w > b.col &&
+                        a.row < b.row + b.h && a.row + a.h > b.row;
+        assert.ok(!overlap, `seed ${seed}: structures overlap`);
+      }
+    }
+  }
+});
+
+test('map-generator: structures sit on land, not water', () => {
+  const m = generateMapModel({ biome: 'swamp', cols: 16, rows: 12, seed: 4 });
+  for (const s of m.structures) {
+    for (let dy = 0; dy < s.h; dy++) {
+      for (let dx = 0; dx < s.w; dx++) {
+        const e = m.elevation(s.col + dx + 0.5, s.row + dy + 0.5);
+        assert.ok(e >= m.levels.shore, `struct cell on water e=${e}`);
+      }
+    }
+  }
+});
+
+test('map-generator: features never sit inside a structure footprint', () => {
+  const m = generateMapModel({ biome: 'forest', cols: 18, rows: 12, seed: 6 });
+  for (const f of m.features) {
+    for (const s of m.structures) {
+      const inside = f.col >= s.col && f.col < s.col + s.w && f.row >= s.row && f.row < s.row + s.h;
+      assert.ok(!inside, `feature ${f.type} inside ${s.type}`);
+    }
+  }
+});
+
+test('map-generator: deterministic structures', () => {
+  const a = generateMapModel({ biome: 'dungeon', cols: 16, rows: 12, seed: 33 });
+  const b = generateMapModel({ biome: 'dungeon', cols: 16, rows: 12, seed: 33 });
+  assert.deepStrictEqual(a.structures, b.structures);
+});
+
+test('map-generator: tiny maps skip structures gracefully', () => {
+  const m = generateMapModel({ biome: 'grass', cols: 4, rows: 4, seed: 1 });
   assert.deepStrictEqual(m.structures, []);
 });
 

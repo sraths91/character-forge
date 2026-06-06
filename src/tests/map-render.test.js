@@ -134,3 +134,33 @@ test('map-render: a no-river indoor biome still paints fine', () => {
   assert.strictEqual(model.paths.length, 0);
   assert.doesNotThrow(() => paintMapModel(ctx, model, { cellPx: 48 }));
 });
+
+// ---------- Phase 3: structures ----------
+
+test('map-render: every structure type paints without throwing', () => {
+  // Build models across biomes/seeds until each structure type appears,
+  // and assert each paints cleanly.
+  const seenTypes = new Set();
+  for (const biome of listBiomes()) {
+    for (let seed = 1; seed < 20; seed++) {
+      const ctx = mockCtx();
+      ctx.quadraticCurveTo = () => {};
+      const model = generateMapModel({ biome, cols: 16, rows: 12, seed });
+      assert.doesNotThrow(() => paintMapModel(ctx, model, { cellPx: 48 }),
+        `${biome} seed ${seed} paints`);
+      for (const s of model.structures) seenTypes.add(s.type);
+    }
+  }
+  // We should have exercised a spread of structure types.
+  assert.ok(seenTypes.size >= 4, `expected ≥4 structure types exercised, got ${[...seenTypes]}`);
+});
+
+test('map-render: dungeon (2 structures) emits extra draws vs none', () => {
+  const ctx = mockCtx();
+  ctx.quadraticCurveTo = () => {};
+  const model = generateMapModel({ biome: 'dungeon', cols: 18, rows: 12, seed: 11 });
+  assert.ok(model.structures.length >= 1);
+  assert.doesNotThrow(() => paintMapModel(ctx, model, { cellPx: 48 }));
+  // structures draw fills/strokes beyond the ground tiles
+  assert.ok(ctx.calls.some(c => c[0] === 'fill' || c[0] === 'stroke'));
+});

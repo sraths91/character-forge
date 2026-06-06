@@ -192,14 +192,22 @@ const ZONE_ORDER = ['water', 'shore', 'low', 'mid', 'high'];
  * river; desert is arid so rivers are rare.
  */
 export const BIOME_STRUCTURE = {
-  grass:   { rivers: 1, paths: 1, river: '#41707a', path: '#7d6b48' },
-  forest:  { rivers: 1, paths: 1, river: '#2f5560', path: '#6e5a3a' },
-  dungeon: { rivers: 0, paths: 1, river: '#26323a', path: '#3a3a42' },
-  cave:    { rivers: 1, paths: 0, river: '#214049', path: '#34303c' },
-  tavern:  { rivers: 0, paths: 0, river: '#3a2418', path: '#5e3716' },
-  desert:  { rivers: 0, paths: 1, river: '#5fa0a8', path: '#a98c54' },
-  snow:    { rivers: 1, paths: 1, river: '#86abbd', path: '#aebcc2' },
-  swamp:   { rivers: 2, paths: 0, river: '#33463a', path: '#4a5436' }
+  grass:   { rivers: 1, paths: 1, river: '#41707a', path: '#7d6b48',
+             structures: { count: 1, types: ['ruin', 'campfire', 'hut'] } },
+  forest:  { rivers: 1, paths: 1, river: '#2f5560', path: '#6e5a3a',
+             structures: { count: 1, types: ['ruin', 'campfire', 'hut'] } },
+  dungeon: { rivers: 0, paths: 1, river: '#26323a', path: '#3a3a42',
+             structures: { count: 2, types: ['pillars', 'ruin', 'altar'] } },
+  cave:    { rivers: 1, paths: 0, river: '#214049', path: '#34303c',
+             structures: { count: 1, types: ['pillars', 'ruin'] } },
+  tavern:  { rivers: 0, paths: 0, river: '#3a2418', path: '#5e3716',
+             structures: { count: 2, types: ['furniture'] } },
+  desert:  { rivers: 0, paths: 1, river: '#5fa0a8', path: '#a98c54',
+             structures: { count: 1, types: ['ruin', 'tent'] } },
+  snow:    { rivers: 1, paths: 1, river: '#86abbd', path: '#aebcc2',
+             structures: { count: 1, types: ['hut', 'ruin'] } },
+  swamp:   { rivers: 2, paths: 0, river: '#33463a', path: '#4a5436',
+             structures: { count: 1, types: ['hut', 'ruin'] } }
 };
 
 /** Is `biome` a known generator biome? */
@@ -259,7 +267,7 @@ export function generateMapModel({ biome, cols, rows, seed } = {}) {
   const struct = BIOME_STRUCTURE[slug] || BIOME_STRUCTURE.grass;
   const rivers = [];
   for (let i = 0; i < struct.rivers; i++) {
-    const poly = traceRiver(elevation, C, R, sd, i, lv.water);
+    const poly = traceRiver(elevation, C, R, sd, i);
     if (poly.length >= 2) rivers.push({ points: poly, width: 0.42 + 0.12 * i });
   }
 
@@ -278,6 +286,9 @@ export function generateMapModel({ biome, cols, rows, seed } = {}) {
       if (hit) bridges.push(hit);
     }
   }
+
+  // --- Pass 5: multi-cell structures ------------------------------
+  const structures = placeStructures(elevation, C, R, sd, struct, rivers, paths, lv);
 
   // --- Pass 6: region-aware detail scatter ------------------------
   // Scatter, then drop anything sitting on a river/path so water and
@@ -300,8 +311,9 @@ export function generateMapModel({ biome, cols, rows, seed } = {}) {
         const jy = hashCell(sd + 13, col, row) - 0.5;
         const fx = col + 0.5 + jx * 0.5;
         const fy = row + 0.5 + jy * 0.5;
-        // Keep clear of rivers (1 cell) + paths (0.7 cell).
+        // Keep clear of rivers (1 cell) + paths (0.7 cell) + structures.
         if (nearPolylines(rivers, fx, fy, 1.0) || nearPolylines(paths, fx, fy, 0.7)) break;
+        if (insideStructure(structures, col, row)) break;
         const variant = Math.floor(hashCell(sd + 3, col, row) * f.palette.length);
         features.push({
           type: f.type, zone,
@@ -327,7 +339,7 @@ export function generateMapModel({ biome, cols, rows, seed } = {}) {
     rivers,
     paths,
     bridges,
-    structures: [],   // Phase 3
+    structures,
     features
   };
 }
@@ -342,7 +354,7 @@ export function generateMapModel({ biome, cols, rows, seed } = {}) {
  * (negative gradient) with meander + momentum until reaching an edge or
  * running out of steps. Returns a polyline in cell space.
  */
-function traceRiver(elevation, C, R, sd, idx, waterLevel) {
+function traceRiver(elevation, C, R, sd, idx) {
   // Source: sample candidate points, pick the highest (rivers spring
   // from high ground).
   let best = null, bestE = -1;
@@ -446,6 +458,70 @@ function segIntersect(p1, p2, p3, p4) {
   const u = ((p3.x - p1.x) * (p2.y - p1.y) - (p3.y - p1.y) * (p2.x - p1.x)) / d;
   if (t < 0 || t > 1 || u < 0 || u > 1) return null;
   return { x: p1.x + t * (p2.x - p1.x), y: p1.y + t * (p2.y - p1.y) };
+}
+
+/* =====================================================================
+ * Structure placement (Phase 3)
+ * ===================================================================== */
+
+/**
+ * Place up to `count` multi-cell structures on dry land, clear of water
+ * and rivers, not overlapping each other, biased toward roadside spots.
+ * Each is { type, col, row, w, h, variant } where (col,row) is the
+ * top-left cell of a w×h footprint. Deterministic from the seed.
+ */
+function placeStructures(elevation, C, R, sd, struct, rivers, paths, lv) {
+  const cfg = struct.structures;
+  const out = [];
+  if (!cfg || !cfg.count || C < 5 || R < 5) return out;
+  const types = cfg.types || ['ruin'];
+  for (let i = 0; i < cfg.count; i++) {
+    const type = types[Math.floor(hashCell(sd + i * 211, 1, i) * types.length)] || 'ruin';
+    const w = 2 + Math.floor(hashCell(sd + i * 7, 2, i) * 2);   // 2..3
+    const h = 2 + Math.floor(hashCell(sd + i * 11, 3, i) * 2);
+    if (C - w - 2 < 1 || R - h - 2 < 1) continue;
+    let best = null, bestScore = -1;
+    for (let k = 0; k < 48; k++) {
+      const col = 1 + Math.floor(hashCell(sd + i * 97 + k, k, 4) * (C - w - 2));
+      const row = 1 + Math.floor(hashCell(sd + i * 131 + k, 5, k) * (R - h - 2));
+      let ok = true;
+      for (let dy = 0; dy < h && ok; dy++) {
+        for (let dx = 0; dx < w; dx++) {
+          const cx = col + dx + 0.5, cy = row + dy + 0.5;
+          if (elevation(cx, cy) < lv.shore) { ok = false; break; }     // off water/shore
+          if (nearPolylines(rivers, cx, cy, 0.6)) { ok = false; break; }
+        }
+      }
+      if (!ok || overlapsRect(out, col, row, w, h)) continue;
+      // Prefer roadside lots (a building by the path reads as a scene).
+      const cc = col + w / 2, cr = row + h / 2;
+      const score = 1 + (nearPolylines(paths, cc, cr, 1.6) ? 1 : 0);
+      if (score > bestScore) { bestScore = score; best = { col, row }; }
+    }
+    if (!best) continue;
+    out.push({
+      type, col: best.col, row: best.row, w, h,
+      variant: Math.floor(hashCell(sd + i * 3, 7, i) * 3),
+      angle: (hashCell(sd + i * 17, 8, i) - 0.5) * 0.2   // slight tilt
+    });
+  }
+  return out;
+}
+
+function overlapsRect(rects, col, row, w, h) {
+  for (const s of rects) {
+    if (col < s.col + s.w + 1 && col + w + 1 > s.col &&
+        row < s.row + s.h + 1 && row + h + 1 > s.row) return true;
+  }
+  return false;
+}
+
+/** Is cell (col,row) inside any structure footprint? */
+function insideStructure(structures, col, row) {
+  for (const s of structures) {
+    if (col >= s.col && col < s.col + s.w && row >= s.row && row < s.row + s.h) return true;
+  }
+  return false;
 }
 
 /** Is (x,y) within `dist` cells of any point on any polyline? */

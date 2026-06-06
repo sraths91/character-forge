@@ -55,8 +55,8 @@ export function paintMapModel(ctx, model, { cellPx } = {}) {
   // Paths under rivers so a bridge reads as crossing over the water.
   for (const path of (model.paths || [])) drawPath(ctx, path, px, model);
   for (const river of (model.rivers || [])) drawRiver(ctx, river, px, model);
-  for (const bridge of (model.bridges || [])) drawBridge(ctx, bridge, px, model);
-  // Phase 3 will paint model.structures here.
+  for (const bridge of (model.bridges || [])) drawBridge(ctx, bridge, px);
+  for (const s of (model.structures || [])) drawStructure(ctx, s, px);
   for (const f of model.features) {
     drawFeature(ctx, f, px);
   }
@@ -143,7 +143,7 @@ function drawPath(ctx, path, px, model) {
 }
 
 /** Bridge — wooden planks spanning the water where a path crosses. */
-function drawBridge(ctx, bridge, px, model) {
+function drawBridge(ctx, bridge, px) {
   const x = bridge.x * px, y = bridge.y * px;
   const ang = bridge.angle || 0;
   const len = px * 1.4, half = px * 0.55;
@@ -263,6 +263,229 @@ function paintVignette(ctx, model, px) {
   ctx.fillStyle = g;
   ctx.fillRect(0, 0, W, H);
   ctx.restore();
+}
+
+/* =====================================================================
+ * Structures (Phase 3) — multi-cell buildings / ruins / camps
+ * ===================================================================== */
+
+function drawStructure(ctx, s, px) {
+  const x = (s.col + s.w / 2) * px;
+  const y = (s.row + s.h / 2) * px;
+  const w = s.w * px, h = s.h * px;
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(s.angle || 0);
+  // Cast shadow under every structure for grounding.
+  ctx.globalAlpha = 0.3;
+  ctx.fillStyle = '#000';
+  roundRectPath(ctx, -w / 2 + px * 0.1, -h / 2 + px * 0.14, w * 0.92, h * 0.92, px * 0.15);
+  ctx.fill();
+  ctx.globalAlpha = 1;
+  switch (s.type) {
+    case 'hut':       drawHut(ctx, w, h, s.variant); break;
+    case 'cabin':     drawHut(ctx, w, h, s.variant); break;
+    case 'ruin':      drawRuin(ctx, w, h, s.variant); break;
+    case 'campfire':  drawCampfire(ctx, w, h); break;
+    case 'pillars':   drawPillars(ctx, w, h, s); break;
+    case 'altar':     drawAltar(ctx, w, h); break;
+    case 'tent':      drawTent(ctx, w, h, s.variant); break;
+    case 'furniture': drawFurniture(ctx, w, h, s.variant); break;
+    default:          drawRuin(ctx, w, h, s.variant);
+  }
+  ctx.restore();
+}
+
+/** Hut/cabin — walls + pitched roof (top-down: roof rectangle with a
+ *  ridge line) + a door notch. */
+function drawHut(ctx, w, h, variant) {
+  const roofs = ['#7a4a28', '#6b5436', '#84502a'];
+  const wallC = '#caa377';
+  // Walls
+  ctx.fillStyle = wallC;
+  roundRectPath(ctx, -w / 2 + 4, -h / 2 + 4, w - 8, h - 8, 4);
+  ctx.fill();
+  // Roof (inset)
+  ctx.fillStyle = roofs[variant % roofs.length];
+  roundRectPath(ctx, -w / 2 + 9, -h / 2 + 9, w - 18, h - 18, 3);
+  ctx.fill();
+  // Ridge line
+  ctx.strokeStyle = 'rgba(0,0,0,0.35)';
+  ctx.lineWidth = Math.max(1, w * 0.02);
+  ctx.beginPath();
+  ctx.moveTo(0, -h / 2 + 10); ctx.lineTo(0, h / 2 - 10);
+  ctx.stroke();
+  // Roof highlight
+  ctx.strokeStyle = 'rgba(255,255,255,0.18)';
+  ctx.beginPath();
+  ctx.moveTo(-w / 2 + 11, -h / 2 + 11); ctx.lineTo(w / 2 - 11, -h / 2 + 11);
+  ctx.stroke();
+  // Door
+  ctx.fillStyle = '#3a2716';
+  ctx.fillRect(-w * 0.08, h / 2 - 8, w * 0.16, 6);
+}
+
+/** Ruin — broken stone walls forming a partial enclosure with gaps. */
+function drawRuin(ctx, w, h, variant) {
+  const stone = '#8c8c84';
+  const t = Math.max(3, w * 0.09);   // wall thickness
+  ctx.fillStyle = stone;
+  ctx.strokeStyle = 'rgba(0,0,0,0.3)';
+  ctx.lineWidth = 1;
+  // Four walls, each with a random missing chunk → ruined look.
+  const L = -w / 2 + 6, Rr = w / 2 - 6, T = -h / 2 + 6, B = h / 2 - 6;
+  const segs = [
+    // top wall (with gap on the right third for variant 0)
+    [L, T, Rr - (variant === 0 ? (Rr - L) * 0.4 : 0), T, t, 'h'],
+    // left wall
+    [L, T, L, B - (variant === 1 ? (B - T) * 0.35 : 0), t, 'v'],
+    // bottom wall (gap on left for variant 2)
+    [L + (variant === 2 ? (Rr - L) * 0.35 : 0), B, Rr, B, t, 'h'],
+    // right wall
+    [Rr, T + (variant === 0 ? (B - T) * 0.3 : 0), Rr, B, t, 'v']
+  ];
+  for (const [x1, y1, x2, y2, th, dir] of segs) {
+    if (dir === 'h') ctx.fillRect(Math.min(x1, x2), y1 - th / 2, Math.abs(x2 - x1), th);
+    else ctx.fillRect(x1 - th / 2, Math.min(y1, y2), th, Math.abs(y2 - y1));
+  }
+  // Highlight tops
+  ctx.fillStyle = 'rgba(255,255,255,0.14)';
+  for (const [x1, y1, x2, y2, th, dir] of segs) {
+    if (dir === 'h') ctx.fillRect(Math.min(x1, x2), y1 - th / 2, Math.abs(x2 - x1), th * 0.4);
+    else ctx.fillRect(x1 - th / 2, Math.min(y1, y2), th * 0.4, Math.abs(y2 - y1));
+  }
+  // A few fallen blocks inside.
+  ctx.fillStyle = '#787870';
+  for (const [dx, dy] of [[-0.18, 0.1], [0.2, -0.12], [0.05, 0.22]]) {
+    ctx.fillRect(dx * w, dy * h, t * 0.9, t * 0.9);
+  }
+}
+
+/** Campfire — stone ring + glowing fire + a couple of logs. */
+function drawCampfire(ctx, w, h) {
+  const r = Math.min(w, h) * 0.28;
+  // Fire glow
+  if (ctx.createRadialGradient) {
+    const g = ctx.createRadialGradient(0, 0, 0, 0, 0, r * 2.2);
+    g.addColorStop(0, 'rgba(255,170,60,0.6)');
+    g.addColorStop(1, 'rgba(255,170,60,0)');
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(0, 0, r * 2.2, 0, Math.PI * 2); ctx.fill();
+  }
+  // Logs (cross)
+  ctx.strokeStyle = '#5a3a1f';
+  ctx.lineWidth = Math.max(2, r * 0.3);
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(-r * 0.7, -r * 0.4); ctx.lineTo(r * 0.7, r * 0.4);
+  ctx.moveTo(-r * 0.7, r * 0.4); ctx.lineTo(r * 0.7, -r * 0.4);
+  ctx.stroke();
+  // Flame
+  ctx.fillStyle = '#ffb13b';
+  ctx.beginPath(); ctx.arc(0, 0, r * 0.5, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = '#ffe08a';
+  ctx.beginPath(); ctx.arc(0, -r * 0.1, r * 0.25, 0, Math.PI * 2); ctx.fill();
+  // Stone ring
+  ctx.fillStyle = '#9a948a';
+  for (let i = 0; i < 8; i++) {
+    const a = (i / 8) * Math.PI * 2;
+    ctx.beginPath();
+    ctx.arc(Math.cos(a) * r, Math.sin(a) * r, r * 0.22, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+/** Pillars — a grid of stone columns (dungeon/cave hall). */
+function drawPillars(ctx, w, h, s) {
+  const cols = s.w, rows = s.h;
+  const r = Math.min(w / cols, h / rows) * 0.3;
+  ctx.fillStyle = '#4a4a52';
+  for (let c = 0; c < cols; c++) {
+    for (let rr = 0; rr < rows; rr++) {
+      const cx = -w / 2 + (c + 0.5) * (w / cols);
+      const cy = -h / 2 + (rr + 0.5) * (h / rows);
+      ctx.beginPath(); ctx.arc(cx + r * 0.18, cy + r * 0.2, r, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(0,0,0,0.4)'; ctx.fill();
+      ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2);
+      ctx.fillStyle = '#56565e'; ctx.fill();
+      ctx.beginPath(); ctx.arc(cx - r * 0.3, cy - r * 0.3, r * 0.4, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(255,255,255,0.18)'; ctx.fill();
+    }
+  }
+}
+
+/** Altar — a raised stone block with a rune top. */
+function drawAltar(ctx, w, h) {
+  const bw = w * 0.5, bh = h * 0.5;
+  ctx.fillStyle = '#5a5660';
+  roundRectPath(ctx, -bw / 2, -bh / 2, bw, bh, 3);
+  ctx.fill();
+  ctx.fillStyle = '#6a6672';
+  roundRectPath(ctx, -bw / 2 + 4, -bh / 2 + 4, bw - 8, bh - 8, 2);
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(150,120,220,0.7)';
+  ctx.lineWidth = Math.max(1, w * 0.02);
+  ctx.beginPath();
+  ctx.arc(0, 0, Math.min(bw, bh) * 0.22, 0, Math.PI * 2);
+  ctx.stroke();
+}
+
+/** Tent — a triangular canvas with a center pole + entrance. */
+function drawTent(ctx, w, h, variant) {
+  const canvasC = ['#9c7a4a', '#8a6b5a', '#6b7a8a'][variant % 3];
+  ctx.fillStyle = canvasC;
+  ctx.beginPath();
+  ctx.moveTo(0, -h / 2 + 6);
+  ctx.lineTo(w / 2 - 6, h / 2 - 6);
+  ctx.lineTo(-w / 2 + 6, h / 2 - 6);
+  ctx.closePath();
+  ctx.fill();
+  // Shaded right half
+  ctx.fillStyle = 'rgba(0,0,0,0.2)';
+  ctx.beginPath();
+  ctx.moveTo(0, -h / 2 + 6);
+  ctx.lineTo(w / 2 - 6, h / 2 - 6);
+  ctx.lineTo(0, h / 2 - 6);
+  ctx.closePath();
+  ctx.fill();
+  // Entrance slit
+  ctx.strokeStyle = '#2a1f14';
+  ctx.lineWidth = Math.max(1, w * 0.03);
+  ctx.beginPath();
+  ctx.moveTo(0, -h / 2 + 8); ctx.lineTo(0, h / 2 - 8);
+  ctx.stroke();
+}
+
+/** Furniture — tavern tables (a couple of rounded tables + benches). */
+function drawFurniture(ctx, w, h, variant) {
+  const tableC = '#6e4a26';
+  const n = 1 + (variant % 2);
+  for (let i = 0; i < n; i++) {
+    const ox = (i - (n - 1) / 2) * w * 0.4;
+    ctx.fillStyle = 'rgba(0,0,0,0.3)';
+    ctx.beginPath(); ctx.ellipse(ox + 3, 4, w * 0.16, h * 0.16, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = tableC;
+    ctx.beginPath(); ctx.ellipse(ox, 0, w * 0.16, h * 0.16, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,0.12)';
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.ellipse(ox, 0, w * 0.1, h * 0.1, 0, 0, Math.PI * 2); ctx.stroke();
+  }
+}
+
+/** Rounded-rectangle path helper. */
+function roundRectPath(ctx, x, y, w, h, r) {
+  const rr = Math.min(r, w / 2, h / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + rr, y);
+  ctx.lineTo(x + w - rr, y);
+  ctx.quadraticCurveTo(x + w, y, x + w, y + rr);
+  ctx.lineTo(x + w, y + h - rr);
+  ctx.quadraticCurveTo(x + w, y + h, x + w - rr, y + h);
+  ctx.lineTo(x + rr, y + h);
+  ctx.quadraticCurveTo(x, y + h, x, y + h - rr);
+  ctx.lineTo(x, y + rr);
+  ctx.quadraticCurveTo(x, y, x + rr, y);
+  ctx.closePath();
 }
 
 /* =====================================================================
