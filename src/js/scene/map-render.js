@@ -20,6 +20,7 @@
 
 import { generateMapModel } from './map-generator.js';
 import { makeValueNoise2D, fbm2D } from './noise.js';
+import { applyAtmosphere } from './map-grade.js';
 
 /**
  * Paint a full generated map for `scene` onto `ctx`.
@@ -61,6 +62,9 @@ export function paintMapModel(ctx, model, { cellPx } = {}) {
     drawFeature(ctx, f, px);
   }
   paintVignette(ctx, model, px);
+  // M50 Phase A — cinematic finishing pass (grade + sun + bloom). Runs
+  // once inside the cached offscreen paint; safe no-op on a headless ctx.
+  applyAtmosphere(ctx, model, model.cols * px, model.rows * px);
 }
 
 /* =====================================================================
