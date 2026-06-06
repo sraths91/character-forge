@@ -68,6 +68,7 @@ import {
 // UI side-effects (logs, cinema, animations).
 import { runOneAttack as engineRunOneAttack } from './scene/combat-engine.js';
 import { applyPolish } from './anim/polish.js';
+import { idlePoseAt } from './anim/idle-pose.js';
 import {
   preloadActorSprite, makeLpcDrawSprite, clearActorSpriteCache,
   setActorWeapon, clearActorWeapon, drawWeaponOverlay, preloadActorAttack
@@ -201,7 +202,11 @@ function rerender() {
   const c = JSON.parse(JSON.stringify(slotEffective));
   applyAppearanceOverrides(c, currentAppearance);
   currentCharacter = c;
-  renderSprite(canvas, c, { scale: 6, direction: currentDirection, frameIdx: animFrame });
+  // M53 — while the idle loop is running, a change (direction/appearance/
+  // equipment) re-bakes the buffer; the rAF keeps drawing it. Otherwise
+  // paint the static composite.
+  if (animating && viewMode !== 'party') { bakeIdleBuffer(); return; }
+  renderSprite(canvas, c, { scale: 6, direction: currentDirection, frameIdx: 0 });
 }
 
 // M3 — turn the scene's monster instances into the character-shaped
@@ -335,6 +340,9 @@ document.addEventListener('click', (e) => {
 // (enterPartyView) succeeds — otherwise a failed "no party loaded" entry
 // would leave the nav highlighted on a view the user isn't actually in.
 async function setView(name) {
+  // M53 — a running idle/walk animation is view-specific; reset it on any
+  // view switch so the rAF loop never fights another view's canvas render.
+  if (animating) stopAnimation();
   if (name === 'character') {
     if (viewMode === 'party') exitPartyView();
     versusActive = false;
@@ -3557,33 +3565,106 @@ function loadImageAsDataUrl(file, maxEdge = 1024) {
   });
 }
 
-// ---------- Tier 3.1: Walk-cycle animation ----------
+// ---------- Tier 3.1 / M53: Character animation ----------
+//
+// Two animation modes share the Animate toggle:
+//   - Party / battle view → the original frame-cycle tick (monsters walk
+//     in place; the battle scene reads frameIdx = animFrame).
+//   - Single-character view → M53 lifelike idle: the composite is baked
+//     ONCE to an offscreen buffer, then a 60fps rAF loop draws it with a
+//     breathing squash/stretch, a slow weight-shift sway, and a grounding
+//     contact shadow (idle-pose.js). Smooth + cheap — no per-frame
+//     re-composite, the choppy 2-frame wobble it replaces.
 let animating = false;
 let animFrame = 0;
-let animTimer = null;
+let animTimer = null;            // party-view frame-cycle interval
 const FRAME_INTERVAL_MS = 130;
 
-function startAnimation() {
+// M53 idle state
+let idleRaf = null;
+let idleStart = 0;
+let idleBuffer = null;           // baked composite (offscreen canvas)
+let idleBakeToken = 0;           // invalidates in-flight async bakes
+
+/** Bake the current composed character to an offscreen buffer for the
+ *  idle loop. Async (composition); guarded so a newer bake wins. */
+async function bakeIdleBuffer() {
+  if (!currentCharacter) return;
+  const token = ++idleBakeToken;
+  const off = document.createElement('canvas');
+  try { await renderSprite(off, currentCharacter, { scale: 6, direction: currentDirection, frameIdx: 0 }); }
+  catch { return; }
+  if (token === idleBakeToken) idleBuffer = off;
+}
+
+/** One frame of the idle loop — draw the baked buffer with the breathing
+ *  transform + contact shadow. */
+function drawIdleFrame(now) {
+  if (!animating) return;
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width, H = canvas.height;
+  ctx.clearRect(0, 0, W, H);
+  if (idleBuffer) {
+    const p = idlePoseAt(now - idleStart);
+    const cx = W / 2;
+    const feetY = H * 0.95;        // pivot near the feet so breathing rises from the ground
+    // Grounding pedestal — a soft additive light pool under the feet that
+    // pulses with the breath. Reads on the dark viewer background (a black
+    // contact shadow would vanish there); harmless on light themes.
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.translate(cx, feetY + H * 0.025);
+    ctx.scale(1, 0.16);            // flatten the disc into a ground ellipse
+    const rad = W * 0.34 * p.shadowScale;
+    const a = Math.max(0, p.shadowAlpha) * 0.62;
+    const glow = ctx.createRadialGradient(0, 0, 0, 0, 0, rad);
+    glow.addColorStop(0, `rgba(150,172,220,${a})`);
+    glow.addColorStop(0.6, `rgba(120,140,190,${a * 0.4})`);
+    glow.addColorStop(1, 'rgba(120,140,190,0)');
+    ctx.fillStyle = glow;
+    ctx.beginPath(); ctx.arc(0, 0, rad, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+    // Sprite: weight-shift + bob translate, micro-lean, breathing scale
+    // pivoted at the feet.
+    ctx.save();
+    ctx.imageSmoothingEnabled = false;
+    ctx.translate(cx + p.swayX * W, feetY + p.bobY * H);
+    ctx.rotate(p.rot);
+    ctx.scale(p.scaleX, p.scaleY);
+    ctx.drawImage(idleBuffer, -cx, -feetY);
+    ctx.restore();
+  }
+  idleRaf = requestAnimationFrame(drawIdleFrame);
+}
+
+async function startAnimation() {
   if (animating) return;
   animating = true;
   const btn = $('animate-toggle');
   if (btn) btn.textContent = '⏸ Animating';
-  animTimer = setInterval(() => {
-    animFrame = (animFrame + 1) & 0xFFFF;   // never overflow; renderer mods per-layer
-    pruneExpired();
-    rerender();
-  }, FRAME_INTERVAL_MS);
+  if (viewMode === 'party') {
+    animTimer = setInterval(() => {
+      animFrame = (animFrame + 1) & 0xFFFF;
+      pruneExpired();
+      rerender();
+    }, FRAME_INTERVAL_MS);
+  } else {
+    await bakeIdleBuffer();
+    idleStart = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+    idleRaf = requestAnimationFrame(drawIdleFrame);
+  }
 }
 
 function stopAnimation() {
   if (!animating) return;
   animating = false;
-  clearInterval(animTimer);
-  animTimer = null;
+  if (animTimer) { clearInterval(animTimer); animTimer = null; }
+  if (idleRaf) { cancelAnimationFrame(idleRaf); idleRaf = null; }
+  idleBuffer = null;
   animFrame = 0;
   const btn = $('animate-toggle');
   if (btn) btn.textContent = '▶ Animate';
-  rerender();   // snap back to frame 0
+  rerender();   // snap back to the static frame
 }
 
 document.addEventListener('click', (e) => {
