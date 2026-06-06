@@ -23,6 +23,14 @@
 import { renderSprite } from '../sprite/compositor.js';
 import { MONSTER_PRESETS, buildMonsterCharacter } from '../scene/monster-presets.js';
 import { actorStateAt } from './fsm.js';
+import { loadImage } from '../sprite/image-cache.js';
+import { weaponSpriteSrc, FRAME } from '../sprite/lpc-config.js';
+import { motionForWeapon } from './weapon-motions.js';
+import { swingRigFor } from './weapon-swing.js';
+
+// M51 — Slots whose layers the cinema omits from the baked body so the
+// weapon can be drawn (and swung) as a separate overlay.
+export const WEAPON_OVERLAY_SLOTS = ['mainhand', 'weaponBack', 'offhand'];
 
 // M44.1 — Per-actor frame cycle. We pre-render five poses sampled
 // from the LPC walk sheet:
@@ -96,7 +104,9 @@ export async function preloadActorSprite(entity, { scale = 3, direction = 'south
   for (const idx of ACTOR_FRAMES) {
     const off = makeOffscreenCanvas();
     if (!off) continue;
-    await renderSprite(off, character, { scale, direction, frameIdx: idx });
+    // M51 — render the body WITHOUT the weapon; the cinema swings the
+    // weapon as a separate overlay (setActorWeapon / drawWeaponOverlay).
+    await renderSprite(off, character, { scale, direction, frameIdx: idx, excludeSlots: WEAPON_OVERLAY_SLOTS });
     frames.set(idx, off);
   }
   if (frames.size === 0) return null;
@@ -312,3 +322,111 @@ function makeOffscreenCanvas() {
   if (typeof OffCanvas === 'function') return new OffCanvas(64, 64);
   return null;
 }
+
+/* =====================================================================
+ * M51 — Attacker weapon overlay (the weapon that actually swings)
+ * ===================================================================== */
+
+// Current attacker weapon overlay, or null. The project's weapon PNGs
+// are LPC SLASH sheets — the south row holds the weapon sweeping through
+// the swing (frame 0 raised → last frame extended). So instead of
+// rotating a static frame, we PLAY those authored frames timed to the
+// strike: a real, hand-drawn weapon swing.
+//   { img, rowY, cellW, frames, rig }   (rig kept for timing windows)
+let _attackerWeapon = null;
+
+// LPC row order N,W,S,E; the slash weapons populate the SOUTH row, whose
+// left→right sweep reads as a forward slash for a right-facing attacker.
+const SLASH_ROW_SOUTH = 2;
+
+/**
+ * Resolve + load the attacker's weapon sheet so the cinema can play its
+ * authored swing frames. PC: equipment.mainhand; monster: preset attack
+ * name (usually no LPC sprite → null, the effect arc carries it).
+ */
+export async function setActorWeapon(entity) {
+  _attackerWeapon = null;
+  const weapon = entity?.equipment?.mainhand
+    || (entity?.presetSlug ? { name: MONSTER_PRESETS[entity.presetSlug]?.attack?.name } : null);
+  const rig = swingRigFor(motionForWeapon(weapon));
+  if (!rig) return null;                       // unarmed → no overlay
+  const src = weaponSpriteSrc(weapon);
+  if (!src) return null;                       // no LPC sprite → effect-only
+  let img;
+  try { img = await loadImage(src); } catch { return null; }
+  // Cell size: 64 (256-tall sheets) or 128 (512-tall oversized weapons).
+  const cellW = img.height >= 512 ? 128 : FRAME;
+  const frames = Math.max(1, Math.round(img.width / cellW));
+  const rowY = SLASH_ROW_SOUTH * cellW;
+  _attackerWeapon = { img, rowY, cellW, frames, rig };
+  return _attackerWeapon;
+}
+
+/** Clear the weapon overlay (e.g. between actors / on teardown). */
+export function clearActorWeapon() { _attackerWeapon = null; }
+
+const easeInOut = (t) => t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+
+/**
+ * Map sequence progress to a swing-frame index across the windup→strike
+ * →settle window, biased so the extended "hit" frame lands at impact.
+ * Returns a fractional index (the renderer rounds; the smear reads the
+ * couple of frames behind it).
+ */
+export function swingFrameAt(frames, p, impactP) {
+  const windupStart = Math.max(0, impactP - 0.34);
+  const settleEnd = Math.min(1, impactP + 0.22);
+  if (p <= windupStart) return 0;
+  if (p >= settleEnd) return frames - 1;
+  const sp = (p - windupStart) / (settleEnd - windupStart);
+  return easeInOut(sp) * (frames - 1);
+}
+
+/**
+ * Draw the attacker's weapon mid-swing. Called by the cinema right after
+ * the attacker body, with the same anchor + scale. Plays the weapon
+ * sheet's authored slash frames; a frame-based smear (the 1-2 frames
+ * behind, at low alpha) gives the motion-trail.
+ */
+export function drawWeaponOverlay(ctx, anchor, snapshot, scale) {
+  const ov = _attackerWeapon;
+  if (!ov || !ov.img) return;
+  const dur = Number.isFinite(snapshot._duration) ? snapshot._duration : 1000;
+  const t = Number.isFinite(snapshot._t) ? snapshot._t : 0;
+  const impactAt = Number.isFinite(snapshot._impactAt) ? snapshot._impactAt : dur / 2;
+  const p = clamp01(t / dur);
+  const impactP = clamp01(impactAt / dur);
+  const fIdx = swingFrameAt(ov.frames, p, impactP);
+  const cur = Math.round(fIdx);
+  const cell = FRAME * scale;
+  const baseAlpha = snapshot.alpha ?? 1;
+  // Frame-based smear — the two prior frames at low alpha during the
+  // fast part of the sweep (only when the blade is actually moving).
+  if (ov.rig.trail && fIdx > 0.5 && cur < ov.frames - 1) {
+    for (let b = 1; b <= 2; b++) {
+      const idx = cur - b;
+      if (idx < 0) break;
+      paintWeaponFrame(ctx, ov, anchor, cell, idx, baseAlpha * (0.32 / b));
+    }
+  }
+  paintWeaponFrame(ctx, ov, anchor, cell, cur, baseAlpha);
+}
+
+function paintWeaponFrame(ctx, ov, anchor, cell, frameIdx, alpha) {
+  const sx = clampInt(frameIdx, 0, ov.frames - 1) * ov.cellW;
+  // 64px weapon cells map 1:1 onto the body cell (feet at the bottom).
+  // 128px "oversized" weapon cells keep the body centred with the weapon
+  // extending out, so they draw at 2× size with the feet ~0.84 down.
+  const oversized = ov.cellW >= 128;
+  const drawSize = oversized ? cell * 2 : cell;
+  const feetFrac = oversized ? 0.84 : 1.0;
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(ov.img, sx, ov.rowY, ov.cellW, ov.cellW,
+    anchor.x - drawSize / 2, anchor.y - drawSize * feetFrac, drawSize, drawSize);
+  ctx.restore();
+}
+
+function clampInt(v, lo, hi) { v = v | 0; return v < lo ? lo : v > hi ? hi : v; }
+function clamp01(v) { return v < 0 ? 0 : v > 1 ? 1 : v; }

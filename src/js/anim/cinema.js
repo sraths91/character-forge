@@ -112,6 +112,7 @@ export function createCinema({
   canvas = null, attacker, defender,
   drawSprite = drawSpriteDefault,
   drawBackground = drawBackgroundDefault,
+  drawWeapon = null,
   onActorsChanged = null,
   scale = 1
 } = {}) {
@@ -158,7 +159,7 @@ export function createCinema({
       prevFrameT = frame.t;
       draw(ctx, state, seq, frame, {
         attacker: actorRefs.attacker, defender: actorRefs.defender,
-        drawSprite, drawBackground: currentBg, scale, canvas,
+        drawSprite, drawWeapon, drawBackground: currentBg, scale, canvas,
         particles
       });
     }, {});
@@ -266,9 +267,12 @@ function draw(ctx, state, seq, frame, opts) {
   const impactAt = findHitPauseAt(seq);
   const attackerPhase = phaseAt(frame.t, impactAt);
   const defenderPhase = defenderPhaseAt(frame.t, impactAt);
-  const attSnap = { ...frame.attacker, _t: frame.t, _impactAt: impactAt, _phase: attackerPhase };
-  const defSnap = { ...frame.defender, _t: frame.t, _impactAt: impactAt, _phase: defenderPhase };
+  const attSnap = { ...frame.attacker, _t: frame.t, _impactAt: impactAt, _duration: seq.duration, _phase: attackerPhase };
+  const defSnap = { ...frame.defender, _t: frame.t, _impactAt: impactAt, _duration: seq.duration, _phase: defenderPhase };
   opts.drawSprite(ctx, 'attacker', attAnchor, attSnap, opts.attacker);
+  // M51 — the attacker's weapon swings as a separate overlay on top of
+  // the (weapon-less) body so the blade actually sweeps with a smear.
+  opts.drawWeapon?.(ctx, attAnchor, attSnap, opts.scale ?? 1);
   opts.drawSprite(ctx, 'defender', defAnchor, defSnap, opts.defender);
 
   // Effects fire as snapshots — for cinema we use a small "trail" so

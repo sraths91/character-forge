@@ -707,6 +707,17 @@ function pickWeapon(weapon) {
 }
 
 /**
+ * M51 — Resolve a weapon record to its LPC sprite source path (or null
+ * when no sprite matches). Exposed so the cinema can render the weapon
+ * as a separately-animated overlay that swings (compositor renders the
+ * body without the baked weapon via `excludeSlots`).
+ */
+export function weaponSpriteSrc(weapon) {
+  const key = pickWeapon(weapon);
+  return key ? ASSET_MAP.weapon[key] : null;
+}
+
+/**
  * Returns the bespoke `universal_behind`/`behind` art key when LPC ships one,
  * otherwise null — the caller falls back to BACK_DERIVED_POSES (rotated mainhand).
  */

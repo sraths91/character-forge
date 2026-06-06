@@ -25,7 +25,7 @@ const RARITY_RANK = {
  * independently — they desync slightly because sheets have different
  * frame counts, which reads as "alive" rather than "marching in step".
  */
-export async function renderSprite(canvas, character, { scale = 6, direction = 'south', frameIdx = 0 } = {}) {
+export async function renderSprite(canvas, character, { scale = 6, direction = 'south', frameIdx = 0, excludeSlots = null } = {}) {
   const outW = FRAME * scale;
   const outH = FRAME * scale;
   canvas.width = outW;
@@ -33,7 +33,7 @@ export async function renderSprite(canvas, character, { scale = 6, direction = '
   const ctx = canvas.getContext('2d');
   ctx.imageSmoothingEnabled = false;
   ctx.clearRect(0, 0, outW, outH);
-  const result = await drawCharacterAt(ctx, character, { x: 0, y: 0, scale, direction, frameIdx });
+  const result = await drawCharacterAt(ctx, character, { x: 0, y: 0, scale, direction, frameIdx, excludeSlots });
   return { canvas, plan: result.plan, generatedCount: result.generatedCount };
 }
 
@@ -681,8 +681,14 @@ export async function renderPartyCanvas(canvas, characters, opts = {}) {
  * cell so multi-character canvases compose cleanly.
  */
 async function drawCharacterAt(ctx, character, opts) {
-  const { x, y, scale, direction, frameIdx } = opts;
+  const { x, y, scale, direction, frameIdx, excludeSlots } = opts;
   const plan = buildRenderPlan(character, { direction });
+  // M51 — Optionally drop layers by slot (e.g. the cinema renders the
+  // body WITHOUT the baked weapon so it can swing the weapon separately).
+  if (excludeSlots && excludeSlots.length) {
+    const skip = new Set(excludeSlots);
+    plan.layers = plan.layers.filter(l => !skip.has(l.slot));
+  }
   const cellW = FRAME * scale;
   const cellH = FRAME * scale;
 

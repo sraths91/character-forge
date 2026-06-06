@@ -69,7 +69,8 @@ import {
 import { runOneAttack as engineRunOneAttack } from './scene/combat-engine.js';
 import { applyPolish } from './anim/polish.js';
 import {
-  preloadActorSprite, makeLpcDrawSprite, clearActorSpriteCache
+  preloadActorSprite, makeLpcDrawSprite, clearActorSpriteCache,
+  setActorWeapon, clearActorWeapon, drawWeaponOverlay
 } from './anim/cinema-sprites.js';
 import { terrainFromScene, backgroundFor } from './anim/cinema-backgrounds.js';
 import { listBiomes, isBiome } from './scene/map-generator.js';
@@ -589,6 +590,8 @@ function setupVersusCinema(active) {
     versusCinema = createCinema({
       canvas,
       drawSprite: makeLpcDrawSprite(),
+      // M51 — the attacker's weapon swings as a separate overlay.
+      drawWeapon: drawWeaponOverlay,
       drawBackground: backgroundFor(terrain),
       // Pre-render each new actor's LPC sprite into an off-screen
       // buffer before the next round starts. Synchronous draw() then
@@ -596,10 +599,12 @@ function setupVersusCinema(active) {
       // M44.5 — Attacker pre-renders east-facing; defender west-facing.
       // The LPC sheet handles facing directly so the cinema draws no
       // longer x-mirror the defender.
+      // M51 — also load the attacker's weapon sprite for the swing overlay.
       onActorsChanged: async ({ attacker, defender }) => {
         await Promise.all([
           preloadActorSprite(attacker, { direction: 'east' }),
-          preloadActorSprite(defender, { direction: 'west' })
+          preloadActorSprite(defender, { direction: 'west' }),
+          setActorWeapon(attacker, { direction: 'east' })
         ]);
       }
     });
@@ -607,6 +612,7 @@ function setupVersusCinema(active) {
     canvas.hidden = true;
     versusCinema = null;
     clearActorSpriteCache();
+    clearActorWeapon();
   }
 }
 
