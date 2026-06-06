@@ -1,27 +1,28 @@
 /**
- * Top-down renderer for procedurally generated battle maps.
+ * Painterly top-down renderer for structured procedural battle maps (M49).
  *
- * Paints a `generateMapModel` result (map-generator.js) onto a 2D
- * canvas context: a base ground fill, an fBm mottle texture for
- * organic color variation, then the scattered biome features (trees,
- * rocks, water, etc.) drawn as simple stylized shapes.
+ * Paints a `generateMapModel` result onto a 2D context:
+ *   1. Painterly ground — per sub-cell tile, the colour is interpolated
+ *      across the biome's elevation ramp with soft zone-boundary blends
+ *      and a moisture tint, so terrain reads as smooth gradients with
+ *      organic region edges (no flat fills, no hard cell borders).
+ *   2. Rivers + paths (Phase 2) — drawn as smooth ribbons.
+ *   3. Structures (Phase 3).
+ *   4. Detail features — region-aware scatter with shadows, gradients,
+ *      and highlights.
  *
- * Synchronous canvas ops only — no image decode, no async. The
- * compositor pre-renders this once to an offscreen canvas keyed by
- * (biome, seed, dimensions) and blits it each frame, so this code runs
- * once per map change, not once per animation frame.
+ * Synchronous canvas ops only. The compositor pre-renders this once to
+ * an offscreen canvas keyed by (biome, seed, dims) and blits it each
+ * frame, so it runs once per map change, not once per animation frame.
  *
- * Pure-ish: it only draws to the ctx it's handed. Headless-testable
- * with a mock ctx (see map-render.test.js), the same pattern as
- * anim-cinema-backgrounds.test.js.
+ * Headless-testable with a mock ctx (map-render.test.js).
  */
 
 import { generateMapModel } from './map-generator.js';
+import { makeValueNoise2D, fbm2D } from './noise.js';
 
 /**
- * Paint a full generated map for `scene` onto `ctx`. Resolves the
- * model from scene.map.{biome,seed} and scene.{cols,rows}, then paints
- * ground + mottle + features at `cellPx` pixels per cell.
+ * Paint a full generated map for `scene` onto `ctx`.
  *
  * @param {CanvasRenderingContext2D} ctx
  * @param {object} scene — needs cols, rows, map.{biome,seed}
@@ -39,8 +40,7 @@ export function paintGeneratedBackground(ctx, scene, cellPx) {
 }
 
 /**
- * Paint a resolved map model. Split out so tests can feed a model
- * directly and the compositor can reuse a cached model if desired.
+ * Paint a resolved map model.
  *
  * @param {CanvasRenderingContext2D} ctx
  * @param {object} model — from generateMapModel
@@ -50,52 +50,110 @@ export function paintGeneratedBackground(ctx, scene, cellPx) {
 export function paintMapModel(ctx, model, { cellPx } = {}) {
   if (!ctx || !model) return;
   const px = cellPx || 64;
-  const W = model.cols * px;
-  const H = model.rows * px;
 
-  // 1. Base ground fill.
-  ctx.save();
-  ctx.fillStyle = model.ground.base;
-  ctx.fillRect(0, 0, W, H);
-
-  // 2. fBm mottle — coarse tiles tint toward light/dark by the field
-  //    value, giving organic variation without per-pixel cost. Tile
-  //    size ~ a third of a cell reads as ground texture, not blocks.
-  const tile = Math.max(6, Math.round(px / 3));
-  const colsT = Math.ceil(W / tile);
-  const rowsT = Math.ceil(H / tile);
-  for (let ty = 0; ty < rowsT; ty++) {
-    for (let tx = 0; tx < colsT; tx++) {
-      // Sample the model's elevation/moisture field in cell space.
-      const cx = (tx * tile) / px;
-      const cy = (ty * tile) / px;
-      const e = model.field(cx, cy);
-      // Map field 0..1 → dark..light blend over the base.
-      if (e < 0.4) {
-        ctx.fillStyle = model.ground.dark;
-        ctx.globalAlpha = (0.4 - e) * 0.7;
-      } else if (e > 0.6) {
-        ctx.fillStyle = model.ground.light;
-        ctx.globalAlpha = (e - 0.6) * 0.7;
-      } else {
-        continue;
-      }
-      ctx.fillRect(tx * tile, ty * tile, tile, tile);
-    }
-  }
-  ctx.globalAlpha = 1;
-  ctx.restore();
-
-  // 3. Features.
+  paintGround(ctx, model, px);
+  // Phase 2 will paint model.rivers + model.paths here.
+  // Phase 3 will paint model.structures here.
   for (const f of model.features) {
     drawFeature(ctx, f, px);
   }
+  paintVignette(ctx, model, px);
 }
 
 /* =====================================================================
- * Feature painters — each takes the feature, the pixel center, and the
- * radius in pixels. Stylized top-down silhouettes; deliberately simple
- * so they read at a glance and never fight the tokens drawn on top.
+ * Painterly ground
+ * ===================================================================== */
+
+function paintGround(ctx, model, px) {
+  const W = model.cols * px;
+  const H = model.rows * px;
+  // Build the biome's continuous elevation→colour ramp once.
+  const ramp = buildRamp(model);
+  // A fine grain texture sampler for per-tile jitter.
+  const grain = makeValueNoise2D((model.seed ^ 0x1b56c4f9) >>> 0);
+
+  // Sub-cell tile resolution. Smaller tiles = smoother gradient. px/8
+  // reads as a smooth wash on a one-time paint while staying bounded
+  // (~6k tiles on a 12x8 map at 64px cells).
+  const tile = Math.max(3, Math.round(px / 8));
+  const cols = Math.ceil(W / tile);
+  const rows = Math.ceil(H / tile);
+
+  ctx.save();
+  for (let ty = 0; ty < rows; ty++) {
+    for (let tx = 0; tx < cols; tx++) {
+      const cx = (tx * tile + tile / 2) / px;
+      const cy = (ty * tile + tile / 2) / px;
+      const e = model.elevation(cx, cy);
+      const m = model.moisture(cx, cy);
+      let rgb = sampleRamp(ramp, e);
+      // Moisture tint: wetter → cooler/greener, drier → warmer/paler.
+      rgb = tintByMoisture(rgb, m);
+      // Fine grain — subtle ±brightness so flat areas aren't dead-flat.
+      // Sampled at higher frequency than the tile grid so it reads as
+      // texture, not blocks.
+      const g = (fbm2D(grain, cx * 5.3, cy * 5.3, { octaves: 2 }) - 0.5) * 11;
+      ctx.fillStyle = rgbStr(addLum(rgb, g));
+      ctx.fillRect(tx * tile, ty * tile, tile + 1, tile + 1);
+    }
+  }
+  ctx.restore();
+}
+
+/** Build elevation stops from the biome zone fills. Each zone spans
+ *  [lo,hi] in elevation; we stop dark at lo and light at hi, then the
+ *  sampler linearly blends — producing soft cross-zone transitions. */
+function buildRamp(model) {
+  const lv = model.levels;
+  const bounds = [
+    ['water', 0,        lv.water],
+    ['shore', lv.water, lv.shore],
+    ['low',   lv.shore, lv.low],
+    ['mid',   lv.low,   lv.mid],
+    ['high',  lv.mid,   1]
+  ];
+  const stops = [];
+  for (const [zone, lo, hi] of bounds) {
+    const [light, dark] = model.zoneFill(zone);
+    const lor = hexToRgb(dark);
+    const hir = hexToRgb(light);
+    // Nudge endpoints inward a hair so adjacent zones blend over the
+    // seam rather than stacking two stops on the exact same elevation.
+    stops.push({ e: lo + 0.001, rgb: lor });
+    stops.push({ e: hi - 0.001, rgb: hir });
+  }
+  stops.sort((a, b) => a.e - b.e);
+  return stops;
+}
+
+function sampleRamp(stops, e) {
+  if (e <= stops[0].e) return stops[0].rgb;
+  if (e >= stops[stops.length - 1].e) return stops[stops.length - 1].rgb;
+  for (let i = 1; i < stops.length; i++) {
+    if (e <= stops[i].e) {
+      const a = stops[i - 1], b = stops[i];
+      const t = (e - a.e) / Math.max(1e-6, b.e - a.e);
+      return lerpRgb(a.rgb, b.rgb, t);
+    }
+  }
+  return stops[stops.length - 1].rgb;
+}
+
+/** Soft vignette so the play area draws the eye to center; very subtle. */
+function paintVignette(ctx, model, px) {
+  const W = model.cols * px, H = model.rows * px;
+  if (!ctx.createRadialGradient) return;
+  const g = ctx.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.35, W / 2, H / 2, Math.max(W, H) * 0.7);
+  g.addColorStop(0, 'rgba(0,0,0,0)');
+  g.addColorStop(1, 'rgba(0,0,0,0.22)');
+  ctx.save();
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, W, H);
+  ctx.restore();
+}
+
+/* =====================================================================
+ * Feature painters
  * ===================================================================== */
 
 function drawFeature(ctx, f, px) {
@@ -103,85 +161,150 @@ function drawFeature(ctx, f, px) {
   const y = f.y * px;
   const r = f.r * px;
   switch (f.type) {
-    case 'tree':   return drawTree(ctx, x, y, r, f.color);
-    case 'water':  return drawWater(ctx, x, y, r, f.color);
-    case 'rock':   return drawRock(ctx, x, y, r, f.color);
-    case 'rubble': return drawRubble(ctx, x, y, r, f.color);
-    case 'drift':  return drawBlob(ctx, x, y, r, f.color, 0.5);
-    case 'dune':   return drawBlob(ctx, x, y, r, f.color, 0.35);
-    case 'reed':   return drawReed(ctx, x, y, r, f.color);
-    case 'scrub':  return drawTuft(ctx, x, y, r, f.color);
-    case 'tuft':   return drawTuft(ctx, x, y, r, f.color);
-    case 'dirt':   return drawBlob(ctx, x, y, r, f.color, 0.45);
-    case 'plank':  return drawPlank(ctx, x, y, r, f.color);
-    case 'rug':    return drawRug(ctx, x, y, r, f.color);
-    default:       return drawBlob(ctx, x, y, r, f.color, 0.5);
+    case 'tree':    return drawTree(ctx, x, y, r, f.color);
+    case 'bush':    return drawBush(ctx, x, y, r, f.color);
+    case 'water':   return drawWater(ctx, x, y, r, f.color);
+    case 'lily':    return drawLily(ctx, x, y, r, f.color);
+    case 'rock':    return drawRock(ctx, x, y, r, f.color);
+    case 'rubble':  return drawRubble(ctx, x, y, r, f.color);
+    case 'crack':   return drawCrack(ctx, x, y, r, f.color);
+    case 'crystal': return drawCrystal(ctx, x, y, r, f.color);
+    case 'crate':   return drawCrate(ctx, x, y, r, f.color);
+    case 'drift':   return drawSoftBlob(ctx, x, y, r, f.color, 0.55);
+    case 'dune':    return drawSoftBlob(ctx, x, y, r, f.color, 0.32);
+    case 'dirt':    return drawSoftBlob(ctx, x, y, r, f.color, 0.4);
+    case 'reed':    return drawReed(ctx, x, y, r, f.color);
+    case 'scrub':   return drawTuft(ctx, x, y, r, f.color);
+    case 'tuft':    return drawTuft(ctx, x, y, r, f.color);
+    case 'plank':   return drawPlank(ctx, x, y, r, f.color);
+    case 'rug':     return drawRug(ctx, x, y, r, f.color);
+    default:        return drawSoftBlob(ctx, x, y, r, f.color, 0.5);
   }
 }
 
-/** Soft filled circle with adjustable alpha — the workhorse. */
-function drawBlob(ctx, x, y, r, color, alpha = 1) {
+/** Soft radial blob — gradient center→transparent. The painterly base. */
+function drawSoftBlob(ctx, x, y, r, color, alpha = 1) {
   ctx.save();
-  ctx.globalAlpha = alpha;
-  ctx.fillStyle = color;
+  if (ctx.createRadialGradient) {
+    const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+    g.addColorStop(0, withAlpha(color, alpha));
+    g.addColorStop(0.7, withAlpha(color, alpha * 0.7));
+    g.addColorStop(1, withAlpha(color, 0));
+    ctx.fillStyle = g;
+  } else {
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle = color;
+  }
   ctx.beginPath();
   ctx.arc(x, y, r, 0, Math.PI * 2);
   ctx.fill();
   ctx.restore();
 }
 
-/** Tree — layered canopy: a darker shadow disc + a lighter top disc. */
+/** Tree — cast shadow + radial-gradient canopy + rim highlight. */
 function drawTree(ctx, x, y, r, color) {
   ctx.save();
-  // Shadow
-  ctx.globalAlpha = 0.5;
+  // Cast shadow (offset, soft)
+  ctx.globalAlpha = 0.32;
   ctx.fillStyle = '#000000';
   ctx.beginPath();
-  ctx.arc(x + r * 0.18, y + r * 0.18, r, 0, Math.PI * 2);
+  ctx.ellipse(x + r * 0.22, y + r * 0.28, r * 1.02, r * 0.85, 0, 0, Math.PI * 2);
   ctx.fill();
-  // Canopy
-  ctx.globalAlpha = 0.95;
-  ctx.fillStyle = color;
+  ctx.globalAlpha = 1;
+  // Canopy with volume
+  if (ctx.createRadialGradient) {
+    const g = ctx.createRadialGradient(x - r * 0.3, y - r * 0.3, r * 0.2, x, y, r);
+    g.addColorStop(0, lighten(color, 28));
+    g.addColorStop(0.6, color);
+    g.addColorStop(1, darken(color, 24));
+    ctx.fillStyle = g;
+  } else {
+    ctx.fillStyle = color;
+  }
   ctx.beginPath();
   ctx.arc(x, y, r, 0, Math.PI * 2);
   ctx.fill();
-  // Highlight
-  ctx.globalAlpha = 0.4;
-  ctx.fillStyle = '#ffffff';
+  // Clustered lobes for a less perfectly-round canopy
+  ctx.fillStyle = lighten(color, 12);
+  ctx.globalAlpha = 0.7;
+  for (const [dx, dy] of [[-0.45, -0.2], [0.4, -0.35], [0.15, 0.4]]) {
+    ctx.beginPath();
+    ctx.arc(x + dx * r, y + dy * r, r * 0.42, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+/** Bush — smaller clustered canopy, no shadow. */
+function drawBush(ctx, x, y, r, color) {
+  ctx.save();
+  ctx.fillStyle = color;
+  for (const [dx, dy, s] of [[0, 0, 1], [-0.5, 0.1, 0.7], [0.5, 0.05, 0.7], [0, -0.4, 0.6]]) {
+    ctx.beginPath();
+    ctx.arc(x + dx * r, y + dy * r, r * 0.6 * s, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 0.5;
+  ctx.fillStyle = lighten(color, 20);
   ctx.beginPath();
-  ctx.arc(x - r * 0.3, y - r * 0.3, r * 0.45, 0, Math.PI * 2);
+  ctx.arc(x - r * 0.2, y - r * 0.2, r * 0.4, 0, Math.PI * 2);
   ctx.fill();
   ctx.restore();
 }
 
-/** Water — translucent pool with a lighter ripple arc. */
+/** Water pool — gradient body + rim + ripple. */
 function drawWater(ctx, x, y, r, color) {
   ctx.save();
-  ctx.globalAlpha = 0.7;
-  ctx.fillStyle = color;
+  if (ctx.createRadialGradient) {
+    const g = ctx.createRadialGradient(x, y, r * 0.2, x, y, r);
+    g.addColorStop(0, lighten(color, 14));
+    g.addColorStop(1, darken(color, 12));
+    ctx.fillStyle = g;
+  } else {
+    ctx.fillStyle = color;
+  }
+  ctx.globalAlpha = 0.78;
   ctx.beginPath();
-  ctx.ellipse(x, y, r, r * 0.8, 0, 0, Math.PI * 2);
+  ctx.ellipse(x, y, r, r * 0.82, 0, 0, Math.PI * 2);
   ctx.fill();
-  // Ripple
-  ctx.globalAlpha = 0.35;
+  ctx.globalAlpha = 0.3;
   ctx.strokeStyle = '#ffffff';
-  ctx.lineWidth = Math.max(1, r * 0.08);
+  ctx.lineWidth = Math.max(1, r * 0.07);
   ctx.beginPath();
-  ctx.ellipse(x, y, r * 0.55, r * 0.4, 0, Math.PI * 0.1, Math.PI * 0.9);
+  ctx.ellipse(x, y - r * 0.1, r * 0.55, r * 0.36, 0, Math.PI * 0.1, Math.PI * 0.9);
   ctx.stroke();
   ctx.restore();
 }
 
-/** Rock — angular polygon lump with a shadow + highlight facet. */
+/** Lily pad — small green disc with a notch, floats on water. */
+function drawLily(ctx, x, y, r, color) {
+  ctx.save();
+  ctx.fillStyle = color;
+  ctx.globalAlpha = 0.9;
+  ctx.beginPath();
+  ctx.arc(x, y, r, 0.4, Math.PI * 2 + 0.0);
+  ctx.lineTo(x, y);
+  ctx.fill();
+  ctx.restore();
+}
+
+/** Rock — faceted polygon with gradient + shadow + highlight facet. */
 function drawRock(ctx, x, y, r, color) {
   ctx.save();
-  ctx.globalAlpha = 0.4;
+  ctx.globalAlpha = 0.36;
   ctx.fillStyle = '#000000';
   ctx.beginPath();
-  ctx.arc(x + r * 0.2, y + r * 0.2, r, 0, Math.PI * 2);
+  ctx.ellipse(x + r * 0.2, y + r * 0.24, r, r * 0.8, 0, 0, Math.PI * 2);
   ctx.fill();
   ctx.globalAlpha = 1;
-  ctx.fillStyle = color;
+  if (ctx.createLinearGradient) {
+    const g = ctx.createLinearGradient(x - r, y - r, x + r, y + r);
+    g.addColorStop(0, lighten(color, 22));
+    g.addColorStop(1, darken(color, 20));
+    ctx.fillStyle = g;
+  } else {
+    ctx.fillStyle = color;
+  }
   ctx.beginPath();
   ctx.moveTo(x - r, y + r * 0.3);
   ctx.lineTo(x - r * 0.4, y - r * 0.8);
@@ -190,8 +313,7 @@ function drawRock(ctx, x, y, r, color) {
   ctx.lineTo(x + r * 0.2, y + r);
   ctx.closePath();
   ctx.fill();
-  // Facet highlight
-  ctx.globalAlpha = 0.25;
+  ctx.globalAlpha = 0.3;
   ctx.fillStyle = '#ffffff';
   ctx.beginPath();
   ctx.moveTo(x - r * 0.4, y - r * 0.8);
@@ -202,15 +324,12 @@ function drawRock(ctx, x, y, r, color) {
   ctx.restore();
 }
 
-/** Rubble — a few small specks clustered around the point. */
+/** Rubble — speck cluster. */
 function drawRubble(ctx, x, y, r, color) {
   ctx.save();
   ctx.fillStyle = color;
   ctx.globalAlpha = 0.85;
-  const pts = [
-    [0, 0, 1], [-0.7, 0.4, 0.6], [0.6, -0.5, 0.7], [0.5, 0.6, 0.5], [-0.5, -0.6, 0.5]
-  ];
-  for (const [dx, dy, s] of pts) {
+  for (const [dx, dy, s] of [[0, 0, 1], [-0.7, 0.4, 0.6], [0.6, -0.5, 0.7], [0.5, 0.6, 0.5], [-0.5, -0.6, 0.5]]) {
     ctx.beginPath();
     ctx.arc(x + dx * r, y + dy * r, r * 0.4 * s, 0, Math.PI * 2);
     ctx.fill();
@@ -218,7 +337,61 @@ function drawRubble(ctx, x, y, r, color) {
   ctx.restore();
 }
 
-/** Tuft — three short grass blades fanning up. */
+/** Crack — a dark jagged fissure in the floor. */
+function drawCrack(ctx, x, y, r, color) {
+  ctx.save();
+  ctx.strokeStyle = color;
+  ctx.globalAlpha = 0.6;
+  ctx.lineWidth = Math.max(1, r * 0.12);
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(x - r, y - r * 0.4);
+  ctx.lineTo(x - r * 0.3, y);
+  ctx.lineTo(x + r * 0.2, y - r * 0.3);
+  ctx.lineTo(x + r, y + r * 0.5);
+  ctx.stroke();
+  ctx.restore();
+}
+
+/** Crystal — a small glowing gem cluster (cave accent). */
+function drawCrystal(ctx, x, y, r, color) {
+  ctx.save();
+  ctx.shadowColor = color;
+  ctx.shadowBlur = r;
+  ctx.fillStyle = color;
+  ctx.globalAlpha = 0.9;
+  for (const [dx, h] of [[-0.3, 1], [0.2, 1.3], [0.5, 0.8]]) {
+    ctx.beginPath();
+    ctx.moveTo(x + dx * r, y + r * 0.5);
+    ctx.lineTo(x + dx * r - r * 0.18, y + r * 0.5);
+    ctx.lineTo(x + dx * r, y - r * h);
+    ctx.lineTo(x + dx * r + r * 0.18, y + r * 0.5);
+    ctx.closePath();
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+/** Crate — a wooden box (tavern/dungeon prop). */
+function drawCrate(ctx, x, y, r, color) {
+  ctx.save();
+  ctx.globalAlpha = 0.36;
+  ctx.fillStyle = '#000';
+  ctx.fillRect(x - r * 0.85 + r * 0.18, y - r * 0.85 + r * 0.2, r * 1.7, r * 1.7);
+  ctx.globalAlpha = 1;
+  ctx.fillStyle = color;
+  ctx.fillRect(x - r * 0.85, y - r * 0.85, r * 1.7, r * 1.7);
+  ctx.strokeStyle = darken(color, 30);
+  ctx.lineWidth = Math.max(1, r * 0.1);
+  ctx.strokeRect(x - r * 0.85, y - r * 0.85, r * 1.7, r * 1.7);
+  ctx.beginPath();
+  ctx.moveTo(x - r * 0.85, y - r * 0.85); ctx.lineTo(x + r * 0.85, y + r * 0.85);
+  ctx.moveTo(x + r * 0.85, y - r * 0.85); ctx.lineTo(x - r * 0.85, y + r * 0.85);
+  ctx.stroke();
+  ctx.restore();
+}
+
+/** Tuft — three short grass blades. */
 function drawTuft(ctx, x, y, r, color) {
   ctx.save();
   ctx.strokeStyle = color;
@@ -234,7 +407,7 @@ function drawTuft(ctx, x, y, r, color) {
   ctx.restore();
 }
 
-/** Reed — taller, thinner blades for swamp edges. */
+/** Reed — taller thin blades for water edges. */
 function drawReed(ctx, x, y, r, color) {
   ctx.save();
   ctx.strokeStyle = color;
@@ -250,7 +423,7 @@ function drawReed(ctx, x, y, r, color) {
   ctx.restore();
 }
 
-/** Plank — a wood board rectangle (tavern flooring detail). */
+/** Plank — wood board (tavern flooring). */
 function drawPlank(ctx, x, y, r, color) {
   ctx.save();
   ctx.globalAlpha = 0.5;
@@ -263,7 +436,7 @@ function drawPlank(ctx, x, y, r, color) {
   ctx.restore();
 }
 
-/** Rug — a soft rounded rectangle accent. */
+/** Rug — soft rounded accent. */
 function drawRug(ctx, x, y, r, color) {
   ctx.save();
   ctx.globalAlpha = 0.55;
@@ -278,4 +451,46 @@ function drawRug(ctx, x, y, r, color) {
   ctx.ellipse(x, y, r * 0.7, r * 0.5, 0, 0, Math.PI * 2);
   ctx.stroke();
   ctx.restore();
+}
+
+/* =====================================================================
+ * Colour helpers
+ * ===================================================================== */
+
+function hexToRgb(hex) {
+  const m = String(hex).match(/^#?([0-9a-f]{6})$/i);
+  if (!m) return { r: 128, g: 128, b: 128 };
+  const v = parseInt(m[1], 16);
+  return { r: (v >> 16) & 255, g: (v >> 8) & 255, b: v & 255 };
+}
+function rgbStr(c) { return `rgb(${c.r | 0},${c.g | 0},${c.b | 0})`; }
+function lerpRgb(a, b, t) {
+  return { r: a.r + (b.r - a.r) * t, g: a.g + (b.g - a.g) * t, b: a.b + (b.b - a.b) * t };
+}
+function addLum(c, d) {
+  return { r: clampByte(c.r + d), g: clampByte(c.g + d), b: clampByte(c.b + d) };
+}
+function clampByte(v) { return v < 0 ? 0 : v > 255 ? 255 : v; }
+
+/** Shift an rgb toward green (wet) or warm-pale (dry). Subtle. */
+function tintByMoisture(c, m) {
+  const d = (m - 0.5);                       // -0.5..0.5
+  return {
+    r: clampByte(c.r - d * 10),
+    g: clampByte(c.g + d * 8),
+    b: clampByte(c.b - d * 4)
+  };
+}
+
+function lighten(hex, amt) {
+  const c = hexToRgb(hex);
+  return rgbStr(addLum(c, amt));
+}
+function darken(hex, amt) {
+  const c = hexToRgb(hex);
+  return rgbStr(addLum(c, -amt));
+}
+function withAlpha(hex, a) {
+  const c = hexToRgb(hex);
+  return `rgba(${c.r},${c.g},${c.b},${a})`;
 }

@@ -111,3 +111,56 @@ export function fbm2D(noiseFn, x, y, opts = {}) {
   }
   return norm > 0 ? sum / norm : 0;
 }
+
+/**
+ * Ridged fBm — folds each octave around its midpoint (`1 - |2n-1|`) so
+ * ridges form sharp crests. Used to bias river channels toward natural
+ * valley lines and to give rocky highlands a veined look.
+ *
+ * @returns {number} in [0, 1]
+ */
+export function ridgedFbm2D(noiseFn, x, y, opts = {}) {
+  const {
+    octaves = 4,
+    frequency = 1,
+    persistence = 0.5,
+    lacunarity = 2
+  } = opts;
+  let freq = frequency;
+  let amp = 1;
+  let sum = 0;
+  let norm = 0;
+  for (let o = 0; o < octaves; o++) {
+    const n = noiseFn(x * freq, y * freq);
+    const ridge = 1 - Math.abs(2 * n - 1);   // crease at n=0.5 → 1
+    sum += amp * ridge;
+    norm += amp;
+    amp *= persistence;
+    freq *= lacunarity;
+  }
+  return norm > 0 ? sum / norm : 0;
+}
+
+/**
+ * Domain warp — perturb the sample coordinates by a second noise field
+ * before sampling, so region boundaries meander organically instead of
+ * following the noise lattice. `strength` is in the same units as the
+ * input coordinates (cells).
+ *
+ * Returns warped { x, y } to feed into another sampler.
+ *
+ * @param {(x:number,y:number)=>number} warpFn — a sampler (its own seed)
+ * @param {number} x
+ * @param {number} y
+ * @param {object} [opts]
+ * @param {number} [opts.strength=1.5]
+ * @param {number} [opts.frequency=0.5]
+ * @returns {{x:number, y:number}}
+ */
+export function domainWarp(warpFn, x, y, opts = {}) {
+  const { strength = 1.5, frequency = 0.5 } = opts;
+  // Two offset samples decorrelate the x and y perturbations.
+  const wx = warpFn(x * frequency, y * frequency) - 0.5;
+  const wy = warpFn((x + 31.7) * frequency, (y + 11.3) * frequency) - 0.5;
+  return { x: x + wx * 2 * strength, y: y + wy * 2 * strength };
+}

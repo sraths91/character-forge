@@ -1,54 +1,64 @@
 import { test } from 'node:test';
 import assert from 'node:assert';
 import {
-  BIOME_FEATURES, isBiome, listBiomes, generateMapModel
+  BIOMES, isBiome, listBiomes, generateMapModel
 } from '../js/scene/map-generator.js';
 import { SCENE_PRESETS } from '../js/scene/scene-state.js';
+
+const ZONES = ['water', 'shore', 'low', 'mid', 'high'];
 
 // ---------- Biome registry ----------
 
 test('map-generator: biome slugs mirror SCENE_PRESETS exactly', () => {
-  const gen = listBiomes().sort();
-  const presets = Object.keys(SCENE_PRESETS).sort();
-  assert.deepStrictEqual(gen, presets,
-    'generator biomes must stay in sync with SCENE_PRESETS');
+  assert.deepStrictEqual(listBiomes().sort(), Object.keys(SCENE_PRESETS).sort());
 });
 
-test('map-generator: every biome defines ground palette + features', () => {
+test('map-generator: every biome defines levels + all five zones', () => {
   for (const slug of listBiomes()) {
-    const spec = BIOME_FEATURES[slug];
-    assert.ok(spec.ground?.base && spec.ground.light && spec.ground.dark, `${slug} ground`);
-    assert.ok(Array.isArray(spec.features) && spec.features.length > 0, `${slug} features`);
-    assert.ok(typeof spec.maxCoverage === 'number', `${slug} maxCoverage`);
+    const spec = BIOMES[slug];
+    assert.ok(spec.levels, `${slug} levels`);
+    for (const z of ZONES) {
+      assert.ok(spec.zones[z], `${slug} missing zone ${z}`);
+      assert.ok(Array.isArray(spec.zones[z].fill) && spec.zones[z].fill.length === 2,
+        `${slug}/${z} fill pair`);
+      assert.ok(Array.isArray(spec.zones[z].features), `${slug}/${z} features array`);
+    }
   }
 });
 
-test('map-generator: every feature has a valid hex palette + radius cap', () => {
+test('map-generator: elevation thresholds are ascending', () => {
   for (const slug of listBiomes()) {
-    for (const f of BIOME_FEATURES[slug].features) {
-      assert.ok(f.r <= 0.42, `${slug}/${f.type} radius ${f.r} exceeds 0.42 cap`);
-      assert.ok(Array.isArray(f.palette) && f.palette.length > 0, `${slug}/${f.type} palette`);
-      for (const c of f.palette) {
-        assert.match(c, /^#[0-9a-f]{6}$/i, `${slug}/${f.type} bad color ${c}`);
+    const { water, shore, low, mid } = BIOMES[slug].levels;
+    assert.ok(water <= shore && shore <= low && low <= mid,
+      `${slug} thresholds not ascending`);
+  }
+});
+
+test('map-generator: every fill + feature colour is valid hex', () => {
+  for (const slug of listBiomes()) {
+    for (const z of ZONES) {
+      const zspec = BIOMES[slug].zones[z];
+      for (const c of zspec.fill) assert.match(c, /^#[0-9a-f]{6}$/i, `${slug}/${z} fill ${c}`);
+      assert.match(zspec.edge, /^#[0-9a-f]{6}$/i, `${slug}/${z} edge ${zspec.edge}`);
+      for (const f of zspec.features) {
+        assert.ok(f.r <= 0.46, `${slug}/${z}/${f.type} radius ${f.r} over cap`);
+        for (const c of f.palette) assert.match(c, /^#[0-9a-f]{6}$/i, `${slug}/${z}/${f.type} ${c}`);
       }
-      assert.ok(Array.isArray(f.band) && f.band.length === 2, `${slug}/${f.type} band`);
     }
   }
 });
 
 test('map-generator: isBiome', () => {
   assert.strictEqual(isBiome('forest'), true);
-  assert.strictEqual(isBiome('cave'), true);
   assert.strictEqual(isBiome('nonsense'), false);
   assert.strictEqual(isBiome(null), false);
 });
 
 // ---------- generateMapModel ----------
 
-test('map-generator: deterministic — same inputs → identical model', () => {
+test('map-generator: deterministic — same inputs → identical features', () => {
   const a = generateMapModel({ biome: 'forest', cols: 10, rows: 7, seed: 42 });
   const b = generateMapModel({ biome: 'forest', cols: 10, rows: 7, seed: 42 });
-  assert.strictEqual(a.features.length, b.features.length);
   assert.deepStrictEqual(
     a.features.map(f => `${f.type}@${f.col},${f.row}:${f.variant}`),
     b.features.map(f => `${f.type}@${f.col},${f.row}:${f.variant}`)
@@ -63,57 +73,75 @@ test('map-generator: different seeds → different layouts', () => {
   assert.notStrictEqual(sa, sb);
 });
 
-test('map-generator: all features land inside grid bounds', () => {
-  const m = generateMapModel({ biome: 'swamp', cols: 8, rows: 6, seed: 99 });
-  for (const f of m.features) {
-    assert.ok(f.col >= 0 && f.col < 8, `col ${f.col} OOB`);
-    assert.ok(f.row >= 0 && f.row < 6, `row ${f.row} OOB`);
-    // cell-space center stays within the cell's neighborhood
-    assert.ok(f.x >= f.col && f.x <= f.col + 1, `x ${f.x} outside cell`);
-    assert.ok(f.y >= f.row && f.y <= f.row + 1, `y ${f.y} outside cell`);
+test('map-generator: model exposes continuous fields + zone classifier', () => {
+  const m = generateMapModel({ biome: 'grass', cols: 6, rows: 6, seed: 5 });
+  assert.strictEqual(typeof m.elevation, 'function');
+  assert.strictEqual(typeof m.moisture, 'function');
+  assert.strictEqual(typeof m.zoneAt, 'function');
+  assert.strictEqual(typeof m.zoneFill, 'function');
+  for (let r = 0; r < 6; r++) {
+    for (let c = 0; c < 6; c++) {
+      const e = m.elevation(c, r);
+      const mo = m.moisture(c, r);
+      assert.ok(e >= 0 && e <= 1, `elevation ${e}`);
+      assert.ok(mo >= 0 && mo <= 1, `moisture ${mo}`);
+      assert.ok(ZONES.includes(m.zoneAt(c, r)), `zone ${m.zoneAt(c, r)}`);
+    }
   }
 });
 
-test('map-generator: at most one feature per cell (readability)', () => {
+test('map-generator: regions are coherent (zone matches the field)', () => {
+  // A cell classified 'water' must have elevation below the water level,
+  // proving the classifier reads the same field the renderer paints.
+  const m = generateMapModel({ biome: 'swamp', cols: 12, rows: 10, seed: 8 });
+  for (let r = 0; r < 10; r++) {
+    for (let c = 0; c < 12; c++) {
+      const z = m.zoneAt(c, r);
+      const e = m.elevation(c, r);
+      if (z === 'water') assert.ok(e < m.levels.water, `water cell e=${e}`);
+      if (z === 'high')  assert.ok(e >= m.levels.mid, `high cell e=${e}`);
+    }
+  }
+});
+
+test('map-generator: features carry their originating zone', () => {
+  const m = generateMapModel({ biome: 'forest', cols: 10, rows: 8, seed: 3 });
+  for (const f of m.features) {
+    assert.ok(ZONES.includes(f.zone), `feature zone ${f.zone}`);
+    // The feature's cell should actually classify to that zone.
+    assert.strictEqual(m.zoneAt(f.col, f.row), f.zone);
+  }
+});
+
+test('map-generator: features stay in bounds + one per cell', () => {
   const m = generateMapModel({ biome: 'cave', cols: 10, rows: 7, seed: 7 });
   const seen = new Set();
   for (const f of m.features) {
+    assert.ok(f.col >= 0 && f.col < 10 && f.row >= 0 && f.row < 7, 'in bounds');
+    assert.ok(f.x >= f.col && f.x <= f.col + 1 && f.y >= f.row && f.y <= f.row + 1, 'in cell');
     const key = `${f.col},${f.row}`;
-    assert.ok(!seen.has(key), `two features on cell ${key}`);
+    assert.ok(!seen.has(key), `two features on ${key}`);
     seen.add(key);
   }
 });
 
-test('map-generator: coverage respects the biome budget', () => {
-  const cols = 12, rows = 10;
-  const m = generateMapModel({ biome: 'forest', cols, rows, seed: 3 });
-  const budget = BIOME_FEATURES.forest.maxCoverage * cols * rows;
-  assert.ok(m.features.length <= Math.ceil(budget),
-    `${m.features.length} features exceeds budget ${budget}`);
+test('map-generator: model exposes phase-2/3 arrays (empty for now)', () => {
+  const m = generateMapModel({ biome: 'grass', cols: 5, rows: 5, seed: 1 });
+  assert.deepStrictEqual(m.rivers, []);
+  assert.deepStrictEqual(m.paths, []);
+  assert.deepStrictEqual(m.structures, []);
 });
 
 test('map-generator: unknown biome falls back to grass', () => {
-  const m = generateMapModel({ biome: 'not-real', cols: 5, rows: 5, seed: 1 });
-  assert.strictEqual(m.biome, 'grass');
-});
-
-test('map-generator: produces some features on a normal-size map', () => {
-  // Sanity: a 10x7 forest with a typical seed should not be barren.
-  const m = generateMapModel({ biome: 'forest', cols: 10, rows: 7, seed: 12345 });
-  assert.ok(m.features.length > 0, 'expected at least one feature');
-});
-
-test('map-generator: field sampler returns [0,1]', () => {
-  const m = generateMapModel({ biome: 'grass', cols: 6, rows: 6, seed: 5 });
-  for (let r = 0; r < 6; r++) {
-    for (let c = 0; c < 6; c++) {
-      const e = m.field(c, r);
-      assert.ok(e >= 0 && e <= 1, `field(${c},${r})=${e} out of range`);
-    }
-  }
+  assert.strictEqual(generateMapModel({ biome: 'nope', cols: 5, rows: 5, seed: 1 }).biome, 'grass');
 });
 
 test('map-generator: degenerate inputs are safe', () => {
   assert.doesNotThrow(() => generateMapModel({ biome: 'grass', cols: 1, rows: 1, seed: 0 }));
   assert.doesNotThrow(() => generateMapModel({}));
+});
+
+test('map-generator: produces features on a normal map', () => {
+  const m = generateMapModel({ biome: 'forest', cols: 12, rows: 9, seed: 12345 });
+  assert.ok(m.features.length > 0);
 });

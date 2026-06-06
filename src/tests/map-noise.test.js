@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert';
-import { hash2, makeValueNoise2D, fbm2D } from '../js/scene/noise.js';
+import { hash2, makeValueNoise2D, fbm2D, ridgedFbm2D, domainWarp } from '../js/scene/noise.js';
 
 // ---------- hash2 ----------
 
@@ -96,4 +96,34 @@ test('map-noise: fbm2D — octaves:1 equals the base sampler', () => {
   const n = makeValueNoise2D(3);
   const v = fbm2D(n, 2.2, 1.1, { octaves: 1, frequency: 1 });
   assert.ok(Math.abs(v - n(2.2, 1.1)) < 1e-9);
+});
+
+// ---------- ridgedFbm2D + domainWarp (M49) ----------
+
+test('map-noise: ridgedFbm2D — output in [0,1] + deterministic', () => {
+
+  const n = makeValueNoise2D(5);
+  for (let i = 0; i < 60; i++) {
+    const v = ridgedFbm2D(n, i * 0.2, i * 0.3, { octaves: 4 });
+    assert.ok(v >= 0 && v <= 1, `ridged out of range: ${v}`);
+  }
+  assert.strictEqual(ridgedFbm2D(n, 1.5, 2.5), ridgedFbm2D(n, 1.5, 2.5));
+});
+
+test('map-noise: domainWarp — perturbs coords deterministically', () => {
+
+  const w = makeValueNoise2D(11);
+  const a = domainWarp(w, 3, 4, { strength: 1.5 });
+  const b = domainWarp(w, 3, 4, { strength: 1.5 });
+  assert.deepStrictEqual(a, b);
+  // It should actually move the point (strength > 0).
+  assert.ok(Math.abs(a.x - 3) + Math.abs(a.y - 4) > 0);
+});
+
+test('map-noise: domainWarp — zero strength is identity', () => {
+
+  const w = makeValueNoise2D(2);
+  const a = domainWarp(w, 5, 6, { strength: 0 });
+  assert.strictEqual(a.x, 5);
+  assert.strictEqual(a.y, 6);
 });

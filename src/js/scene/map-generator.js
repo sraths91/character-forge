@@ -1,188 +1,272 @@
 /**
- * Procedural battle-map model generator.
+ * Structured procedural battle-map generator (M49).
  *
- * Pure, deterministic, headless — turns a (biome, cols, rows, seed) into
- * a structured map model the renderer (map-render.js) paints top-down.
- * No canvas, no DOM. The same inputs always produce the same model, so
- * a scene persists as just { biome, seed } and regenerates identically
- * on load.
+ * Pure, deterministic, headless. Produces a layered map model the
+ * painterly renderer (map-render.js) draws top-down. The same inputs
+ * always yield the same model, so a scene persists as just { biome,
+ * seed } and regenerates identically.
  *
- * VISUAL ONLY: the features here carry no game-rule meaning. A "tree" is
- * a canopy blob to draw, not difficult terrain. Movement and combat
- * never read this model.
+ * VISUAL ONLY — nothing here affects movement or combat.
  *
- * Coherence: an fBm field (noise.js) acts as a combined
- * elevation/moisture map. Water clusters in the low/wet band, vegetation
- * in the mid band, bare rock on the high/dry band — so a generated map
- * reads as terrain rather than uniform scatter. Feature placement is
- * seeded per cell, biased away from cell centers (corner jitter) so
- * tokens dropped on a cell stay readable, and capped per-biome by
- * `maxCoverage` so the field never hides the grid.
+ * Unlike the original per-cell scatter, this is a multi-pass pipeline
+ * that gives maps *structure*:
+ *
+ *   1. Fields    — continuous elevation + moisture fBm (domain-warped
+ *                  for organic, non-grid edges).
+ *   2. Regions   — each cell classified into a zone (water/shore/low/
+ *                  mid/high) from elevation bands. Because the field is
+ *                  smooth, same-zone cells cluster spatially → coherent
+ *                  groves, clearings, ponds, rocky patches for free.
+ *   3. Rivers    — (Phase 2) flowing water polylines.
+ *   4. Paths     — (Phase 2) roads/trails.
+ *   5. Structures— (Phase 3) multi-cell buildings/ruins/camps.
+ *   6. Scatter   — region-aware detail features, density modulated by
+ *                  moisture (dense groves vs open clearings), kept clear
+ *                  of water centers / paths / structures.
  */
 
-import { makeValueNoise2D, fbm2D, hash2 } from './noise.js';
+import { makeValueNoise2D, fbm2D, domainWarp } from './noise.js';
 
 /**
- * Per-biome art direction. Each entry defines the base ground palette
- * (light → dark for the fBm mottle), the feature mix with placement
- * bands, and a density / coverage budget. The eight slugs mirror
- * SCENE_PRESETS so the cinema backdrop + grid color stay in sync.
+ * Per-biome art direction. Each biome defines:
+ *   levels  — elevation thresholds separating the five zones.
+ *   moist   — base moisture bias (-/+) shifting the whole biome wet/dry.
+ *   zones   — per-zone { fill:[light,dark], edge, features:[...] }.
+ *             `fill` drives the painterly ground gradient; `edge` tints
+ *             the soft boundary into the next-lower zone.
+ *   feature `chance` is per eligible cell; `r` is radius in cells (≤0.46);
+ *   `moist`: 'wet' scales chance up with moisture, 'dry' scales it down.
  *
- * Feature `band`: which elevation/moisture range (0..1) the feature
- * prefers. `chance`: per-eligible-cell probability. `r`: radius as a
- * fraction of a cell (capped ≤ 0.42 so blockers don't bleed across
- * cell lines). `palette`: fill colors, picked by `variant`.
+ * The eight slugs mirror SCENE_PRESETS so the cinema backdrop + grid
+ * colour stay in sync.
  */
-export const BIOME_FEATURES = {
+export const BIOMES = {
   grass: {
-    ground: { base: '#3d5a3d', light: '#4a6b46', dark: '#2f4831' },
-    maxCoverage: 0.5,
-    features: [
-      { type: 'tuft',  band: [0.30, 1.00], chance: 0.40, r: 0.16, palette: ['#5a7d4e', '#456b3a', '#6b8f57'] },
-      { type: 'dirt',  band: [0.00, 0.34], chance: 0.30, r: 0.30, palette: ['#5c5038', '#6b5d44'] },
-      { type: 'rock',  band: [0.70, 1.00], chance: 0.08, r: 0.22, palette: ['#7d7d72', '#8c8c80'] }
-    ]
+    levels: { water: 0.20, shore: 0.27, low: 0.66, mid: 0.84 },
+    moist: 0.05,
+    zones: {
+      water: { fill: ['#3f5e63', '#314a4f'], edge: '#56756b',
+        features: [{ type: 'lily', chance: 0.20, r: 0.16, palette: ['#4a7d52'] }] },
+      shore: { fill: ['#7a7148', '#665b38'], edge: '#8a8054',
+        features: [{ type: 'reed', chance: 0.30, r: 0.14, palette: ['#7c8a4a', '#6a7740'], moist: 'wet' }] },
+      low:   { fill: ['#4f6f48', '#3d5a3a'], edge: '#5c7d50',
+        features: [{ type: 'tuft', chance: 0.34, r: 0.16, palette: ['#5d8150', '#4a6b3c', '#6e9359'], moist: 'wet' },
+                   { type: 'bush', chance: 0.10, r: 0.26, palette: ['#3f6638', '#365a31'] }] },
+      mid:   { fill: ['#6a5e3e', '#564a30'], edge: '#776a48',
+        features: [{ type: 'dirt', chance: 0.26, r: 0.32, palette: ['#5c5038', '#6b5d44'], moist: 'dry' },
+                   { type: 'rock', chance: 0.08, r: 0.22, palette: ['#7d7d72', '#8c8c80'] }] },
+      high:  { fill: ['#8a8478', '#6e695f'], edge: '#9a9486',
+        features: [{ type: 'rock', chance: 0.22, r: 0.30, palette: ['#7d7d72', '#8c8c80', '#6b6b62'] }] }
+    }
   },
   forest: {
-    ground: { base: '#1e3a23', light: '#27482c', dark: '#152c19' },
-    maxCoverage: 0.6,
-    features: [
-      { type: 'tree',   band: [0.35, 1.00], chance: 0.34, r: 0.40, palette: ['#2f5d36', '#274d2d', '#386b40'] },
-      { type: 'tuft',   band: [0.20, 0.80], chance: 0.30, r: 0.16, palette: ['#3a6b40', '#2d5733'] },
-      { type: 'water',  band: [0.00, 0.20], chance: 0.30, r: 0.36, palette: ['#2c4a52', '#33555e'] }
-    ]
+    levels: { water: 0.22, shore: 0.28, low: 0.70, mid: 0.86 },
+    moist: 0.18,
+    zones: {
+      water: { fill: ['#2c4a52', '#22363c'], edge: '#3a5d5a',
+        features: [{ type: 'lily', chance: 0.24, r: 0.16, palette: ['#356b3c'] }] },
+      shore: { fill: ['#5a5436', '#48422a'], edge: '#6a6240',
+        features: [{ type: 'reed', chance: 0.34, r: 0.14, palette: ['#5a6b3a', '#4a5a30'], moist: 'wet' }] },
+      low:   { fill: ['#27482c', '#1c3a22'], edge: '#315237',
+        features: [{ type: 'tree', chance: 0.40, r: 0.44, palette: ['#2f5d36', '#274d2d', '#386b40'], moist: 'wet' },
+                   { type: 'tuft', chance: 0.26, r: 0.16, palette: ['#3a6b40', '#2d5733'] }] },
+      mid:   { fill: ['#3a4a2c', '#2c3a22'], edge: '#46583a',
+        features: [{ type: 'tree', chance: 0.22, r: 0.40, palette: ['#345a32', '#2b4a2a'] },
+                   { type: 'bush', chance: 0.16, r: 0.26, palette: ['#3f6638', '#365a31'] }] },
+      high:  { fill: ['#6e695a', '#565247'], edge: '#7c776a',
+        features: [{ type: 'rock', chance: 0.24, r: 0.32, palette: ['#5a5750', '#666256'] }] }
+    }
   },
   dungeon: {
-    ground: { base: '#2a2a2e', light: '#34343a', dark: '#202024' },
-    maxCoverage: 0.45,
-    features: [
-      { type: 'rock',   band: [0.55, 1.00], chance: 0.20, r: 0.34, palette: ['#3a3a40', '#45454c', '#303036'] },
-      { type: 'rubble', band: [0.00, 0.55], chance: 0.28, r: 0.12, palette: ['#3d3d42', '#4a4a50'] }
-    ]
+    levels: { water: 0.16, shore: 0.22, low: 0.60, mid: 0.82 },
+    moist: -0.1,
+    zones: {
+      water: { fill: ['#243038', '#1a242a'], edge: '#30414a',
+        features: [] },
+      shore: { fill: ['#32323a', '#28282e'], edge: '#3c3c44',
+        features: [{ type: 'rubble', chance: 0.30, r: 0.12, palette: ['#3d3d42', '#4a4a50'] }] },
+      low:   { fill: ['#2c2c32', '#242428'], edge: '#36363c',
+        features: [{ type: 'rubble', chance: 0.26, r: 0.12, palette: ['#3d3d42', '#4a4a50'] },
+                   { type: 'crack', chance: 0.14, r: 0.34, palette: ['#1f1f24'] }] },
+      mid:   { fill: ['#34343a', '#2a2a30'], edge: '#404048',
+        features: [{ type: 'rock', chance: 0.18, r: 0.32, palette: ['#3a3a40', '#45454c', '#303036'] }] },
+      high:  { fill: ['#42424a', '#36363c'], edge: '#4e4e56',
+        features: [{ type: 'rock', chance: 0.30, r: 0.36, palette: ['#3a3a40', '#45454c', '#303036'] }] }
+    }
   },
   cave: {
-    ground: { base: '#1a1820', light: '#23212c', dark: '#121017' },
-    maxCoverage: 0.5,
-    features: [
-      { type: 'rock',   band: [0.50, 1.00], chance: 0.26, r: 0.38, palette: ['#2a2833', '#33303d', '#211f29'] },
-      { type: 'rubble', band: [0.00, 0.50], chance: 0.30, r: 0.12, palette: ['#2d2b36', '#38353f'] },
-      { type: 'water',  band: [0.00, 0.12], chance: 0.40, r: 0.34, palette: ['#1f3540', '#27414d'] }
-    ]
+    levels: { water: 0.20, shore: 0.26, low: 0.58, mid: 0.80 },
+    moist: 0.1,
+    zones: {
+      water: { fill: ['#1f3540', '#152530'], edge: '#2a4450',
+        features: [] },
+      shore: { fill: ['#26242e', '#1e1c26'], edge: '#302e3a',
+        features: [{ type: 'rubble', chance: 0.30, r: 0.12, palette: ['#2d2b36', '#38353f'] }] },
+      low:   { fill: ['#1f1d28', '#181620'], edge: '#272532',
+        features: [{ type: 'rubble', chance: 0.28, r: 0.12, palette: ['#2d2b36', '#38353f'] },
+                   { type: 'crystal', chance: 0.06, r: 0.18, palette: ['#5a7fae', '#6f93c4'], moist: 'wet' }] },
+      mid:   { fill: ['#262430', '#1d1b26'], edge: '#322f3e',
+        features: [{ type: 'rock', chance: 0.24, r: 0.34, palette: ['#2a2833', '#33303d', '#211f29'] }] },
+      high:  { fill: ['#322f3e', '#262430'], edge: '#403c4e',
+        features: [{ type: 'rock', chance: 0.34, r: 0.38, palette: ['#2a2833', '#33303d', '#211f29'] }] }
+    }
   },
   tavern: {
-    ground: { base: '#6b3f1a', light: '#7d4d22', dark: '#5a3415' },
-    maxCoverage: 0.35,
-    features: [
-      { type: 'plank',  band: [0.00, 1.00], chance: 0.22, r: 0.30, palette: ['#5e3716', '#7a4a20'] },
-      { type: 'rug',    band: [0.40, 0.65], chance: 0.10, r: 0.40, palette: ['#7a2d2d', '#8c3a2a'] }
-    ]
+    levels: { water: 0.05, shore: 0.10, low: 0.62, mid: 0.84 },
+    moist: -0.2,
+    zones: {
+      water: { fill: ['#3a2418', '#2c1b12'], edge: '#46301f', features: [] },
+      shore: { fill: ['#5e3716', '#4c2d12'], edge: '#6e4520',
+        features: [{ type: 'plank', chance: 0.22, r: 0.30, palette: ['#5e3716', '#7a4a20'] }] },
+      low:   { fill: ['#6b3f1a', '#583414'], edge: '#7a4a22',
+        features: [{ type: 'plank', chance: 0.24, r: 0.30, palette: ['#5e3716', '#7a4a20'] },
+                   { type: 'rug', chance: 0.07, r: 0.42, palette: ['#7a2d2d', '#8c3a2a'] }] },
+      mid:   { fill: ['#7a4a20', '#643c19'], edge: '#8a5828',
+        features: [{ type: 'plank', chance: 0.20, r: 0.30, palette: ['#6e4420', '#86541f'] }] },
+      high:  { fill: ['#86541f', '#6e4519'], edge: '#946027',
+        features: [{ type: 'crate', chance: 0.14, r: 0.32, palette: ['#7a5224', '#6a471f'] }] }
+    }
   },
   desert: {
-    ground: { base: '#c8a665', light: '#d8b878', dark: '#b3914f' },
-    maxCoverage: 0.35,
-    features: [
-      { type: 'dune',   band: [0.45, 1.00], chance: 0.30, r: 0.40, palette: ['#d2b06f', '#c19a55'] },
-      { type: 'rock',   band: [0.80, 1.00], chance: 0.07, r: 0.24, palette: ['#9c8456', '#8a7448'] },
-      { type: 'scrub',  band: [0.00, 0.25], chance: 0.10, r: 0.14, palette: ['#8a8a4a', '#76763e'] }
-    ]
+    levels: { water: 0.08, shore: 0.14, low: 0.58, mid: 0.82 },
+    moist: -0.3,
+    zones: {
+      water: { fill: ['#5fa0a8', '#4d8890'], edge: '#7ab8bf',   // rare oasis
+        features: [{ type: 'lily', chance: 0.2, r: 0.16, palette: ['#4a7d52'] }] },
+      shore: { fill: ['#b39a64', '#9c8454'], edge: '#c2aa72',
+        features: [{ type: 'scrub', chance: 0.14, r: 0.14, palette: ['#8a8a4a', '#76763e'], moist: 'wet' }] },
+      low:   { fill: ['#cda968', '#bb9656'], edge: '#d8b878',
+        features: [{ type: 'scrub', chance: 0.08, r: 0.14, palette: ['#8a8a4a', '#76763e'], moist: 'wet' },
+                   { type: 'dune', chance: 0.30, r: 0.44, palette: ['#d2b06f', '#c19a55'] }] },
+      mid:   { fill: ['#d6b673', '#c4a25b'], edge: '#e0c485',
+        features: [{ type: 'dune', chance: 0.34, r: 0.44, palette: ['#d8b878', '#c8a665'] }] },
+      high:  { fill: ['#b39256', '#9c7e48'], edge: '#c2a062',
+        features: [{ type: 'rock', chance: 0.16, r: 0.30, palette: ['#9c8456', '#8a7448'] }] }
+    }
   },
   snow: {
-    ground: { base: '#dfe7ea', light: '#eef3f5', dark: '#c8d4d8' },
-    maxCoverage: 0.4,
-    features: [
-      { type: 'drift',  band: [0.45, 1.00], chance: 0.32, r: 0.40, palette: ['#eef4f6', '#ffffff'] },
-      { type: 'rock',   band: [0.78, 1.00], chance: 0.08, r: 0.22, palette: ['#9aa6ac', '#879499'] },
-      { type: 'water',  band: [0.00, 0.14], chance: 0.30, r: 0.34, palette: ['#9fc0cf', '#b3d0db'] }
-    ]
+    levels: { water: 0.14, shore: 0.20, low: 0.64, mid: 0.84 },
+    moist: 0.05,
+    zones: {
+      water: { fill: ['#9fc0cf', '#86abbd'], edge: '#b8d4df',
+        features: [] },
+      shore: { fill: ['#c4d2d6', '#aebcc2'], edge: '#d4e0e3',
+        features: [{ type: 'rock', chance: 0.10, r: 0.20, palette: ['#9aa6ac', '#879499'] }] },
+      low:   { fill: ['#e6eef0', '#cfdbdf'], edge: '#f2f7f8',
+        features: [{ type: 'drift', chance: 0.30, r: 0.44, palette: ['#eef4f6', '#ffffff'] },
+                   { type: 'tree', chance: 0.10, r: 0.40, palette: ['#3a5540', '#2f4a36'], moist: 'wet' }] },
+      mid:   { fill: ['#d8e2e5', '#bfcdd1'], edge: '#e6eef0',
+        features: [{ type: 'drift', chance: 0.34, r: 0.44, palette: ['#eef4f6', '#ffffff'] }] },
+      high:  { fill: ['#aab8be', '#94a3a9'], edge: '#bcc8cd',
+        features: [{ type: 'rock', chance: 0.24, r: 0.32, palette: ['#9aa6ac', '#879499'] }] }
+    }
   },
   swamp: {
-    ground: { base: '#3b4a2e', light: '#475838', dark: '#2f3c25' },
-    maxCoverage: 0.6,
-    features: [
-      { type: 'water',  band: [0.00, 0.40], chance: 0.45, r: 0.40, palette: ['#3a4a3a', '#445244', '#33433a'] },
-      { type: 'reed',   band: [0.30, 0.70], chance: 0.26, r: 0.14, palette: ['#5a6b3a', '#4a5a30'] },
-      { type: 'tree',   band: [0.65, 1.00], chance: 0.16, r: 0.38, palette: ['#2f4a2c', '#3a5734'] }
-    ]
+    levels: { water: 0.34, shore: 0.42, low: 0.74, mid: 0.88 },
+    moist: 0.35,
+    zones: {
+      water: { fill: ['#39483a', '#2c3a2e'], edge: '#475845',
+        features: [{ type: 'lily', chance: 0.26, r: 0.16, palette: ['#4a6b3a', '#3f5e32'] }] },
+      shore: { fill: ['#4a5436', '#3c452c'], edge: '#5a6440',
+        features: [{ type: 'reed', chance: 0.36, r: 0.14, palette: ['#5a6b3a', '#4a5a30'], moist: 'wet' }] },
+      low:   { fill: ['#3b4a2e', '#2f3c25'], edge: '#475838',
+        features: [{ type: 'reed', chance: 0.22, r: 0.14, palette: ['#5a6b3a', '#4a5a30'] },
+                   { type: 'tree', chance: 0.18, r: 0.40, palette: ['#2f4a2c', '#3a5734'], moist: 'wet' }] },
+      mid:   { fill: ['#46512f', '#3a4327'], edge: '#525e38',
+        features: [{ type: 'tree', chance: 0.16, r: 0.38, palette: ['#324c2e', '#3d5734'] },
+                   { type: 'bush', chance: 0.14, r: 0.24, palette: ['#445229', '#4f5e30'] }] },
+      high:  { fill: ['#5a6240', '#4a5234'], edge: '#666e4a',
+        features: [{ type: 'rock', chance: 0.14, r: 0.28, palette: ['#6b6b56', '#5a5a48'] }] }
+    }
   }
 };
 
-/** Fallback biome when an unknown slug is requested. */
 const FALLBACK_BIOME = 'grass';
+const ZONE_ORDER = ['water', 'shore', 'low', 'mid', 'high'];
 
 /** Is `biome` a known generator biome? */
 export function isBiome(biome) {
-  return Object.prototype.hasOwnProperty.call(BIOME_FEATURES, biome);
+  return Object.prototype.hasOwnProperty.call(BIOMES, biome);
 }
 
 /** All generator biome slugs (mirror SCENE_PRESETS). */
 export function listBiomes() {
-  return Object.keys(BIOME_FEATURES);
+  return Object.keys(BIOMES);
 }
 
 /**
- * Generate the map model for a scene.
+ * Generate the layered map model for a scene.
  *
  * @param {object} args
  * @param {string} args.biome
  * @param {number} args.cols
  * @param {number} args.rows
  * @param {number} args.seed
- * @returns {{
- *   biome: string,
- *   cols: number,
- *   rows: number,
- *   seed: number,
- *   ground: { base:string, light:string, dark:string },
- *   field: (col:number,row:number)=>number,   // elevation/moisture 0..1
- *   features: Array<{type,col,row,x,y,r,variant,color}>
- * }}
+ * @returns {object} layered map model (see module header)
  */
 export function generateMapModel({ biome, cols, rows, seed } = {}) {
   const slug = isBiome(biome) ? biome : FALLBACK_BIOME;
-  const spec = BIOME_FEATURES[slug];
+  const spec = BIOMES[slug];
   const sd = (seed >>> 0) || 1;
   const C = Math.max(1, cols | 0);
   const R = Math.max(1, rows | 0);
 
-  // fBm elevation/moisture field. Low frequency so terrain bands span
-  // several cells. A second seeded sampler decorrelates the texture
-  // mottle from the placement field.
-  const placeNoise = makeValueNoise2D(sd ^ 0x9e3779b9);
-  const field = (col, row) =>
-    fbm2D(placeNoise, col * 0.28, row * 0.28, { octaves: 3, frequency: 1, persistence: 0.55 });
+  // --- Pass 1: continuous fields ----------------------------------
+  // Elevation drives zoning; moisture modulates feature density. Both
+  // are domain-warped so zone edges meander organically.
+  const elevNoise  = makeValueNoise2D(sd ^ 0x9e3779b9);
+  const moistNoise = makeValueNoise2D(sd ^ 0x85ebca6b);
+  const warpNoise  = makeValueNoise2D(sd ^ 0xc2b2ae35);
 
+  const elevation = (col, row) => {
+    const w = domainWarp(warpNoise, col, row, { strength: 1.4, frequency: 0.35 });
+    return clamp01(fbm2D(elevNoise, w.x * 0.18, w.y * 0.18, { octaves: 4, persistence: 0.55 }));
+  };
+  const moisture = (col, row) => {
+    const m = fbm2D(moistNoise, col * 0.16, row * 0.16, { octaves: 3, persistence: 0.6 });
+    return clamp01(m + spec.moist);
+  };
+
+  const lv = spec.levels;
+  const zoneAt = (col, row) => {
+    const e = elevation(col, row);
+    if (e < lv.water) return 'water';
+    if (e < lv.shore) return 'shore';
+    if (e < lv.low)   return 'low';
+    if (e < lv.mid)   return 'mid';
+    return 'high';
+  };
+
+  // --- Pass 6: region-aware detail scatter ------------------------
+  // (Rivers/paths/structures land in later phases; the model exposes
+  // empty arrays now so the renderer + callers are stable.)
   const features = [];
-  let covered = 0;
-  const budget = spec.maxCoverage * C * R;
-
   for (let row = 0; row < R; row++) {
     for (let col = 0; col < C; col++) {
-      if (covered >= budget) break;
-      const e = field(col, row);
-      // Walk the biome's feature list; first eligible roll that passes
-      // claims the cell (one feature per cell keeps it readable).
-      for (let i = 0; i < spec.features.length; i++) {
-        const f = spec.features[i];
-        if (e < f.band[0] || e > f.band[1]) continue;
-        // Per-(cell, feature) deterministic roll.
-        const roll = hash2(sd + i * 101, col, row);
-        if (roll > f.chance) continue;
-        // Jitter the center toward a corner so tokens (drawn at cell
-        // center) stay legible. Two more hashes give x/y offsets.
-        const jx = hash2(sd + 7, col, row) - 0.5;
-        const jy = hash2(sd + 13, col, row) - 0.5;
-        const variant = Math.floor(hash2(sd + 3, col, row) * f.palette.length);
+      const zone = zoneAt(col, row);
+      const zspec = spec.zones[zone];
+      if (!zspec || !zspec.features.length) continue;
+      const m = moisture(col, row);
+      for (let i = 0; i < zspec.features.length; i++) {
+        const f = zspec.features[i];
+        let chance = f.chance;
+        if (f.moist === 'wet') chance *= 0.45 + 0.85 * m;
+        else if (f.moist === 'dry') chance *= 0.45 + 0.85 * (1 - m);
+        const roll = hashCell(sd + i * 101 + zoneIndex(zone) * 17, col, row);
+        if (roll > chance) continue;
+        const jx = hashCell(sd + 7, col, row) - 0.5;
+        const jy = hashCell(sd + 13, col, row) - 0.5;
+        const variant = Math.floor(hashCell(sd + 3, col, row) * f.palette.length);
         features.push({
-          type: f.type,
+          type: f.type, zone,
           col, row,
-          x: col + 0.5 + jx * 0.5,   // cell-space center, ±0.25 jitter
+          x: col + 0.5 + jx * 0.5,
           y: row + 0.5 + jy * 0.5,
-          r: Math.min(0.42, f.r),
+          r: Math.min(0.46, f.r),
           variant,
           color: f.palette[variant] || f.palette[0]
         });
-        covered += 1;
-        break;
+        break;   // one feature per cell — readability
       }
     }
   }
@@ -190,8 +274,32 @@ export function generateMapModel({ biome, cols, rows, seed } = {}) {
   return {
     biome: slug,
     cols: C, rows: R, seed: sd,
-    ground: spec.ground,
-    field,
+    levels: lv,
+    zones: spec.zones,
+    elevation, moisture, zoneAt,
+    zoneFill: (zone) => spec.zones[zone]?.fill || spec.zones.low.fill,
+    zoneEdge: (zone) => spec.zones[zone]?.edge || spec.zones.low.edge,
+    rivers: [],       // Phase 2
+    paths: [],        // Phase 2
+    structures: [],   // Phase 3
     features
   };
+}
+
+/* ----- helpers ----- */
+
+function clamp01(v) { return v < 0 ? 0 : v > 1 ? 1 : v; }
+function zoneIndex(zone) { return ZONE_ORDER.indexOf(zone); }
+
+/** Deterministic per-(seed,cell) roll in [0,1). Inlined mulberry mix so
+ *  this module doesn't depend on noise's internal hash export. */
+function hashCell(seed, x, y) {
+  let s = (seed >>> 0);
+  s = (s + Math.imul(x | 0, 0x27d4eb2d)) >>> 0;
+  s = (s + Math.imul(y | 0, 0x165667b1)) >>> 0;
+  s = (s + 0x6D2B79F5) >>> 0;
+  let t = s;
+  t = Math.imul(t ^ (t >>> 15), t | 1);
+  t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+  return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
 }
