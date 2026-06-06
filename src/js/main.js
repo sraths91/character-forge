@@ -70,7 +70,7 @@ import { runOneAttack as engineRunOneAttack } from './scene/combat-engine.js';
 import { applyPolish } from './anim/polish.js';
 import {
   preloadActorSprite, makeLpcDrawSprite, clearActorSpriteCache,
-  setActorWeapon, clearActorWeapon, drawWeaponOverlay
+  setActorWeapon, clearActorWeapon, drawWeaponOverlay, preloadActorAttack
 } from './anim/cinema-sprites.js';
 import { terrainFromScene, backgroundFor } from './anim/cinema-backgrounds.js';
 import { listBiomes, isBiome } from './scene/map-generator.js';
@@ -600,11 +600,13 @@ function setupVersusCinema(active) {
       // The LPC sheet handles facing directly so the cinema draws no
       // longer x-mirror the defender.
       // M51 — also load the attacker's weapon sprite for the swing overlay.
+      // M51 Phase 2 — both actors face the camera (south) so the real
+      // LPC attack frames + the south weapon slash align.
       onActorsChanged: async ({ attacker, defender }) => {
         await Promise.all([
-          preloadActorSprite(attacker, { direction: 'east' }),
-          preloadActorSprite(defender, { direction: 'west' }),
-          setActorWeapon(attacker, { direction: 'east' })
+          preloadActorSprite(attacker, { direction: 'south' }),
+          preloadActorSprite(defender, { direction: 'south' }),
+          setActorWeapon(attacker)
         ]);
       }
     });
@@ -614,6 +616,15 @@ function setupVersusCinema(active) {
     clearActorSpriteCache();
     clearActorWeapon();
   }
+}
+
+/** M51 Phase 2 — Map a cinema motion id to the LPC body animation that
+ *  the attacker's body should play. */
+function bodyAnimForMotion(motionId) {
+  if (motionId === 'staff-cast') return 'cast';
+  if (motionId === 'sword-thrust' || motionId === 'lance-thrust') return 'thrust';
+  if (motionId === 'bow-draw') return 'slash';   // no shoot body sheet; slash reads ok
+  return 'slash';   // sword-slash / axe-cleave / dagger-stab / fist
 }
 
 /** M43.2 — Play one cinema round for a versus attack. Looks up the
@@ -676,6 +687,16 @@ async function playCinemaRoundForAttack(attackerHit, targetHit, dmg, opts = {}) 
     attacker: attackerHit.entity,
     defender: targetHit.entity
   });
+  // M51 Phase 2 — Preload the REAL LPC body attack frames for this
+  // exchange: the attacker plays slash/thrust/cast (mapped from the
+  // motion), the defender plays hurt. Human bodies only; monsters fall
+  // back to idle + the Phase-1 weapon swing. Awaited so the frames are
+  // ready before playRound starts.
+  const bodyAnim = bodyAnimForMotion(motionId);
+  await Promise.all([
+    preloadActorAttack(attackerHit.entity, { animation: bodyAnim }),
+    preloadActorAttack(targetHit.entity, { animation: 'hurt' })
+  ]);
   versusCinema.resetHp({
     attHp: attackerHit.entity.hp?.current ?? attackerHit.entity.hp ?? 1,
     defHp: targetHit.entity.hp?.current   ?? targetHit.entity.hp   ?? 1

@@ -55,6 +55,32 @@ export const FRAME_OVERRIDES = {
 };
 
 /**
+ * M51 Phase 2 — Real LPC body attack-animation sheets (sourced from the
+ * same LiberatedPixelCup repo our idle bodies came from — byte-identical
+ * base, so they tint + compose the same). Standard 64×64 LPC layout
+ * (rows N/W/S/E), except `hurt` which ships south-only (one 64px row).
+ *
+ *   slash 6 frames · thrust 8 · cast (spellcast) 7 · hurt 6 (south only)
+ *
+ * Only the human bodies have them; skeleton/zombie keep the walk body
+ * (their attacks ride the Phase-1 weapon swing).
+ */
+export const BODY_ANIMS = {
+  slash:  { frames: 6, southOnly: false },
+  thrust: { frames: 8, southOnly: false },
+  cast:   { frames: 7, southOnly: false },
+  hurt:   { frames: 6, southOnly: true }
+};
+const BODY_ANIM_BASES = new Set(['male', 'female', 'teen', 'muscular']);
+
+/** Resolve a body key + animation to its attack sheet path, or null
+ *  (monsters / unknown anim → caller falls back to the idle body). */
+export function bodyAnimSheet(bodyKey, anim) {
+  if (!BODY_ANIM_BASES.has(bodyKey) || !BODY_ANIMS[anim]) return null;
+  return `${ASSETS}/body/${bodyKey}_${anim}.png`;
+}
+
+/**
  * Resolve the source-frame coords for an asset URL at the requested
  * direction and frame index. frameIdx shifts sx by frameIdx*sw — the
  * caller is responsible for clamping to the asset's actual frame count
@@ -1333,7 +1359,7 @@ function pickLegsVariant(armor) {
 /**
  * Build the layered render plan. Returns {layers, gender, torsoVariant, skinTone}.
  */
-export function buildRenderPlan(rawCharacter, { direction = 'south' } = {}) {
+export function buildRenderPlan(rawCharacter, { direction = 'south', animation = null } = {}) {
   // Phase F2/F4 — apply background + lifestyle defaults BEFORE reading
   // equipment, so empty slots get filled with virtual items (Holy Symbol
   // for Acolyte, Brown Cloak for Outlander, etc.). Explicit equipment
@@ -1417,10 +1443,13 @@ export function buildRenderPlan(rawCharacter, { direction = 'south' } = {}) {
   // (a key into ASSET_MAP.body) overrides the gender-based default, so
   // monsters with skeleton/zombie/muscular bodies render correctly.
   const bodyKey = character.body && ASSET_MAP.body[character.body] ? character.body : gender;
+  // M51 Phase 2 — when an attack animation is requested, the body layer
+  // uses the real LPC slash/thrust/cast/hurt sheet (human bodies only).
+  const bodyAnimSrc = animation ? bodyAnimSheet(bodyKey, animation) : null;
   layers.push({
     kind: 'lpc',
     slot: 'body',
-    src: ASSET_MAP.body[bodyKey] || ASSET_MAP.body.male,
+    src: bodyAnimSrc || ASSET_MAP.body[bodyKey] || ASSET_MAP.body.male,
     filter: composedFilter
   });
 

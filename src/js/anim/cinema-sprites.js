@@ -24,7 +24,7 @@ import { renderSprite } from '../sprite/compositor.js';
 import { MONSTER_PRESETS, buildMonsterCharacter } from '../scene/monster-presets.js';
 import { actorStateAt } from './fsm.js';
 import { loadImage } from '../sprite/image-cache.js';
-import { weaponSpriteSrc, FRAME } from '../sprite/lpc-config.js';
+import { weaponSpriteSrc, FRAME, BODY_ANIMS, bodyAnimSheet } from '../sprite/lpc-config.js';
 import { motionForWeapon } from './weapon-motions.js';
 import { swingRigFor } from './weapon-swing.js';
 
@@ -59,13 +59,14 @@ const cache = new Map();
 function cacheKey(id, direction) { return `${id}|${direction || 'south'}`; }
 
 /**
- * M44.5 — Map cinema role → LPC sheet direction.
- *   attacker (left side, faces RIGHT)  → 'east'
- *   defender (right side, faces LEFT)  → 'west'
+ * M51 Phase 2 — Both actors face the camera (south). The real LPC
+ * attack art (body slash/thrust/cast) and the weapon slash sheets are
+ * authored SOUTH, and the south slash's left→right sweep reads correctly
+ * for an attacker on the left striking a defender on the right. (Pre-M51
+ * this returned east/west profiles, but those directions have no weapon
+ * slash art.)
  */
-export function directionForActor(actor) {
-  if (actor === 'attacker') return 'east';
-  if (actor === 'defender') return 'west';
+export function directionForActor() {
   return 'south';
 }
 
@@ -110,7 +111,41 @@ export async function preloadActorSprite(entity, { scale = 3, direction = 'south
     frames.set(idx, off);
   }
   if (frames.size === 0) return null;
-  const entry = { frames, scale, direction };
+  const entry = cache.get(key) || {};
+  entry.frames = frames; entry.scale = scale; entry.direction = direction;
+  cache.set(key, entry);
+  return entry;
+}
+
+/**
+ * M51 Phase 2 — Pre-render an actor's REAL LPC attack/hurt animation
+ * frames (slash/thrust/cast/hurt) into the cache entry's `.attack` map.
+ * Human bodies have these sheets (sourced from the same LPC repo as our
+ * idle bodies); monsters don't → returns null and the cinema falls back
+ * to the idle pose + the Phase-1 weapon swing. Rendered south-facing to
+ * match the south-authored weapon slash. The body excludes the weapon
+ * slot (the overlay handles the blade).
+ */
+export async function preloadActorAttack(entity, { animation, scale = 3, direction = 'south' } = {}) {
+  const spec = BODY_ANIMS[animation];
+  if (!spec) return null;
+  const character = toLpcCharacter(entity);
+  if (!character || !character.id) return null;
+  // Only human bodies have attack sheets; a quick probe avoids rendering
+  // a full set that would just be the idle body.
+  if (!bodyAnimSheet(character.body || (character.gender === 'female' ? 'female' : 'male'), animation)) return null;
+  const key = cacheKey(character.id, direction);
+  const frames = new Map();
+  for (let i = 0; i < spec.frames; i++) {
+    const off = makeOffscreenCanvas();
+    if (!off) continue;
+    await renderSprite(off, character, { scale, direction, frameIdx: i, animation, excludeSlots: WEAPON_OVERLAY_SLOTS });
+    frames.set(i, off);
+  }
+  if (frames.size === 0) return null;
+  const entry = cache.get(key) || {};
+  entry.attack = { animation, frames, count: spec.frames };
+  entry.scale = scale; entry.direction = direction;
   cache.set(key, entry);
   return entry;
 }
@@ -161,6 +196,33 @@ export function pickActorFrameBlended(snapshot = {}, actor = 'attacker') {
   };
 }
 
+/**
+ * M51 Phase 2 — Pick the real LPC attack/hurt frame for this actor +
+ * phase, or null to fall back to the idle pose. Attacker plays its
+ * slash/thrust/cast set across windup→strike→settle (extended frame at
+ * impact); defender plays the hurt set across the hurt window.
+ */
+function pickAttackBuf(entry, snapshot, actor) {
+  const set = entry?.attack;
+  if (!set || !set.frames?.size) return null;
+  const phase = snapshot._phase || 'idle';
+  const dur = Number.isFinite(snapshot._duration) ? snapshot._duration : 1000;
+  const t = Number.isFinite(snapshot._t) ? snapshot._t : 0;
+  const impactAt = Number.isFinite(snapshot._impactAt) ? snapshot._impactAt : dur / 2;
+  if (actor === 'attacker' && set.animation !== 'hurt') {
+    if (phase !== 'windup' && phase !== 'strike' && phase !== 'recover') return null;
+    const idx = Math.round(swingFrameAt(set.count, clamp01(t / dur), clamp01(impactAt / dur)));
+    return set.frames.get(clampInt(idx, 0, set.count - 1)) || null;
+  }
+  if (actor === 'defender' && set.animation === 'hurt') {
+    if (phase !== 'hurt') return null;
+    const u = clamp01((t - impactAt) / 220);
+    const idx = Math.round(u * (set.count - 1));
+    return set.frames.get(clampInt(idx, 0, set.count - 1)) || null;
+  }
+  return null;
+}
+
 /** Build a drawSprite(ctx, actor, anchor, snapshot, refInfo) callback
  *  that paints the pre-rendered LPC bitmap for each actor. `lookup`
  *  is a function (id, direction) → cache entry (defaults to the
@@ -177,11 +239,16 @@ export function makeLpcDrawSprite({ lookup = defaultLookup } = {}) {
     // callers (legacy pickActorFrame) still work: blend=1 means
     // "fully on current frame" which renders identically to the
     // single-frame path.
-    const blended = pickActorFrameBlended(snapshot, actor);
-    const buf = entry?.frames?.get(blended.frame)
-             || entry?.frames?.get(FRAME_IDLE_A)
-             || null;
-    const prevBuf = entry?.frames?.get(blended.prevFrame) || null;
+    // M51 Phase 2 — During the strike, play the REAL LPC attack frames
+    // (attacker: slash/thrust/cast; defender: hurt) when available.
+    // Otherwise fall back to the M44/M46 idle-pose cross-fade.
+    const atkBuf = pickAttackBuf(entry, snapshot, actor);
+    const blended = atkBuf ? { blend: 1, prevFrame: null } : pickActorFrameBlended(snapshot, actor);
+    const buf = atkBuf
+      || entry?.frames?.get(blended.frame)
+      || entry?.frames?.get(FRAME_IDLE_A)
+      || null;
+    const prevBuf = atkBuf ? null : (entry?.frames?.get(blended.prevFrame) || null);
     if (!buf) {
       // Fallback — a faint label so the missing sprite is debuggable
       ctx.save();

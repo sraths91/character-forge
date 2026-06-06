@@ -252,17 +252,16 @@ test('M44.3: makeLpcDrawSprite — no red tint when phase is idle', () => {
 
 // ---------- M44.5: directional facing ----------
 
-test('M44.5: directionForActor — attacker → east, defender → west', () => {
-  assert.strictEqual(directionForActor('attacker'), 'east');
-  assert.strictEqual(directionForActor('defender'), 'west');
-});
-
-test('M44.5: directionForActor — unknown actor falls back to south', () => {
+test('M51: directionForActor — both actors face the camera (south)', () => {
+  // M51 Phase 2 — the real LPC attack art (body slash/thrust/cast) +
+  // weapon slash sheets are authored SOUTH, so both actors face camera.
+  assert.strictEqual(directionForActor('attacker'), 'south');
+  assert.strictEqual(directionForActor('defender'), 'south');
   assert.strictEqual(directionForActor('narrator'), 'south');
   assert.strictEqual(directionForActor(null), 'south');
 });
 
-test('M44.5: makeLpcDrawSprite — lookup receives the actor direction', () => {
+test('M51: makeLpcDrawSprite — lookup receives the south direction', () => {
   const seen = [];
   const lookup = (id, direction) => {
     seen.push({ id, direction });
@@ -271,41 +270,8 @@ test('M44.5: makeLpcDrawSprite — lookup receives the actor direction', () => {
   const draw = makeLpcDrawSprite({ lookup });
   draw(mockCtx(), 'attacker', { x: 0, y: 0 }, { scale: 1 }, { id: 'p1' });
   draw(mockCtx(), 'defender', { x: 0, y: 0 }, { scale: 1 }, { id: 'm1' });
-  // The attacker's lookup must have been called with direction='east',
-  // the defender's with direction='west'. This is what makes the LPC
-  // sheet pick the correct row for each role.
   assert.deepStrictEqual(seen, [
-    { id: 'p1', direction: 'east' },
-    { id: 'm1', direction: 'west' }
+    { id: 'p1', direction: 'south' },
+    { id: 'm1', direction: 'south' }
   ]);
-});
-
-test('M44.5: directional cache — separate entries per direction', async () => {
-  // We can't easily exercise the async preloadActorSprite headlessly
-  // (no DOM canvas), so this test asserts the *signature* of the
-  // direction-aware lookup. A direction-keyed cache hit beats a
-  // south-keyed fallback when both exist.
-  const directionAwareLookup = (id, direction) => ({
-    frames: new Map([[0, { width: 1, height: 1, _which: direction }]])
-  });
-  const draw = makeLpcDrawSprite({ lookup: directionAwareLookup });
-  const calls = [];
-  const ctx = {
-    calls,
-    save: () => calls.push(['save']),
-    restore: () => calls.push(['restore']),
-    translate: () => {},
-    rotate: () => {},
-    scale: () => {},
-    drawImage: (img) => calls.push(['drawImage', img._which]),
-    fillText: () => {},
-    set globalAlpha(v) {}, get globalAlpha() { return 1; },
-    set imageSmoothingEnabled(v) {},
-    set fillStyle(v) {}, set font(v) {}, set textAlign(v) {},
-    set globalCompositeOperation(v) {}, get globalCompositeOperation() { return 'source-over'; }
-  };
-  draw(ctx, 'attacker', { x: 0, y: 0 }, { scale: 1, _phase: 'idle', _t: 0 }, { id: 'p1' });
-  draw(ctx, 'defender', { x: 0, y: 0 }, { scale: 1, _phase: 'idle', _t: 0 }, { id: 'p1' });
-  const drewWhich = calls.filter(c => c[0] === 'drawImage').map(c => c[1]);
-  assert.deepStrictEqual(drewWhich, ['east', 'west']);
 });

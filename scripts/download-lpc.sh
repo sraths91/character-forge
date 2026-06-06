@@ -52,6 +52,18 @@ fetch "body/bodies/skeleton/walk/skeleton.png" "body/skeleton.png"
 fetch "body/bodies/zombie/walk/zombie.png"     "body/zombie.png"
 fetch "body/bodies/muscular/idle.png"          "body/muscular.png"
 
+# M51 Phase 2 — Real body ATTACK animation sheets (cinema fight frames):
+#   slash 384x256 (6 frames × 4 dir), thrust 512x256 (8f), spellcast
+#   448x256 (7f), hurt 384x64 (6f, south-only). Human bodies only — the
+#   cinema plays these so PC bodies actually wind up + swing; monsters
+#   fall back to idle + the procedural weapon swing. lpc-config BODY_ANIMS.
+for v in male female teen muscular; do
+  fetch "body/bodies/$v/slash.png"     "body/${v}_slash.png"
+  fetch "body/bodies/$v/thrust.png"    "body/${v}_thrust.png"
+  fetch "body/bodies/$v/spellcast.png" "body/${v}_cast.png"
+  fetch "body/bodies/$v/hurt.png"      "body/${v}_hurt.png"
+done
+
 # Heads — required, since bodies are headless
 fetch "head/heads/human/male/idle.png"        "head/heads/human_male.png"
 fetch "head/heads/human/female/idle.png"      "head/heads/human_female.png"
