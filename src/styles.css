@@ -1589,6 +1589,28 @@ body.party-view-mode .battlefield-controls { display: block; }
   flex-shrink: 0;
 }
 
+/* Procedural map generator row */
+.bf-generate-row { align-items: center; flex-wrap: wrap; gap: 0.5rem; }
+.bf-generate-label {
+  font-size: 0.78rem;
+  color: var(--text-dim);
+  min-width: 3.5rem;
+}
+.scene-gen-biome {
+  padding: 0.3rem 0.5rem;
+  border-radius: 6px;
+  border: 1px solid var(--border, #2a2a32);
+  background: var(--surface, #15151a);
+  color: var(--text);
+  font-size: 0.78rem;
+  cursor: pointer;
+}
+.scene-gen-seed {
+  font-size: 0.72rem;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
 /* M2.5 — Custom background image upload row */
 .bf-image-row { align-items: center; }
 .bf-image-upload {
@@ -2004,6 +2026,7 @@ body.readonly-mode .monster-remove,
 body.readonly-mode #add-to-party,
 body.readonly-mode .bf-scene-actions,
 body.readonly-mode .scene-preset-list,
+body.readonly-mode .bf-generate-row,
 body.readonly-mode .bf-image-row,
 body.readonly-mode #share-scene,
 body.readonly-mode #share-link {

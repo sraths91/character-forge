@@ -72,6 +72,7 @@ import {
   preloadActorSprite, makeLpcDrawSprite, clearActorSpriteCache
 } from './anim/cinema-sprites.js';
 import { terrainFromScene, backgroundFor } from './anim/cinema-backgrounds.js';
+import { listBiomes, isBiome } from './scene/map-generator.js';
 // M45 Phase 2 — Wire the PC AI planner into the live auto-fight loop.
 // The simulator has used this since M42; the live runner just never
 // asked. choosePcAction returns a plan with the chosen weapon, target,
@@ -277,6 +278,7 @@ async function enterPartyView() {
   syncTopnav();
   syncBattlefieldControls();
   renderScenePresetList();
+  renderGenBiomeList();
   renderMonsterPresetList();
   setStatus(`Party view: ${partyComposedCharacters.length} character${partyComposedCharacters.length === 1 ? '' : 's'}.`, 'ok');
   rerender();
@@ -3235,6 +3237,12 @@ function syncBattlefieldControls() {
   if (sz) sz.value = `${currentScene.cols}x${currentScene.rows}`;
   const fl = document.getElementById('scene-flanking');
   if (fl) fl.checked = !!currentScene.flankingEnabled;
+  // Generated-map controls reflect the active biome + seed.
+  const gb = document.getElementById('scene-gen-biome');
+  const gseed = document.getElementById('scene-gen-seed');
+  const isGen = currentScene.map?.kind === 'generated';
+  if (gb && isGen && currentScene.map.biome) gb.value = currentScene.map.biome;
+  if (gseed) gseed.textContent = isGen ? `seed ${currentScene.map.seed >>> 0}` : '';
   renderScenePicker();
 }
 
@@ -3371,6 +3379,72 @@ document.addEventListener('click', (e) => {
   const btn = e.target.closest('.scene-preset-btn');
   if (!btn) return;
   applyScenePreset(btn.dataset.preset);
+});
+
+/* =====================================================================
+ * Procedural map generation. A "generated" map is a richly-textured
+ * top-down terrain painted from a (biome, seed). It persists as just
+ * those two fields and regenerates identically on load. Visual only —
+ * terrain has no effect on movement or combat.
+ * ===================================================================== */
+
+/** Populate the biome <select> once, reusing SCENE_PRESETS display names. */
+function renderGenBiomeList() {
+  const sel = document.getElementById('scene-gen-biome');
+  if (!sel || sel.dataset.populated === '1') return;
+  sel.dataset.populated = '1';
+  for (const slug of listBiomes()) {
+    const opt = document.createElement('option');
+    opt.value = slug;
+    opt.textContent = SCENE_PRESETS[slug]?.name || slug;
+    sel.appendChild(opt);
+  }
+}
+
+/** A fresh random seed in the 32-bit range. */
+function randomSeed() {
+  return (Math.floor(Math.random() * 0xffffffff) >>> 0) || 1;
+}
+
+/**
+ * Apply a generated map. Mirrors applyScenePreset: sets the map, syncs
+ * the grid colour + cinema backdrop to the matching biome, persists,
+ * and re-renders. The biome's preset colour is kept as a fallback fill.
+ */
+function applyGeneratedMap(biome, seed) {
+  const slug = isBiome(biome) ? biome : 'grass';
+  const p = SCENE_PRESETS[slug];
+  currentScene.map = {
+    kind: 'generated',
+    biome: slug,
+    seed: (seed >>> 0) || randomSeed(),
+    color: p?.map?.color || '#3d5a3d',
+    preset: slug
+  };
+  if (p?.grid) currentScene.grid = { ...(currentScene.grid || {}), ...p.grid };
+  saveScene(currentScene);
+  if (versusCinema?.setBackground) {
+    versusCinema.setBackground(backgroundFor(slug));
+  }
+  syncBattlefieldControls();
+  if (viewMode === 'party') rerender();
+}
+
+// Generate — uses the picked biome + a fresh seed.
+document.addEventListener('click', (e) => {
+  if (e.target.id !== 'scene-gen-apply') return;
+  const biome = document.getElementById('scene-gen-biome')?.value || 'grass';
+  applyGeneratedMap(biome, randomSeed());
+});
+
+// Reroll — keep the current biome, draw a new seed. If the current map
+// isn't generated yet, fall back to the picker's biome.
+document.addEventListener('click', (e) => {
+  if (e.target.id !== 'scene-gen-reroll') return;
+  const biome = currentScene.map?.kind === 'generated'
+    ? currentScene.map.biome
+    : (document.getElementById('scene-gen-biome')?.value || 'grass');
+  applyGeneratedMap(biome, randomSeed());
 });
 
 // Custom background image: read file → resize → data URL → save

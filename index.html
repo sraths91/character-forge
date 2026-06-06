@@ -308,6 +308,13 @@
             <span class="bf-presets-label">Preset</span>
             <div id="scene-preset-list" class="scene-preset-list"></div>
           </div>
+          <div class="bf-row bf-generate-row">
+            <span class="bf-generate-label">Generate map</span>
+            <select id="scene-gen-biome" class="scene-gen-biome" title="Terrain type for the generated map"></select>
+            <button id="scene-gen-apply" class="secondary" type="button" title="Generate a procedural battle map for this terrain">Generate</button>
+            <button id="scene-gen-reroll" class="secondary" type="button" title="Reroll the layout with a new seed">⟳ Reroll</button>
+            <span id="scene-gen-seed" class="scene-gen-seed" aria-live="polite"></span>
+          </div>
           <div class="bf-row bf-image-row">
             <label class="bf-image-upload">
               <span>Custom background</span>

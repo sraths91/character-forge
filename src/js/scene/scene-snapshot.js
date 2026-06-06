@@ -30,6 +30,16 @@ export function buildSceneSnapshot(scene) {
     snap.map = { kind: 'color', color: scene.map.color };
   } else if (scene.map?.kind === 'image') {
     snap.map = { kind: 'color', color: scene.map.color || '#3d5a3d' };
+  } else if (scene.map?.kind === 'generated') {
+    // Generated maps are just (biome, seed) — tiny, so they travel in
+    // the URL intact and the recipient regenerates identical terrain.
+    snap.map = {
+      kind: 'generated',
+      biome: scene.map.biome,
+      seed: scene.map.seed >>> 0,
+      color: scene.map.color || '#3d5a3d',
+      preset: scene.map.preset
+    };
   }
   if (scene.grid) {
     snap.grid = {

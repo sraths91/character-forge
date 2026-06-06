@@ -554,10 +554,11 @@ function getGeneratedMapCanvas(scene, totalW, totalH, cellPx) {
     return hit;
   }
   let off;
+  const OffCanvas = globalThis.OffscreenCanvas;
   if (typeof document !== 'undefined' && document.createElement) {
     off = document.createElement('canvas');
-  } else if (typeof OffscreenCanvas !== 'undefined') {
-    off = new OffscreenCanvas(totalW, totalH);
+  } else if (typeof OffCanvas === 'function') {
+    off = new OffCanvas(totalW, totalH);
   } else {
     return null;
   }
