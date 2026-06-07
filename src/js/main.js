@@ -61,6 +61,10 @@ import {
   applyStyle, availableStyles, styleForPc, saveStyle, isStyle
 } from './anim/motion-styles.js';
 import {
+  SWING_TYPES, availableSwings, swingForPc, saveSwing, isSwingSelection,
+  nextVariedSwing, applySwing
+} from './anim/swing-types.js';
+import {
   applyModifiers, modifiersForAttack, snapshotAttackerFlags
 } from './anim/modifiers.js';
 // M45 Phase 4b.2 — Live runner dispatches through the unified combat
@@ -610,11 +614,12 @@ function setupVersusCinema(active) {
       // M51 — also load the attacker's weapon sprite for the swing overlay.
       // M51 Phase 2 — both actors face the camera (south) so the real
       // LPC attack frames + the south weapon slash align.
+      // M54 — the weapon is (re)loaded per round in playCinemaRoundForAttack
+      // with the resolved swing, so it's not loaded here.
       onActorsChanged: async ({ attacker, defender }) => {
         await Promise.all([
           preloadActorSprite(attacker, { direction: 'south' }),
-          preloadActorSprite(defender, { direction: 'south' }),
-          setActorWeapon(attacker)
+          preloadActorSprite(defender, { direction: 'south' })
         ]);
       }
     });
@@ -655,6 +660,20 @@ async function playCinemaRoundForAttack(attackerHit, targetHit, dmg, opts = {}) 
   // Power / Flourish). Monsters always use Standard for v1.
   if (attackerHit.kind === 'pc') {
     seq = applyStyle(seq, styleForPc(attackerHit.entity));
+  }
+  // M54 — Apply the PC's chosen SWING direction (melee only; not casts).
+  // 'varied' resolves to a concrete type that alternates each attack.
+  let resolvedSwing = null;
+  if (attackerHit.kind === 'pc' && !isCast && seq.meta?.kind === 'melee') {
+    const sel = swingForPc(attackerHit.entity);
+    const wclass = seq.meta?.weaponClass || 'sword';
+    if (sel === 'varied') {
+      const n = (attackerHit.entity._swingN = (attackerHit.entity._swingN || 0) + 1) - 1;
+      resolvedSwing = nextVariedSwing(wclass, n);
+    } else {
+      resolvedSwing = sel;
+    }
+    seq = applySwing(seq, resolvedSwing);
   }
   // M43.4 — Detect which class-feature modifiers fired on this exchange
   // by diffing pre-attack flags against the attacker's current state,
@@ -703,7 +722,10 @@ async function playCinemaRoundForAttack(attackerHit, targetHit, dmg, opts = {}) 
   const bodyAnim = bodyAnimForMotion(motionId);
   await Promise.all([
     preloadActorAttack(attackerHit.entity, { animation: bodyAnim }),
-    preloadActorAttack(targetHit.entity, { animation: 'hurt' })
+    preloadActorAttack(targetHit.entity, { animation: 'hurt' }),
+    // M54 — load the attacker's weapon with the resolved swing so the
+    // overlay drives the matching arc (rotation for directional swings).
+    setActorWeapon(attackerHit.entity, { swing: resolvedSwing })
   ]);
   versusCinema.resetHp({
     attHp: attackerHit.entity.hp?.current ?? attackerHit.entity.hp ?? 1,
@@ -4609,6 +4631,7 @@ function renderPartyCard(character, ddbId) {
   const livePc = partyComposedCharacters.find(p => String(p.id) === String(ddbId)) || character;
   card.insertAdjacentHTML('beforeend', renderPcAiEditor(livePc));
   card.insertAdjacentHTML('beforeend', renderAttackStylePicker(livePc));
+  card.insertAdjacentHTML('beforeend', renderSwingPicker(livePc));
 
   // Click the card body (not the remove button) → switch to this character
   card.addEventListener('click', () => switchToMember(ddbId));
@@ -4713,6 +4736,60 @@ function handlePcAttackStyleEvent(e) {
   refreshParty();
 }
 document.addEventListener('change', handlePcAttackStyleEvent);
+
+/** M54 — Map a PC's mainhand to a weapon class for swing gating. */
+function weaponClassForSwing(pc) {
+  const m = motionForWeapon(pc?.equipment?.mainhand);
+  return ({
+    'lance-thrust': 'polearm', 'axe-cleave': 'heavy', 'dagger-stab': 'light',
+    'sword-thrust': 'sword', 'sword-slash': 'sword', 'staff-cast': 'arcane',
+    'bow-draw': 'bow', 'fist-jab': 'unarmed'
+  })[m] || 'sword';
+}
+
+/** M54 — Per-PC swing-direction picker (mirrors the Attack Style picker).
+ *  Lists the weapon-appropriate cuts plus a "Varied" auto-alternate mode. */
+function renderSwingPicker(pc) {
+  if (!pc?.id) return '';
+  const choices = availableSwings(weaponClassForSwing(pc));
+  const current = swingForPc(pc);
+  const opts = [
+    `<option value="varied"${current === 'varied' ? ' selected' : ''}>Varied (alternate)</option>`,
+    ...choices.map(s => `<option value="${escapeHtml(s.id)}"${s.id === current ? ' selected' : ''}>${escapeHtml(s.label)}</option>`)
+  ].join('');
+  const curLabel = current === 'varied' ? 'Varied' : (SWING_TYPES[current]?.label || current);
+  const curDesc = current === 'varied'
+    ? 'Alternates the swing direction each attack — no two hits look the same.'
+    : (SWING_TYPES[current]?.desc || '');
+  return `
+    <details class="monster-ai-editor pc-style-picker">
+      <summary>
+        <span class="ai-editor-label">Swing</span>
+        <span class="ai-archetype-summary">${escapeHtml(curLabel)}</span>
+      </summary>
+      <div class="ai-editor-body">
+        <label class="ai-row">
+          <span class="ai-row-label">Direction</span>
+          <select data-pc-swing="${escapeHtml(pc.id)}">${opts}</select>
+        </label>
+        <p class="ai-style-hint">${escapeHtml(curDesc)}</p>
+      </div>
+    </details>
+  `;
+}
+
+function handlePcSwingEvent(e) {
+  const t = e.target;
+  if (!t || !t.dataset?.pcSwing) return;
+  const pc = findPcInParty(t.dataset.pcSwing);
+  if (!pc) return;
+  const next = t.value;
+  if (!isSwingSelection(next)) return;
+  pc._swingType = next;
+  saveSwing(pc.id, next);
+  refreshParty();
+}
+document.addEventListener('change', handlePcSwingEvent);
 
 function findPcInParty(id) {
   return partyComposedCharacters.find(p => String(p.id) === String(id)) || null;

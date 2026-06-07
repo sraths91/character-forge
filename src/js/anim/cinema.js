@@ -488,21 +488,53 @@ function colorFor(params) {
 }
 
 function drawSlashArc(ctx, u, att, def, params) {
-  // Curved arc from attacker waist to defender torso, peaking up-right
+  // M54 — the swoosh re-orients to the swing direction (params.swing):
+  // overhead = vertical, horizontal = flat, rising = upward, backslash =
+  // reverse, thrust = straight stab, spin = a loop. Default = up-right
+  // diagonal. This is the clearest read of "how the weapon swung".
   const color = colorFor(params);
   const alpha = Math.sin(u * Math.PI) * 0.9;
+  const swing = params?.swing || 'diagonal';
+  // Impact point (defender torso) + origin (attacker weapon).
+  const ix = def.x - 14, iy = def.y - 30;
+  const ox = att.x + 16, oy = att.y - 22;
   ctx.save();
   ctx.strokeStyle = color;
   ctx.globalAlpha = alpha;
-  ctx.lineWidth = 5;
+  ctx.lineWidth = swing === 'thrust' ? 6 : 5;
   ctx.shadowColor = color;
   ctx.shadowBlur = 16;
   ctx.lineCap = 'round';
-  const mx = (att.x + def.x) / 2;
-  const my = (att.y + def.y) / 2 - 30;
   ctx.beginPath();
-  ctx.moveTo(att.x + 16, att.y - 20);
-  ctx.quadraticCurveTo(mx, my, def.x - 16, def.y - 30);
+  if (swing === 'overhead') {
+    // steep vertical chop coming down onto the defender
+    ctx.moveTo(ix - 6, iy - 64);
+    ctx.quadraticCurveTo(ix + 10, iy - 26, ix, iy + 8);
+  } else if (swing === 'horizontal') {
+    // flat side-to-side sweep across the torso line
+    ctx.moveTo(ix - 52, iy - 2);
+    ctx.quadraticCurveTo(ix, iy - 12, ix + 30, iy);
+  } else if (swing === 'rising') {
+    // upward cut from low-front sweeping up
+    ctx.moveTo(ix - 26, iy + 34);
+    ctx.quadraticCurveTo(ix - 4, iy + 4, ix + 6, iy - 34);
+  } else if (swing === 'backslash') {
+    // reverse horizontal — sweeps the other way, bowing down
+    ctx.moveTo(ix + 34, iy - 6);
+    ctx.quadraticCurveTo(ix, iy + 14, ix - 40, iy);
+  } else if (swing === 'thrust') {
+    // straight point-first stab
+    ctx.moveTo(ox, oy);
+    ctx.lineTo(ix, iy);
+  } else if (swing === 'spin') {
+    // a whirling loop around the impact
+    ctx.ellipse(ix, iy - 4, 34, 26, -0.3, 0, Math.PI * 2);
+  } else {
+    // diagonal (default) — shoulder→hip up-right arc
+    const mx = (att.x + def.x) / 2, my = (att.y + def.y) / 2 - 30;
+    ctx.moveTo(ox, oy);
+    ctx.quadraticCurveTo(mx, my, ix - 2, iy);
+  }
   ctx.stroke();
   ctx.restore();
 }
