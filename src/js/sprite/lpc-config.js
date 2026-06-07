@@ -62,21 +62,31 @@ export const FRAME_OVERRIDES = {
  *
  *   slash 6 frames · thrust 8 · cast (spellcast) 7 · hurt 6 (south only)
  *
+ * M54 Phase 2 — swing-matched bodies: backslash 13 frames (reverse cut),
+ * halfslash 6 (quick cut). These ship for male/female/teen only — the
+ * muscular base has no backslash/halfslash in the LPC repo, so those
+ * swings fall back to the idle body (the weapon still swings).
+ *
  * Only the human bodies have them; skeleton/zombie keep the walk body
  * (their attacks ride the Phase-1 weapon swing).
  */
 export const BODY_ANIMS = {
-  slash:  { frames: 6, southOnly: false },
-  thrust: { frames: 8, southOnly: false },
-  cast:   { frames: 7, southOnly: false },
-  hurt:   { frames: 6, southOnly: true }
+  slash:     { frames: 6,  southOnly: false },
+  thrust:    { frames: 8,  southOnly: false },
+  cast:      { frames: 7,  southOnly: false },
+  hurt:      { frames: 6,  southOnly: true },
+  backslash: { frames: 13, southOnly: false, bases: ['male', 'female', 'teen'] },
+  halfslash: { frames: 6,  southOnly: false, bases: ['male', 'female', 'teen'] }
 };
 const BODY_ANIM_BASES = new Set(['male', 'female', 'teen', 'muscular']);
 
 /** Resolve a body key + animation to its attack sheet path, or null
- *  (monsters / unknown anim → caller falls back to the idle body). */
+ *  (monsters / unknown anim / base without that anim → caller falls back
+ *  to the idle body). */
 export function bodyAnimSheet(bodyKey, anim) {
-  if (!BODY_ANIM_BASES.has(bodyKey) || !BODY_ANIMS[anim]) return null;
+  const spec = BODY_ANIMS[anim];
+  if (!BODY_ANIM_BASES.has(bodyKey) || !spec) return null;
+  if (spec.bases && !spec.bases.includes(bodyKey)) return null;
   return `${ASSETS}/body/${bodyKey}_${anim}.png`;
 }
 

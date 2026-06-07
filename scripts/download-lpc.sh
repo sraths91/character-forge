@@ -64,6 +64,15 @@ for v in male female teen muscular; do
   fetch "body/bodies/$v/hurt.png"      "body/${v}_hurt.png"
 done
 
+# M54 Phase 2 — swing-matched bodies: backslash 832x256 (13 frames, reverse
+# cut) + halfslash 384x256 (6f, quick cut). male/female/teen only — the
+# muscular base has no backslash/halfslash in the repo (it falls back to
+# the idle body for those swings). lpc-config BODY_ANIMS .bases gating.
+for v in male female teen; do
+  fetch "body/bodies/$v/backslash.png" "body/${v}_backslash.png"
+  fetch "body/bodies/$v/halfslash.png" "body/${v}_halfslash.png"
+done
+
 # Heads — required, since bodies are headless
 fetch "head/heads/human/male/idle.png"        "head/heads/human_male.png"
 fetch "head/heads/human/female/idle.png"      "head/heads/human_female.png"

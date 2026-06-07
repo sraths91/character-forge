@@ -640,6 +640,20 @@ function bodyAnimForMotion(motionId) {
   return 'slash';   // sword-slash / axe-cleave / dagger-stab / fist
 }
 
+/** M54 Phase 2 — Map a resolved SWING to the LPC body animation so the
+ *  character's body matches the cut, not just the weapon + effect. Bodies
+ *  without backslash/halfslash (muscular) fall back to idle automatically
+ *  (bodyAnimSheet returns null → preloadActorAttack yields no frames). */
+function bodyAnimForSwing(swingId) {
+  switch (swingId) {
+    case 'thrust':     return 'thrust';
+    case 'backslash':  return 'backslash';
+    case 'rising':     return 'backslash';   // reverse wind-up reads as a rising cut
+    case 'horizontal': return 'halfslash';   // quick, flatter cut
+    default:           return 'slash';        // diagonal / overhead / spin
+  }
+}
+
 /** M43.2 — Play one cinema round for a versus attack. Looks up the
  *  attacker's chosen weapon, builds the matching motion sequence, and
  *  plays it with the resolved damage as the verdict. Awaits completion
@@ -719,7 +733,10 @@ async function playCinemaRoundForAttack(attackerHit, targetHit, dmg, opts = {}) 
   // motion), the defender plays hurt. Human bodies only; monsters fall
   // back to idle + the Phase-1 weapon swing. Awaited so the frames are
   // ready before playRound starts.
-  const bodyAnim = bodyAnimForMotion(motionId);
+  // M54 Phase 2 — a chosen swing drives the body animation too (backslash
+  // body for a backslash cut, quick body for horizontal, etc.); otherwise
+  // the motion decides.
+  const bodyAnim = resolvedSwing ? bodyAnimForSwing(resolvedSwing) : bodyAnimForMotion(motionId);
   await Promise.all([
     preloadActorAttack(attackerHit.entity, { animation: bodyAnim }),
     preloadActorAttack(targetHit.entity, { animation: 'hurt' }),
