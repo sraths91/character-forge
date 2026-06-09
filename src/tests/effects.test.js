@@ -82,6 +82,22 @@ test('M27: effectsForWeaponHit (melee) — lunge → primitive → recoil', () =
   assert.ok(out[1].color);
 });
 
+test('M54b: effectsForWeaponHit threads the swing onto the grid swoosh', () => {
+  const out = effectsForWeaponHit({
+    attacker: pcAt(), target: mon(),
+    weapon: { name: 'Longsword', damageType: 'Slashing' },
+    isRanged: false, crit: false, swing: 'overhead', now: NOW
+  });
+  const arc = out.find(e => e.kind === 'slash-arc');
+  assert.strictEqual(arc.swing, 'overhead', 'the slash effect carries the swing for the grid renderer');
+  // no swing → undefined (default diagonal geometry)
+  const plain = effectsForWeaponHit({
+    attacker: pcAt(), target: mon(),
+    weapon: { name: 'Longsword', damageType: 'Slashing' }, isRanged: false, crit: false, now: NOW
+  });
+  assert.strictEqual(plain.find(e => e.kind === 'slash-arc').swing, null);
+});
+
 test('M27: effectsForWeaponHit (ranged) — no lunge, projectile + recoil', () => {
   const out = effectsForWeaponHit({
     attacker: pcAt(), target: mon(),

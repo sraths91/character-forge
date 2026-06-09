@@ -127,3 +127,34 @@ test('swing-types: applySwing unknown id → clone with no swing applied', () =>
   const out = applySwing(baseSeq(), 'nope');
   assert.strictEqual(out.effects[0].params.swing, undefined);
 });
+
+// ---------- timing + flavor ----------
+
+test('swing-types: every swing has a timing profile + verb', () => {
+  for (const [id, s] of Object.entries(SWING_TYPES)) {
+    assert.ok(Number.isFinite(s.timing?.speed) && s.timing.speed > 0, `${id}.timing.speed`);
+    assert.ok(Number.isFinite(s.timing?.hitPause), `${id}.timing.hitPause`);
+    assert.ok(typeof s.verb === 'string' && s.verb.length, `${id}.verb`);
+  }
+});
+
+test('swing-types: timing scales the sequence — overhead slower, thrust faster', () => {
+  const base = baseSeq().duration;          // 1000
+  const overhead = applySwing(baseSeq(), 'overhead');   // speed 0.80 → longer
+  const thrust = applySwing(baseSeq(), 'thrust');       // speed 1.25 → shorter
+  assert.ok(overhead.duration > base, `overhead ${overhead.duration} > ${base}`);
+  assert.ok(thrust.duration < base, `thrust ${thrust.duration} < ${base}`);
+  // keyframe times scale too
+  const sBase = baseSeq().keyframes.find(k => k.x === 30).at;
+  const sOver = overhead.keyframes.find(k => k.x === 30).at;
+  assert.ok(sOver > sBase, 'overhead strike lands later (slower)');
+});
+
+test('swing-types: applySwing scales the hit-pause + stamps the verb', () => {
+  const seq = baseSeq();
+  seq.effects.push({ at: 460, type: 'hit-pause', params: { duration: 180 } });
+  const out = applySwing(seq, 'overhead');   // hitPause 1.5
+  const hp = out.effects.find(e => e.type === 'hit-pause');
+  assert.ok(hp.params.duration > 180, `overhead holds the freeze longer: ${hp.params.duration}`);
+  assert.strictEqual(out.meta.swingVerb, SWING_TYPES.overhead.verb);
+});

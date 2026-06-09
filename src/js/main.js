@@ -654,6 +654,16 @@ function bodyAnimForSwing(swingId) {
   }
 }
 
+/** M54 — Resolve a PC's swing for one attack. 'varied' advances a per-
+ *  entity counter so the cut alternates; everything else returns as-is.
+ *  Shared by the cinema (auto) and manual click-to-attack paths. */
+function resolveSwingForPc(entity, weaponClass) {
+  const sel = swingForPc(entity);
+  if (sel !== 'varied') return sel;
+  const n = (entity._swingN = (entity._swingN || 0) + 1) - 1;
+  return nextVariedSwing(weaponClass, n);
+}
+
 /** M43.2 — Play one cinema round for a versus attack. Looks up the
  *  attacker's chosen weapon, builds the matching motion sequence, and
  *  plays it with the resolved damage as the verdict. Awaits completion
@@ -679,14 +689,7 @@ async function playCinemaRoundForAttack(attackerHit, targetHit, dmg, opts = {}) 
   // 'varied' resolves to a concrete type that alternates each attack.
   let resolvedSwing = null;
   if (attackerHit.kind === 'pc' && !isCast && seq.meta?.kind === 'melee') {
-    const sel = swingForPc(attackerHit.entity);
-    const wclass = seq.meta?.weaponClass || 'sword';
-    if (sel === 'varied') {
-      const n = (attackerHit.entity._swingN = (attackerHit.entity._swingN || 0) + 1) - 1;
-      resolvedSwing = nextVariedSwing(wclass, n);
-    } else {
-      resolvedSwing = sel;
-    }
+    resolvedSwing = resolveSwingForPc(attackerHit.entity, seq.meta?.weaponClass || 'sword');
     seq = applySwing(seq, resolvedSwing);
   }
   // M43.4 — Detect which class-feature modifiers fired on this exchange
@@ -1334,8 +1337,36 @@ async function runManualWeaponAttack(attackerHit, targetHit, weaponOverride = nu
   });
   const afterHp = targetHit.entity.hp?.current ?? 0;
   const dmg = Math.max(0, beforeHp - afterHp);
+  const hit = dmg > 0;
+  // M54b — Manual click-to-attack now shows the swing on the GRID too.
+  // The engine path renders no attack FX, so (in grid view) push the same
+  // lunge + slash + recoil the legacy path does — oriented by the PC's
+  // chosen swing — and surface a flavour line ("Knight cleaves down on…").
+  if (!versusCinemaActive) {
+    let swing = null;
+    if (attackerHit.kind === 'pc' && !isRanged) {
+      swing = resolveSwingForPc(attackerHit.entity, weaponClassOf(weapon));
+    }
+    if (hit) {
+      pushEffects(effectsForWeaponHit({
+        attacker: attackerHit.entity, target: targetHit.entity,
+        weapon, isRanged, crit: false, swing
+      }));
+      resolveAttackAnimation(targetHit.entity.id, targetHit.kind, dmg);
+    } else {
+      pushEffects(effectsForWeaponMiss({
+        attacker: attackerHit.entity, target: targetHit.entity, weapon, isRanged
+      }));
+    }
+    if (swing) {
+      const verb = SWING_TYPES[swing]?.verb || 'strikes';
+      const word = hit ? verb : `${verb.replace(/es$|s$/, '')} at`;
+      setCombatStatus(`${attackerHit.entity.name || 'Attacker'} ${word} ${targetHit.entity.name || 'the target'}${hit ? ` for ${dmg}` : ' — miss'}.`);
+    }
+    startContinuousRender();
+  }
   return {
-    hit: dmg > 0,
+    hit,
     crit: false,    // engine doesn't surface crit through this path yet
     dmg,
     total: null,
@@ -4754,15 +4785,16 @@ function handlePcAttackStyleEvent(e) {
 }
 document.addEventListener('change', handlePcAttackStyleEvent);
 
-/** M54 — Map a PC's mainhand to a weapon class for swing gating. */
-function weaponClassForSwing(pc) {
-  const m = motionForWeapon(pc?.equipment?.mainhand);
+/** M54 — Map a weapon (or a PC's mainhand) to a weapon class for swing
+ *  gating / variation. */
+function weaponClassOf(weapon) {
   return ({
     'lance-thrust': 'polearm', 'axe-cleave': 'heavy', 'dagger-stab': 'light',
     'sword-thrust': 'sword', 'sword-slash': 'sword', 'staff-cast': 'arcane',
     'bow-draw': 'bow', 'fist-jab': 'unarmed'
-  })[m] || 'sword';
+  })[motionForWeapon(weapon)] || 'sword';
 }
+function weaponClassForSwing(pc) { return weaponClassOf(pc?.equipment?.mainhand); }
 
 /** M54 — Per-PC swing-direction picker (mirrors the Attack Style picker).
  *  Lists the weapon-appropriate cuts plus a "Varied" auto-alternate mode. */

@@ -44,49 +44,56 @@ export const SWING_TYPES = {
     desc: 'A committed down-cross from shoulder to opposite hip. The classic strike.',
     weapons: '*',
     arc: { rest: 0, windup: -0.7, strike: 1.9, follow: 2.2, lunge: 0.12, sweepWidth: 0.12, trail: true, strikeScale: 1.05 },
-    effect: 'diagonal', body: { dy: 0, drot: 0, dlunge: 0 }, useFrames: true
+    effect: 'diagonal', body: { dy: 0, drot: 0, dlunge: 0 }, useFrames: true,
+    timing: { speed: 1.0, hitPause: 1.0 }, verb: 'slashes'
   },
   overhead: {
     id: 'overhead', label: 'Overhead Chop', hema: 'Scheitelhau',
     desc: 'Raise high and split straight down the centre. Heavy and vertical.',
     weapons: '*',
     arc: { rest: 0, windup: -1.5, strike: 1.7, follow: 2.0, lunge: 0.10, sweepWidth: 0.15, trail: true, strikeScale: 1.09 },
-    effect: 'overhead', body: { dy: 7, drot: 0.10, dlunge: 0 }
+    effect: 'overhead', body: { dy: 7, drot: 0.10, dlunge: 0 },
+    timing: { speed: 0.80, hitPause: 1.5 }, verb: 'cleaves down on'
   },
   horizontal: {
     id: 'horizontal', label: 'Horizontal Sweep', hema: 'Zwerchhau',
     desc: 'A flat side-to-side cut across the centre line.',
     weapons: '*',
     arc: { rest: 0, windup: -1.05, strike: 1.0, follow: 1.2, lunge: 0.30, sweepWidth: 0.12, trail: true, strikeScale: 1.04 },
-    effect: 'horizontal', body: { dy: 0, drot: 0, dlunge: 6 }
+    effect: 'horizontal', body: { dy: 0, drot: 0, dlunge: 6 },
+    timing: { speed: 1.08, hitPause: 0.9 }, verb: 'sweeps across'
   },
   rising: {
     id: 'rising', label: 'Rising Cut', hema: 'Unterhau',
     desc: 'A rising diagonal from the hip to the opposite shoulder.',
     weapons: '*',
     arc: { rest: 0, windup: 1.2, strike: -1.4, follow: -1.7, lunge: 0.18, sweepWidth: 0.14, trail: true, strikeScale: 1.05 },
-    effect: 'rising', body: { dy: -7, drot: -0.08, dlunge: 0 }
+    effect: 'rising', body: { dy: -7, drot: -0.08, dlunge: 0 },
+    timing: { speed: 1.12, hitPause: 0.9 }, verb: 'cuts upward at'
   },
   thrust: {
     id: 'thrust', label: 'Thrust', hema: 'Stich',
     desc: 'A straight point-first lunge. Little rotation, lots of reach.',
     weapons: '*',
     arc: { rest: 0, windup: -0.25, strike: 0.12, follow: 0.0, lunge: 0.85, sweepWidth: 0.10, trail: true, strikeScale: 1.04 },
-    effect: 'thrust', body: { dy: 0, drot: 0, dlunge: 14 }
+    effect: 'thrust', body: { dy: 0, drot: 0, dlunge: 14 },
+    timing: { speed: 1.25, hitPause: 0.85 }, verb: 'lunges at'
   },
   backslash: {
     id: 'backslash', label: 'Backslash', hema: 'reverse cut',
     desc: 'A reverse horizontal cut sweeping back across the body.',
     weapons: '*',
     arc: { rest: 0, windup: 0.9, strike: -1.6, follow: -1.9, lunge: 0.18, sweepWidth: 0.12, trail: true, strikeScale: 1.05 },
-    effect: 'backslash', body: { dy: 0, drot: -0.06, dlunge: 4 }
+    effect: 'backslash', body: { dy: 0, drot: -0.06, dlunge: 4 },
+    timing: { speed: 0.95, hitPause: 1.1 }, verb: 'backslashes'
   },
   spin: {
     id: 'spin', label: 'Spinning Slash', hema: 'flourish',
     desc: 'A full spinning cut — a whirl of steel. Showy and wide.',
     weapons: ['sword', 'heavy', 'polearm'],
     arc: { rest: 0, windup: -0.6, strike: 5.7, follow: 6.28, lunge: 0.16, sweepWidth: 0.26, trail: true, strikeScale: 1.07, spin: true },
-    effect: 'spin', body: { dy: 0, drot: 0.5, dlunge: 4 }
+    effect: 'spin', body: { dy: 0, drot: 0.5, dlunge: 4 },
+    timing: { speed: 0.78, hitPause: 1.35 }, verb: 'spins into'
   }
 };
 
@@ -163,12 +170,26 @@ export function swingArcRig(swingId) {
 export function applySwing(seq, swingId) {
   if (!seq) return seq;
   const swing = SWING_TYPES[swingId];
+  // M54b — per-swing TIMING: scale the whole sequence so each cut FEELS
+  // distinct (overhead/spin slow + heavy hit-pause; thrust/rising snappy).
+  // Mirrors applyStyle's speed/hitPause scaling so the two compose.
+  const speed = swing?.timing?.speed ?? 1;
+  const hitPauseScale = swing?.timing?.hitPause ?? 1;
+  const ts = 1 / speed;
   const out = {
     id: swing ? `${seq.id}:${swing.id}` : seq.id,
-    duration: seq.duration,
-    keyframes: seq.keyframes.map(k => ({ ...k })),
-    effects: seq.effects.map(e => ({ ...e, params: { ...(e.params || {}) } })),
-    meta: { ...(seq.meta || {}), swing: swing ? swing.id : (seq.meta?.swing || null) }
+    duration: Math.round(seq.duration * ts),
+    keyframes: seq.keyframes.map(k => ({ ...k, at: Math.round((k.at || 0) * ts) })),
+    effects: seq.effects.map(e => ({
+      ...e,
+      at: Math.round((e.at || 0) * ts),
+      params: scaleSwingEffectParams(e, hitPauseScale)
+    })),
+    meta: {
+      ...(seq.meta || {}),
+      swing: swing ? swing.id : (seq.meta?.swing || null),
+      swingVerb: swing?.verb || seq.meta?.swingVerb || null
+    }
   };
   if (!swing) return out;
 
@@ -195,4 +216,14 @@ export function applySwing(seq, swingId) {
     }
   }
   return out;
+}
+
+/** Scale a hit-pause effect's duration by the swing's hitPause factor
+ *  (heavier swings hold the freeze longer). Other effects pass through. */
+function scaleSwingEffectParams(e, hitPauseScale) {
+  const params = { ...(e.params || {}) };
+  if (e.type === 'hit-pause' && Number.isFinite(params.duration) && hitPauseScale !== 1) {
+    params.duration = Math.round(params.duration * hitPauseScale);
+  }
+  return params;
 }

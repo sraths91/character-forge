@@ -101,7 +101,7 @@ export function spellAttackPrimitive(spell) {
  * Includes the weapon-specific primitive, lunge on attacker, and recoil
  * on target. Crits get an additional shadow-strike-like accent flare.
  */
-export function effectsForWeaponHit({ attacker, target, weapon, isRanged, crit, now = performance.now() }) {
+export function effectsForWeaponHit({ attacker, target, weapon, isRanged, crit, swing = null, now = performance.now() }) {
   const primitive = weaponAttackPrimitive(weapon, isRanged);
   const color = colorForDamageType(weapon?.damageType);
   const fromPos = positionOf(attacker);
@@ -118,11 +118,11 @@ export function effectsForWeaponHit({ attacker, target, weapon, isRanged, crit, 
       duration: 280
     });
   }
-  // The weapon primitive itself
+  // The weapon primitive itself (M54b — `swing` orients the grid swoosh)
   effects.push({
     kind: primitive,
     from: fromPos, to: toPos,
-    color,
+    color, swing,
     startedAt: now + (isRanged ? 0 : 60),   // melee primitive slightly delayed after lunge starts
     duration: primitive === 'projectile' ? 360 : 240
   });

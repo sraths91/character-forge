@@ -331,11 +331,12 @@ function cellCenter(pos, cellPx) {
 function renderSlashArc(ctx, e, t, cellPx) {
   const a = cellCenter(e.from, cellPx);
   const b = cellCenter(e.to, cellPx);
-  // Midpoint with a perpendicular offset → curved arc
   const dx = b.x - a.x, dy = b.y - a.y;
   const len = Math.hypot(dx, dy) || 1;
-  const nx = -dy / len, ny = dx / len;
-  const mid = { x: (a.x + b.x) / 2 + nx * cellPx * 0.4, y: (a.y + b.y) / 2 + ny * cellPx * 0.4 };
+  const nx = -dy / len, ny = dx / len;     // unit perpendicular
+  // M54b — the chosen swing varies the arc: a wider/narrower bow, the
+  // reverse side, or (spin) a full loop around the target.
+  const bow = SWING_GRID_BOW[e.swing] ?? 0.4;
   const alpha = Math.sin(t * Math.PI) * 0.85;
   ctx.save();
   ctx.strokeStyle = e.color;
@@ -344,11 +345,25 @@ function renderSlashArc(ctx, e, t, cellPx) {
   ctx.shadowColor = e.color;
   ctx.shadowBlur = cellPx * 0.25;
   ctx.beginPath();
-  ctx.moveTo(a.x, a.y);
-  ctx.quadraticCurveTo(mid.x, mid.y, b.x, b.y);
+  if (e.swing === 'spin') {
+    // a whirling loop centred on the target cell
+    ctx.ellipse(b.x, b.y, cellPx * 0.55, cellPx * 0.42, Math.atan2(dy, dx), 0, Math.PI * 2);
+  } else {
+    const mid = { x: (a.x + b.x) / 2 + nx * cellPx * bow, y: (a.y + b.y) / 2 + ny * cellPx * bow };
+    ctx.moveTo(a.x, a.y);
+    ctx.quadraticCurveTo(mid.x, mid.y, b.x, b.y);
+  }
   ctx.stroke();
   ctx.restore();
 }
+
+// Per-swing perpendicular bow for the top-down grid swoosh. Positive bows
+// one way, negative the other (backslash/rising), small = flat (horizontal),
+// large = deep (overhead). spin is handled separately (a loop).
+const SWING_GRID_BOW = {
+  diagonal: 0.4, overhead: 0.62, horizontal: 0.16,
+  rising: -0.4, backslash: -0.55, thrust: 0.1
+};
 
 function renderThrust(ctx, e, t, cellPx) {
   const a = cellCenter(e.from, cellPx);
