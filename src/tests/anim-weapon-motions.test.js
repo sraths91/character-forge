@@ -190,3 +190,29 @@ test('M43.1: buildMotion accepts damageType override via opts', () => {
   const slash = seq.effects.find(e => e.type === 'slash-arc');
   assert.strictEqual(slash.params.damageType, 'radiant');
 });
+
+// ---------- M56.1: structural regression guard ----------
+// insertHitPause became pure in M56 Phase 1 and every builder now
+// reassigns its return value. A missed call site would silently drop
+// the hit-pause AND shrink the motion's duration — pin both. These
+// durations are the pre-refactor baselines (base + pause).
+
+const MOTION_DURATIONS = {
+  'sword-slash':  1180,
+  'sword-thrust': 1000,
+  'lance-thrust': 1150,
+  'axe-cleave':   1350,
+  'bow-draw':     1260,
+  'dagger-stab':  750,
+  'staff-cast':   1520,
+  'fist-jab':     640
+};
+
+test('M56.1: every motion keeps exactly one hit-pause and its baseline duration', () => {
+  for (const [id, duration] of Object.entries(MOTION_DURATIONS)) {
+    const seq = buildMotion(id);
+    const pauses = seq.effects.filter(e => e.type === 'hit-pause');
+    assert.strictEqual(pauses.length, 1, `${id}: expected exactly one hit-pause`);
+    assert.strictEqual(seq.duration, duration, `${id}: duration drifted`);
+  }
+});

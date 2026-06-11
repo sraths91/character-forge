@@ -15,6 +15,8 @@
  * Pure transform — never mutates input. Same shape in / same shape out.
  */
 
+import { cloneSeq } from './sequence.js';
+
 const SPARKLE = 'sparkle';
 const ZOOM = 'zoom';
 
@@ -146,16 +148,6 @@ function impactTimeOf(seq) {
   if (!seq?.effects) return Math.floor((seq?.duration || 1000) / 2);
   const ev = seq.effects.find(e => e.type === 'hit-pause');
   return ev ? ev.at : Math.floor((seq.duration || 1000) / 2);
-}
-
-function cloneSeq(seq) {
-  return {
-    id: seq.id,
-    duration: seq.duration,
-    keyframes: seq.keyframes.map(k => ({ ...k })),
-    effects: seq.effects.map(e => ({ ...e, params: { ...(e.params || {}) } })),
-    meta: { ...(seq.meta || {}) }
-  };
 }
 
 function polishColorFor(ctx) {

@@ -131,17 +131,35 @@ export function effectsBetween(seq, t0, t1) {
 }
 
 /**
+ * Deep-clone a Sequence (keyframes, effects + params, meta). The
+ * shared clone behind every pure transform — polish.js and
+ * motion-styles.js import this rather than keeping private copies.
+ */
+export function cloneSeq(seq) {
+  return {
+    id: seq.id,
+    duration: seq.duration,
+    keyframes: seq.keyframes.map(k => ({ ...k })),
+    effects: seq.effects.map(e => ({ ...e, params: { ...(e.params || {}) } })),
+    meta: { ...(seq.meta || {}) }
+  };
+}
+
+/**
  * Hit-pause helper: insert a "freeze" segment at time `at` for `duration`
  * ms. Shifts every subsequent keyframe + effect by `duration`. The
  * timeline player treats hit-pause as a no-tick window — sprites stay
  * frozen at their `at` state.
+ *
+ * Pure (M56 Phase 1): returns a new Sequence; the input is untouched.
  */
 export function insertHitPause(seq, at, duration = 200) {
-  for (const k of seq.keyframes) if (k.at > at) k.at += duration;
-  for (const e of seq.effects)   if (e.at > at) e.at += duration;
-  seq.effects.push({ at, type: 'hit-pause', params: { duration } });
-  seq.duration += duration;
-  return seq;
+  const out = cloneSeq(seq);
+  for (const k of out.keyframes) if (k.at > at) k.at += duration;
+  for (const e of out.effects)   if (e.at > at) e.at += duration;
+  out.effects.push({ at, type: 'hit-pause', params: { duration } });
+  out.duration += duration;
+  return out;
 }
 
 /**

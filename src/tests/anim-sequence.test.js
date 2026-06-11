@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert';
 import {
   newSequence, addKey, addEffect, sampleSprite, effectsBetween,
-  insertHitPause, applyModifier, EASING
+  insertHitPause, applyModifier, cloneSeq, EASING
 } from '../js/anim/sequence.js';
 
 // ---------- Easing functions ----------
@@ -129,17 +129,52 @@ test('M43.0: insertHitPause — shifts later keyframes + effects by duration', (
   addKey(seq, { at: 500, actor: 'attacker', x: 50 });
   addEffect(seq, { at: 200, type: 'hit' });
   addEffect(seq, { at: 700, type: 'recover' });
-  insertHitPause(seq, 300, 200);
+  const out = insertHitPause(seq, 300, 200);
   // Pre-300 frames untouched
-  assert.strictEqual(seq.keyframes.find(k => k.x === 0).at, 100);
-  assert.strictEqual(seq.effects.find(e => e.type === 'hit').at, 200);
+  assert.strictEqual(out.keyframes.find(k => k.x === 0).at, 100);
+  assert.strictEqual(out.effects.find(e => e.type === 'hit').at, 200);
   // Post-300 frames shifted by 200
-  assert.strictEqual(seq.keyframes.find(k => k.x === 50).at, 700);
-  assert.strictEqual(seq.effects.find(e => e.type === 'recover').at, 900);
+  assert.strictEqual(out.keyframes.find(k => k.x === 50).at, 700);
+  assert.strictEqual(out.effects.find(e => e.type === 'recover').at, 900);
   // Duration extended
-  assert.strictEqual(seq.duration, 1200);
+  assert.strictEqual(out.duration, 1200);
   // hit-pause event added
-  assert.ok(seq.effects.some(e => e.type === 'hit-pause'));
+  assert.ok(out.effects.some(e => e.type === 'hit-pause'));
+});
+
+test('M56.1: insertHitPause — pure: the input sequence is untouched', () => {
+  const seq = newSequence('s', 1000);
+  addKey(seq, { at: 500, actor: 'attacker', x: 50 });
+  addEffect(seq, { at: 700, type: 'recover' });
+  const out = insertHitPause(seq, 300, 200);
+  assert.notStrictEqual(out, seq);
+  // Input keeps its original timing, duration, and effect count
+  assert.strictEqual(seq.keyframes[0].at, 500);
+  assert.strictEqual(seq.effects.length, 1);
+  assert.strictEqual(seq.effects[0].at, 700);
+  assert.strictEqual(seq.duration, 1000);
+  assert.ok(!seq.effects.some(e => e.type === 'hit-pause'));
+  // The return value carries the shift
+  assert.strictEqual(out.keyframes[0].at, 700);
+  assert.strictEqual(out.duration, 1200);
+});
+
+// ---------- cloneSeq ----------
+
+test('M56.1: cloneSeq — deep clone: mutating the copy leaves the original alone', () => {
+  const seq = newSequence('s', 1000);
+  addKey(seq, { at: 100, actor: 'attacker', x: 5 });
+  addEffect(seq, { at: 200, type: 'shake', params: { amplitude: 3 } });
+  seq.meta = { kind: 'melee' };
+  const copy = cloneSeq(seq);
+  copy.keyframes[0].at = 999;
+  copy.effects[0].params.amplitude = 99;
+  copy.meta.kind = 'cast';
+  copy.duration = 1;
+  assert.strictEqual(seq.keyframes[0].at, 100);
+  assert.strictEqual(seq.effects[0].params.amplitude, 3);
+  assert.strictEqual(seq.meta.kind, 'melee');
+  assert.strictEqual(seq.duration, 1000);
 });
 
 // ---------- applyModifier ----------

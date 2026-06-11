@@ -75,7 +75,7 @@ export function motionForWeapon(weapon) {
 /** Standard slashing weapon. 1000ms total. */
 function buildSwordSlash(opts = {}) {
   const dmgType = opts.damageType || 'slashing';
-  const s = newSequence('sword-slash', 1000);
+  let s = newSequence('sword-slash', 1000);
   // Attacker
   addKey(s, { at: 0,    actor: 'attacker', x: 0,  rotation: 0,    easing: 'linear' });
   addKey(s, { at: 200,  actor: 'attacker', x: -5, rotation: -0.2, easing: 'easeOut' });   // wind-up
@@ -91,7 +91,7 @@ function buildSwordSlash(opts = {}) {
   addEffect(s, { at: 400, type: 'slash-arc', params: { damageType: dmgType } });
   addEffect(s, { at: 460, type: 'shake', params: { amplitude: 3 } });
   // Hit-pause adds 180ms freeze at the impact frame (extends total to 1180ms)
-  insertHitPause(s, 460, 180);
+  s = insertHitPause(s, 460, 180);
   s.meta = { kind: 'melee', weaponClass: 'sword' };
   return s;
 }
@@ -99,7 +99,7 @@ function buildSwordSlash(opts = {}) {
 /** Rapier / scimitar — sharper, faster point-thrust. 850ms. */
 function buildSwordThrust(opts = {}) {
   const dmgType = opts.damageType || 'piercing';
-  const s = newSequence('sword-thrust', 850);
+  let s = newSequence('sword-thrust', 850);
   addKey(s, { at: 0,    actor: 'attacker', x: 0  });
   addKey(s, { at: 150,  actor: 'attacker', x: -3, easing: 'easeOut' });
   addKey(s, { at: 400,  actor: 'attacker', x: 35, easing: 'easeIn' });    // long lunge
@@ -109,7 +109,7 @@ function buildSwordThrust(opts = {}) {
   addKey(s, { at: 700,  actor: 'defender', x: 0 });
   addEffect(s, { at: 350, type: 'thrust', params: { damageType: dmgType } });
   addEffect(s, { at: 420, type: 'shake', params: { amplitude: 2 } });
-  insertHitPause(s, 420, 150);
+  s = insertHitPause(s, 420, 150);
   s.meta = { kind: 'melee', weaponClass: 'sword' };
   return s;
 }
@@ -117,7 +117,7 @@ function buildSwordThrust(opts = {}) {
 /** Lance / spear — long reach, hard thrust. 950ms. */
 function buildLanceThrust(opts = {}) {
   const dmgType = opts.damageType || 'piercing';
-  const s = newSequence('lance-thrust', 950);
+  let s = newSequence('lance-thrust', 950);
   addKey(s, { at: 0,    actor: 'attacker', x: 0,  y: 0 });
   addKey(s, { at: 150,  actor: 'attacker', x: 0,  y: 2, rotation: 0.1, easing: 'easeOut' });   // lance dip
   addKey(s, { at: 420,  actor: 'attacker', x: 40, y: 0, rotation: 0,   easing: 'easeIn' });    // thrust
@@ -127,7 +127,7 @@ function buildLanceThrust(opts = {}) {
   addKey(s, { at: 800,  actor: 'defender', x: 0 });
   addEffect(s, { at: 380, type: 'thrust', params: { damageType: dmgType, range: 'long' } });
   addEffect(s, { at: 440, type: 'shake', params: { amplitude: 4 } });
-  insertHitPause(s, 440, 200);
+  s = insertHitPause(s, 440, 200);
   s.meta = { kind: 'melee', weaponClass: 'polearm' };
   return s;
 }
@@ -135,7 +135,7 @@ function buildLanceThrust(opts = {}) {
 /** Greataxe / maul — heavy overhead. Slow but high-impact. 1100ms. */
 function buildAxeCleave(opts = {}) {
   const dmgType = opts.damageType || 'slashing';
-  const s = newSequence('axe-cleave', 1100);
+  let s = newSequence('axe-cleave', 1100);
   addKey(s, { at: 0,    actor: 'attacker', x: 0,  y: 0, rotation: 0 });
   addKey(s, { at: 280,  actor: 'attacker', x: -6, y: -5, rotation: -0.5, easing: 'anticipate' });   // overhead wind-up
   addKey(s, { at: 530,  actor: 'attacker', x: 25, y: 10, rotation: 0.7,  easing: 'easeIn' });        // cleave down
@@ -147,7 +147,7 @@ function buildAxeCleave(opts = {}) {
   addKey(s, { at: 900,  actor: 'defender', x: 0 });
   addEffect(s, { at: 500, type: 'bash', params: { damageType: dmgType, heavy: true } });
   addEffect(s, { at: 560, type: 'shake', params: { amplitude: 6 } });
-  insertHitPause(s, 560, 250);
+  s = insertHitPause(s, 560, 250);
   s.meta = { kind: 'melee', weaponClass: 'heavy' };
   return s;
 }
@@ -155,7 +155,7 @@ function buildAxeCleave(opts = {}) {
 /** Bow — draw + release + projectile travel time. 1100ms. */
 function buildBowDraw(opts = {}) {
   const dmgType = opts.damageType || 'piercing';
-  const s = newSequence('bow-draw', 1100);
+  let s = newSequence('bow-draw', 1100);
   addKey(s, { at: 0,    actor: 'attacker', x: 0,  scale: 1 });
   addKey(s, { at: 350,  actor: 'attacker', x: -4, scale: 1.02, easing: 'easeOut' });   // draw the string (subtle lean back)
   addKey(s, { at: 450,  actor: 'attacker', x: -2, scale: 1,    easing: 'easeIn' });    // release
@@ -173,7 +173,7 @@ function buildBowDraw(opts = {}) {
   // so cross-stage shots arc visibly higher than point-blank.
   addEffect(s, { at: 430, type: 'projectile', params: { damageType: dmgType, travelMs: 350, arcHeight: 60 } });
   addEffect(s, { at: 800, type: 'shake', params: { amplitude: 3 } });
-  insertHitPause(s, 800, 160);
+  s = insertHitPause(s, 800, 160);
   s.meta = { kind: 'ranged', weaponClass: 'bow' };
   return s;
 }
@@ -181,7 +181,7 @@ function buildBowDraw(opts = {}) {
 /** Dagger — short, snappy. 650ms. */
 function buildDaggerStab(opts = {}) {
   const dmgType = opts.damageType || 'piercing';
-  const s = newSequence('dagger-stab', 650);
+  let s = newSequence('dagger-stab', 650);
   addKey(s, { at: 0,   actor: 'attacker', x: 0  });
   addKey(s, { at: 100, actor: 'attacker', x: -2, easing: 'easeOut' });
   addKey(s, { at: 250, actor: 'attacker', x: 22, easing: 'easeIn' });
@@ -191,7 +191,7 @@ function buildDaggerStab(opts = {}) {
   addKey(s, { at: 500, actor: 'defender', x: 0 });
   addEffect(s, { at: 220, type: 'thrust', params: { damageType: dmgType, range: 'short' } });
   addEffect(s, { at: 260, type: 'shake', params: { amplitude: 2 } });
-  insertHitPause(s, 260, 100);   // snappy, shorter pause
+  s = insertHitPause(s, 260, 100);   // snappy, shorter pause
   s.meta = { kind: 'melee', weaponClass: 'light' };
   return s;
 }
@@ -200,7 +200,7 @@ function buildDaggerStab(opts = {}) {
  *  projectile/burst → impact. 1300ms. */
 function buildStaffCast(opts = {}) {
   const dmgType = opts.damageType || 'force';
-  const s = newSequence('staff-cast', 1300);
+  let s = newSequence('staff-cast', 1300);
   addKey(s, { at: 0,    actor: 'attacker', x: 0, y: 0, scale: 1 });
   addKey(s, { at: 300,  actor: 'attacker', x: 0, y: -3, scale: 1.04, easing: 'easeOut' });   // caster pose lift
   addKey(s, { at: 700,  actor: 'attacker', x: 0, y: -3, scale: 1.04, easing: 'linear' });
@@ -217,7 +217,7 @@ function buildStaffCast(opts = {}) {
   addEffect(s, { at: 900,  type: 'burst',         params: { damageType: dmgType } });
   addEffect(s, { at: 900,  type: 'flash',         params: { intensity: 0.5 } });
   addEffect(s, { at: 920,  type: 'shake',         params: { amplitude: 4 } });
-  insertHitPause(s, 920, 220);
+  s = insertHitPause(s, 920, 220);
   s.meta = { kind: 'cast', weaponClass: 'arcane' };
   return s;
 }
@@ -225,7 +225,7 @@ function buildStaffCast(opts = {}) {
 /** Unarmed / monk strike — snappiest of all. 550ms. */
 function buildFistJab(opts = {}) {
   const dmgType = opts.damageType || 'bludgeoning';
-  const s = newSequence('fist-jab', 550);
+  let s = newSequence('fist-jab', 550);
   addKey(s, { at: 0,   actor: 'attacker', x: 0  });
   addKey(s, { at: 100, actor: 'attacker', x: -3, easing: 'easeOut' });
   addKey(s, { at: 200, actor: 'attacker', x: 20, easing: 'easeIn' });
@@ -235,7 +235,7 @@ function buildFistJab(opts = {}) {
   addKey(s, { at: 450, actor: 'defender', x: 0 });
   addEffect(s, { at: 180, type: 'bash', params: { damageType: dmgType, light: true } });
   addEffect(s, { at: 210, type: 'shake', params: { amplitude: 1.5 } });
-  insertHitPause(s, 210, 90);
+  s = insertHitPause(s, 210, 90);
   s.meta = { kind: 'melee', weaponClass: 'unarmed' };
   return s;
 }

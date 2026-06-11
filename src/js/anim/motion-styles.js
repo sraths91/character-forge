@@ -24,9 +24,7 @@
  * reloads + character re-imports.
  */
 
-import { cloneProfile as _ } from '../scene/ai/editor.js';   // unused; placeholder to flag related module
-
-void _;
+import { cloneSeq } from './sequence.js';
 
 const STYLE_IDS = ['quick', 'standard', 'power', 'flourish'];
 
@@ -160,16 +158,6 @@ export function applyStyle(seq, styleId) {
     }
   }
   return out;
-}
-
-function cloneSeq(seq) {
-  return {
-    id: seq.id,
-    duration: seq.duration,
-    keyframes: seq.keyframes.map(k => ({ ...k })),
-    effects: seq.effects.map(e => ({ ...e, params: { ...(e.params || {}) } })),
-    meta: { ...(seq.meta || {}) }
-  };
 }
 
 function scaleEffectParams(effect, style) {
