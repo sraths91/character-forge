@@ -688,13 +688,18 @@ async function playCinemaRoundForAttack(attackerHit, targetHit, dmg, opts = {}) 
   if (!seq) return;
   // M43.3 — Apply the PC's chosen attack style (Quick / Standard /
   // Power / Flourish). Monsters always use Standard for v1.
-  if (attackerHit.kind === 'pc') {
+  // M56 Phase 4 — opportunity attacks are single snapped strikes:
+  // always Quick, regardless of the attacker's chosen style.
+  if (opts.reaction) {
+    seq = applyStyle(seq, 'quick');
+  } else if (attackerHit.kind === 'pc') {
     seq = applyStyle(seq, styleForPc(attackerHit.entity));
   }
-  // M54 — Apply the PC's chosen SWING direction (melee only; not casts).
-  // 'varied' resolves to a concrete type that alternates each attack.
+  // M54 — Apply the PC's chosen SWING direction (melee only; not casts
+  // or reactions). 'varied' resolves to a concrete type that
+  // alternates each attack.
   let resolvedSwing = null;
-  if (attackerHit.kind === 'pc' && !isCast && seq.meta?.kind === 'melee') {
+  if (attackerHit.kind === 'pc' && !isCast && !opts.reaction && seq.meta?.kind === 'melee') {
     resolvedSwing = resolveSwingForPc(attackerHit.entity, seq.meta?.weaponClass || 'sword');
     seq = applySwing(seq, resolvedSwing);
   }
@@ -706,7 +711,10 @@ async function playCinemaRoundForAttack(attackerHit, targetHit, dmg, opts = {}) 
     : 1;
   // M56 Phase 2 — class-feature modifier overlays are weapon-swing
   // dressing (Sneak/Rage/GWM/Smite/Reckless); casts skip them.
-  if (attackerHit.kind === 'pc' && !isCast) {
+  // M56 Phase 4 — reactions skip them too: the captured preAttackFlags
+  // belong to the active entity, so diffing would mis-attribute
+  // modifiers to the OA attacker.
+  if (attackerHit.kind === 'pc' && !isCast && !opts.reaction) {
     const post = snapshotAttackerFlags(attackerHit.entity);
     const fired = modifiersForAttack({
       pre: opts.preAttackFlags || {},
@@ -1249,7 +1257,7 @@ async function runEngineTurn(entity, entityKind, opts = {}) {
     // Cinema-round dispatch — fires after every weapon swing AND
     // (M56 Phase 2) every resolved cast. Bridges to the existing
     // playCinemaRoundForAttack helper.
-    onCinemaRound: async ({ attacker, defender, atk, dmg, crit, miss, spell, cast, outcome }) => {
+    onCinemaRound: async ({ attacker, defender, atk, dmg, crit, miss, spell, cast, outcome, reaction }) => {
       if (!(versusCinemaActive && versusCinema)) return;
       if (!attacker?.ref || !defender?.ref) return;
       const attackerLive = attacker.ref;
@@ -1283,7 +1291,11 @@ async function runEngineTurn(entity, entityKind, opts = {}) {
           preAttackFlags,
           smiteSlot: attacker._smiteSlotUsed || null,
           killing: defender.hp <= 0 && beforeTargetHp > 0,
-          crit: !!crit, miss: !!miss
+          crit: !!crit, miss: !!miss,
+          // M56 Phase 4 — OAs play Quick with no swing pick and no
+          // modifier diffing (preAttackFlags above belong to the
+          // ACTIVE entity, not the OA attacker).
+          reaction: !!reaction
         }
       );
       void atk;

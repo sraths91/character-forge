@@ -620,10 +620,31 @@ export async function runReactionAttack(attacker, target, targetBeforePos, scene
       atk.hit = false;
     }
   }
-  if (!atk.hit) return;
+  // M56 Phase 4 — opportunity attacks dramatize through the same
+  // onCinemaRound prompt, tagged reaction: true (the bridge forces the
+  // Quick style and skips class-feature modifier diffing — the
+  // captured pre-attack flags belong to the ACTIVE entity, not the OA
+  // attacker). The autoMiss return above stays silent (nothing
+  // happened on screen); a Shield-negated OA reaches here as a plain
+  // miss — known v1 inconsistency with the cast path, see DEFERRED.md.
+  if (!atk.hit) {
+    if (prompts.onCinemaRound) {
+      await prompts.onCinemaRound({
+        attacker, defender: target, plan: null, atk,
+        dmg: 0, crit: false, miss: true, reaction: true
+      });
+    }
+    return;
+  }
   const dmg = rollDamage(verdict.damage.dice, { crit: atk.crit }, rng);
   target.hp = Math.max(0, target.hp - dmg.total);
   attacker.damageDealt += dmg.total;
+  if (prompts.onCinemaRound) {
+    await prompts.onCinemaRound({
+      attacker, defender: target, plan: null, atk,
+      dmg: dmg.total, crit: !!atk.crit, miss: false, reaction: true
+    });
+  }
 }
 
 // =====================================================================

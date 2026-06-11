@@ -347,3 +347,56 @@ test('M56.2: simulator path (prompts: {}) resolves every kind without dispatchin
     );
   }
 });
+
+// =====================================================================
+// M56 Phase 4 — opportunity-attack cinema dispatch (reaction: true)
+// =====================================================================
+
+test('M56.4: OA hit dispatches onCinemaRound with reaction: true', async () => {
+  const gob = castGoblin({
+    attack: { name: 'Scimitar', bonus: 4, dice: '1d6+2' },
+    _position: { col: 1, row: 1 }
+  });
+  // rng 0.5 → d20 = 11; +4 = 15 vs AC 12 → hit
+  const pc = castWizard({ ac: 12 });
+  const { calls, prompts } = castSpy();
+  await runReactionAttack(gob, pc, { col: 1, row: 2 },
+    { cols: 10, rows: 7 }, () => 0.5, prompts);
+  assert.strictEqual(calls.length, 1, 'one cinema round for the OA');
+  assert.strictEqual(calls[0].reaction, true);
+  assert.strictEqual(calls[0].miss, false);
+  assert.ok(calls[0].dmg > 0, 'damage carried in the payload');
+  assert.strictEqual(calls[0].attacker.id, 'm1');
+  assert.strictEqual(calls[0].defender.id, 'pc1');
+  assert.ok(pc.hp < 22, 'OA damage applied before the dispatch');
+});
+
+test('M56.4: OA miss dispatches a miss cinema with reaction: true', async () => {
+  const gob = castGoblin({
+    attack: { name: 'Scimitar', bonus: 4, dice: '1d6+2' },
+    _position: { col: 1, row: 1 }
+  });
+  // 15 vs AC 30 → miss
+  const pc = castWizard({ ac: 30 });
+  const { calls, prompts } = castSpy();
+  await runReactionAttack(gob, pc, { col: 1, row: 2 },
+    { cols: 10, rows: 7 }, () => 0.5, prompts);
+  assert.strictEqual(calls.length, 1);
+  assert.strictEqual(calls[0].reaction, true);
+  assert.strictEqual(calls[0].miss, true);
+  assert.strictEqual(calls[0].dmg, 0);
+  assert.strictEqual(pc.hp, 22, 'no damage on a miss');
+});
+
+test('M56.4: OA with prompts: {} (simulator path) resolves silently', async () => {
+  const gob = castGoblin({
+    attack: { name: 'Scimitar', bonus: 4, dice: '1d6+2' },
+    _position: { col: 1, row: 1 }
+  });
+  const pc = castWizard({ ac: 12 });
+  await assert.doesNotReject(
+    runReactionAttack(gob, pc, { col: 1, row: 2 },
+      { cols: 10, rows: 7 }, () => 0.5, {})
+  );
+  assert.ok(pc.hp < 22, 'the OA still resolves');
+});
