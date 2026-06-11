@@ -31,6 +31,7 @@
 import { playSequence } from './timeline.js';
 import { createParticleSystem, presetConfig } from './particles.js';
 import { attackerPhaseAt as phaseAt, defenderPhaseAt } from './fsm.js';
+import { idlePoseAt } from './idle-pose.js';
 
 /* =====================================================================
  * Pure state machine
@@ -55,6 +56,31 @@ export function createCinemaState({ attacker, defender } = {}) {
  * cinema's historical names so existing callers keep working.
  */
 export { phaseAt, defenderPhaseAt };
+
+/**
+ * M56 Phase 6 — gentle breathing for actors standing idle in the
+ * cinema. idlePoseAt (M53) returns offsets as FRACTIONS of the drawn
+ * sprite size; this converts to pixels against a nominal actor height
+ * and damps the amplitudes — the FSM already bobs idle actors between
+ * the two idle poses, so the transform breath stacks on top and must
+ * stay subtle (reads as breathing, not bouncing).
+ *
+ * Pure: only idle/recover actors breathe. Strike, windup, hurt, and
+ * (Phase 3) down all return zero offsets — a corpse doesn't breathe.
+ * `detuneMs` phase-shifts one actor so the two never sync up.
+ */
+const BREATH_NOMINAL_PX = 110;   // ≈ drawn LPC body height in scene pixels
+const BREATH_DAMP = 0.6;         // stacks on the FSM A/B bob — keep subtle
+
+export function idleBreathOffset(phase, t, detuneMs = 0) {
+  if (phase !== 'idle' && phase !== 'recover') return { x: 0, y: 0, rot: 0 };
+  const pose = idlePoseAt(t + detuneMs, { breathAmp: BREATH_DAMP, swayAmp: BREATH_DAMP });
+  return {
+    x: pose.swayX * BREATH_NOMINAL_PX,
+    y: pose.bobY * BREATH_NOMINAL_PX,
+    rot: pose.rot
+  };
+}
 
 /** Find the time-ms when the sequence's primary hit-pause fires. */
 export function findHitPauseAt(seq) {
@@ -235,21 +261,8 @@ function draw(ctx, state, seq, frame, opts) {
     ctx.translate(-W / 2, -H / 2);
   }
 
-  // Anchor positions: attacker bottom-left third, defender bottom-right third.
-  const baseY = H * 0.62;
-  const attAnchor = { x: W * 0.28 + frame.attacker.x, y: baseY + frame.attacker.y };
-  const defAnchor = { x: W * 0.72 + frame.defender.x, y: baseY + frame.defender.y };
-
-  // Floor line for visual grounding
-  ctx.strokeStyle = 'rgba(255,255,255,0.08)';
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  ctx.moveTo(0, baseY + 20); ctx.lineTo(W, baseY + 20); ctx.stroke();
-
-  // M44.1 — Augment the per-actor snapshots with timing context so a
-  // sprite renderer can pick the right pose frame for the current
-  // swing phase. Pure additive — renderers that ignore these fields
-  // still see the original x/y/rotation/scale/alpha snapshot.
+  // M44.1 — Phase classification feeds frame picking AND (M56 Phase 6)
+  // gates the idle breathing, so it runs before anchors.
   const impactAt = findHitPauseAt(seq);
   // M56 Phase 2 — Friendly sequences (heals) keep the defender in idle:
   // a NaN impact makes the FSM classify every t as 'idle', which also
@@ -262,8 +275,29 @@ function draw(ctx, state, seq, frame, opts) {
   const killing = !friendly && !!seq.meta?.killing;
   const attackerPhase = phaseAt(frame.t, impactAt);
   const defenderPhase = friendly ? 'idle' : defenderPhaseAt(frame.t, impactAt, { killing });
-  const attSnap = { ...frame.attacker, _t: frame.t, _impactAt: impactAt, _duration: seq.duration, _phase: attackerPhase };
-  const defSnap = { ...frame.defender, _t: frame.t, _impactAt: friendly ? NaN : impactAt, _duration: seq.duration, _phase: defenderPhase, _killing: killing };
+  // M56 Phase 6 — idle actors breathe: bob + sway fold into the anchor,
+  // the micro-lean into the snapshot rotation. The defender is detuned
+  // so the two never breathe in sync.
+  const attBreath = idleBreathOffset(attackerPhase, frame.t);
+  const defBreath = idleBreathOffset(defenderPhase, frame.t, 700);
+
+  // Anchor positions: attacker bottom-left third, defender bottom-right third.
+  const baseY = H * 0.62;
+  const attAnchor = { x: W * 0.28 + frame.attacker.x + attBreath.x, y: baseY + frame.attacker.y + attBreath.y };
+  const defAnchor = { x: W * 0.72 + frame.defender.x + defBreath.x, y: baseY + frame.defender.y + defBreath.y };
+
+  // Floor line for visual grounding
+  ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(0, baseY + 20); ctx.lineTo(W, baseY + 20); ctx.stroke();
+
+  // Augment the per-actor snapshots with timing context so a sprite
+  // renderer can pick the right pose frame for the current swing
+  // phase. Pure additive — renderers that ignore these fields still
+  // see the original x/y/rotation/scale/alpha snapshot.
+  const attSnap = { ...frame.attacker, rotation: (frame.attacker.rotation || 0) + attBreath.rot, _t: frame.t, _impactAt: impactAt, _duration: seq.duration, _phase: attackerPhase };
+  const defSnap = { ...frame.defender, rotation: (frame.defender.rotation || 0) + defBreath.rot, _t: frame.t, _impactAt: friendly ? NaN : impactAt, _duration: seq.duration, _phase: defenderPhase, _killing: killing };
   opts.drawSprite(ctx, 'attacker', attAnchor, attSnap, opts.attacker);
   // M51 — the attacker's weapon swings as a separate overlay on top of
   // the (weapon-less) body so the blade actually sweeps with a smear.

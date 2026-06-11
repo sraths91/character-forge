@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert';
 import {
   createCinemaState, findHitPauseAt, applyVerdictToState, createCinema,
-  phaseAt, defenderPhaseAt
+  phaseAt, defenderPhaseAt, idleBreathOffset
 } from '../js/anim/cinema.js';
 import { buildMotion } from '../js/anim/weapon-motions.js';
 import { buildSpellSequence } from '../js/anim/spell-motions.js';
@@ -325,4 +325,42 @@ test('M56.2: applyVerdictToState — heal never subtracts even with dmg present'
   s.pendingDmg = { victim: 'defender', dmg: 4, heal: 8 };
   applyVerdictToState(s, 500, 500);
   assert.strictEqual(s.defHp, 14, 'heal wins; dmg ignored');
+});
+
+// ---------- M56 Phase 6: idle breathing ----------
+
+test('M56.6: idleBreathOffset — idle offsets vary over time (the actor breathes)', () => {
+  const a = idleBreathOffset('idle', 200);
+  const b = idleBreathOffset('idle', 1400);
+  assert.ok(a.x !== b.x || a.y !== b.y || a.rot !== b.rot,
+    'two distant idle samples differ');
+  // Subtle: a couple of pixels at most, not a bounce
+  for (const s of [a, b]) {
+    assert.ok(Math.abs(s.y) < 4, `bob stays subtle (${s.y})`);
+    assert.ok(Math.abs(s.x) < 3, `sway stays subtle (${s.x})`);
+    assert.ok(Math.abs(s.rot) < 0.03, `lean stays subtle (${s.rot})`);
+  }
+});
+
+test('M56.6: idleBreathOffset — recover breathes too', () => {
+  const s = idleBreathOffset('recover', 900);
+  assert.ok(s.x !== 0 || s.y !== 0, 'recover phase breathes');
+});
+
+test('M56.6: idleBreathOffset — strike, windup, hurt, and down are stone still', () => {
+  for (const phase of ['strike', 'windup', 'hurt', 'down']) {
+    const s = idleBreathOffset(phase, 1234);
+    assert.deepStrictEqual(s, { x: 0, y: 0, rot: 0 }, `${phase} must not breathe`);
+  }
+});
+
+test('M56.6: idleBreathOffset — detune desynchronizes the two actors', () => {
+  const att = idleBreathOffset('idle', 1000);
+  const def = idleBreathOffset('idle', 1000, 700);
+  assert.ok(att.x !== def.x || att.y !== def.y,
+    'detuned actors breathe out of phase');
+});
+
+test('M56.6: idleBreathOffset — deterministic for the same inputs', () => {
+  assert.deepStrictEqual(idleBreathOffset('idle', 500), idleBreathOffset('idle', 500));
 });
