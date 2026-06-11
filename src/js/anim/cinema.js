@@ -311,10 +311,14 @@ function draw(ctx, state, seq, frame, opts) {
   // Damage popups (rise + fade over 800ms)
   drawPopups(ctx, state.popups, frame.t, attAnchor, defAnchor);
 
-  // White flash overlay
+  // Flash overlay — white by default; M56 Phase 5 hit reactions tint
+  // it per damage type via frame.flashColor.
   if (frame.flash > 0.01) {
-    ctx.fillStyle = `rgba(255,255,255,${frame.flash})`;
+    ctx.save();
+    ctx.globalAlpha = frame.flash;
+    ctx.fillStyle = frame.flashColor || '#ffffff';
     ctx.fillRect(-50, -50, W + 100, H + 100);
+    ctx.restore();
   }
 
   ctx.restore();

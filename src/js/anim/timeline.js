@@ -45,6 +45,10 @@ export function playSequence(seq, render, opts = {}) {
   let hitPauseUntil = 0;
   let shake = null;
   let flash = 0;
+  // M56 Phase 5 — flash color rides alongside the decaying intensity
+  // scalar. Last writer wins; persists across frames (NOT reset per
+  // tick) so the tint holds while the intensity decays.
+  let flashColor = null;
   let cancelled = false;
   let frameId = null;
   let resolveFn = null;
@@ -69,6 +73,7 @@ export function playSequence(seq, render, opts = {}) {
           nextShake = shakeAt(ef.params || {}, now);
         } else if (ef.type === 'flash') {
           nextFlash = ef.params?.intensity ?? 0.8;
+          flashColor = ef.params?.color || null;   // null → white default
         }
       }
       // Sprite snapshots
@@ -81,7 +86,7 @@ export function playSequence(seq, render, opts = {}) {
       render({
         attacker: att, defender: def,
         effects: fired, hitPauseUntil: nextHitPause,
-        shake: nextShake, flash: nextFlash, t: now,
+        shake: nextShake, flash: nextFlash, flashColor, t: now,
         duration: seq.duration
       });
       hitPauseUntil = nextHitPause;

@@ -73,6 +73,7 @@ import {
 // UI side-effects (logs, cinema, animations).
 import { runOneAttack as engineRunOneAttack } from './scene/combat-engine.js';
 import { applyPolish } from './anim/polish.js';
+import { applyHitReaction } from './anim/hit-reactions.js';
 import { idlePoseAt } from './anim/idle-pose.js';
 import {
   preloadActorSprite, makeLpcDrawSprite, clearActorSpriteCache,
@@ -747,6 +748,15 @@ async function playCinemaRoundForAttack(attackerHit, targetHit, dmg, opts = {}) 
       damageType: isCast ? (opts.spell?.damageType || null) : (weapon?.damageType || null),
       killing:    !!opts.killing
     });
+    // M56 Phase 5 — per-damage-type defender reaction (fire knockback,
+    // cold freeze, lightning staccato, necrotic drain). Only damaging
+    // hits react; misses and 0-dmg saves keep the base read. Unknown
+    // types are a no-op, so plain slashing/piercing stays unchanged.
+    if (!opts.miss && (dmg | 0) > 0) {
+      seq = applyHitReaction(seq, {
+        damageType: isCast ? opts.spell?.damageType : weapon?.damageType
+      });
+    }
   }
   // Update actor sprites to match the current attacker / defender
   await versusCinema.setActors?.({
