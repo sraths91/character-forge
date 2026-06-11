@@ -23,6 +23,7 @@
 import { renderSprite } from '../sprite/compositor.js';
 import { MONSTER_PRESETS, buildMonsterCharacter } from '../scene/monster-presets.js';
 import { actorStateAt } from './fsm.js';
+import { HURT_TAIL_MS, IDLE_BOB_MS } from './timings.js';
 import { loadImage } from '../sprite/image-cache.js';
 import { weaponSpriteSrc, FRAME, BODY_ANIMS, bodyAnimSheet } from '../sprite/lpc-config.js';
 import { motionForWeapon } from './weapon-motions.js';
@@ -47,8 +48,7 @@ const FRAME_STRIKE = 6;
 const FRAME_HURT   = 4;
 const ACTOR_FRAMES = [FRAME_IDLE_A, FRAME_IDLE_B, FRAME_WINDUP, FRAME_STRIKE, FRAME_HURT];
 
-// Idle bob period in ms — alternation between IDLE_A and IDLE_B.
-const IDLE_BOB_MS = 280;
+// Idle bob period (IDLE_BOB_MS) is shared via timings.js.
 
 // M44.5 — Cache keyed by `${id}|${direction}` so the same entity can
 // be pre-rendered in both east-facing (attacker) and west-facing
@@ -217,7 +217,7 @@ function pickAttackBuf(entry, snapshot, actor) {
   }
   if (actor === 'defender' && set.animation === 'hurt') {
     if (phase !== 'hurt') return null;
-    const u = clamp01((t - impactAt) / 220);
+    const u = clamp01((t - impactAt) / HURT_TAIL_MS);
     const idx = Math.round(u * (set.count - 1));
     return set.frames.get(clampInt(idx, 0, set.count - 1)) || null;
   }

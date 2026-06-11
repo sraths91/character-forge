@@ -17,6 +17,11 @@
  * `actorStateAt(actor, t, impactAt)` every frame.
  */
 
+import {
+  WINDUP_LEAD_MS, STRIKE_LEAD_MS, STRIKE_TAIL_MS, HURT_TAIL_MS,
+  FADE_MS, IDLE_BOB_MS
+} from './timings.js';
+
 // LPC walk-sheet pose indices (mirrors cinema-sprites.js).
 export const POSE = {
   IDLE_A:  0,
@@ -26,42 +31,34 @@ export const POSE = {
   STRIKE:  6
 };
 
-// How long the cross-fade window lasts at the start of each new pose.
-// 80ms = ~5 frames at 60fps — long enough to read as smooth, short
-// enough that no held pose feels mushy.
-const FADE_MS = 80;
-
-// Idle bob period — alternation A↔B in the idle/recover states.
-const IDLE_BOB_MS = 280;
-
 /**
  * Classify the attacker's swing phase at time `t` relative to the
- * sequence's impact moment. Mirrors cinema.js phaseAt but is owned
- * here so the FSM doesn't depend on cinema.
+ * sequence's impact moment. Owned here so the FSM doesn't depend on
+ * cinema; cinema.js re-exports this as `phaseAt`.
  *
- *   t < impactAt - 350         → idle (pre-fight stance)
- *   impactAt - 350 ≤ t < -100  → windup
- *   -100 ≤ t < impactAt + 180  → strike (impact + immediate follow-through)
- *   t ≥ impactAt + 180         → recover
+ *   t < impactAt - WINDUP_LEAD         → idle (pre-fight stance)
+ *   - WINDUP_LEAD ≤ t < -STRIKE_LEAD   → windup
+ *   - STRIKE_LEAD ≤ t < +STRIKE_TAIL   → strike (impact + follow-through)
+ *   t ≥ impactAt + STRIKE_TAIL         → recover
  */
 export function attackerPhaseAt(t, impactAt) {
   if (!Number.isFinite(impactAt)) return 'idle';
-  if (t < impactAt - 350) return 'idle';
-  if (t < impactAt - 100) return 'windup';
-  if (t < impactAt + 180) return 'strike';
+  if (t < impactAt - WINDUP_LEAD_MS) return 'idle';
+  if (t < impactAt - STRIKE_LEAD_MS) return 'windup';
+  if (t < impactAt + STRIKE_TAIL_MS) return 'strike';
   return 'recover';
 }
 
 /**
  * Classify the defender's swing phase.
- *   t < impactAt          → idle
- *   impactAt ≤ t < +220   → hurt
- *   t ≥ impactAt + 220    → idle
+ *   t < impactAt                 → idle
+ *   impactAt ≤ t < +HURT_TAIL    → hurt
+ *   t ≥ impactAt + HURT_TAIL     → idle
  */
 export function defenderPhaseAt(t, impactAt) {
   if (!Number.isFinite(impactAt)) return 'idle';
   if (t < impactAt) return 'idle';
-  if (t < impactAt + 220) return 'hurt';
+  if (t < impactAt + HURT_TAIL_MS) return 'hurt';
   return 'idle';
 }
 
@@ -99,9 +96,9 @@ function defenderPose(phase, t) {
 function attackerPhaseStart(phase, impactAt) {
   if (!Number.isFinite(impactAt)) return 0;
   if (phase === 'idle')    return Number.NEGATIVE_INFINITY;
-  if (phase === 'windup')  return impactAt - 350;
-  if (phase === 'strike')  return impactAt - 100;
-  if (phase === 'recover') return impactAt + 180;
+  if (phase === 'windup')  return impactAt - WINDUP_LEAD_MS;
+  if (phase === 'strike')  return impactAt - STRIKE_LEAD_MS;
+  if (phase === 'recover') return impactAt + STRIKE_TAIL_MS;
   return 0;
 }
 function defenderPhaseStart(phase, impactAt) {

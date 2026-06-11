@@ -30,6 +30,7 @@
 
 import { playSequence } from './timeline.js';
 import { createParticleSystem, presetConfig } from './particles.js';
+import { attackerPhaseAt as phaseAt, defenderPhaseAt } from './fsm.js';
 
 /* =====================================================================
  * Pure state machine
@@ -49,38 +50,11 @@ export function createCinemaState({ attacker, defender } = {}) {
 }
 
 /**
- * M44.1 — Classify the attacker's swing phase at time `t` relative to
- * the sequence's impact moment. Used by the LPC sprite renderer to
- * select an animation frame (windup → strike → recover → idle).
- *
- *   t < impactAt - 350         → idle (pre-fight stance)
- *   impactAt - 350 ≤ t < -100  → windup
- *   -100 ≤ t < impactAt + 180  → strike (impact + immediate follow-through)
- *   t ≥ impactAt + 180         → recover (returns to idle bob)
+ * M44.1 / M44.3 — Swing-phase classifiers. The logic lives in fsm.js
+ * (single source of truth, M56 Phase 1); re-exported here under the
+ * cinema's historical names so existing callers keep working.
  */
-export function phaseAt(t, impactAt) {
-  if (!Number.isFinite(impactAt)) return 'idle';
-  if (t < impactAt - 350) return 'idle';
-  if (t < impactAt - 100) return 'windup';
-  if (t < impactAt + 180) return 'strike';
-  return 'recover';
-}
-
-/**
- * M44.3 — Defender swing phase. The defender has no wind-up or strike
- * pose; instead they read the hit at impact with a brief flinch and a
- * red tint, then return to idle.
- *
- *   t < impactAt          → idle (calm before the hit)
- *   impactAt ≤ t < +220   → hurt (flinch pose + red tint overlay)
- *   t ≥ impactAt + 220    → idle (recovery is just back to the bob)
- */
-export function defenderPhaseAt(t, impactAt) {
-  if (!Number.isFinite(impactAt)) return 'idle';
-  if (t < impactAt) return 'idle';
-  if (t < impactAt + 220) return 'hurt';
-  return 'idle';
-}
+export { phaseAt, defenderPhaseAt };
 
 /** Find the time-ms when the sequence's primary hit-pause fires. */
 export function findHitPauseAt(seq) {
