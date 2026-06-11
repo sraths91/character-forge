@@ -5,6 +5,7 @@ import {
   phaseAt, defenderPhaseAt
 } from '../js/anim/cinema.js';
 import { buildMotion } from '../js/anim/weapon-motions.js';
+import { buildSpellSequence } from '../js/anim/spell-motions.js';
 
 // ---------- createCinemaState ----------
 
@@ -284,4 +285,44 @@ test('M44.3: defenderPhaseAt — past hurt window returns to idle', () => {
 
 test('M44.3: defenderPhaseAt — non-finite impactAt safely falls back to idle', () => {
   assert.strictEqual(defenderPhaseAt(500, NaN), 'idle');
+});
+
+// ---------- M56 Phase 2: heal verdicts ----------
+
+test('M56.2: playRound — heal verdict raises HP through the real pendingDmg path', async () => {
+  const cinema = createCinema({
+    canvas: null,
+    attacker: { hpMax: 30, name: 'Cleric' },
+    defender: { hpMax: 20, name: 'Ally' }
+  });
+  cinema.resetHp({ attHp: 30, defHp: 5 });
+  const seq = buildSpellSequence({ spell: { kind: 'heal' }, outcome: { heal: 9 } });
+  await cinema.playRound(seq, { victim: 'defender', dmg: 0, heal: 9, miss: false });
+  assert.strictEqual(cinema.state.defHp, 14, '5 + 9 healed');
+  const popup = cinema.state.popups.find(p => p.heal > 0);
+  assert.ok(popup, 'a heal popup was pushed');
+  assert.strictEqual(popup.heal, 9);
+  assert.strictEqual(popup.side, 'defender');
+});
+
+test('M56.2: playRound — heal clamps at the defender max', async () => {
+  const cinema = createCinema({
+    canvas: null,
+    attacker: { hpMax: 30, name: 'Cleric' },
+    defender: { hpMax: 20, name: 'Ally' }
+  });
+  cinema.resetHp({ attHp: 30, defHp: 18 });
+  const seq = buildSpellSequence({ spell: { kind: 'heal' }, outcome: { heal: 12 } });
+  await cinema.playRound(seq, { victim: 'defender', dmg: 0, heal: 12, miss: false });
+  assert.strictEqual(cinema.state.defHp, 20, 'clamped to max');
+});
+
+test('M56.2: applyVerdictToState — heal never subtracts even with dmg present', () => {
+  const s = createCinemaState({
+    attacker: { hpMax: 30 }, defender: { hpMax: 20 }
+  });
+  s.defHp = 6;
+  s.pendingDmg = { victim: 'defender', dmg: 4, heal: 8 };
+  applyVerdictToState(s, 500, 500);
+  assert.strictEqual(s.defHp, 14, 'heal wins; dmg ignored');
 });

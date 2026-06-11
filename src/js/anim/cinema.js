@@ -71,6 +71,17 @@ export function applyVerdictToState(state, t, pauseAt) {
   if (!state.pendingDmg) return false;
   if (t < pauseAt) return false;
   const v = state.pendingDmg;
+  // M56 Phase 2 — Heal verdicts ADD HP (clamped to max) and pop green.
+  if (v.heal > 0) {
+    if (v.victim === 'attacker') {
+      state.attHp = Math.min(state.attHpMax, state.attHp + v.heal);
+    } else {
+      state.defHp = Math.min(state.defHpMax, state.defHp + v.heal);
+    }
+    state.popups.push({ side: v.victim, heal: v.heal, t });
+    state.pendingDmg = null;
+    return true;
+  }
   if (v.victim === 'attacker') state.attHp = Math.max(0, state.attHp - (v.dmg || 0));
   else                          state.defHp = Math.max(0, state.defHp - (v.dmg || 0));
   state.popups.push({ side: v.victim, dmg: v.dmg, crit: !!v.crit, t });
@@ -114,7 +125,8 @@ export function createCinema({
       victim: verdict.victim || 'defender',
       dmg:    verdict.dmg ?? 0,
       crit:   !!verdict.crit,
-      miss:   !!verdict.miss
+      miss:   !!verdict.miss,
+      heal:   verdict.heal || 0
     };
     if (verdict.miss) state.pendingDmg.dmg = 0;
     // Headless fast-path: when there's no canvas, skip the rAF timeline
@@ -239,10 +251,14 @@ function draw(ctx, state, seq, frame, opts) {
   // swing phase. Pure additive — renderers that ignore these fields
   // still see the original x/y/rotation/scale/alpha snapshot.
   const impactAt = findHitPauseAt(seq);
+  // M56 Phase 2 — Friendly sequences (heals) keep the defender in idle:
+  // a NaN impact makes the FSM classify every t as 'idle', which also
+  // suppresses the hurt-sheet frames and the red flinch tint.
+  const friendly = !!seq.meta?.friendly;
   const attackerPhase = phaseAt(frame.t, impactAt);
-  const defenderPhase = defenderPhaseAt(frame.t, impactAt);
+  const defenderPhase = friendly ? 'idle' : defenderPhaseAt(frame.t, impactAt);
   const attSnap = { ...frame.attacker, _t: frame.t, _impactAt: impactAt, _duration: seq.duration, _phase: attackerPhase };
-  const defSnap = { ...frame.defender, _t: frame.t, _impactAt: impactAt, _duration: seq.duration, _phase: defenderPhase };
+  const defSnap = { ...frame.defender, _t: frame.t, _impactAt: friendly ? NaN : impactAt, _duration: seq.duration, _phase: defenderPhase };
   opts.drawSprite(ctx, 'attacker', attAnchor, attSnap, opts.attacker);
   // M51 — the attacker's weapon swings as a separate overlay on top of
   // the (weapon-less) body so the blade actually sweeps with a smear.
@@ -372,14 +388,16 @@ function drawPopups(ctx, popups, t, attAnchor, defAnchor) {
     const anchor = p.side === 'attacker' ? attAnchor : defAnchor;
     const y = anchor.y - 50 - u * 35;
     const alpha = 1 - u;
+    // M56 Phase 2 — heal popups rise green with a leading '+'.
+    const isHeal = (p.heal || 0) > 0;
     ctx.save();
     ctx.globalAlpha = alpha;
-    ctx.fillStyle = p.crit ? '#fbbf24' : '#f87171';
+    ctx.fillStyle = isHeal ? '#4ade80' : p.crit ? '#fbbf24' : '#f87171';
     ctx.font = `bold ${p.crit ? 28 : 22}px ui-sans-serif, sans-serif`;
     ctx.textAlign = 'center';
     ctx.strokeStyle = 'rgba(0,0,0,0.85)';
     ctx.lineWidth = 4;
-    const text = p.crit ? `CRIT ${p.dmg}!` : String(p.dmg);
+    const text = isHeal ? `+${p.heal}` : p.crit ? `CRIT ${p.dmg}!` : String(p.dmg);
     ctx.strokeText(text, anchor.x, y);
     ctx.fillText(text, anchor.x, y);
     ctx.restore();
@@ -454,7 +472,8 @@ const COLOR_FOR_TYPE = {
   lightning:  '#fde047',
   force:      '#a78bfa',
   radiant:    '#fef3c7',
-  necrotic:   '#a855f7'
+  necrotic:   '#a855f7',
+  heal:       '#4ade80'
 };
 function colorFor(params) {
   const t = params?.damageType;
@@ -629,7 +648,9 @@ export function bezierTangent(t, p0, p1, p2) {
 
 function drawBurst(ctx, u, def, params) {
   const color = colorFor(params);
-  const radius = 8 + u * 50;
+  // M56 Phase 2 — params.radius sets the max growth so save spells can
+  // read weaker (22) and AoE blasts wider (70/100) than the default.
+  const radius = 8 + u * (Number.isFinite(params?.radius) ? params.radius : 50);
   const alpha = (1 - u) * 0.95;
   ctx.save();
   ctx.fillStyle = color;

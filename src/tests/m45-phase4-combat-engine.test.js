@@ -143,3 +143,207 @@ test('M45 Phase 4: applyDamageToEntity — non-positive damage is a no-op', () =
 test('M45 Phase 4: applyDamageToEntity — null target is safe', () => {
   assert.doesNotThrow(() => applyDamageToEntity(null, 5));
 });
+
+// =====================================================================
+// M56 Phase 2 — spell-cast cinema dispatch (onCinemaRound, cast: true)
+// =====================================================================
+
+function castWizard(over = {}) {
+  return {
+    ref: { name: 'Wiz', classes: [{ name: 'Wizard', level: 3 }],
+           abilityModifiers: { INT: 4 } },
+    id: 'pc1', name: 'Wiz', kind: 'pc',
+    hp: 22, hpMax: 22, ac: 14,
+    conditions: [], damageDealt: 0, weapon: null,
+    _position: { col: 1, row: 1 },
+    _slots: { 1: 3, 2: 2, 3: 1 },
+    ...over
+  };
+}
+function castGoblin(over = {}) {
+  return {
+    ref: { name: 'Goblin' },
+    id: 'm1', name: 'Goblin', kind: 'monster',
+    presetSlug: 'goblin',
+    hp: 30, hpMax: 30, ac: 12,
+    conditions: [], damageDealt: 0,
+    position: { col: 2, row: 1 },
+    ...over
+  };
+}
+function castSpy() {
+  const calls = [];
+  return { calls, prompts: { onCinemaRound: async (ev) => { calls.push(ev); } } };
+}
+async function castSpell({ attacker, target, spellId, castAtLevel = 1,
+                           allEnemies = null, prompts = {} }) {
+  await runMonsterSpell({
+    attacker, target,
+    plan: { spellId, castAtLevel, targetId: target?.id },
+    scene: { cols: 10, rows: 7 },
+    rng: () => 0.5,
+    witnesses: [],
+    allEnemies: allEnemies ?? (target ? [target] : []),
+    prompts
+  });
+}
+
+test('M56.2: heal dispatches cast cinema with the heal amount', async () => {
+  const wiz = castWizard();
+  const ally = castWizard({ id: 'pc2', name: 'Ally', hp: 5, hpMax: 20,
+    ref: { name: 'Ally', classes: [{ name: 'Cleric', level: 3 }], abilityModifiers: { WIS: 2 } } });
+  const { calls, prompts } = castSpy();
+  await castSpell({ attacker: wiz, target: ally, spellId: 'cure-wounds', prompts });
+  assert.strictEqual(calls.length, 1);
+  assert.strictEqual(calls[0].cast, true);
+  assert.strictEqual(calls[0].spell.id, 'cure-wounds');
+  assert.strictEqual(calls[0].defender.id, 'pc2');
+  assert.ok(calls[0].outcome.heal > 0, 'outcome carries the heal amount');
+  assert.ok(ally.hp > 5, 'healing applied before the dispatch');
+});
+
+test('M56.2: heal with no valid target dispatches nothing', async () => {
+  const wiz = castWizard();
+  const { calls, prompts } = castSpy();
+  await castSpell({ attacker: wiz, target: null, spellId: 'cure-wounds', prompts });
+  assert.strictEqual(calls.length, 0);
+});
+
+test('M56.2: magic missile dispatches dmg + dart count', async () => {
+  const wiz = castWizard();
+  const gob = castGoblin();
+  const { calls, prompts } = castSpy();
+  await castSpell({ attacker: wiz, target: gob, spellId: 'magic-missile', prompts });
+  assert.strictEqual(calls.length, 1);
+  assert.strictEqual(calls[0].cast, true);
+  assert.strictEqual(calls[0].outcome.darts, 3);
+  assert.ok(calls[0].outcome.dmg > 0);
+});
+
+test('M56.2: Shield-negated magic missile dispatches nothing', async () => {
+  const wiz = castWizard();
+  const shielded = castWizard({
+    id: 'pc9', name: 'Shieldy',
+    ref: { name: 'Shieldy', classes: [{ name: 'Wizard', level: 3 }],
+           abilityModifiers: { INT: 2 }, spells: ['Shield'] },
+    _lvl1Slots: 1
+  });
+  const { calls, prompts } = castSpy();
+  await castSpell({ attacker: wiz, target: shielded, spellId: 'magic-missile', prompts });
+  assert.strictEqual(calls.length, 0, 'fizzled cast plays no cinema');
+});
+
+test('M56.2: spell attack hit dispatches dmg; miss dispatches miss: true', async () => {
+  const wiz = castWizard();
+  // rng 0.5 → d20 = 11; +6 (prof 2 + INT 4) = 17 vs AC 12 → hit
+  const gob = castGoblin();
+  const hit = castSpy();
+  await castSpell({ attacker: wiz, target: gob, spellId: 'fire-bolt',
+                    castAtLevel: 0, prompts: hit.prompts });
+  assert.strictEqual(hit.calls.length, 1);
+  assert.ok(hit.calls[0].outcome.dmg > 0);
+  assert.ok(!hit.calls[0].outcome.miss);
+  // 17 vs AC 30 → miss
+  const wall = castGoblin({ id: 'm2', ac: 30 });
+  const miss = castSpy();
+  await castSpell({ attacker: castWizard(), target: wall, spellId: 'fire-bolt',
+                    castAtLevel: 0, prompts: miss.prompts });
+  assert.strictEqual(miss.calls.length, 1);
+  assert.strictEqual(miss.calls[0].outcome.dmg, 0);
+  assert.strictEqual(miss.calls[0].outcome.miss, true);
+});
+
+test('M56.2: Shield-negated spell attack dispatches nothing', async () => {
+  const wiz = castWizard();
+  // total 17 vs AC 14: hit, and 17 < 19 so Shield converts it → fizzle
+  const shielded = castWizard({
+    id: 'pc9', name: 'Shieldy', ac: 14,
+    ref: { name: 'Shieldy', classes: [{ name: 'Wizard', level: 3 }],
+           abilityModifiers: { INT: 2 }, spells: ['Shield'] },
+    _lvl1Slots: 1
+  });
+  const { calls, prompts } = castSpy();
+  await castSpell({ attacker: wiz, target: shielded, spellId: 'fire-bolt',
+                    castAtLevel: 0, prompts });
+  assert.strictEqual(calls.length, 0);
+});
+
+test('M56.2: single save dispatches dmg + saved; condition-only dispatches dmg 0', async () => {
+  const wiz = castWizard();
+  // DEX 0 → save 11 < DC 14 → fail, full 1d8
+  const slow = castWizard({ id: 'pc3', name: 'Slow',
+    ref: { name: 'Slow', classes: [{ name: 'Fighter', level: 3 }],
+           abilityModifiers: { DEX: 0, WIS: 0 } } });
+  const failed = castSpy();
+  await castSpell({ attacker: wiz, target: slow, spellId: 'sacred-flame',
+                    castAtLevel: 0, prompts: failed.prompts });
+  assert.strictEqual(failed.calls.length, 1);
+  assert.ok(failed.calls[0].outcome.dmg > 0);
+  assert.strictEqual(failed.calls[0].outcome.saved, false);
+  // DEX +5 → save 16 ≥ 14 → success; sacred flame has no half → dmg 0
+  const dexy = castWizard({ id: 'pc4', name: 'Dexy',
+    ref: { name: 'Dexy', classes: [{ name: 'Rogue', level: 3 }],
+           abilityModifiers: { DEX: 5 } } });
+  const saved = castSpy();
+  await castSpell({ attacker: castWizard(), target: dexy, spellId: 'sacred-flame',
+                    castAtLevel: 0, prompts: saved.prompts });
+  assert.strictEqual(saved.calls.length, 1);
+  assert.strictEqual(saved.calls[0].outcome.dmg, 0);
+  assert.strictEqual(saved.calls[0].outcome.saved, true);
+  // Hold Person (dice: null) — landed condition still dispatches, dmg 0
+  const held = castWizard({ id: 'pc5', name: 'Held',
+    ref: { name: 'Held', classes: [{ name: 'Fighter', level: 3 }],
+           abilityModifiers: { WIS: 0 } } });
+  const cond = castSpy();
+  await castSpell({ attacker: castWizard(), target: held, spellId: 'hold-person',
+                    castAtLevel: 2, prompts: cond.prompts });
+  assert.strictEqual(cond.calls.length, 1);
+  assert.strictEqual(cond.calls[0].outcome.dmg, 0);
+  assert.strictEqual(cond.calls[0].outcome.saved, false);
+  assert.ok(held.conditions.includes('paralyzed'), 'the condition landed');
+});
+
+test('M56.2: AoE frames the hardest-hit target, not the planner target', async () => {
+  const wiz = castWizard();   // at col 1
+  // Planner target saves (DEX +5 → 16 ≥ 14, half damage); the other
+  // target fails (DEX 0 → full damage) and must be framed instead.
+  const dexy = castWizard({ id: 'pc4', name: 'Dexy', _position: { col: 2, row: 1 },
+    ref: { name: 'Dexy', classes: [{ name: 'Rogue', level: 3 }],
+           abilityModifiers: { DEX: 5 } } });
+  const slow = castWizard({ id: 'pc3', name: 'Slow', _position: { col: 2, row: 2 },
+    ref: { name: 'Slow', classes: [{ name: 'Fighter', level: 3 }],
+           abilityModifiers: { DEX: 0 } } });
+  const { calls, prompts } = castSpy();
+  await castSpell({ attacker: wiz, target: dexy, spellId: 'fire-breath',
+                    castAtLevel: 0, allEnemies: [dexy, slow], prompts });
+  assert.strictEqual(calls.length, 1, 'one dispatch for the whole blast');
+  assert.strictEqual(calls[0].defender.id, 'pc3', 'framed the hardest-hit target');
+  assert.strictEqual(calls[0].outcome.saved, false);
+  assert.strictEqual(calls[0].outcome.targets, 2);
+  assert.ok(calls[0].outcome.dmg >= calls[0].outcome.total - calls[0].outcome.dmg,
+    'framed target took the largest share');
+});
+
+test('M56.2: AoE with nobody in range dispatches nothing', async () => {
+  const wiz = castWizard();   // at col 1; fire-breath range 15ft = 3 cells
+  const far = castWizard({ id: 'pc6', name: 'Far', _position: { col: 9, row: 6 },
+    ref: { name: 'Far', classes: [{ name: 'Fighter', level: 3 }],
+           abilityModifiers: { DEX: 0 } } });
+  const { calls, prompts } = castSpy();
+  await castSpell({ attacker: wiz, target: far, spellId: 'fire-breath',
+                    castAtLevel: 0, allEnemies: [far], prompts });
+  assert.strictEqual(calls.length, 0);
+});
+
+test('M56.2: simulator path (prompts: {}) resolves every kind without dispatching', async () => {
+  for (const [spellId, castAtLevel] of [
+    ['cure-wounds', 1], ['magic-missile', 1], ['fire-bolt', 0],
+    ['sacred-flame', 0], ['fire-breath', 0]
+  ]) {
+    const wiz = castWizard();
+    const gob = castGoblin({ position: { col: 2, row: 1 } });
+    await assert.doesNotReject(
+      castSpell({ attacker: wiz, target: gob, spellId, castAtLevel, prompts: {} })
+    );
+  }
+});

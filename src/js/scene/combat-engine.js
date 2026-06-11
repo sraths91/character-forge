@@ -437,12 +437,26 @@ export async function runMonsterSpell({ attacker, target, plan, scene: _scene, r
     break;
   }
 
+  // M56 Phase 2 — Every resolved cast dramatizes through the same
+  // onCinemaRound prompt as weapon swings, tagged `cast: true` with a
+  // per-kind `outcome` payload. Shield-negated casts dispatch nothing
+  // (the cast fizzles silently; a fizzle cinema is deferred). Guarded
+  // exactly like the weapon path so the simulator's prompts:{} hot
+  // loop is untouched.
+  const castCinema = async (defender, outcome) => {
+    if (!prompts.onCinemaRound) return;
+    await prompts.onCinemaRound({
+      attacker, defender, plan, spell, cast: true, outcome
+    });
+  };
+
   if (spell.kind === 'heal') {
     const dmgRoll = rollDamage(spell.dice, { crit: false }, rng);
     const mod = spell.addsAbilityMod ? (effectiveBook.abilityMod || 0) : 0;
     const heal = dmgRoll.total + mod;
     if (target?.hpMax > 0) {
       target.hp = Math.min(target.hpMax, target.hp + heal);
+      await castCinema(target, { heal });
     }
     return;
   }
@@ -460,6 +474,7 @@ export async function runMonsterSpell({ attacker, target, plan, scene: _scene, r
     }
     applyDamageToEntity(target, totalDmg);
     attacker.damageDealt += totalDmg;
+    await castCinema(target, { dmg: totalDmg, darts });
     return;
   }
 
@@ -474,10 +489,14 @@ export async function runMonsterSpell({ attacker, target, plan, scene: _scene, r
       consumeShield(target);
       return;
     }
-    if (!atk.hit) return;
+    if (!atk.hit) {
+      await castCinema(target, { dmg: 0, miss: true });
+      return;
+    }
     const dmg = rollDamage(spell.dice, { crit: atk.crit }, rng);
     applyDamageToEntity(target, dmg.total);
     attacker.damageDealt += dmg.total;
+    await castCinema(target, { dmg: dmg.total, crit: !!atk.crit });
     return;
   }
 
@@ -486,6 +505,7 @@ export async function runMonsterSpell({ attacker, target, plan, scene: _scene, r
     const center = attacker._position || attacker.position;
     if (center) {
       let totalDmg = 0;
+      const aoeResults = [];
       for (const e of allEnemies) {
         if (!isAlive(e)) continue;
         const ep = e._position || e.position;
@@ -498,8 +518,19 @@ export async function runMonsterSpell({ attacker, target, plan, scene: _scene, r
         if (eSave.success) dmg = spell.saveOnHalf ? Math.floor(dmg / 2) : 0;
         applyDamageToEntity(e, dmg);
         totalDmg += dmg;
+        aoeResults.push({ entity: e, dmg, saved: eSave.success });
       }
       attacker.damageDealt += totalDmg;
+      // Frame the hardest-hit target — the planner's `target` may have
+      // been range-excluded or saved for 0, so don't frame it blindly.
+      // Nobody in range → nothing happened on screen → no dispatch.
+      if (aoeResults.length > 0) {
+        const framed = aoeResults.reduce((a, b) => (b.dmg > a.dmg ? b : a));
+        await castCinema(framed.entity, {
+          dmg: framed.dmg, saved: framed.saved,
+          total: totalDmg, targets: aoeResults.length
+        });
+      }
     }
     return;
   }
@@ -508,12 +539,14 @@ export async function runMonsterSpell({ attacker, target, plan, scene: _scene, r
   const saveStat = spell.saveStat;
   const targetSaveBonus = saveBonusFor(target, saveStat);
   const save = rollSave({ bonus: targetSaveBonus, dc: effectiveBook.dc }, rng);
+  let saveDmg = 0;
   if (spell.dice) {
     const dmgRoll = rollDamage(spell.dice, { crit: false }, rng);
     let dmg = dmgRoll.total;
     if (save.success) dmg = spell.saveOnHalf ? Math.floor(dmg / 2) : 0;
     applyDamageToEntity(target, dmg);
     attacker.damageDealt += dmg;
+    saveDmg = dmg;
   }
   if (!save.success && spell.appliesCondition) {
     if (!target.conditions.includes(spell.appliesCondition)) {
@@ -523,6 +556,9 @@ export async function runMonsterSpell({ attacker, target, plan, scene: _scene, r
       startConcentration(attacker, spell, [target.id]);
     }
   }
+  // Condition-only spells (dice: null) dispatch dmg 0 — the bridge
+  // pins miss: false so a landed Hold Person never reads as a whiff.
+  await castCinema(target, { dmg: saveDmg, saved: save.success });
 }
 
 // =====================================================================

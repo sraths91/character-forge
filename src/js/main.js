@@ -57,6 +57,7 @@ import {
 import { promptReaction } from './scene/reaction-prompt.js';
 import { createCinema, phaseAt } from './anim/cinema.js';
 import { buildMotion, motionForWeapon } from './anim/weapon-motions.js';
+import { buildSpellSequence } from './anim/spell-motions.js';
 import {
   applyStyle, availableStyles, styleForPc, saveStyle, isStyle
 } from './anim/motion-styles.js';
@@ -675,12 +676,15 @@ async function playCinemaRoundForAttack(attackerHit, targetHit, dmg, opts = {}) 
   const weapon = attackerHit.kind === 'pc'
     ? (attackerHit.entity.equipment?.mainhand || null)
     : { name: MONSTER_PRESETS[attackerHit.entity.presetSlug]?.attack?.name };
-  // M45 Phase 5 — Cast plans use the staff-cast motion regardless of
-  // the caster's equipped weapon. Reading the plan kind from opts
-  // keeps the cinema's weapon-by-default behavior for plain attacks.
-  const isCast = opts.plan?.kind === 'cast';
+  // M56 Phase 2 — Resolved casts route to the spell-sequence builder
+  // (per-kind variants: heal / missiles / bolt / save / aoe) instead
+  // of the bare staff-cast motion. Weapon attacks keep the
+  // weapon-by-default behavior.
+  const isCast = !!opts.cast;
   const motionId = isCast ? 'staff-cast' : motionForWeapon(weapon);
-  let seq = buildMotion(motionId);
+  let seq = isCast
+    ? buildSpellSequence({ spell: opts.spell || {}, outcome: opts.outcome || {} })
+    : buildMotion(motionId);
   if (!seq) return;
   // M43.3 — Apply the PC's chosen attack style (Quick / Standard /
   // Power / Flourish). Monsters always use Standard for v1.
@@ -700,7 +704,9 @@ async function playCinemaRoundForAttack(attackerHit, targetHit, dmg, opts = {}) 
   const attackerLevel = attackerHit.kind === 'pc'
     ? ((attackerHit.entity.classes || []).reduce((s, c) => s + (c?.level || 0), 0) || 1)
     : 1;
-  if (attackerHit.kind === 'pc') {
+  // M56 Phase 2 — class-feature modifier overlays are weapon-swing
+  // dressing (Sneak/Rage/GWM/Smite/Reckless); casts skip them.
+  if (attackerHit.kind === 'pc' && !isCast) {
     const post = snapshotAttackerFlags(attackerHit.entity);
     const fired = modifiersForAttack({
       pre: opts.preAttackFlags || {},
@@ -718,16 +724,22 @@ async function playCinemaRoundForAttack(attackerHit, targetHit, dmg, opts = {}) 
   const defenderMax = targetHit.entity.hp?.max
     ?? targetHit.entity.hpMax
     ?? (targetHit.entity.hp?.current ?? 0) + (dmg || 0);
-  seq = applyPolish(seq, {
-    level:      attackerLevel,
-    crit:       !!opts.crit,
-    dmg:        dmg | 0,
-    defenderHp: defenderMax,
-    magical:    !!weapon?.magical,
-    material:   weapon?.material || null,
-    damageType: weapon?.damageType || null,
-    killing:    !!opts.killing
-  });
+  // M56 Phase 2 — friendly sequences (heals) skip polish entirely:
+  // crit pauses, big-hit zooms, and level-tier impact bursts are all
+  // offensive dressing. Casts that DO hit read the spell's damage
+  // type; weapon swings keep reading the weapon.
+  if (!seq.meta?.friendly) {
+    seq = applyPolish(seq, {
+      level:      attackerLevel,
+      crit:       !!opts.crit,
+      dmg:        dmg | 0,
+      defenderHp: defenderMax,
+      magical:    isCast ? false : !!weapon?.magical,
+      material:   isCast ? null : (weapon?.material || null),
+      damageType: isCast ? (opts.spell?.damageType || null) : (weapon?.damageType || null),
+      killing:    !!opts.killing
+    });
+  }
   // Update actor sprites to match the current attacker / defender
   await versusCinema.setActors?.({
     attacker: attackerHit.entity,
@@ -757,6 +769,8 @@ async function playCinemaRoundForAttack(attackerHit, targetHit, dmg, opts = {}) 
     victim: 'defender',
     dmg: Math.max(0, dmg | 0),
     crit: !!opts.crit,
+    // M56 Phase 2 — heals ride the verdict and ADD HP (green popup).
+    heal: Math.max(0, opts.outcome?.heal | 0),
     // M43.6 — Prefer the explicit miss signal from the attack resolver
     // (a 0-damage hit on a resistant target should NOT read as a miss).
     // Fall back to the dmg-derived inference for legacy callers.
@@ -1232,13 +1246,35 @@ async function runEngineTurn(entity, entityKind, opts = {}) {
     // pre-built plan (target, weapon) so the engine skips AI planning
     // and resolves the player's choice directly.
     forcePlan: opts.forcePlan || null,
-    // Cinema-round dispatch — fires after every weapon swing. Bridges
-    // to the existing playCinemaRoundForAttack helper.
-    onCinemaRound: async ({ attacker, defender, atk, dmg, crit, miss }) => {
+    // Cinema-round dispatch — fires after every weapon swing AND
+    // (M56 Phase 2) every resolved cast. Bridges to the existing
+    // playCinemaRoundForAttack helper.
+    onCinemaRound: async ({ attacker, defender, atk, dmg, crit, miss, spell, cast, outcome }) => {
       if (!(versusCinemaActive && versusCinema)) return;
+      if (!attacker?.ref || !defender?.ref) return;
       const attackerLive = attacker.ref;
       const defenderLive = defender.ref;
       const beforeTargetHp = defender.hpMax;   // pre-attack baseline
+      if (cast) {
+        // Resolved cast: the positional dmg is the framed target's
+        // damage (0 for heals and condition-only saves) and miss is
+        // explicit — a landed Hold Person or a Cure Wounds must never
+        // read as a whiff via the !dmg inference. The heal amount
+        // rides outcome → verdict.heal.
+        await playCinemaRoundForAttack(
+          { kind: attacker.kind, entity: attackerLive },
+          { kind: defender.kind, entity: defenderLive },
+          outcome?.dmg | 0,
+          {
+            cast: true, spell, outcome,
+            crit: !!outcome?.crit,
+            miss: !!outcome?.miss,
+            killing: defender.hp <= 0 && beforeTargetHp > 0
+          }
+        );
+        void atk;
+        return;
+      }
       await playCinemaRoundForAttack(
         { kind: attacker.kind, entity: attackerLive },
         { kind: defender.kind, entity: defenderLive },
