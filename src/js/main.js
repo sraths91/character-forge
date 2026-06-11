@@ -55,13 +55,13 @@ import {
   innateBlockFor, freshInnateState, rollInnateRecharges
 } from './scene/monster-spells.js';
 import { promptReaction } from './scene/reaction-prompt.js';
-import { createCinema } from './anim/cinema.js';
+import { createCinema, phaseAt } from './anim/cinema.js';
 import { buildMotion, motionForWeapon } from './anim/weapon-motions.js';
 import {
   applyStyle, availableStyles, styleForPc, saveStyle, isStyle
 } from './anim/motion-styles.js';
 import {
-  SWING_TYPES, availableSwings, swingForPc, saveSwing, isSwingSelection,
+  SWING_TYPES, availableSwings, swingForPc, saveSwing, isSwing, isSwingSelection,
   nextVariedSwing, applySwing
 } from './anim/swing-types.js';
 import {
@@ -206,6 +206,7 @@ function rerender() {
   const c = JSON.parse(JSON.stringify(slotEffective));
   applyAppearanceOverrides(c, currentAppearance);
   currentCharacter = c;
+  populateSwingPreviewSelect(c);   // M55 — keep the swing-preview list in sync
   // M53 — while the idle loop is running, a change (direction/appearance/
   // equipment) re-bakes the buffer; the rAF keeps drawing it. Otherwise
   // paint the static composite.
@@ -347,6 +348,7 @@ async function setView(name) {
   // M53 — a running idle/walk animation is view-specific; reset it on any
   // view switch so the rAF loop never fights another view's canvas render.
   if (animating) stopAnimation();
+  stopSwingPreview();   // M55
   if (name === 'character') {
     if (viewMode === 'party') exitPartyView();
     versusActive = false;
@@ -3709,6 +3711,7 @@ function drawIdleFrame(now) {
 
 async function startAnimation() {
   if (animating) return;
+  stopSwingPreview();   // M55 — idle + swing preview are mutually exclusive
   animating = true;
   const btn = $('animate-toggle');
   if (btn) btn.textContent = '⏸ Animating';
@@ -3740,6 +3743,74 @@ function stopAnimation() {
 document.addEventListener('click', (e) => {
   if (e.target.id !== 'animate-toggle') return;
   if (animating) stopAnimation(); else startAnimation();
+});
+
+// ---------- M55: Swing preview ----------
+//
+// Play one attack swing on the character's own sprite (body attack frames
+// + the rotating weapon overlay), so the player can SEE how each cut looks
+// without starting a fight. Reuses the cinema actor machinery
+// (preloadActorAttack / drawWeaponOverlay / makeLpcDrawSprite) on the
+// single #sprite-canvas. Returns to the static sprite (or resumes idle).
+let swingPreviewRaf = null;
+const SWING_PREVIEW_MS = 1150;
+
+/** Fill the export-bar swing dropdown with the character's available cuts. */
+function populateSwingPreviewSelect(character) {
+  const sel = $('swing-preview-select');
+  if (!sel) return;
+  if (!character) { sel.innerHTML = ''; return; }
+  const choices = availableSwings(weaponClassForSwing(character));
+  const prev = sel.value;
+  sel.innerHTML = choices.map(s => `<option value="${escapeHtml(s.id)}">${escapeHtml(s.label)}</option>`).join('');
+  if (prev && choices.some(s => s.id === prev)) sel.value = prev;
+}
+
+function stopSwingPreview() {
+  if (swingPreviewRaf) { cancelAnimationFrame(swingPreviewRaf); swingPreviewRaf = null; }
+}
+
+async function playSwingPreview(swingId) {
+  if (!currentCharacter?.id || !isSwing(swingId)) return;
+  stopSwingPreview();
+  const wasIdling = animating;
+  if (animating) stopAnimation();
+  const ent = currentCharacter;
+  const scale = Math.max(3, Math.round(canvas.width / 64) - 1);   // slight margin for the arc
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width, H = canvas.height;
+  // Bake the body attack frames + idle + weapon for this swing.
+  await Promise.all([
+    preloadActorSprite(ent, { direction: 'south', scale }),
+    preloadActorAttack(ent, { animation: bodyAnimForSwing(swingId), direction: 'south', scale }),
+    setActorWeapon(ent, { swing: swingId })
+  ]);
+  const drawSprite = makeLpcDrawSprite();
+  const dur = SWING_PREVIEW_MS, impactAt = Math.round(dur * 0.55);
+  const anchor = { x: W / 2, y: H * 0.97 };
+  const refInfo = { id: ent.id, name: '' };
+  const start = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+  const step = (now) => {
+    const t = now - start;
+    ctx.clearRect(0, 0, W, H);
+    const snap = {
+      x: 0, y: 0, rotation: 0, scale: 1, alpha: 1,
+      _t: t, _impactAt: impactAt, _duration: dur, _phase: phaseAt(t, impactAt)
+    };
+    drawSprite(ctx, 'attacker', anchor, snap, refInfo);
+    drawWeaponOverlay(ctx, anchor, snap, scale);
+    if (t < dur) { swingPreviewRaf = requestAnimationFrame(step); return; }
+    swingPreviewRaf = null;
+    clearActorWeapon();
+    if (wasIdling) startAnimation(); else rerender();   // back to idle / static
+  };
+  swingPreviewRaf = requestAnimationFrame(step);
+}
+
+document.addEventListener('click', (e) => {
+  if (e.target.id !== 'swing-preview-play') return;
+  const sel = $('swing-preview-select');
+  if (sel?.value) playSwingPreview(sel.value);
 });
 
 // ---------- Tier 3.2: Share-link encoding ----------
@@ -4078,6 +4149,7 @@ async function render(character) {
   const effective = JSON.parse(JSON.stringify(slotEffective));
   applyAppearanceOverrides(effective, currentAppearance);
   currentCharacter = effective;
+  populateSwingPreviewSelect(effective);   // M55 — swing preview list
 
   result.classList.remove('hidden');
   $('char-name').textContent = effective.name;
