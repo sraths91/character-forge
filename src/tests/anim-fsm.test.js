@@ -141,3 +141,42 @@ test('M46 FSM: state is well-formed for every actor + every t in 0..2000', () =>
     }
   }
 });
+
+// ---------- M56 Phase 3: the 'down' phase ----------
+
+test('M56.3: defenderPhaseAt — killing holds "down" past the hurt window', () => {
+  const impact = 600;
+  // Without the flag: back to idle after the hurt window
+  assert.strictEqual(defenderPhaseAt(impact + 220, impact), 'idle');
+  // With it: down, and it stays down arbitrarily late
+  assert.strictEqual(defenderPhaseAt(impact + 220, impact, { killing: true }), 'down');
+  assert.strictEqual(defenderPhaseAt(impact + 5000, impact, { killing: true }), 'down');
+  // The hurt window itself is unchanged
+  assert.strictEqual(defenderPhaseAt(impact + 100, impact, { killing: true }), 'hurt');
+  assert.strictEqual(defenderPhaseAt(impact - 1, impact, { killing: true }), 'idle');
+});
+
+test('M56.3: actorStateAt — down holds POSE.HURT with no bob', () => {
+  const impact = 600;
+  const a = actorStateAt('defender', impact + 300, impact, { killing: true });
+  const b = actorStateAt('defender', impact + 900, impact, { killing: true });
+  assert.strictEqual(a.phase, 'down');
+  assert.strictEqual(a.pose, POSE.HURT);
+  assert.strictEqual(a.blend, 1, 'held pose, no cross-fade');
+  // No idle bob: the pose is identical at distant times
+  assert.strictEqual(b.pose, POSE.HURT);
+  assert.strictEqual(b.blend, 1);
+});
+
+test('M56.3: actorStateAt — without killing the defender stands back up', () => {
+  const impact = 600;
+  const s = actorStateAt('defender', impact + 300, impact);
+  assert.strictEqual(s.phase, 'idle');
+  assert.ok(s.pose === POSE.IDLE_A || s.pose === POSE.IDLE_B);
+});
+
+test('M56.3: attacker is unaffected by the killing flag', () => {
+  const impact = 600;
+  const s = actorStateAt('attacker', impact + 300, impact, { killing: true });
+  assert.strictEqual(s.phase, 'recover');
+});

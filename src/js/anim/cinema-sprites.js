@@ -167,7 +167,9 @@ export function pickActorFrame(snapshot = {}, actor = 'attacker') {
     if (phase === 'windup') return FRAME_WINDUP;
     if (phase === 'strike') return FRAME_STRIKE;
   }
-  if (actor === 'defender' && phase === 'hurt') return FRAME_HURT;
+  // M56 Phase 3 — 'down' holds the flinch pose: a slain defender must
+  // not stand back up into the idle bob.
+  if (actor === 'defender' && (phase === 'hurt' || phase === 'down')) return FRAME_HURT;
   // Idle / recover / defender non-hurt phases — bob between A and B
   const half = Math.floor(t / IDLE_BOB_MS) % 2;
   return half === 0 ? FRAME_IDLE_A : FRAME_IDLE_B;
@@ -188,7 +190,10 @@ export function pickActorFrameBlended(snapshot = {}, actor = 'attacker') {
   // classifier can fall back to 'idle' instead of mis-computing a
   // recover/strike window relative to a zero impact moment.
   const impactAt = snapshot._impactAt;
-  const state = actorStateAt(actor, t, impactAt);
+  // M56 Phase 3 — the snapshot is the conduit for the killing flag:
+  // cinema.js stamps _killing so monsters (which have no hurt sheet
+  // and are served entirely by this fallback) stay collapsed too.
+  const state = actorStateAt(actor, t, impactAt, { killing: !!snapshot._killing });
   return {
     frame: state.pose,
     prevFrame: state.prevPose,
@@ -216,6 +221,9 @@ function pickAttackBuf(entry, snapshot, actor) {
     return set.frames.get(clampInt(idx, 0, set.count - 1)) || null;
   }
   if (actor === 'defender' && set.animation === 'hurt') {
+    // M56 Phase 3 — past the hurt window a slain defender holds the
+    // FINAL collapse frame instead of falling back to the idle bob.
+    if (phase === 'down') return set.frames.get(set.count - 1) || null;
     if (phase !== 'hurt') return null;
     const u = clamp01((t - impactAt) / HURT_TAIL_MS);
     const idx = Math.round(u * (set.count - 1));

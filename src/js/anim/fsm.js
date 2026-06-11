@@ -53,13 +53,16 @@ export function attackerPhaseAt(t, impactAt) {
  * Classify the defender's swing phase.
  *   t < impactAt                 → idle
  *   impactAt ≤ t < +HURT_TAIL    → hurt
- *   t ≥ impactAt + HURT_TAIL     → idle
+ *   t ≥ impactAt + HURT_TAIL     → idle, or 'down' on a killing blow
+ *
+ * M56 Phase 3 — `opts.killing` keeps a slain defender collapsed
+ * instead of standing back up into the idle bob.
  */
-export function defenderPhaseAt(t, impactAt) {
+export function defenderPhaseAt(t, impactAt, opts = {}) {
   if (!Number.isFinite(impactAt)) return 'idle';
   if (t < impactAt) return 'idle';
   if (t < impactAt + HURT_TAIL_MS) return 'hurt';
-  return 'idle';
+  return opts.killing ? 'down' : 'idle';
 }
 
 /**
@@ -81,9 +84,10 @@ function attackerPose(phase, t) {
  *
  *   idle → bobs A↔B
  *   hurt → HURT
+ *   down → HURT held (M56 Phase 3 — slain; no bob, no recovery)
  */
 function defenderPose(phase, t) {
-  if (phase === 'hurt') return POSE.HURT;
+  if (phase === 'hurt' || phase === 'down') return POSE.HURT;
   return (Math.floor(t / IDLE_BOB_MS) % 2 === 0) ? POSE.IDLE_A : POSE.IDLE_B;
 }
 
@@ -104,6 +108,7 @@ function attackerPhaseStart(phase, impactAt) {
 function defenderPhaseStart(phase, impactAt) {
   if (!Number.isFinite(impactAt)) return 0;
   if (phase === 'hurt') return impactAt;
+  if (phase === 'down') return impactAt + HURT_TAIL_MS;
   return Number.NEGATIVE_INFINITY;
 }
 
@@ -121,9 +126,9 @@ function defenderPhaseStart(phase, impactAt) {
  * A↔B over the bob cycle, so the standing pose breathes rather than
  * snap-cutting every IDLE_BOB_MS.
  */
-export function actorStateAt(actor, t, impactAt) {
+export function actorStateAt(actor, t, impactAt, opts = {}) {
   const phase = actor === 'defender'
-    ? defenderPhaseAt(t, impactAt)
+    ? defenderPhaseAt(t, impactAt, opts)
     : attackerPhaseAt(t, impactAt);
   const poseFn = actor === 'defender' ? defenderPose : attackerPose;
   const phaseStartFn = actor === 'defender' ? defenderPhaseStart : attackerPhaseStart;
@@ -164,6 +169,7 @@ export function actorStateAt(actor, t, impactAt) {
 function previousPose(actor, currentPhase) {
   if (actor === 'defender') {
     if (currentPhase === 'hurt') return POSE.IDLE_A;   // idle → hurt
+    if (currentPhase === 'down') return POSE.HURT;     // hurt → down (same pose)
     return POSE.IDLE_A;
   }
   if (currentPhase === 'windup')  return POSE.IDLE_A;   // idle → windup

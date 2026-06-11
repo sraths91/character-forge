@@ -255,10 +255,15 @@ function draw(ctx, state, seq, frame, opts) {
   // a NaN impact makes the FSM classify every t as 'idle', which also
   // suppresses the hurt-sheet frames and the red flinch tint.
   const friendly = !!seq.meta?.friendly;
+  // M56 Phase 3 — Killing blows hold the defender in the 'down' phase
+  // past the hurt window. The snapshot carries the flag across into
+  // cinema-sprites (the blended fallback re-derives phase via the FSM
+  // and needs it there too).
+  const killing = !friendly && !!seq.meta?.killing;
   const attackerPhase = phaseAt(frame.t, impactAt);
-  const defenderPhase = friendly ? 'idle' : defenderPhaseAt(frame.t, impactAt);
+  const defenderPhase = friendly ? 'idle' : defenderPhaseAt(frame.t, impactAt, { killing });
   const attSnap = { ...frame.attacker, _t: frame.t, _impactAt: impactAt, _duration: seq.duration, _phase: attackerPhase };
-  const defSnap = { ...frame.defender, _t: frame.t, _impactAt: friendly ? NaN : impactAt, _duration: seq.duration, _phase: defenderPhase };
+  const defSnap = { ...frame.defender, _t: frame.t, _impactAt: friendly ? NaN : impactAt, _duration: seq.duration, _phase: defenderPhase, _killing: killing };
   opts.drawSprite(ctx, 'attacker', attAnchor, attSnap, opts.attacker);
   // M51 — the attacker's weapon swings as a separate overlay on top of
   // the (weapon-less) body so the blade actually sweeps with a smear.

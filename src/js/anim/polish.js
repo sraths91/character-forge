@@ -16,8 +16,13 @@
  */
 
 import { cloneSeq } from './sequence.js';
+import { HURT_TAIL_MS } from './timings.js';
 
 const SPARKLE = 'sparkle';
+
+// M56 Phase 3 — how long the slain defender's sink + fade takes after
+// the hurt window ends.
+const DEATH_FADE_MS = 400;
 const ZOOM = 'zoom';
 
 /**
@@ -114,9 +119,19 @@ export function applyPolish(seq, ctx = {}) {
     );
   }
 
-  // Killing blow — one bonus flash for finality
+  // Killing blow — one bonus flash for finality, then (M56 Phase 3)
+  // the defender sinks and fades after the hurt window while the
+  // 'down' phase holds the collapse frame. Duration is extended
+  // EXPLICITLY: the tail-extension below scans effects only and would
+  // never see these keyframes.
   if (ctx.killing) {
     out.effects.push({ at: impactAt + 80, type: 'flash', params: { intensity: 0.4 } });
+    const downAt = impactAt + HURT_TAIL_MS;
+    out.keyframes.push(
+      { at: downAt, actor: 'defender', alpha: 1, easing: 'linear' },
+      { at: downAt + DEATH_FADE_MS, actor: 'defender', y: 6, alpha: 0.65, easing: 'easeOut' }
+    );
+    out.duration = Math.max(out.duration, downAt + DEATH_FADE_MS);
     out.meta.killing = true;
   }
 

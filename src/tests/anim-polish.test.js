@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert';
 import { applyPolish } from '../js/anim/polish.js';
 import { buildMotion } from '../js/anim/weapon-motions.js';
+import { sampleSprite } from '../js/anim/sequence.js';
 
 // ---------- Identity / no-op ----------
 
@@ -148,4 +149,38 @@ test('M43.5: duration extends to cover any late-added effects', () => {
   const out = applyPolish(seq, { crit: true, level: 17 });
   const maxAt = out.effects.reduce((m, e) => Math.max(m, e.at), 0);
   assert.ok(out.duration >= maxAt, 'duration must cover the latest effect');
+});
+
+// ---------- M56 Phase 3: death fade ----------
+
+test('M56.3: applyPolish killing — appends defender fade keyframes + extends duration', () => {
+  const base = buildMotion('sword-slash');   // impact 460, duration 1180
+  const out = applyPolish(base, { killing: true });
+  assert.strictEqual(out.meta.killing, true);
+  // Two new defender keyframes after the hurt window
+  const added = out.keyframes.filter(k => k.actor === 'defender' && k.at >= 460 + 220);
+  assert.ok(added.length >= 2, 'fade keyframes appended');
+  const last = added[added.length - 1];
+  assert.ok(last.alpha < 1, 'the corpse fades');
+  assert.ok(last.y > 0, 'the corpse sinks');
+  // Duration covers the fade: impact + hurt tail (220) + fade (400)
+  assert.ok(out.duration >= 460 + 620, `duration ${out.duration} covers the fade`);
+  // Input untouched (purity)
+  assert.strictEqual(base.duration, 1180);
+  assert.ok(!base.keyframes.some(k => k.alpha != null && k.alpha < 1));
+});
+
+test('M56.3: applyPolish killing — defender alpha < 1 at sequence end', () => {
+  const base = buildMotion('sword-slash');
+  const out = applyPolish(base, { killing: true });
+  const snap = sampleSprite(out, 'defender', out.duration);
+  assert.ok(snap.alpha < 1, `alpha at end is ${snap.alpha}`);
+  assert.ok(snap.alpha >= 0.6, 'fades to a corpse, not to nothing');
+});
+
+test('M56.3: applyPolish without killing — no fade keyframes, duration untouched', () => {
+  const base = buildMotion('sword-slash');
+  const out = applyPolish(base, {});
+  assert.ok(!out.keyframes.some(k => k.alpha != null && k.alpha < 1));
+  assert.strictEqual(out.duration, base.duration);
 });

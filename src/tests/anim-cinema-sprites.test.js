@@ -275,3 +275,80 @@ test('M51: makeLpcDrawSprite — lookup receives the south direction', () => {
     { id: 'm1', direction: 'south' }
   ]);
 });
+
+// ---------- M56 Phase 3: the corpse stays down ----------
+
+/** Cache entry with a 6-frame hurt attack set (the LPC collapse). */
+function fakeHurtEntry() {
+  const entry = fakeCacheEntry();
+  const hurtFrames = new Map();
+  for (let i = 0; i < 6; i++) hurtFrames.set(i, { width: 192, height: 192, _hurt: i });
+  entry.attack = { animation: 'hurt', count: 6, frames: hurtFrames };
+  return entry;
+}
+
+/** Mock ctx that records the actual image objects drawn. */
+function recordingCtx() {
+  const drawn = [];
+  return {
+    drawn,
+    save() {}, restore() {}, translate() {}, rotate() {}, scale() {},
+    beginPath() {}, fill() {}, stroke() {}, arc() {}, ellipse() {},
+    moveTo() {}, lineTo() {},
+    drawImage(img) { drawn.push(img); },
+    fillText() {}, strokeText() {}, fillRect() {},
+    set globalAlpha(v) {}, get globalAlpha() { return 1; },
+    set globalCompositeOperation(v) {}, get globalCompositeOperation() { return 'source-over'; },
+    set imageSmoothingEnabled(v) {},
+    set fillStyle(v) {}, set strokeStyle(v) {}, set lineWidth(v) {},
+    set font(v) {}, set textAlign(v) {}, set shadowColor(v) {}, set shadowBlur(v) {}
+  };
+}
+
+test('M56.3: hurt-sheet path — down holds the FINAL collapse frame, not the idle bob', () => {
+  const draw = makeLpcDrawSprite({ lookup: () => fakeHurtEntry() });
+  const ctx = recordingCtx();
+  // Well past the hurt window (impact 460 + 220), killing blow
+  draw(ctx, 'defender', { x: 0, y: 0 }, {
+    scale: 1, _t: 1100, _impactAt: 460, _duration: 1180,
+    _phase: 'down', _killing: true
+  }, { id: 'm1', name: 'Goblin' });
+  const hurtDrawn = ctx.drawn.filter(img => img._hurt != null);
+  assert.ok(hurtDrawn.length > 0, 'a hurt-sheet frame was drawn');
+  assert.strictEqual(hurtDrawn[hurtDrawn.length - 1]._hurt, 5, 'holds the final collapse frame');
+});
+
+test('M56.3: hurt-sheet path — without killing the defender returns to the idle bob', () => {
+  const draw = makeLpcDrawSprite({ lookup: () => fakeHurtEntry() });
+  const ctx = recordingCtx();
+  draw(ctx, 'defender', { x: 0, y: 0 }, {
+    scale: 1, _t: 1100, _impactAt: 460, _duration: 1180,
+    _phase: 'idle', _killing: false
+  }, { id: 'm1', name: 'Goblin' });
+  assert.ok(!ctx.drawn.some(img => img._hurt != null), 'no hurt frame held');
+  assert.ok(ctx.drawn.some(img => img._frame === 0 || img._frame === 1), 'idle bob frame drawn');
+});
+
+test('M56.3: blended path (monsters, no hurt sheet) — _killing holds FRAME_HURT with no bob', () => {
+  // No .attack set on the entry — exactly a monster's situation.
+  const draw = makeLpcDrawSprite({ lookup: () => fakeCacheEntry() });
+  const early = recordingCtx();
+  const late = recordingCtx();
+  const snap = (t) => ({
+    scale: 1, _t: t, _impactAt: 460, _duration: 1180,
+    _phase: 'down', _killing: true
+  });
+  draw(early, 'defender', { x: 0, y: 0 }, snap(800), { id: 'm1' });
+  draw(late, 'defender', { x: 0, y: 0 }, snap(1150), { id: 'm1' });
+  // FRAME_HURT = 4 — held at both times, never the idle A/B bob
+  for (const ctx of [early, late]) {
+    const frames = ctx.drawn.map(img => img._frame).filter(f => f != null);
+    assert.ok(frames.length > 0, 'a walk-sheet frame was drawn');
+    assert.ok(frames.every(f => f === 4), `holds FRAME_HURT, drew ${frames}`);
+  }
+});
+
+test('M56.3: pickActorFrame — down maps to FRAME_HURT for the defender', () => {
+  assert.strictEqual(pickActorFrame({ _phase: 'down', _t: 900 }, 'defender'), 4);
+  assert.strictEqual(pickActorFrame({ _phase: 'hurt', _t: 500 }, 'defender'), 4);
+});
