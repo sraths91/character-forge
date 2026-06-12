@@ -142,6 +142,10 @@ Backgrounds key off the scene's terrain preset
 
 ## Roadmap state
 
-The work is tracked in `docs/M45-COMBAT-FIX-PLAN.md`. Animation
-deferred items in `docs/DEFERRED.md` (M44.4 = bow projectile arcs,
-M44.5 = directional facing).
+Combat-engine unification is tracked in
+`docs/M45-COMBAT-FIX-PLAN.md`. The cinema-completeness milestone —
+spell-cast cinema, death animation, opportunity-attack cinema,
+per-damage-type hit reactions, idle breathing — is
+`docs/M56-CINEMA-COMPLETENESS-PLAN.md` (all 7 phases landed
+2026-06-11). Deferred animation/cinema items live in
+`docs/DEFERRED.md`.
