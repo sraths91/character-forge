@@ -14,7 +14,7 @@ Render a 2D paper-doll sprite from a D&D Beyond character sheet.
 - Vanilla JS + Vite 6 (no framework)
 - Express + SQLite (better-sqlite3) backend
 - HTML5 Canvas paper-doll compositor
-- LPC (Liberated Pixel Cup) sprite assets — CC-BY-SA 3.0
+- LPC (Liberated Pixel Cup) sprite assets — CC-BY-SA 3.0 / GPL 3.0 (see [CREDITS.md](CREDITS.md))
 
 ## Quick start
 

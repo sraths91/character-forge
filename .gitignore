@@ -39,3 +39,7 @@ Thumbs.db
 # Playwright MCP scratch artifacts (snapshots / screenshots from local QA)
 .playwright-mcp/
 m*-*.png
+
+# AI-generated sprite scratch dumps (only curated art under public/assets/generated/ is committed)
+art-gen/raw/*
+!art-gen/raw/.gitkeep
