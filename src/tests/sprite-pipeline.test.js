@@ -2,7 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert';
 import {
   slugify, assetFileName, buildProvenanceEntry, upsertManifest,
-  validateProcessedMeta, parseSipsProps, TARGET_CELL
+  validateProcessedMeta, parseSipsProps, TARGET_CELL,
+  parseSliceSpec, parseHexColor, prepFrameName
 } from '../../scripts/sprite-pipeline.mjs';
 
 // ---------- slugify ----------
@@ -103,4 +104,37 @@ test('M60 spike: parseSipsProps — extracts dims + alpha from sips output', () 
 test('M60 spike: parseSipsProps — hasAlpha no → false', () => {
   const stdout = '  pixelWidth: 128\n  pixelHeight: 96\n  hasAlpha: no\n';
   assert.deepStrictEqual(parseSipsProps(stdout), { width: 128, height: 96, hasAlpha: false });
+});
+
+// ---------- M60 Phase 2: prep arg parsers ----------
+
+test('M60.2: parseSliceSpec — CxR forms', () => {
+  assert.deepStrictEqual(parseSliceSpec('4x1'), { cols: 4, rows: 1 });
+  assert.deepStrictEqual(parseSliceSpec('2x2'), { cols: 2, rows: 2 });
+  assert.deepStrictEqual(parseSliceSpec(' 3X2 '), { cols: 3, rows: 2 }, 'tolerant of X and spaces');
+});
+
+test('M60.2: parseSliceSpec — rejects malformed specs', () => {
+  assert.throws(() => parseSliceSpec('4'), /CxR/);
+  assert.throws(() => parseSliceSpec('axb'), /CxR/);
+  assert.throws(() => parseSliceSpec('0x1'), /≥ 1/);
+  assert.throws(() => parseSliceSpec(''), /CxR/);
+});
+
+test('M60.2: parseHexColor — #rrggbb and rrggbb', () => {
+  assert.deepStrictEqual(parseHexColor('#1a2b3c'), { r: 0x1a, g: 0x2b, b: 0x3c });
+  assert.deepStrictEqual(parseHexColor('f8f8f8'), { r: 248, g: 248, b: 248 });
+  assert.deepStrictEqual(parseHexColor('#FFFFFF'), { r: 255, g: 255, b: 255 });
+});
+
+test('M60.2: parseHexColor — rejects bad colors', () => {
+  assert.throws(() => parseHexColor('#fff'), /#rrggbb/);     // 3-digit not supported
+  assert.throws(() => parseHexColor('xyzxyz'), /#rrggbb/);
+  assert.throws(() => parseHexColor('auto'), /#rrggbb/);     // 'auto' handled by the CLI, not here
+});
+
+test('M60.2: prepFrameName — single vs multi-frame naming', () => {
+  assert.strictEqual(prepFrameName('goblin', 0, 1), 'goblin_prep.png');
+  assert.strictEqual(prepFrameName('strip', 0, 4), 'strip_prep_0.png');
+  assert.strictEqual(prepFrameName('strip', 3, 4), 'strip_prep_3.png');
 });

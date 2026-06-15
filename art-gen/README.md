@@ -38,25 +38,31 @@ M4 Pro / 48 GB:
   (purpose-built, pose/animation assist), Pixel Art XL (SDXL, best
   stills), 8bitdiffuser 64x (native 64-px).
 
-Aim to export **64×64 with a transparent background**. Pixel-art models
-output a clean grid; if yours doesn't, the tool below prints the exact
-ImageMagick commands to downscale (nearest-neighbor) and key out the
-background.
+Export at a clean multiple of 64 with a flat background (e.g. 512² or
+1024²). The `prep` step below downscales to 64×64 and keys the
+background to transparency — no ImageMagick needed.
 
 Drop raw exports in `art-gen/raw/` (git-ignored — nothing here is
 committed until you promote it).
 
-### 2. Curate → commit
+### 2. Prep → curate → commit
 
 ```bash
-# Check a raw export is committable (64×64 + alpha):
-node scripts/sprite-pipeline.mjs validate art-gen/raw/goblin.png
+# Clean a raw export → 64×64 transparent frame (in-repo, no extra tools):
+#   --downscale N   integer nearest-neighbor (1024→64 is 16; 512→64 is 8)
+#   --bg auto       key the flat corner color to transparency (or --bg '#rrggbb')
+#   --slice CxR     split a directional sheet into frames first (e.g. 4x1)
+node scripts/sprite-pipeline.mjs prep art-gen/raw/goblin.png --downscale 16 --bg auto
+# → writes art-gen/raw/goblin_prep.png (multi-frame slices → goblin_prep_0.png …)
+
+# Check it's committable (64×64 + alpha):
+node scripts/sprite-pipeline.mjs validate art-gen/raw/goblin_prep.png
 
 # Promote it + record provenance:
-node scripts/sprite-pipeline.mjs register art-gen/raw/goblin.png \
-  --slug "Goblin Shaman" --pose idle \
-  --model "SD_PixelArt SpriteSheet" --prompt "goblin shaman, staff, robe" \
-  --seed 7 --source "Draw Things" --license "Apache-2.0"
+node scripts/sprite-pipeline.mjs register art-gen/raw/goblin_prep.png \
+  --slug "Goblin" --pose idle \
+  --model "SDXL Base 1.0 + Pixel Art XL LoRA" --prompt "goblin, leather armor" \
+  --seed 7 --source "Draw Things HTTP API" --license "verify model terms"
 
 node scripts/sprite-pipeline.mjs list
 ```
