@@ -1,4 +1,16 @@
 {
   "schemaVersion": 1,
-  "assets": []
+  "assets": [
+    {
+      "slug": "goblin",
+      "pose": "idle",
+      "file": "public/assets/generated/goblin_idle.png",
+      "model": "SDXL Base 1.0 + Pixel Art XL v1.1 LoRA (w1.0)",
+      "prompt": "pixel art sprite, a goblin, green skin, leather armor, front view facing the viewer, full body, centered, simple flat background",
+      "seed": 770311,
+      "source": "Draw Things HTTP API 1024px -> nnDownscale x16 -> keyBackground",
+      "license": "Pixel Art XL (nerijs) — verify output terms before redistribution",
+      "generatedAt": "2026-06-15T03:23:14.224Z"
+    }
+  ]
 }
