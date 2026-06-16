@@ -32,7 +32,7 @@ test('M60 spike: buildProvenanceEntry — deterministic shape with passed-in dat
     license: 'Apache-2.0', at: '2026-06-12T00:00:00.000Z'
   });
   assert.deepStrictEqual(e, {
-    slug: 'goblin-shaman', pose: 'idle',
+    slug: 'goblin-shaman', pose: 'idle', direction: null,
     file: 'public/assets/generated/goblin-shaman_idle.png',
     model: 'SD_PixelArt', prompt: 'a goblin shaman', seed: 7,
     source: 'Draw Things', license: 'Apache-2.0',
@@ -137,4 +137,53 @@ test('M60.2: prepFrameName — single vs multi-frame naming', () => {
   assert.strictEqual(prepFrameName('goblin', 0, 1), 'goblin_prep.png');
   assert.strictEqual(prepFrameName('strip', 0, 4), 'strip_prep_0.png');
   assert.strictEqual(prepFrameName('strip', 3, 4), 'strip_prep_3.png');
+});
+
+// ---------- M60 Phase 3: directional register ----------
+
+test('M60.3: assetFileName — optional direction adds a 3rd segment; 2-arg unchanged', () => {
+  assert.strictEqual(assetFileName('goblin', 'idle'), 'goblin_idle.png');
+  assert.strictEqual(assetFileName('goblin', 'idle', 'south'), 'goblin_idle_south.png');
+  assert.strictEqual(assetFileName('goblin', 'idle', null), 'goblin_idle.png', 'null direction = no segment');
+});
+
+test('M60.3: buildProvenanceEntry — direction sets the field and the filename', () => {
+  const e = buildProvenanceEntry({ slug: 'goblin', pose: 'idle', direction: 'west', at: 'T' });
+  assert.strictEqual(e.direction, 'west');
+  assert.strictEqual(e.file, 'public/assets/generated/goblin_idle_west.png');
+  const d = buildProvenanceEntry({ slug: 'goblin', pose: 'idle', at: 'T' });
+  assert.strictEqual(d.direction, null, 'missing direction normalizes to null');
+  assert.strictEqual(d.file, 'public/assets/generated/goblin_idle.png');
+});
+
+test('M60.3: upsertManifest — distinct directions of the same (slug,pose) coexist', () => {
+  let m = { schemaVersion: 1, assets: [] };
+  m = upsertManifest(m, buildProvenanceEntry({ slug: 'goblin', pose: 'idle', direction: 'south', at: 'T' }));
+  m = upsertManifest(m, buildProvenanceEntry({ slug: 'goblin', pose: 'idle', direction: 'north', at: 'T' }));
+  assert.strictEqual(m.assets.length, 2);
+  assert.deepStrictEqual(m.assets.map(a => a.direction).sort(), ['north', 'south']);
+  // re-registering one direction replaces just that one
+  m = upsertManifest(m, buildProvenanceEntry({ slug: 'goblin', pose: 'idle', direction: 'south', model: 'v2', at: 'T2' }));
+  assert.strictEqual(m.assets.length, 2, 'no duplicate of south');
+  assert.strictEqual(m.assets.find(a => a.direction === 'south').model, 'v2');
+});
+
+test('M60.3: upsertManifest — directionless re-register still replaces (null sentinel)', () => {
+  let m = { schemaVersion: 1, assets: [] };
+  m = upsertManifest(m, buildProvenanceEntry({ slug: 'orc', pose: 'idle', model: 'v1', at: 'T' }));
+  m = upsertManifest(m, buildProvenanceEntry({ slug: 'orc', pose: 'idle', model: 'v2', at: 'T2' }));
+  assert.strictEqual(m.assets.length, 1, 'directionless dedup holds');
+  assert.strictEqual(m.assets[0].model, 'v2');
+  // ...and a directional variant is still a separate entry
+  m = upsertManifest(m, buildProvenanceEntry({ slug: 'orc', pose: 'idle', direction: 'east', at: 'T3' }));
+  assert.strictEqual(m.assets.length, 2);
+});
+
+test('M60.3: upsertManifest — LEGACY entry (no direction field) dedups vs a directionless entry', () => {
+  // A pre-Phase-3 manifest entry has no `direction` key at all (undefined).
+  const legacy = { slug: 'goblin', pose: 'idle', file: 'x', generatedAt: 'old' };
+  let m = { schemaVersion: 1, assets: [legacy] };
+  m = upsertManifest(m, buildProvenanceEntry({ slug: 'goblin', pose: 'idle', model: 'new', at: 'T' }));
+  assert.strictEqual(m.assets.length, 1, 'undefined-direction legacy === null-direction new');
+  assert.strictEqual(m.assets[0].model, 'new');
 });
