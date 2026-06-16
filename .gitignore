@@ -43,3 +43,4 @@ m*-*.png
 # AI-generated sprite scratch dumps (only curated art under public/assets/generated/ is committed)
 art-gen/raw/*
 !art-gen/raw/.gitkeep
+art-gen/preview.html

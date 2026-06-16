@@ -3,7 +3,8 @@ import assert from 'node:assert';
 import {
   slugify, assetFileName, buildProvenanceEntry, upsertManifest,
   validateProcessedMeta, parseSipsProps, TARGET_CELL,
-  parseSliceSpec, parseHexColor, prepFrameName
+  parseSliceSpec, parseHexColor, prepFrameName,
+  escapeHtml, buildPreviewHtml, PREVIEW_SCALE
 } from '../../scripts/sprite-pipeline.mjs';
 
 // ---------- slugify ----------
@@ -186,4 +187,50 @@ test('M60.3: upsertManifest — LEGACY entry (no direction field) dedups vs a di
   m = upsertManifest(m, buildProvenanceEntry({ slug: 'goblin', pose: 'idle', model: 'new', at: 'T' }));
   assert.strictEqual(m.assets.length, 1, 'undefined-direction legacy === null-direction new');
   assert.strictEqual(m.assets[0].model, 'new');
+});
+
+// ---------- M60 Phase 4: preview contact sheet ----------
+
+test('M60.4: escapeHtml — escapes the five HTML-significant chars', () => {
+  assert.strictEqual(escapeHtml(`<b>&"'`), '&lt;b&gt;&amp;&quot;&#39;');
+  assert.strictEqual(escapeHtml(null), '');
+  assert.strictEqual(escapeHtml(42), '42');
+});
+
+test('M60.4: buildPreviewHtml — lists every asset with a ../-prefixed src', () => {
+  const m = { schemaVersion: 1, assets: [
+    buildProvenanceEntry({ slug: 'goblin', pose: 'idle', model: 'SDXL', seed: 7, at: 'T' }),
+    buildProvenanceEntry({ slug: 'orc', pose: 'idle', direction: 'south', at: 'T' })
+  ]};
+  const html = buildPreviewHtml(m);
+  assert.match(html, /2 asset\(s\)/);
+  assert.ok(html.includes('src="../public/assets/generated/goblin_idle.png"'));
+  assert.ok(html.includes('src="../public/assets/generated/orc_idle_south.png"'));
+  assert.ok(html.includes('goblin/idle'));
+  assert.ok(html.includes('orc/idle/south'), 'directional id shown');
+  assert.ok(html.includes('seed 7'));
+});
+
+test('M60.4: buildPreviewHtml — nearest-neighbor + ×6 size', () => {
+  const m = { schemaVersion: 1, assets: [buildProvenanceEntry({ slug: 'a', pose: 'idle', at: 'T' })] };
+  const html = buildPreviewHtml(m);
+  assert.ok(html.includes('image-rendering: pixelated'));
+  const px = TARGET_CELL * PREVIEW_SCALE;
+  assert.ok(html.includes(`width="${px}" height="${px}"`), `${px}px sprite`);
+});
+
+test('M60.4: buildPreviewHtml — escapes a hostile model label (no raw injection)', () => {
+  const m = { schemaVersion: 1, assets: [
+    buildProvenanceEntry({ slug: 'x', pose: 'idle', model: '<script>alert(1)</script>', at: 'T' })
+  ]};
+  const html = buildPreviewHtml(m);
+  assert.ok(!html.includes('<script>alert(1)</script>'), 'raw script not injected');
+  assert.ok(html.includes('&lt;script&gt;alert(1)&lt;/script&gt;'));
+});
+
+test('M60.4: buildPreviewHtml — empty manifest renders valid HTML, no throw', () => {
+  const html = buildPreviewHtml({ schemaVersion: 1, assets: [] });
+  assert.match(html, /^<!doctype html>/);
+  assert.ok(html.includes('No generated assets registered yet.'));
+  assert.match(html, /0 asset\(s\)/);
 });
