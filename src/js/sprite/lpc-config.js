@@ -661,6 +661,7 @@ const WEAPON_NAME_RULES = [
   ['light hammer',  'mace'],
   ['war pick',      'mace'],
   ['warpick',       'mace'],
+  ['mace',          'mace'],   // plain "Mace" → mace sprite (was unmatched → null)
   ['flail',         'flail'],
   ['whip',          'flail'],
   ['battleaxe',     'waraxe'],
@@ -751,6 +752,49 @@ function pickWeapon(weapon) {
 export function weaponSpriteSrc(weapon) {
   const key = pickWeapon(weapon);
   return key ? ASSET_MAP.weapon[key] : null;
+}
+
+/**
+ * M59 — Real weapon ATTACK sheets that frame-match the classic body.
+ *
+ * These are the standard 64×64 / 4-direction LPC attack animations
+ * (slash 6 frames / thrust 8), authored to overlay the body's matching
+ * attack frames — so the cinema plays a real slash/thrust that tracks
+ * the hand, instead of repurposing the walk arm-swing. Saved as
+ * `weapon/<key>_<anim>.png`.
+ *
+ * Only weapons whose attack art is the CLASSIC format are listed. Most
+ * swords (longsword, rapier, scimitar, …) ship only "oversize"/universal
+ * attack art (1152×768) that needs a bespoke overlay renderer and a
+ * frame layout our classic body doesn't match — deferred (DEFERRED.md).
+ * Anything absent here falls back to the M58 walk-sheet swing.
+ */
+export const WEAPON_ATTACK_ANIMS = {
+  dagger: { slash: 6, thrust: 8 },
+  mace:   { thrust: 8 },
+  spear:  { thrust: 8 }
+};
+
+/**
+ * Resolve a weapon + attack animation to its classic attack-sheet path,
+ * or null when this weapon has no classic sheet for that animation (→
+ * the caller falls back to the walk sheet).
+ */
+export function weaponAttackSrc(weapon, anim) {
+  const key = pickWeapon(weapon);
+  const spec = key && WEAPON_ATTACK_ANIMS[key];
+  return spec && spec[anim] ? `${ASSETS}/weapon/${key}_${anim}.png` : null;
+}
+
+/**
+ * Map the body's attack animation to the weapon attack sheet to play:
+ * slash-family body poses use the weapon 'slash', thrust uses 'thrust',
+ * and casts / anything without a matching sheet use the walk fallback.
+ */
+export function weaponAnimForBody(bodyAnim) {
+  if (bodyAnim === 'thrust') return 'thrust';
+  if (bodyAnim === 'slash' || bodyAnim === 'backslash' || bodyAnim === 'halfslash') return 'slash';
+  return null;
 }
 
 /**

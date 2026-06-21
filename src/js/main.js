@@ -775,9 +775,9 @@ async function playCinemaRoundForAttack(attackerHit, targetHit, dmg, opts = {}) 
   await Promise.all([
     preloadActorAttack(attackerHit.entity, { animation: bodyAnim }),
     preloadActorAttack(targetHit.entity, { animation: 'hurt' }),
-    // M54 — load the attacker's weapon with the resolved swing so the
-    // overlay drives the matching arc (rotation for directional swings).
-    setActorWeapon(attackerHit.entity, { swing: resolvedSwing })
+    // M59 — load the weapon's real attack sheet matching the body
+    // animation (slash/thrust) when one exists; else the walk fallback.
+    setActorWeapon(attackerHit.entity, { swing: resolvedSwing, animation: bodyAnim })
   ]);
   versusCinema.resetHp({
     attHp: attackerHit.entity.hp?.current ?? attackerHit.entity.hp ?? 1,
@@ -3841,7 +3841,7 @@ async function playSwingPreview(swingId) {
   await Promise.all([
     preloadActorSprite(ent, { direction: 'south', scale }),
     preloadActorAttack(ent, { animation: bodyAnimForSwing(swingId), direction: 'south', scale }),
-    setActorWeapon(ent, { swing: swingId })
+    setActorWeapon(ent, { swing: swingId, animation: bodyAnimForSwing(swingId) })
   ]);
   const drawSprite = makeLpcDrawSprite();
   const dur = SWING_PREVIEW_MS, impactAt = Math.round(dur * 0.55);

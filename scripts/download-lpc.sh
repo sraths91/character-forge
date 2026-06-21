@@ -156,6 +156,17 @@ fetch "weapon/polearm/scythe/universal_behind/walk/scythe.png"  "weapon-back/scy
 fetch "weapon/blunt/flail/behind/walk/flail.png"                "weapon-back/flail.png"
 fetch "weapon/blunt/waraxe/behind/walk/waraxe.png"              "weapon-back/waraxe.png"
 
+# M59 — real weapon ATTACK animation sheets (CLASSIC 64x64 4-dir, frame-
+# matched to the body: slash 384x256 / thrust 512x256). The cinema plays
+# these so a thrust thrusts and a slash slashes, tracking the hand. Only
+# weapons with classic-format attack art; most swords ship only
+# "oversize"/universal attack art (1152x768) that needs a bespoke overlay
+# (deferred — docs/DEFERRED.md). Keyed into lpc-config WEAPON_ATTACK_ANIMS.
+fetch "weapon/sword/dagger/slash/dagger.png"       "weapon/dagger_slash.png"
+fetch "weapon/sword/dagger/thrust/dagger.png"      "weapon/dagger_thrust.png"
+fetch "weapon/blunt/mace/thrust/mace.png"          "weapon/mace_thrust.png"
+fetch "weapon/polearm/spear/thrust/foreground.png" "weapon/spear_thrust.png"
+
 # Phase B — Torso armor expansion (1 new variant)
 fetch "torso/armour/legion/male/idle.png"   "torso/legion_male.png"
 fetch "torso/armour/legion/female/idle.png" "torso/legion_female.png"

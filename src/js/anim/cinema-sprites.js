@@ -25,7 +25,7 @@ import { MONSTER_PRESETS, buildMonsterCharacter } from '../scene/monster-presets
 import { actorStateAt } from './fsm.js';
 import { HURT_TAIL_MS, IDLE_BOB_MS } from './timings.js';
 import { loadImage } from '../sprite/image-cache.js';
-import { weaponSpriteSrc, FRAME, BODY_ANIMS, bodyAnimSheet } from '../sprite/lpc-config.js';
+import { weaponSpriteSrc, weaponAttackSrc, weaponAnimForBody, FRAME, BODY_ANIMS, bodyAnimSheet } from '../sprite/lpc-config.js';
 import { motionForWeapon } from './weapon-motions.js';
 import { swingRigFor } from './weapon-swing.js';
 
@@ -430,16 +430,21 @@ const SLASH_ROW_SOUTH = 2;
  * name (usually no LPC sprite → null, the effect arc carries it).
  *
  * `swing` is accepted for call-site compatibility but no longer changes
- * the overlay — all swings frame-play (see the module note above).
+ * the overlay (all swings frame-play). `animation` is the body's attack
+ * animation (slash/thrust/…) — M59 uses it to load the matching real
+ * weapon attack sheet when one exists.
  */
-export async function setActorWeapon(entity, { swing = null } = {}) {
+export async function setActorWeapon(entity, { swing = null, animation = null } = {}) {
   void swing;
   _attackerWeapon = null;
   const weapon = entity?.equipment?.mainhand
     || (entity?.presetSlug ? { name: MONSTER_PRESETS[entity.presetSlug]?.attack?.name } : null);
   const classRig = swingRigFor(motionForWeapon(weapon));
   if (!classRig) return null;                  // unarmed → no overlay
-  const src = weaponSpriteSrc(weapon);
+  // M59 — prefer a real attack sheet (slash/thrust) frame-matched to the
+  // body animation; fall back to the walk sheet (M58 behavior) when the
+  // weapon has no classic attack art for this animation.
+  const src = weaponAttackSrc(weapon, weaponAnimForBody(animation)) || weaponSpriteSrc(weapon);
   if (!src) return null;                       // no LPC sprite → effect-only
   let img;
   try { img = await loadImage(src); } catch { return null; }

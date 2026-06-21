@@ -75,3 +75,25 @@ attack:
   no authored attack art: extract the LPC hand x/y/rotation per slash
   frame once and pin the weapon there (true attachment, not a fixed
   pivot). Only worth it if procedural weapons stay.
+
+## From M59 — oversize/universal weapon attack art
+
+M59 imported the CLASSIC-format weapon attack sheets (dagger
+slash+thrust, mace+spear thrust — 384×256/512×256) that frame-match
+our classic body, so those play real attacks. Most **swords**
+(longsword, rapier, scimitar, saber, katana, waraxe, halberd) ship
+only **oversize/universal** attack art upstream (`attack_slash`
+1152×768, `attack_thrust` 1536×768) which does NOT compose with our
+classic 6-frame body — LPC overlays oversize weapons via a bespoke
+generator-side layout, not a frame-identical sheet. Our body slash is
+classic (384×256), so there is no "expanded body" to import either.
+Those weapons stay on the M58 walk-fallback swing.
+
+To give swords real attacks needs an **oversize-overlay renderer**:
+reverse-engineer the universal sheet's south strike frames + their
+per-frame offsets over the body's 6 slash frames, with a manifest
+carrying per-sheet geometry (cellW, row, frame-range) — NOT the
+`img.height>=512?128:64` heuristic, which mis-decodes 768-tall sheets.
+Recommended approach: prove ONE sword (longsword) end-to-end as a
+spike before committing to the roster. See
+`docs/M59-WEAPON-ATTACK-SHEETS-PLAN.md` (format finding).
