@@ -56,3 +56,22 @@ east/west pre-renders in the existing cache, and flipping
   `shadowScale`/`shadowAlpha` (used on the character page); the
   cinema's idle breathing (M56 Phase 6) consumes only bob/sway/lean
   because the cinema draws no contact shadow to pulse.
+
+## From M58 — weapon animation (per-swing weapon variety)
+
+M58 retired the procedural single-frame weapon rotation (the "flies
+around" bug) so every swing frame-plays the authored slash and stays
+in hand. The weapon sprite no longer re-aims per swing direction —
+all swings play the one authored slash arc; the body pose + effect
+swoosh carry the direction. To make the *weapon itself* differ per
+attack:
+
+- **Real per-animation weapon sheets.** LPC ships weapon *thrust* +
+  oversize slash art frame-matched to the body. Importing it (the M57
+  expanded-LPC work) lets thrust play a thrust and slash a slash, each
+  tracking the hand — the LPC-correct path. See
+  `docs/M58-WEAPON-ANIMATION-RESEARCH.md`.
+- **Hard-point per-frame attachment** as a fallback for weapons with
+  no authored attack art: extract the LPC hand x/y/rotation per slash
+  frame once and pin the weapon there (true attachment, not a fixed
+  pivot). Only worth it if procedural weapons stay.

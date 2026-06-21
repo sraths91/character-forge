@@ -27,8 +27,7 @@ import { HURT_TAIL_MS, IDLE_BOB_MS } from './timings.js';
 import { loadImage } from '../sprite/image-cache.js';
 import { weaponSpriteSrc, FRAME, BODY_ANIMS, bodyAnimSheet } from '../sprite/lpc-config.js';
 import { motionForWeapon } from './weapon-motions.js';
-import { swingRigFor, sampleSwing, swingTrail } from './weapon-swing.js';
-import { swingArcRig } from './swing-types.js';
+import { swingRigFor } from './weapon-swing.js';
 
 // M51 — Slots whose layers the cinema omits from the baked body so the
 // weapon can be drawn (and swung) as a separate overlay.
@@ -405,10 +404,20 @@ function makeOffscreenCanvas() {
 
 // Current attacker weapon overlay, or null. The project's weapon PNGs
 // are LPC SLASH sheets — the south row holds the weapon sweeping through
-// the swing (frame 0 raised → last frame extended). So instead of
-// rotating a static frame, we PLAY those authored frames timed to the
-// strike: a real, hand-drawn weapon swing.
-//   { img, rowY, cellW, frames, rig }   (rig kept for timing windows)
+// the swing (frame 0 raised → last frame extended). We PLAY those
+// authored frames timed to the strike: a real, hand-drawn weapon swing
+// that stays in the hand.
+//
+// M58 — Retired the old `rotate` mode. Directional swings (M54) used to
+// spin a SINGLE extended-blade frame about a fixed grip, which read as a
+// detached blade "flying around" — the frame's painted hand drifts off
+// the body's real hand as it rotates. Frame-playback is the correct
+// approach (the LPC weapon art is authored to track the hand): every
+// swing now plays the authored frames. Directional FLAVOR is carried
+// where it actually reads — the body's real LPC attack pose
+// (bodyAnimForSwing) and the slash-effect swoosh orientation (applySwing)
+// — not by torquing the weapon sprite.
+//   { img, rowY, cellW, frames, rig }   (rig kept for timing + trail)
 let _attackerWeapon = null;
 
 // LPC row order N,W,S,E; the slash weapons populate the SOUTH row, whose
@@ -419,8 +428,12 @@ const SLASH_ROW_SOUTH = 2;
  * Resolve + load the attacker's weapon sheet so the cinema can play its
  * authored swing frames. PC: equipment.mainhand; monster: preset attack
  * name (usually no LPC sprite → null, the effect arc carries it).
+ *
+ * `swing` is accepted for call-site compatibility but no longer changes
+ * the overlay — all swings frame-play (see the module note above).
  */
 export async function setActorWeapon(entity, { swing = null } = {}) {
+  void swing;
   _attackerWeapon = null;
   const weapon = entity?.equipment?.mainhand
     || (entity?.presetSlug ? { name: MONSTER_PRESETS[entity.presetSlug]?.attack?.name } : null);
@@ -434,17 +447,7 @@ export async function setActorWeapon(entity, { swing = null } = {}) {
   const cellW = img.height >= 512 ? 128 : FRAME;
   const frames = Math.max(1, Math.round(img.width / cellW));
   const rowY = SLASH_ROW_SOUTH * cellW;
-  // M54 — directional swing? Rotate the weapon through the swing's arc
-  // (grip from the weapon-class rig + angles from the swing type). The
-  // default `diagonal` (and unknown) keeps the authored frame-playback.
-  const arcAngles = swing && swing !== 'diagonal' ? swingArcRig(swing) : null;
-  const directional = !!arcAngles;
-  const arc = directional ? { ...classRig, ...arcAngles } : classRig;
-  const baseFrame = Math.round((frames - 1) * 0.55);   // extended-blade frame to rotate
-  _attackerWeapon = {
-    img, rowY, cellW, frames, rig: classRig,
-    mode: directional ? 'rotate' : 'frames', arc, baseFrame, swing
-  };
+  _attackerWeapon = { img, rowY, cellW, frames, rig: classRig };
   return _attackerWeapon;
 }
 
@@ -485,20 +488,11 @@ export function drawWeaponOverlay(ctx, anchor, snapshot, scale) {
   const cell = FRAME * scale;
   const baseAlpha = snapshot.alpha ?? 1;
 
-  // M54 — Directional swing: rotate the (extended-blade) weapon frame
-  // through the chosen arc, with a swept smear. Gives overhead / horizontal
-  // / rising / thrust / backslash / spin from one sprite.
-  if (ov.mode === 'rotate' && ov.arc) {
-    for (const tr of swingTrail(ov.arc, p, impactP, 5)) {
-      paintWeaponRotated(ctx, ov, anchor, cell, ov.baseFrame, tr, baseAlpha * tr.alpha);
-    }
-    const cur = sampleSwing(ov.arc, p, impactP);
-    paintWeaponRotated(ctx, ov, anchor, cell, ov.baseFrame, cur, baseAlpha);
-    return;
-  }
-
-  // Default `diagonal` — play the authored slash frames (frame-playback)
-  // with a frame-based smear.
+  // M58 — Every swing plays the authored slash frames (frame-playback)
+  // with a frame-based smear (the 1-2 frames behind, at low alpha). The
+  // weapon stays in the hand because the LPC art tracks the hand across
+  // the sweep; no procedural rotation. Directional flavor comes from the
+  // body pose + effect swoosh, not from torquing the sprite.
   const fIdx = swingFrameAt(ov.frames, p, impactP);
   const cur = Math.round(fIdx);
   if (ov.rig.trail && fIdx > 0.5 && cur < ov.frames - 1) {
@@ -509,27 +503,6 @@ export function drawWeaponOverlay(ctx, anchor, snapshot, scale) {
     }
   }
   paintWeaponFrame(ctx, ov, anchor, cell, cur, baseAlpha);
-}
-
-/** Draw one weapon frame rotated about its grip by the swing transform. */
-function paintWeaponRotated(ctx, ov, anchor, cell, frameIdx, s, alpha) {
-  const oversized = ov.cellW >= 128;
-  const drawSize = oversized ? cell * 2 : cell;
-  const feetFrac = oversized ? 0.84 : 1.0;
-  const gx = (ov.arc.grip?.x ?? 0.22) * cell;     // grip in anchor-local space
-  const gy = (ov.arc.grip?.y ?? -0.42) * cell;
-  const sx = clampInt(frameIdx, 0, ov.frames - 1) * ov.cellW;
-  ctx.save();
-  ctx.translate(anchor.x + (s.dx || 0) * cell, anchor.y + (s.dy || 0) * cell);
-  ctx.translate(gx, gy);                          // origin → grip (pivot)
-  ctx.rotate(s.angle || 0);
-  ctx.scale(s.scale || 1, s.scale || 1);
-  ctx.globalAlpha = alpha;
-  ctx.imageSmoothingEnabled = false;
-  // Place the cell so its grip point lands back at the pivot.
-  ctx.drawImage(ov.img, sx, ov.rowY, ov.cellW, ov.cellW,
-    -drawSize / 2 - gx, -drawSize * feetFrac - gy, drawSize, drawSize);
-  ctx.restore();
 }
 
 function paintWeaponFrame(ctx, ov, anchor, cell, frameIdx, alpha) {
