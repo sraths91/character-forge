@@ -777,7 +777,8 @@ export const WEAPON_ATTACK_ANIMS = {
   dagger:    { slash: 6, thrust: 8 },
   mace:      { thrust: 8 },
   spear:     { thrust: 8 },
-  longsword: { slash: 6, thrust: 8 }   // oversize 192px
+  longsword: { slash: 6, thrust: 8 },  // oversize 192px
+  waraxe:    { slash: 6 }              // oversize 192px (axes don't thrust)
 };
 
 /**

@@ -174,6 +174,7 @@ fetch "weapon/polearm/spear/thrust/foreground.png" "weapon/spear_thrust.png"
 # other oversize swords share this exact layout; add them the same way.)
 fetch "weapon/sword/longsword/attack_slash/longsword.png"  "weapon/longsword_slash.png"
 fetch "weapon/sword/longsword/attack_thrust/longsword.png" "weapon/longsword_thrust.png"
+fetch "weapon/blunt/waraxe/attack_slash/waraxe.png"        "weapon/waraxe_slash.png"
 
 # Phase B — Torso armor expansion (1 new variant)
 fetch "torso/armour/legion/male/idle.png"   "torso/legion_male.png"
