@@ -34,21 +34,17 @@ test('M59: weaponAttackSrc — resolves classic attack sheets for covered weapon
     '/assets/lpc/weapon/mace_thrust.png');
 });
 
-test('M59: weaponAttackSrc — longsword resolves to the oversize sheets', () => {
-  assert.strictEqual(weaponAttackSrc({ name: 'Longsword' }, 'slash'),
-    '/assets/lpc/weapon/longsword_slash.png');
-  assert.strictEqual(weaponAttackSrc({ name: 'Longsword' }, 'thrust'),
-    '/assets/lpc/weapon/longsword_thrust.png');
-});
-
-test('M59: weaponAttackSrc — null when the weapon lacks that anim', () => {
+test('M59: weaponAttackSrc — null when the weapon lacks a matching classic anim', () => {
   // mace has no classic slash (universal only)
   assert.strictEqual(weaponAttackSrc({ name: 'Mace' }, 'slash'), null);
   // spear has no slash sheet
   assert.strictEqual(weaponAttackSrc({ name: 'Spear' }, 'slash'), null);
-  // scimitar's attack art is the 13-frame "expanded" format that doesn't
-  // sync with our 6-frame body → not registered (stays on walk fallback)
-  assert.strictEqual(weaponAttackSrc({ name: 'Scimitar' }, 'slash'), null);
+  // the oversize swords are NOT registered — their attack art is
+  // authored for the revised body and floats off our classic hand, so
+  // they fall back to the walk-swing (DEFERRED.md).
+  assert.strictEqual(weaponAttackSrc({ name: 'Longsword' }, 'slash'), null);
+  assert.strictEqual(weaponAttackSrc({ name: 'Longsword' }, 'thrust'), null);
+  assert.strictEqual(weaponAttackSrc({ name: 'Greataxe' }, 'slash'), null);
   // casts / unmatched anim → null (caller falls back to walk)
   assert.strictEqual(weaponAttackSrc({ name: 'Dagger' }, null), null);
   // unknown weapon → null
@@ -83,13 +79,14 @@ function pngSize(path) {
 }
 
 // The cinema derives cellW = height/4 (4 directions) and frames =
-// width/cellW. For the weapon to sync with the body it MUST yield the
-// body's frame count for that anim (slash 6 / thrust 8). This pins the
-// format so a re-download of a wrong-layout sheet (e.g. a 13-frame
-// "expanded" slash) fails loudly instead of desyncing silently.
+// width/cellW. For a registered weapon to sync with the body it MUST
+// yield the body's frame count for that anim (slash 6 / thrust 8). This
+// pins the format so a re-download of a wrong-layout sheet fails loudly.
+// (Registered weapons are all classic 64px here; the cellW=height/4 rule
+// also handles 192px oversize sheets for the future revised-body work.)
 const BODY_FRAMES = { slash: 6, thrust: 8 };
 
-test('M59: every attack sheet decodes (cellW=height/4) to the body frame count', () => {
+test('M59: every registered attack sheet decodes (cellW=height/4) to the body frame count', () => {
   for (const [key, anims] of Object.entries(WEAPON_ATTACK_ANIMS)) {
     for (const [anim, listed] of Object.entries(anims)) {
       const { w, h } = pngSize(join(REPO, 'public', 'assets', 'lpc', 'weapon', `${key}_${anim}.png`));

@@ -774,11 +774,17 @@ export function weaponSpriteSrc(weapon) {
  * Weapons absent here fall back to the M58 walk-sheet swing.
  */
 export const WEAPON_ATTACK_ANIMS = {
-  dagger:    { slash: 6, thrust: 8 },
-  mace:      { thrust: 8 },
-  spear:     { thrust: 8 },
-  longsword: { slash: 6, thrust: 8 },  // oversize 192px
-  waraxe:    { slash: 6 }              // oversize 192px (axes don't thrust)
+  dagger: { slash: 6, thrust: 8 },
+  mace:   { thrust: 8 },
+  spear:  { thrust: 8 }
+  // NOTE: the oversize swords (longsword/waraxe/…) are intentionally
+  // NOT here. Their `attack_*` art (192px) is authored for ElizaWy's
+  // REVISED body — a centred two-handed overhead slash — which does not
+  // match our CLASSIC body slash (a right-arm diagonal). Composited on
+  // our body the grip floats off the hand. The cinema geometry handles
+  // the 192 format (cellW=height/4 + centred draw); the missing piece is
+  // the matching revised body. Until then these fall back to the M58
+  // walk-swing, which reads as held. See DEFERRED.md.
 };
 
 /**

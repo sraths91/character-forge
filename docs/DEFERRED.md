@@ -89,11 +89,30 @@ generator-side layout, not a frame-identical sheet. Our body slash is
 classic (384×256), so there is no "expanded body" to import either.
 Those weapons stay on the M58 walk-fallback swing.
 
-To give swords real attacks needs an **oversize-overlay renderer**:
-reverse-engineer the universal sheet's south strike frames + their
-per-frame offsets over the body's 6 slash frames, with a manifest
-carrying per-sheet geometry (cellW, row, frame-range) — NOT the
-`img.height>=512?128:64` heuristic, which mis-decodes 768-tall sheets.
-Recommended approach: prove ONE sword (longsword) end-to-end as a
-spike before committing to the roster. See
-`docs/M59-WEAPON-ATTACK-SHEETS-PLAN.md` (format finding).
+**Update (oversize spike, 2026-06-21):** The renderer geometry is now
+DONE and shipped — `cellW = height/4` (4 directions) + a centred draw
+correctly decode the oversize format (192px cells, south band 2, 6/8
+frames). I proved it on the longsword + greataxe: the blade draws and
+sweeps. BUT compositing on our body revealed the real blocker: the
+oversize `attack_*` animation is authored for ElizaWy's **revised
+body** (a centred two-handed overhead slash), which does NOT match our
+**classic** body slash (a right-arm diagonal). The grip floats off the
+hand. A constant offset can't reconcile them — the grip stays centred
+while the classic hand moves. So the oversize weapons were reverted to
+the M58 walk-fallback; the geometry stays for when the revised body
+lands.
+
+The remaining work is the **matching body**, not the weapon geometry:
+- **Import ElizaWy's revised slash/thrust body** (the overhead-motion
+  body the oversize weapons were drawn for) and use it for oversize-
+  weapon attacks. Then body + weapon connect AND look dramatic. This
+  is the right path; it's a body-animation import (M57-adjacent), not
+  more weapon code.
+- OR per-frame hand-tracking (extract the classic body's hand x/y per
+  slash frame, offset the weapon to it) — but the motions differ
+  (overhead weapon vs diagonal body), so the blade direction would
+  still fight the body. The revised body is the clean answer.
+
+Contrast: the CLASSIC attack weapons (dagger/mace/spear) DO connect —
+they're the canonical LPC slash/thrust pair for our classic body,
+drawn 1:1. Those shipped (M59).
