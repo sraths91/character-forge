@@ -167,6 +167,14 @@ fetch "weapon/sword/dagger/thrust/dagger.png"      "weapon/dagger_thrust.png"
 fetch "weapon/blunt/mace/thrust/mace.png"          "weapon/mace_thrust.png"
 fetch "weapon/polearm/spear/thrust/foreground.png" "weapon/spear_thrust.png"
 
+# M59 oversize spike — big-sword attack art is the "oversize" format:
+# 192px cells (sheet height 768 / 4 dirs), 6-frame slash (1152x768) /
+# 8-frame thrust (1536x768) — same frame counts as the body, so they
+# sync. The cinema's cellW = height/4 + centred draw handles it. (Most
+# other oversize swords share this exact layout; add them the same way.)
+fetch "weapon/sword/longsword/attack_slash/longsword.png"  "weapon/longsword_slash.png"
+fetch "weapon/sword/longsword/attack_thrust/longsword.png" "weapon/longsword_thrust.png"
+
 # Phase B — Torso armor expansion (1 new variant)
 fetch "torso/armour/legion/male/idle.png"   "torso/legion_male.png"
 fetch "torso/armour/legion/female/idle.png" "torso/legion_female.png"

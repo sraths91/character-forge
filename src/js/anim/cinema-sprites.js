@@ -448,8 +448,11 @@ export async function setActorWeapon(entity, { swing = null, animation = null } 
   if (!src) return null;                       // no LPC sprite → effect-only
   let img;
   try { img = await loadImage(src); } catch { return null; }
-  // Cell size: 64 (256-tall sheets) or 128 (512-tall oversized weapons).
-  const cellW = img.height >= 512 ? 128 : FRAME;
+  // M59 — cell size = sheet height / 4 (LPC sheets are always 4
+  // directions). Handles every format: classic 64 (256-tall), walk128
+  // 128 (512-tall), and oversize 192 (768-tall) — where the old
+  // `>=512?128:64` heuristic mis-decoded the oversize swords.
+  const cellW = Math.max(FRAME, Math.round(img.height / 4));
   const frames = Math.max(1, Math.round(img.width / cellW));
   const rowY = SLASH_ROW_SOUTH * cellW;
   _attackerWeapon = { img, rowY, cellW, frames, rig: classRig };
@@ -512,12 +515,15 @@ export function drawWeaponOverlay(ctx, anchor, snapshot, scale) {
 
 function paintWeaponFrame(ctx, ov, anchor, cell, frameIdx, alpha) {
   const sx = clampInt(frameIdx, 0, ov.frames - 1) * ov.cellW;
-  // 64px weapon cells map 1:1 onto the body cell (feet at the bottom).
-  // 128px "oversized" weapon cells keep the body centred with the weapon
-  // extending out, so they draw at 2× size with the feet ~0.84 down.
-  const oversized = ov.cellW >= 128;
-  const drawSize = oversized ? cell * 2 : cell;
-  const feetFrac = oversized ? 0.84 : 1.0;
+  // The weapon cell is an integer multiple of the 64px body cell; draw
+  // it at that multiple of the on-screen cell so the central 64 lands on
+  // the body. M59:
+  //   - 64  cell → 1× cell, feet at the bottom (1.0): classic, body fills it.
+  //   - 128 cell → 2× cell, walk128 weapons sit ~0.84 down (legacy tune).
+  //   - 192 cell → 3× cell, body is CENTRED → feet at (192/2+32)/192 = 0.667.
+  const mult = ov.cellW / FRAME;
+  const drawSize = cell * mult;
+  const feetFrac = ov.cellW === 128 ? 0.84 : 0.5 + (FRAME / 2) / ov.cellW;
   ctx.save();
   ctx.globalAlpha = alpha;
   ctx.imageSmoothingEnabled = false;

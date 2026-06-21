@@ -763,16 +763,21 @@ export function weaponSpriteSrc(weapon) {
  * the hand, instead of repurposing the walk arm-swing. Saved as
  * `weapon/<key>_<anim>.png`.
  *
- * Only weapons whose attack art is the CLASSIC format are listed. Most
- * swords (longsword, rapier, scimitar, …) ship only "oversize"/universal
- * attack art (1152×768) that needs a bespoke overlay renderer and a
- * frame layout our classic body doesn't match — deferred (DEFERRED.md).
- * Anything absent here falls back to the M58 walk-sheet swing.
+ * Two sheet formats, both keyed here and both handled by the cinema's
+ * `cellW = height/4` rule (4 directions, south = band 2):
+ *   - CLASSIC 64px cells (slash 384×256/6f, thrust 512×256/8f) —
+ *     dagger/mace/spear. Frame-match the body 1:1.
+ *   - OVERSIZE 192px cells (slash 1152×768/6f, thrust 1536×768/8f) —
+ *     the big swords. Same 6/8 frame counts as the body, so they sync
+ *     frame-for-frame; the body sits in the centre 64 of the 192 cell
+ *     and the blade sweeps out (M59 oversize spike).
+ * Weapons absent here fall back to the M58 walk-sheet swing.
  */
 export const WEAPON_ATTACK_ANIMS = {
-  dagger: { slash: 6, thrust: 8 },
-  mace:   { thrust: 8 },
-  spear:  { thrust: 8 }
+  dagger:    { slash: 6, thrust: 8 },
+  mace:      { thrust: 8 },
+  spear:     { thrust: 8 },
+  longsword: { slash: 6, thrust: 8 }   // oversize 192px
 };
 
 /**
