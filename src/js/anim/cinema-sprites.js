@@ -25,7 +25,7 @@ import { MONSTER_PRESETS, buildMonsterCharacter } from '../scene/monster-presets
 import { actorStateAt } from './fsm.js';
 import { HURT_TAIL_MS, IDLE_BOB_MS } from './timings.js';
 import { loadImage } from '../sprite/image-cache.js';
-import { weaponSpriteSrc, weaponAttackSrc, weaponAnimForBody, FRAME, BODY_ANIMS, bodyAnimSheet } from '../sprite/lpc-config.js';
+import { weaponSpriteSrc, weaponAttackSrc, weaponAttackBehindSrc, weaponAnimForBody, FRAME, BODY_ANIMS, bodyAnimSheet } from '../sprite/lpc-config.js';
 import { motionForWeapon } from './weapon-motions.js';
 import { swingRigFor } from './weapon-swing.js';
 
@@ -444,10 +444,18 @@ export async function setActorWeapon(entity, { swing = null, animation = null } 
   // M59 — prefer a real attack sheet (slash/thrust) frame-matched to the
   // body animation; fall back to the walk sheet (M58 behavior) when the
   // weapon has no classic attack art for this animation.
-  const src = weaponAttackSrc(weapon, weaponAnimForBody(animation)) || weaponSpriteSrc(weapon);
+  const attackAnim = weaponAnimForBody(animation);
+  const src = weaponAttackSrc(weapon, attackAnim) || weaponSpriteSrc(weapon);
   if (!src) return null;                       // no LPC sprite → effect-only
   let img;
   try { img = await loadImage(src); } catch { return null; }
+  // M59-followup — oversize blades ship a second "behind body" sheet; the
+  // blade arcs partly behind the character. Load it if present so the
+  // cinema can draw it behind the body. Absent (classic weapons) → null,
+  // single-layer draw unchanged.
+  let behindImg = null;
+  const behindSrc = weaponAttackBehindSrc(weapon, attackAnim);
+  if (behindSrc) { try { behindImg = await loadImage(behindSrc); } catch { behindImg = null; } }
   // M59 — cell size = sheet height / 4 (LPC sheets are always 4
   // directions). Handles every format: classic 64 (256-tall), walk128
   // 128 (512-tall), and oversize 192 (768-tall) — where the old
@@ -455,7 +463,7 @@ export async function setActorWeapon(entity, { swing = null, animation = null } 
   const cellW = Math.max(FRAME, Math.round(img.height / 4));
   const frames = Math.max(1, Math.round(img.width / cellW));
   const rowY = SLASH_ROW_SOUTH * cellW;
-  _attackerWeapon = { img, rowY, cellW, frames, rig: classRig };
+  _attackerWeapon = { img, behindImg, rowY, cellW, frames, rig: classRig };
   return _attackerWeapon;
 }
 
@@ -485,9 +493,15 @@ export function swingFrameAt(frames, p, impactP) {
  * sheet's authored slash frames; a frame-based smear (the 1-2 frames
  * behind, at low alpha) gives the motion-trail.
  */
-export function drawWeaponOverlay(ctx, anchor, snapshot, scale) {
+export function drawWeaponOverlay(ctx, anchor, snapshot, scale, layer = 'front') {
   const ov = _attackerWeapon;
-  if (!ov || !ov.img) return;
+  if (!ov) return;
+  // M59-followup — two-layer oversize blades: 'behind' draws the
+  // behind-body sheet (a no-op for single-layer classic weapons), 'front'
+  // draws the main sheet. The cinema calls this once before the body and
+  // once after so the blade arcs around the character.
+  const img = layer === 'behind' ? ov.behindImg : ov.img;
+  if (!img) return;
   const dur = Number.isFinite(snapshot._duration) ? snapshot._duration : 1000;
   const t = Number.isFinite(snapshot._t) ? snapshot._t : 0;
   const impactAt = Number.isFinite(snapshot._impactAt) ? snapshot._impactAt : dur / 2;
@@ -507,13 +521,13 @@ export function drawWeaponOverlay(ctx, anchor, snapshot, scale) {
     for (let b = 1; b <= 2; b++) {
       const idx = cur - b;
       if (idx < 0) break;
-      paintWeaponFrame(ctx, ov, anchor, cell, idx, baseAlpha * (0.32 / b));
+      paintWeaponFrame(ctx, ov, img, anchor, cell, idx, baseAlpha * (0.32 / b));
     }
   }
-  paintWeaponFrame(ctx, ov, anchor, cell, cur, baseAlpha);
+  paintWeaponFrame(ctx, ov, img, anchor, cell, cur, baseAlpha);
 }
 
-function paintWeaponFrame(ctx, ov, anchor, cell, frameIdx, alpha) {
+function paintWeaponFrame(ctx, ov, img, anchor, cell, frameIdx, alpha) {
   const sx = clampInt(frameIdx, 0, ov.frames - 1) * ov.cellW;
   // The weapon cell is an integer multiple of the 64px body cell; draw
   // it at that multiple of the on-screen cell so the central 64 lands on
@@ -527,7 +541,7 @@ function paintWeaponFrame(ctx, ov, anchor, cell, frameIdx, alpha) {
   ctx.save();
   ctx.globalAlpha = alpha;
   ctx.imageSmoothingEnabled = false;
-  ctx.drawImage(ov.img, sx, ov.rowY, ov.cellW, ov.cellW,
+  ctx.drawImage(img, sx, ov.rowY, ov.cellW, ov.cellW,
     anchor.x - drawSize / 2, anchor.y - drawSize * feetFrac, drawSize, drawSize);
   ctx.restore();
 }

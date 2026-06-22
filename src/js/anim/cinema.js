@@ -298,10 +298,14 @@ function draw(ctx, state, seq, frame, opts) {
   // see the original x/y/rotation/scale/alpha snapshot.
   const attSnap = { ...frame.attacker, rotation: (frame.attacker.rotation || 0) + attBreath.rot, _t: frame.t, _impactAt: impactAt, _duration: seq.duration, _phase: attackerPhase };
   const defSnap = { ...frame.defender, rotation: (frame.defender.rotation || 0) + defBreath.rot, _t: frame.t, _impactAt: friendly ? NaN : impactAt, _duration: seq.duration, _phase: defenderPhase, _killing: killing };
+  // M59-followup — oversize blades arc partly BEHIND the body; draw that
+  // layer first (a no-op for single-layer classic weapons), then the body,
+  // then the foreground blade — so the blade sweeps around the character.
+  opts.drawWeapon?.(ctx, attAnchor, attSnap, opts.scale ?? 1, 'behind');
   opts.drawSprite(ctx, 'attacker', attAnchor, attSnap, opts.attacker);
   // M51 — the attacker's weapon swings as a separate overlay on top of
   // the (weapon-less) body so the blade actually sweeps with a smear.
-  opts.drawWeapon?.(ctx, attAnchor, attSnap, opts.scale ?? 1);
+  opts.drawWeapon?.(ctx, attAnchor, attSnap, opts.scale ?? 1, 'front');
   opts.drawSprite(ctx, 'defender', defAnchor, defSnap, opts.defender);
 
   // Effects fire as snapshots — for cinema we use a small "trail" so

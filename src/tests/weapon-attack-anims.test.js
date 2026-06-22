@@ -4,7 +4,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import {
-  weaponAttackSrc, weaponAnimForBody, WEAPON_ATTACK_ANIMS
+  weaponAttackSrc, weaponAttackBehindSrc, weaponAnimForBody, WEAPON_ATTACK_ANIMS
 } from '../js/sprite/lpc-config.js';
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -32,6 +32,24 @@ test('M59: weaponAttackSrc — resolves classic attack sheets for covered weapon
     '/assets/lpc/weapon/spear_thrust.png');
   assert.strictEqual(weaponAttackSrc({ name: 'Mace' }, 'thrust'),
     '/assets/lpc/weapon/mace_thrust.png');
+  // oversize swords now resolve their slash sheet; "sword"/"blade" map to longsword
+  assert.strictEqual(weaponAttackSrc({ name: 'Longsword' }, 'slash'),
+    '/assets/lpc/weapon/longsword_slash.png');
+  assert.strictEqual(weaponAttackSrc({ name: 'Steel Longsword' }, 'slash'),
+    '/assets/lpc/weapon/longsword_slash.png');
+});
+
+test('M59-followup: weaponAttackBehindSrc — oversize blades resolve a behind sheet, classics do not', () => {
+  // the oversize longsword slash ships a behind-body companion sheet
+  assert.strictEqual(weaponAttackBehindSrc({ name: 'Longsword' }, 'slash'),
+    '/assets/lpc/weapon/longsword_slash_behind.png');
+  // classic single-layer weapons have no behind sheet
+  assert.strictEqual(weaponAttackBehindSrc({ name: 'Dagger' }, 'slash'), null);
+  assert.strictEqual(weaponAttackBehindSrc({ name: 'Spear' }, 'thrust'), null);
+  // unmatched anim / weapon → null
+  assert.strictEqual(weaponAttackBehindSrc({ name: 'Longsword' }, 'thrust'), null);
+  assert.strictEqual(weaponAttackBehindSrc({ name: 'Longsword' }, null), null);
+  assert.strictEqual(weaponAttackBehindSrc({ name: 'Banana' }, 'slash'), null);
 });
 
 test('M59: weaponAttackSrc — null when the weapon lacks a matching classic anim', () => {
@@ -39,11 +57,9 @@ test('M59: weaponAttackSrc — null when the weapon lacks a matching classic ani
   assert.strictEqual(weaponAttackSrc({ name: 'Mace' }, 'slash'), null);
   // spear has no slash sheet
   assert.strictEqual(weaponAttackSrc({ name: 'Spear' }, 'slash'), null);
-  // the oversize swords are NOT registered — their attack art is
-  // authored for the revised body and floats off our classic hand, so
-  // they fall back to the walk-swing (DEFERRED.md).
-  assert.strictEqual(weaponAttackSrc({ name: 'Longsword' }, 'slash'), null);
+  // longsword has only a slash sheet registered (no oversize thrust yet)
   assert.strictEqual(weaponAttackSrc({ name: 'Longsword' }, 'thrust'), null);
+  // axes (waraxe) aren't registered yet → walk fallback
   assert.strictEqual(weaponAttackSrc({ name: 'Greataxe' }, 'slash'), null);
   // casts / unmatched anim → null (caller falls back to walk)
   assert.strictEqual(weaponAttackSrc({ name: 'Dagger' }, null), null);
@@ -67,6 +83,26 @@ test('M59: every WEAPON_ATTACK_ANIMS sheet exists on disk with the right name', 
       const p = join(REPO, 'public', 'assets', 'lpc', 'weapon', `${key}_${anim}.png`);
       assert.ok(existsSync(p), `missing asset: ${key}_${anim}.png`);
       assert.ok(anims[anim] > 0, `${key}.${anim} frame count must be positive`);
+    }
+  }
+});
+
+// ---------- behind-layer sheets ↔ disk + geometry ----------
+
+test('M59-followup: each behind sheet exists and matches its foreground (192px / same frames)', () => {
+  // any weapon that resolves a behind sheet must have it on disk and it
+  // must decode identically to the foreground (same cellW + frame count).
+  for (const [key, anims] of Object.entries(WEAPON_ATTACK_ANIMS)) {
+    for (const anim of Object.keys(anims)) {
+      const behind = weaponAttackBehindSrc({ name: key }, anim);
+      if (!behind) continue;
+      const file = behind.replace('/assets/lpc/weapon/', '');
+      const bp = join(REPO, 'public', 'assets', 'lpc', 'weapon', file);
+      assert.ok(existsSync(bp), `missing behind sheet: ${file}`);
+      const fg = pngSize(join(REPO, 'public', 'assets', 'lpc', 'weapon', `${key}_${anim}.png`));
+      const bg = pngSize(bp);
+      assert.strictEqual(bg.h, fg.h, `${file}: behind height ${bg.h} ≠ fg ${fg.h}`);
+      assert.strictEqual(bg.w, fg.w, `${file}: behind width ${bg.w} ≠ fg ${fg.w}`);
     }
   }
 });

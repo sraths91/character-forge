@@ -83,36 +83,41 @@ slash+thrust, mace+spear thrust — 384×256/512×256) that frame-match
 our classic body, so those play real attacks. Most **swords**
 (longsword, rapier, scimitar, saber, katana, waraxe, halberd) ship
 only **oversize/universal** attack art upstream (`attack_slash`
-1152×768, `attack_thrust` 1536×768) which does NOT compose with our
-classic 6-frame body — LPC overlays oversize weapons via a bespoke
-generator-side layout, not a frame-identical sheet. Our body slash is
-classic (384×256), so there is no "expanded body" to import either.
-Those weapons stay on the M58 walk-fallback swing.
+1152×768, `attack_thrust` 1536×768).
 
-**Update (oversize spike, 2026-06-21):** The renderer geometry is now
-DONE and shipped — `cellW = height/4` (4 directions) + a centred draw
-correctly decode the oversize format (192px cells, south band 2, 6/8
-frames). I proved it on the longsword + greataxe: the blade draws and
-sweeps. BUT compositing on our body revealed the real blocker: the
-oversize `attack_*` animation is authored for ElizaWy's **revised
-body** (a centred two-handed overhead slash), which does NOT match our
-**classic** body slash (a right-arm diagonal). The grip floats off the
-hand. A constant offset can't reconcile them — the grip stays centred
-while the classic hand moves. So the oversize weapons were reverted to
-the M58 walk-fallback; the geometry stays for when the revised body
-lands.
+**RESOLVED (oversize two-layer render, 2026-06-21).** The M59 "revised
+body" theory was WRONG. The ULPC generator's own data settles it: the
+longsword's sheet definition uses `custom_animation: "slash_oversize"`,
+and `sources/custom-animations.ts` defines `slash_oversize` as
+`frameSize: 192` mapping frame-for-frame to **`slash-s,0..5` — our
+standard classic slash**. So the oversize blade composes with the body
+we already have; no body import. Two things were actually missing:
+1. The blade is a **two-layer sprite** — `attack_slash/behind/` (zPos
+   −1, draws behind the body) + `attack_slash/` (zPos 150, in front).
+   M59's spike drew foreground only, so half the blade was missing and
+   it read as "disconnected".
+2. The centred-in-192 offset was already correct.
 
-The remaining work is the **matching body**, not the weapon geometry:
-- **Import ElizaWy's revised slash/thrust body** (the overhead-motion
-  body the oversize weapons were drawn for) and use it for oversize-
-  weapon attacks. Then body + weapon connect AND look dramatic. This
-  is the right path; it's a body-animation import (M57-adjacent), not
-  more weapon code.
-- OR per-frame hand-tracking (extract the classic body's hand x/y per
-  slash frame, offset the weapon to it) — but the motions differ
-  (overhead weapon vs diagonal body), so the blade direction would
-  still fight the body. The revised body is the clean answer.
+Drawing **behind → body → front** (cinema.js calls `drawWeapon` with a
+`'behind'`/`'front'` layer arg around the body; `drawWeaponOverlay`
+picks the sheet) connects the hilt to the hand through the whole arc
+AND looks dramatic (Fire-Emblem-grade sweep). Proven in the render
+harness at 5× zoom: the gold cross-guard tracks the right hand, the arm
+extends/raises to follow it, the blade arcs around the character.
+**Longsword slash shipped** (`longsword_slash.png` +
+`longsword_slash_behind.png`); "sword"/"blade" map to it.
 
-Contrast: the CLASSIC attack weapons (dagger/mace/spear) DO connect —
-they're the canonical LPC slash/thrust pair for our classic body,
-drawn 1:1. Those shipped (M59).
+Remaining (mechanical roll-out, no new research):
+- **The rest of the oversize roster** — greatsword (`longsword_alt`),
+  waraxe/axes, rapier, scimitar, saber, katana, halberd: download each
+  weapon's `attack_slash` fg + `attack_slash/behind` bg (192px),
+  register `{ slash: 6 }` in `WEAPON_ATTACK_ANIMS` + add the
+  `<key>_slash` pair to `WEAPON_ATTACK_BEHIND`, verify in the harness.
+- **Oversize thrust** — `attack_thrust` (1536×768/8f) + its behind
+  sheet, same wiring (`{ thrust: 8 }`). Lower priority: our body-anim
+  picker sends swords to `slash`, so thrust rarely fires for them.
+- A reusable `scripts/` fetch that reads each weapon's sheet definition
+  to find the fg/bg `attack_*` paths (they vary per weapon subdir).
+
+Contrast: the CLASSIC attack weapons (dagger/mace/spear) connect as the
+canonical 1:1 LPC slash/thrust pair for our classic body (M59).

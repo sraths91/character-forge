@@ -774,28 +774,49 @@ export function weaponSpriteSrc(weapon) {
  * Weapons absent here fall back to the M58 walk-sheet swing.
  */
 export const WEAPON_ATTACK_ANIMS = {
-  dagger: { slash: 6, thrust: 8 },
-  mace:   { thrust: 8 },
-  spear:  { thrust: 8 }
-  // NOTE: the oversize swords (longsword/waraxe/…) are intentionally
-  // NOT here. Their `attack_*` art (192px) is authored for ElizaWy's
-  // REVISED body — a centred two-handed overhead slash — which does not
-  // match our CLASSIC body slash (a right-arm diagonal). Composited on
-  // our body the grip floats off the hand. The cinema geometry handles
-  // the 192 format (cellW=height/4 + centred draw); the missing piece is
-  // the matching revised body. Until then these fall back to the M58
-  // walk-swing, which reads as held. See DEFERRED.md.
+  dagger:    { slash: 6, thrust: 8 },
+  mace:      { thrust: 8 },
+  spear:     { thrust: 8 },
+  // OVERSIZE (192px) swords. M59-followup: the upstream `attack_*` art is
+  // authored against the STANDARD slash body (ULPC `slash_oversize` maps
+  // frame-for-frame to `slash-s,N` — our classic 6-frame slash), not a
+  // "revised body" as M59 first guessed. The body sits in the centre 64 of
+  // the 192 cell and the grip tracks the hand across the whole sweep. The
+  // catch: the blade is a TWO-layer sprite — part sweeps BEHIND the body
+  // (see WEAPON_ATTACK_BEHIND) — so it must be drawn behind + in front of
+  // the body, which the cinema now does. Generic "sword"/"blade" map here.
+  longsword: { slash: 6 }
 };
 
+// (key_anim) pairs that ship a second "behind body" sheet
+// (`<key>_<anim>_behind.png`). The oversize blade arcs partly behind the
+// character; the cinema draws this layer before the body (zPos < body) and
+// the foreground sheet after it (zPos > body). Classic weapons aren't here
+// → single-layer draw, unchanged.
+const WEAPON_ATTACK_BEHIND = new Set(['longsword_slash']);
+
 /**
- * Resolve a weapon + attack animation to its classic attack-sheet path,
- * or null when this weapon has no classic sheet for that animation (→
- * the caller falls back to the walk sheet).
+ * Resolve a weapon + attack animation to its attack-sheet path, or null
+ * when this weapon has no sheet for that animation (→ the caller falls
+ * back to the walk sheet).
  */
 export function weaponAttackSrc(weapon, anim) {
   const key = pickWeapon(weapon);
   const spec = key && WEAPON_ATTACK_ANIMS[key];
   return spec && spec[anim] ? `${ASSETS}/weapon/${key}_${anim}.png` : null;
+}
+
+/**
+ * Resolve the "behind body" companion sheet for an oversize weapon attack,
+ * or null when this weapon/anim draws as a single foreground layer. The
+ * cinema draws this sheet behind the body so the blade arcs around the
+ * character.
+ */
+export function weaponAttackBehindSrc(weapon, anim) {
+  const key = pickWeapon(weapon);
+  if (!key || !anim) return null;
+  return WEAPON_ATTACK_BEHIND.has(`${key}_${anim}`)
+    ? `${ASSETS}/weapon/${key}_${anim}_behind.png` : null;
 }
 
 /**
