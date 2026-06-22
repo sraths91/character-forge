@@ -4091,8 +4091,14 @@ async function postImport(body) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body)
     });
-    const data = await res.json();
-    if (!res.ok) {
+    // The API always answers with a JSON body (even on errors). An empty
+    // or non-JSON response means the request never reached the backend —
+    // almost always the API server not running, so the Vite proxy returns
+    // an empty 500. Tolerate the parse failure and surface it as an
+    // actionable error instead of a raw "Unexpected end of JSON input".
+    let data = null;
+    try { data = await res.json(); } catch { data = null; }
+    if (!res.ok || !data) {
       throw makeImportError(res.status, data);
     }
     // M23 — re-import diff. If the server returned a previous parse,
@@ -4172,6 +4178,13 @@ document.addEventListener('click', (e) => {
  * fix as a hint instead of the raw HTTP code.
  */
 function makeImportError(status, data) {
+  // No JSON body → the backend wasn't reached (proxy returned an empty
+  // 5xx because the API server isn't running). Tell the user how to fix it.
+  if (!data) {
+    const err = new Error('Could not reach the import API server.');
+    err.hint = 'Start the backend too: run `npm run dev:all` (or `npm run dev:api` alongside `npm run dev`).';
+    return err;
+  }
   const base = data?.error || `HTTP ${status}`;
   if (status === 404 || /not.found|private/i.test(base)) {
     const err = new Error('Character not found or not public on D&D Beyond.');
