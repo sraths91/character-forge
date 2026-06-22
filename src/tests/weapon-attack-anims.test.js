@@ -37,12 +37,25 @@ test('M59: weaponAttackSrc — resolves classic attack sheets for covered weapon
     '/assets/lpc/weapon/longsword_slash.png');
   assert.strictEqual(weaponAttackSrc({ name: 'Steel Longsword' }, 'slash'),
     '/assets/lpc/weapon/longsword_slash.png');
+  // the rest of the 192px oversize roster (rapier / saber / halberd / axes)
+  assert.strictEqual(weaponAttackSrc({ name: 'Rapier' }, 'slash'),
+    '/assets/lpc/weapon/rapier_slash.png');
+  assert.strictEqual(weaponAttackSrc({ name: 'Falchion' }, 'slash'),
+    '/assets/lpc/weapon/saber_slash.png');
+  assert.strictEqual(weaponAttackSrc({ name: 'Halberd' }, 'slash'),
+    '/assets/lpc/weapon/halberd_slash.png');
+  assert.strictEqual(weaponAttackSrc({ name: 'Greataxe' }, 'slash'),
+    '/assets/lpc/weapon/waraxe_slash.png');
 });
 
 test('M59-followup: weaponAttackBehindSrc — oversize blades resolve a behind sheet, classics do not', () => {
-  // the oversize longsword slash ships a behind-body companion sheet
+  // every 192px oversize slash ships a behind-body companion sheet
   assert.strictEqual(weaponAttackBehindSrc({ name: 'Longsword' }, 'slash'),
     '/assets/lpc/weapon/longsword_slash_behind.png');
+  assert.strictEqual(weaponAttackBehindSrc({ name: 'Rapier' }, 'slash'),
+    '/assets/lpc/weapon/rapier_slash_behind.png');
+  assert.strictEqual(weaponAttackBehindSrc({ name: 'Battleaxe' }, 'slash'),
+    '/assets/lpc/weapon/waraxe_slash_behind.png');
   // classic single-layer weapons have no behind sheet
   assert.strictEqual(weaponAttackBehindSrc({ name: 'Dagger' }, 'slash'), null);
   assert.strictEqual(weaponAttackBehindSrc({ name: 'Spear' }, 'thrust'), null);
@@ -57,10 +70,14 @@ test('M59: weaponAttackSrc — null when the weapon lacks a matching classic ani
   assert.strictEqual(weaponAttackSrc({ name: 'Mace' }, 'slash'), null);
   // spear has no slash sheet
   assert.strictEqual(weaponAttackSrc({ name: 'Spear' }, 'slash'), null);
-  // longsword has only a slash sheet registered (no oversize thrust yet)
+  // oversize swords have only a slash sheet registered (no oversize thrust yet)
   assert.strictEqual(weaponAttackSrc({ name: 'Longsword' }, 'thrust'), null);
-  // axes (waraxe) aren't registered yet → walk fallback
-  assert.strictEqual(weaponAttackSrc({ name: 'Greataxe' }, 'slash'), null);
+  assert.strictEqual(weaponAttackSrc({ name: 'Greataxe' }, 'thrust'), null);
+  // Group B (greatsword/scimitar/katana) is the 128px/13-frame slash_128
+  // format — not synced to our 6-frame body, so NOT registered (DEFERRED).
+  assert.strictEqual(weaponAttackSrc({ name: 'Scimitar' }, 'slash'), null);
+  assert.strictEqual(weaponAttackSrc({ name: 'Katana' }, 'slash'), null);
+  assert.strictEqual(weaponAttackSrc({ name: 'Greatsword' }, 'slash'), null);
   // casts / unmatched anim → null (caller falls back to walk)
   assert.strictEqual(weaponAttackSrc({ name: 'Dagger' }, null), null);
   // unknown weapon → null

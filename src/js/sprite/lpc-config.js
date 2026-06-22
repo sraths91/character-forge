@@ -785,7 +785,11 @@ export const WEAPON_ATTACK_ANIMS = {
   // catch: the blade is a TWO-layer sprite — part sweeps BEHIND the body
   // (see WEAPON_ATTACK_BEHIND) — so it must be drawn behind + in front of
   // the body, which the cinema now does. Generic "sword"/"blade" map here.
-  longsword: { slash: 6 }
+  longsword: { slash: 6 },
+  rapier:    { slash: 6 },
+  saber:     { slash: 6 },   // falchion / cutlass / saber
+  halberd:   { slash: 6 },   // glaive / halberd polearm
+  waraxe:    { slash: 6 }    // battleaxe / greataxe / handaxe
 };
 
 // (key_anim) pairs that ship a second "behind body" sheet
@@ -793,7 +797,9 @@ export const WEAPON_ATTACK_ANIMS = {
 // character; the cinema draws this layer before the body (zPos < body) and
 // the foreground sheet after it (zPos > body). Classic weapons aren't here
 // → single-layer draw, unchanged.
-const WEAPON_ATTACK_BEHIND = new Set(['longsword_slash']);
+const WEAPON_ATTACK_BEHIND = new Set([
+  'longsword_slash', 'rapier_slash', 'saber_slash', 'halberd_slash', 'waraxe_slash'
+]);
 
 /**
  * Resolve a weapon + attack animation to its attack-sheet path, or null

@@ -107,17 +107,31 @@ extends/raises to follow it, the blade arcs around the character.
 **Longsword slash shipped** (`longsword_slash.png` +
 `longsword_slash_behind.png`); "sword"/"blade" map to it.
 
-Remaining (mechanical roll-out, no new research):
-- **The rest of the oversize roster** — greatsword (`longsword_alt`),
-  waraxe/axes, rapier, scimitar, saber, katana, halberd: download each
-  weapon's `attack_slash` fg + `attack_slash/behind` bg (192px),
-  register `{ slash: 6 }` in `WEAPON_ATTACK_ANIMS` + add the
-  `<key>_slash` pair to `WEAPON_ATTACK_BEHIND`, verify in the harness.
-- **Oversize thrust** — `attack_thrust` (1536×768/8f) + its behind
-  sheet, same wiring (`{ thrust: 8 }`). Lower priority: our body-anim
-  picker sends swords to `slash`, so thrust rarely fires for them.
-- A reusable `scripts/` fetch that reads each weapon's sheet definition
-  to find the fg/bg `attack_*` paths (they vary per weapon subdir).
+**Roster roll-out (2026-06-22).** The upstream attack art splits into two
+formats, discovered by reading each weapon's sheet definition:
+
+- **Group A — `slash_oversize` (192px, 1152×768/6f).** rapier, saber
+  (falchion/cutlass), halberd (glaive), waraxe (battle/great/hand-axe).
+  Same 6-frame format as the longsword → drop-in. **SHIPPED**: fg +
+  `attack_slash/behind` bg downloaded, registered `{ slash: 6 }` in
+  `WEAPON_ATTACK_ANIMS` + `<key>_slash` in `WEAPON_ATTACK_BEHIND`, all
+  verified connected in the render harness. Combined with the longsword
+  (and generic "sword"/"blade"), most melee blades now play a real slash.
+
+- **Group B — `slash_128` (128px, 1664×512/**13 frames**).** greatsword
+  (`longsword_alt`), scimitar, katana. STILL DEFERRED. These live under
+  `weapon/.../slash/` (+ `slash/behind/`), not `attack_slash/`, and the
+  custom `slash_128` animation is **13 frames** — it does NOT sync with
+  our 6-frame classic body slash (the cinema decodes `cellW = height/4`
+  and frame-plays all 13, which would desync and fails the geometry
+  invariant). To land Group B: either remap the 13 source frames onto the
+  6-frame body timeline (pick/resample the 6 that align), or pair them
+  with a matching 13-frame body slash. Greatsword/scimitar/katana stay on
+  the M58 walk-fallback until then.
+
+- **Oversize thrust** — `attack_thrust` (1536×768/8f) + behind sheet,
+  same wiring (`{ thrust: 8 }`). Lower priority: the body-anim picker
+  sends swords to `slash`, so thrust rarely fires for them.
 
 Contrast: the CLASSIC attack weapons (dagger/mace/spear) connect as the
 canonical 1:1 LPC slash/thrust pair for our classic body (M59).
