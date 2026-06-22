@@ -46,6 +46,13 @@ test('M59: weaponAttackSrc — resolves classic attack sheets for covered weapon
     '/assets/lpc/weapon/halberd_slash.png');
   assert.strictEqual(weaponAttackSrc({ name: 'Greataxe' }, 'slash'),
     '/assets/lpc/weapon/waraxe_slash.png');
+  // Group B — slash_128 (128px) swords, cropped to 6 frames at import
+  assert.strictEqual(weaponAttackSrc({ name: 'Greatsword' }, 'slash'),
+    '/assets/lpc/weapon/longsword_alt_slash.png');
+  assert.strictEqual(weaponAttackSrc({ name: 'Scimitar' }, 'slash'),
+    '/assets/lpc/weapon/scimitar_slash.png');
+  assert.strictEqual(weaponAttackSrc({ name: 'Katana' }, 'slash'),
+    '/assets/lpc/weapon/katana_slash.png');
 });
 
 test('M59-followup: weaponAttackBehindSrc — oversize blades resolve a behind sheet, classics do not', () => {
@@ -73,11 +80,7 @@ test('M59: weaponAttackSrc — null when the weapon lacks a matching classic ani
   // oversize swords have only a slash sheet registered (no oversize thrust yet)
   assert.strictEqual(weaponAttackSrc({ name: 'Longsword' }, 'thrust'), null);
   assert.strictEqual(weaponAttackSrc({ name: 'Greataxe' }, 'thrust'), null);
-  // Group B (greatsword/scimitar/katana) is the 128px/13-frame slash_128
-  // format — not synced to our 6-frame body, so NOT registered (DEFERRED).
-  assert.strictEqual(weaponAttackSrc({ name: 'Scimitar' }, 'slash'), null);
-  assert.strictEqual(weaponAttackSrc({ name: 'Katana' }, 'slash'), null);
-  assert.strictEqual(weaponAttackSrc({ name: 'Greatsword' }, 'slash'), null);
+  assert.strictEqual(weaponAttackSrc({ name: 'Scimitar' }, 'thrust'), null);
   // casts / unmatched anim → null (caller falls back to walk)
   assert.strictEqual(weaponAttackSrc({ name: 'Dagger' }, null), null);
   // unknown weapon → null
@@ -106,20 +109,19 @@ test('M59: every WEAPON_ATTACK_ANIMS sheet exists on disk with the right name', 
 
 // ---------- behind-layer sheets ↔ disk + geometry ----------
 
-test('M59-followup: each behind sheet exists and matches its foreground (192px / same frames)', () => {
-  // any weapon that resolves a behind sheet must have it on disk and it
-  // must decode identically to the foreground (same cellW + frame count).
+test('M59-followup: every behind sheet on disk matches its foreground (same dims)', () => {
+  // Check the behind files directly by registry key (NOT via pickWeapon —
+  // some keys like `longsword_alt` collide with the generic "sword" rule).
+  // A behind sheet is optional (single-layer weapons have none); when one
+  // exists it must decode identically to its foreground (same cellW + frames).
   for (const [key, anims] of Object.entries(WEAPON_ATTACK_ANIMS)) {
     for (const anim of Object.keys(anims)) {
-      const behind = weaponAttackBehindSrc({ name: key }, anim);
-      if (!behind) continue;
-      const file = behind.replace('/assets/lpc/weapon/', '');
-      const bp = join(REPO, 'public', 'assets', 'lpc', 'weapon', file);
-      assert.ok(existsSync(bp), `missing behind sheet: ${file}`);
+      const bp = join(REPO, 'public', 'assets', 'lpc', 'weapon', `${key}_${anim}_behind.png`);
+      if (!existsSync(bp)) continue;   // single-layer weapon — no behind sheet
       const fg = pngSize(join(REPO, 'public', 'assets', 'lpc', 'weapon', `${key}_${anim}.png`));
       const bg = pngSize(bp);
-      assert.strictEqual(bg.h, fg.h, `${file}: behind height ${bg.h} ≠ fg ${fg.h}`);
-      assert.strictEqual(bg.w, fg.w, `${file}: behind width ${bg.w} ≠ fg ${fg.w}`);
+      assert.strictEqual(bg.h, fg.h, `${key}_${anim}_behind: height ${bg.h} ≠ fg ${fg.h}`);
+      assert.strictEqual(bg.w, fg.w, `${key}_${anim}_behind: width ${bg.w} ≠ fg ${fg.w}`);
     }
   }
 });

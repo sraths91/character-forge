@@ -118,16 +118,17 @@ formats, discovered by reading each weapon's sheet definition:
   verified connected in the render harness. Combined with the longsword
   (and generic "sword"/"blade"), most melee blades now play a real slash.
 
-- **Group B — `slash_128` (128px, 1664×512/**13 frames**).** greatsword
-  (`longsword_alt`), scimitar, katana. STILL DEFERRED. These live under
-  `weapon/.../slash/` (+ `slash/behind/`), not `attack_slash/`, and the
-  custom `slash_128` animation is **13 frames** — it does NOT sync with
-  our 6-frame classic body slash (the cinema decodes `cellW = height/4`
-  and frame-plays all 13, which would desync and fails the geometry
-  invariant). To land Group B: either remap the 13 source frames onto the
-  6-frame body timeline (pick/resample the 6 that align), or pair them
-  with a matching 13-frame body slash. Greatsword/scimitar/katana stay on
-  the M58 walk-fallback until then.
+- **Group B — `slash_128` (128px).** greatsword (`longsword_alt`),
+  scimitar, katana. **SHIPPED.** The upstream sheets are 1664×512 / 13
+  frames, but a pixel-occupancy scan showed only frames 0-5 carry the
+  slash (6-13 are empty padding) and for south-facing the whole blade is
+  foreground (`slash/behind/` south is empty). So they ARE a 6-frame slash
+  — just padded and at a 128px cell. Import crops each to a clean 768×512 /
+  6-frame sheet (single-layer, no behind). The cell is 128, body centred,
+  so the vertical anchor is `feetFrac 0.75` — which required separating the
+  attack-sheet placement (always the centred formula) from the legacy
+  walk128 fallback tune (0.84), now stored per-overlay in setActorWeapon.
+  All three verified connected in the harness.
 
 - **Oversize thrust** — `attack_thrust` (1536×768/8f) + behind sheet,
   same wiring (`{ thrust: 8 }`). Lower priority: the body-anim picker

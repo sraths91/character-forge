@@ -445,7 +445,8 @@ export async function setActorWeapon(entity, { swing = null, animation = null } 
   // body animation; fall back to the walk sheet (M58 behavior) when the
   // weapon has no classic attack art for this animation.
   const attackAnim = weaponAnimForBody(animation);
-  const src = weaponAttackSrc(weapon, attackAnim) || weaponSpriteSrc(weapon);
+  const attackSrc = weaponAttackSrc(weapon, attackAnim);
+  const src = attackSrc || weaponSpriteSrc(weapon);
   if (!src) return null;                       // no LPC sprite → effect-only
   let img;
   try { img = await loadImage(src); } catch { return null; }
@@ -463,7 +464,14 @@ export async function setActorWeapon(entity, { swing = null, animation = null } 
   const cellW = Math.max(FRAME, Math.round(img.height / 4));
   const frames = Math.max(1, Math.round(img.width / cellW));
   const rowY = SLASH_ROW_SOUTH * cellW;
-  _attackerWeapon = { img, behindImg, rowY, cellW, frames, rig: classRig };
+  // Vertical placement of the weapon cell. Attack sheets centre the 64px
+  // body in their cell, so the feet sit at (cellW/2 + 32)/cellW: 64→1.0
+  // (classic, body fills it), 128→0.75 (slash_128 swords), 192→0.667
+  // (oversize). The walk-sheet FALLBACK keeps its legacy 128 tune (0.84) —
+  // the body sits lower in that sheet, so it can't share the formula.
+  const centred = 0.5 + (FRAME / 2) / cellW;
+  const feetFrac = attackSrc ? centred : (cellW === 128 ? 0.84 : centred);
+  _attackerWeapon = { img, behindImg, rowY, cellW, frames, feetFrac, rig: classRig };
   return _attackerWeapon;
 }
 
@@ -529,15 +537,14 @@ export function drawWeaponOverlay(ctx, anchor, snapshot, scale, layer = 'front')
 
 function paintWeaponFrame(ctx, ov, img, anchor, cell, frameIdx, alpha) {
   const sx = clampInt(frameIdx, 0, ov.frames - 1) * ov.cellW;
-  // The weapon cell is an integer multiple of the 64px body cell; draw
-  // it at that multiple of the on-screen cell so the central 64 lands on
-  // the body. M59:
-  //   - 64  cell → 1× cell, feet at the bottom (1.0): classic, body fills it.
-  //   - 128 cell → 2× cell, walk128 weapons sit ~0.84 down (legacy tune).
-  //   - 192 cell → 3× cell, body is CENTRED → feet at (192/2+32)/192 = 0.667.
+  // The weapon cell is an integer multiple of the 64px body cell; draw it
+  // at that multiple of the on-screen cell so the central 64 lands on the
+  // body. ov.feetFrac (set in setActorWeapon) is the vertical anchor: 1.0
+  // classic 64, 0.75 centred 128 (slash_128), 0.667 centred 192 (oversize),
+  // 0.84 for the legacy walk128 fallback.
   const mult = ov.cellW / FRAME;
   const drawSize = cell * mult;
-  const feetFrac = ov.cellW === 128 ? 0.84 : 0.5 + (FRAME / 2) / ov.cellW;
+  const feetFrac = ov.feetFrac;
   ctx.save();
   ctx.globalAlpha = alpha;
   ctx.imageSmoothingEnabled = false;

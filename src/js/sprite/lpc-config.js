@@ -789,7 +789,15 @@ export const WEAPON_ATTACK_ANIMS = {
   rapier:    { slash: 6 },
   saber:     { slash: 6 },   // falchion / cutlass / saber
   halberd:   { slash: 6 },   // glaive / halberd polearm
-  waraxe:    { slash: 6 }    // battleaxe / greataxe / handaxe
+  waraxe:    { slash: 6 },   // battleaxe / greataxe / handaxe
+  // slash_128 (128px) swords. Upstream ships these as 1664×512 / 13-frame
+  // sheets where only frames 0-5 carry the slash (rest is padding) and the
+  // whole blade is foreground for south-facing. We crop to a clean 768×512
+  // / 6-frame sheet at import; single-layer (no behind entry — south behind
+  // is empty). The cell is 128, body centred (feetFrac 0.75).
+  longsword_alt: { slash: 6 },   // greatsword / claymore / zweihander
+  scimitar:      { slash: 6 },   // scimitar / sickle
+  katana:        { slash: 6 }    // katana / wakizashi
 };
 
 // (key_anim) pairs that ship a second "behind body" sheet
