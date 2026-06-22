@@ -130,6 +130,16 @@ formats, discovered by reading each weapon's sheet definition:
   walk128 fallback tune (0.84), now stored per-overlay in setActorWeapon.
   All three verified connected in the harness.
 
+- **Group C — remaining melee slashers (SHIPPED).** glowsword (the magic
+  blades — flame tongue / frost brand / sun blade / moonblade / lightsaber;
+  blue variant to match the idle), flail, scythe, and **mace** (it maps to
+  `axe-cleave` → slash body, so a real `slash_oversize` beats its old
+  thrust-only fallback) are 192px single-layer (south behind is empty);
+  shortsword (`arming`) is 128px (`attack_slash/fg/`, already 6 frames).
+  All verified connected. Weapons with NO upstream slash art stay on the
+  walk-fallback: trident, longspear, dragonspear, cane (thrust-only
+  polearms) and club (ships only a reverse slash).
+
 - **Oversize thrust** — `attack_thrust` (1536×768/8f) + behind sheet,
   same wiring (`{ thrust: 8 }`). Lower priority: the body-anim picker
   sends swords to `slash`, so thrust rarely fires for them.

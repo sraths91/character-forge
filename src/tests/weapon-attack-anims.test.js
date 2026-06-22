@@ -53,6 +53,17 @@ test('M59: weaponAttackSrc — resolves classic attack sheets for covered weapon
     '/assets/lpc/weapon/scimitar_slash.png');
   assert.strictEqual(weaponAttackSrc({ name: 'Katana' }, 'slash'),
     '/assets/lpc/weapon/katana_slash.png');
+  // remaining melee slashers: magic blades, flail, scythe, mace-cleave, shortsword
+  assert.strictEqual(weaponAttackSrc({ name: 'Flame Tongue' }, 'slash'),
+    '/assets/lpc/weapon/glowsword_slash.png');
+  assert.strictEqual(weaponAttackSrc({ name: 'Flail' }, 'slash'),
+    '/assets/lpc/weapon/flail_slash.png');
+  assert.strictEqual(weaponAttackSrc({ name: 'Scythe' }, 'slash'),
+    '/assets/lpc/weapon/scythe_slash.png');
+  assert.strictEqual(weaponAttackSrc({ name: 'Mace' }, 'slash'),
+    '/assets/lpc/weapon/mace_slash.png');
+  assert.strictEqual(weaponAttackSrc({ name: 'Shortsword' }, 'slash'),
+    '/assets/lpc/weapon/arming_slash.png');
 });
 
 test('M59-followup: weaponAttackBehindSrc — oversize blades resolve a behind sheet, classics do not', () => {
@@ -73,9 +84,7 @@ test('M59-followup: weaponAttackBehindSrc — oversize blades resolve a behind s
 });
 
 test('M59: weaponAttackSrc — null when the weapon lacks a matching classic anim', () => {
-  // mace has no classic slash (universal only)
-  assert.strictEqual(weaponAttackSrc({ name: 'Mace' }, 'slash'), null);
-  // spear has no slash sheet
+  // spear has no slash sheet (thrust only)
   assert.strictEqual(weaponAttackSrc({ name: 'Spear' }, 'slash'), null);
   // oversize swords have only a slash sheet registered (no oversize thrust yet)
   assert.strictEqual(weaponAttackSrc({ name: 'Longsword' }, 'thrust'), null);

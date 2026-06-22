@@ -775,7 +775,7 @@ export function weaponSpriteSrc(weapon) {
  */
 export const WEAPON_ATTACK_ANIMS = {
   dagger:    { slash: 6, thrust: 8 },
-  mace:      { thrust: 8 },
+  mace:      { thrust: 8, slash: 6 },   // mace cleaves (axe-cleave → slash body)
   spear:     { thrust: 8 },
   // OVERSIZE (192px) swords. M59-followup: the upstream `attack_*` art is
   // authored against the STANDARD slash body (ULPC `slash_oversize` maps
@@ -790,6 +790,9 @@ export const WEAPON_ATTACK_ANIMS = {
   saber:     { slash: 6 },   // falchion / cutlass / saber
   halberd:   { slash: 6 },   // glaive / halberd polearm
   waraxe:    { slash: 6 },   // battleaxe / greataxe / handaxe
+  glowsword: { slash: 6 },   // flame tongue / frost brand / sun blade / lightsaber (blue glow, matches idle)
+  flail:     { slash: 6 },   // flail / whip
+  scythe:    { slash: 6 },   // scythe — big curved sweep
   // slash_128 (128px) swords. Upstream ships these as 1664×512 / 13-frame
   // sheets where only frames 0-5 carry the slash (rest is padding) and the
   // whole blade is foreground for south-facing. We crop to a clean 768×512
@@ -797,7 +800,8 @@ export const WEAPON_ATTACK_ANIMS = {
   // is empty). The cell is 128, body centred (feetFrac 0.75).
   longsword_alt: { slash: 6 },   // greatsword / claymore / zweihander
   scimitar:      { slash: 6 },   // scimitar / sickle
-  katana:        { slash: 6 }    // katana / wakizashi
+  katana:        { slash: 6 },   // katana / wakizashi
+  arming:        { slash: 6 }    // shortsword / arming sword (128px, already 6 frames upstream)
 };
 
 // (key_anim) pairs that ship a second "behind body" sheet
