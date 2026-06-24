@@ -25,7 +25,7 @@ import { MONSTER_PRESETS, buildMonsterCharacter } from '../scene/monster-presets
 import { actorStateAt } from './fsm.js';
 import { HURT_TAIL_MS, IDLE_BOB_MS } from './timings.js';
 import { loadImage } from '../sprite/image-cache.js';
-import { weaponSpriteSrc, weaponAttackSrc, weaponAttackBehindSrc, weaponAnimForBody, FRAME, BODY_ANIMS, bodyAnimSheet } from '../sprite/lpc-config.js';
+import { weaponSpriteSrc, weaponAttackSrc, weaponAttackBehindSrc, weaponAnimForBody, FRAME, BODY_ANIMS, bodyAnimSheet, bodyAnimFrames } from '../sprite/lpc-config.js';
 import { motionForWeapon } from './weapon-motions.js';
 import { swingRigFor } from './weapon-swing.js';
 
@@ -127,16 +127,19 @@ export async function preloadActorSprite(entity, { scale = 3, direction = 'south
  * slot (the overlay handles the blade).
  */
 export async function preloadActorAttack(entity, { animation, scale = 3, direction = 'south' } = {}) {
-  const spec = BODY_ANIMS[animation];
-  if (!spec) return null;
+  if (!BODY_ANIMS[animation]) return null;
   const character = toLpcCharacter(entity);
   if (!character || !character.id) return null;
   // Only human bodies have attack sheets; a quick probe avoids rendering
-  // a full set that would just be the idle body.
-  if (!bodyAnimSheet(character.body || (character.gender === 'female' ? 'female' : 'male'), animation)) return null;
+  // a full set that would just be the idle body. The frame count is
+  // per-body (revised sheets differ from classic), so read it dynamically.
+  const bodyKey = character.body || (character.gender === 'female' ? 'female' : 'male');
+  if (!bodyAnimSheet(bodyKey, animation)) return null;
+  const count = bodyAnimFrames(bodyKey, animation);
+  if (count <= 0) return null;
   const key = cacheKey(character.id, direction);
   const frames = new Map();
-  for (let i = 0; i < spec.frames; i++) {
+  for (let i = 0; i < count; i++) {
     const off = makeOffscreenCanvas();
     if (!off) continue;
     await renderSprite(off, character, { scale, direction, frameIdx: i, animation, excludeSlots: WEAPON_OVERLAY_SLOTS });
@@ -144,7 +147,7 @@ export async function preloadActorAttack(entity, { animation, scale = 3, directi
   }
   if (frames.size === 0) return null;
   const entry = cache.get(key) || {};
-  entry.attack = { animation, frames, count: spec.frames };
+  entry.attack = { animation, frames, count };
   entry.scale = scale; entry.direction = direction;
   cache.set(key, entry);
   return entry;

@@ -622,8 +622,8 @@ function setupVersusCinema(active) {
       // with the resolved swing, so it's not loaded here.
       onActorsChanged: async ({ attacker, defender }) => {
         await Promise.all([
-          preloadActorSprite(attacker, { direction: 'south' }),
-          preloadActorSprite(defender, { direction: 'south' })
+          preloadActorSprite(revisedCinemaActor(attacker), { direction: 'south' }),
+          preloadActorSprite(revisedCinemaActor(defender), { direction: 'south' })
         ]);
       }
     });
@@ -633,6 +633,23 @@ function setupVersusCinema(active) {
     clearActorSpriteCache();
     clearActorWeapon();
   }
+}
+
+// M62 — cinema-only revised-body flag (?revised=1). Humanoid PCs get
+// ElizaWy's revised base in the combat cinema; monsters and ALL other views
+// (party/grid/character sheet) stay classic. The override is applied to a
+// CLONE so the shared entity record is never mutated (no leak). Animations
+// revised lacks (thrust/cast/hurt) resolve to null and fall back to the
+// revised idle pose; Phase 1 is bare-handed (weapon suppressed below).
+const REVISED_CINEMA = (() => {
+  try { return new URLSearchParams(window.location.search).has('revised'); } catch { return false; }
+})();
+function revisedCinemaActor(entity) {
+  if (!REVISED_CINEMA || !entity || entity._isMonster || entity.presetSlug) return entity;
+  const body = entity.body;
+  if (body && body !== 'male' && body !== 'female') return entity;   // teen/muscular/etc → leave classic
+  const female = entity.gender === 'female' || body === 'female';
+  return { ...entity, body: female ? 'revised_female' : 'revised' };
 }
 
 /** M51 Phase 2 — Map a cinema motion id to the LPC body animation that
@@ -773,11 +790,16 @@ async function playCinemaRoundForAttack(attackerHit, targetHit, dmg, opts = {}) 
   // the motion decides.
   const bodyAnim = resolvedSwing ? bodyAnimForSwing(resolvedSwing) : bodyAnimForMotion(motionId);
   await Promise.all([
-    preloadActorAttack(attackerHit.entity, { animation: bodyAnim }),
-    preloadActorAttack(targetHit.entity, { animation: 'hurt' }),
+    preloadActorAttack(revisedCinemaActor(attackerHit.entity), { animation: bodyAnim }),
+    preloadActorAttack(revisedCinemaActor(targetHit.entity), { animation: 'hurt' }),
     // M59 — load the weapon's real attack sheet matching the body
     // animation (slash/thrust) when one exists; else the walk fallback.
-    setActorWeapon(attackerHit.entity, { swing: resolvedSwing, animation: bodyAnim })
+    // M62 Phase 1 — revised cinema is bare-handed: the weapon overlay is
+    // authored for the classic hand and won't track the revised slash
+    // (that's Phase 2), so suppress it to judge the body cleanly.
+    REVISED_CINEMA
+      ? Promise.resolve(clearActorWeapon())
+      : setActorWeapon(attackerHit.entity, { swing: resolvedSwing, animation: bodyAnim })
   ]);
   versusCinema.resetHp({
     attHp: attackerHit.entity.hp?.current ?? attackerHit.entity.hp ?? 1,

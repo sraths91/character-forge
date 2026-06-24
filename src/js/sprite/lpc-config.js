@@ -80,14 +80,32 @@ export const BODY_ANIMS = {
 };
 const BODY_ANIM_BASES = new Set(['male', 'female', 'teen', 'muscular']);
 
+// M62 — ElizaWy's REVISED bases live in their own dir and ship their OWN
+// frame counts (slash 7 vs classic 6, backslash 12 vs 13). Only the
+// slash-family combat exists in revised so far — NO thrust/cast/hurt — so
+// those resolve to null and the caller falls back to the (revised) idle body.
+const REVISED_BASES = new Set(['revised', 'revised_female']);
+const REVISED_ANIM_FRAMES = { slash: 7, backslash: 12, halfslash: 6 };
+
 /** Resolve a body key + animation to its attack sheet path, or null
  *  (monsters / unknown anim / base without that anim → caller falls back
  *  to the idle body). */
 export function bodyAnimSheet(bodyKey, anim) {
+  if (REVISED_BASES.has(bodyKey)) {
+    return REVISED_ANIM_FRAMES[anim] ? `${ASSETS}/body-revised/${bodyKey}_${anim}.png` : null;
+  }
   const spec = BODY_ANIMS[anim];
   if (!BODY_ANIM_BASES.has(bodyKey) || !spec) return null;
   if (spec.bases && !spec.bases.includes(bodyKey)) return null;
   return `${ASSETS}/body/${bodyKey}_${anim}.png`;
+}
+
+/** Per-body frame count for an attack animation. Revised bases override the
+ *  global BODY_ANIMS count (their sheets differ); everything else uses the
+ *  shared spec. Returns 0 when the body has no sheet for that anim. */
+export function bodyAnimFrames(bodyKey, anim) {
+  if (REVISED_BASES.has(bodyKey)) return REVISED_ANIM_FRAMES[anim] || 0;
+  return BODY_ANIMS[anim]?.frames || 0;
 }
 
 /**
@@ -156,7 +174,12 @@ export const ASSET_MAP = {
     // a beefier male variant used by orcs/trolls/minotaurs.
     muscular: `${ASSETS}/body/muscular.png`,
     skeleton: `${ASSETS}/body/skeleton.png`,
-    zombie:   `${ASSETS}/body/zombie.png`
+    zombie:   `${ASSETS}/body/zombie.png`,
+    // M62 — ElizaWy's REVISED base (smaller head, thinner build, smoother
+    // combat). Cinema-only for now (see the `revised` flag in main.js); the
+    // base sheet here is the 3-frame breathing idle.
+    revised:        `${ASSETS}/body-revised/revised.png`,
+    revised_female: `${ASSETS}/body-revised/revised_female.png`
   },
 
   head: {
