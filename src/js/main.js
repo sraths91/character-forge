@@ -794,12 +794,10 @@ async function playCinemaRoundForAttack(attackerHit, targetHit, dmg, opts = {}) 
     preloadActorAttack(revisedCinemaActor(targetHit.entity), { animation: 'hurt' }),
     // M59 — load the weapon's real attack sheet matching the body
     // animation (slash/thrust) when one exists; else the walk fallback.
-    // M62 Phase 1 — revised cinema is bare-handed: the weapon overlay is
-    // authored for the classic hand and won't track the revised slash
-    // (that's Phase 2), so suppress it to judge the body cleanly.
-    REVISED_CINEMA
-      ? Promise.resolve(clearActorWeapon())
-      : setActorWeapon(attackerHit.entity, { swing: resolvedSwing, animation: bodyAnim })
+    // M62 Phase 2 — on the revised body, swords use ElizaWy's revised arming
+    // sword art (frame-matched to the revised hand); non-swords have no
+    // revised art and resolve to bare-handed inside setActorWeapon.
+    setActorWeapon(attackerHit.entity, { swing: resolvedSwing, animation: bodyAnim, revised: REVISED_CINEMA })
   ]);
   versusCinema.resetHp({
     attHp: attackerHit.entity.hp?.current ?? attackerHit.entity.hp ?? 1,

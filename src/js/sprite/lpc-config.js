@@ -860,6 +860,32 @@ export function weaponAttackBehindSrc(weapon, anim) {
     ? `${ASSETS}/weapon/${key}_${anim}_behind.png` : null;
 }
 
+// M62 Phase 2 — ElizaWy ships ONE revised-body weapon (the arming sword),
+// with slash/backslash/halfslash sheets frame-matched to the revised body
+// (cell 128, behind+front layers). All sword-type weapons use it on the
+// revised body — it tracks the hand by construction. The anim is the BODY
+// cut directly (not collapsed to 'slash'), since each cut has its own sheet.
+// Non-sword melee has no revised art yet → bare-handed on revised.
+const REVISED_SWORD_KEYS = new Set([
+  'longsword', 'longsword_alt', 'rapier', 'saber', 'scimitar', 'katana', 'arming', 'glowsword'
+]);
+const REVISED_WEAPON_ANIMS = new Set(['slash', 'backslash', 'halfslash']);
+
+/** Revised-body weapon attack sheet for a weapon + body cut, or null when
+ *  the weapon has no revised art (non-sword) / the cut isn't a revised one. */
+export function revisedWeaponAttackSrc(weapon, anim) {
+  if (!REVISED_WEAPON_ANIMS.has(anim)) return null;
+  return REVISED_SWORD_KEYS.has(pickWeapon(weapon))
+    ? `${ASSETS}/weapon-revised/arming_${anim}.png` : null;
+}
+
+/** The behind-body companion for a revised weapon sheet (always present for
+ *  the arming sword), or null when there's no revised front sheet. */
+export function revisedWeaponBehindSrc(weapon, anim) {
+  return revisedWeaponAttackSrc(weapon, anim)
+    ? `${ASSETS}/weapon-revised/arming_${anim}_behind.png` : null;
+}
+
 /**
  * Map the body's attack animation to the weapon attack sheet to play:
  * slash-family body poses use the weapon 'slash', thrust uses 'thrust',

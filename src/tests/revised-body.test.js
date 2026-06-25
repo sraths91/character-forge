@@ -3,7 +3,10 @@ import assert from 'node:assert';
 import { existsSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { bodyAnimSheet, bodyAnimFrames, ASSET_MAP } from '../js/sprite/lpc-config.js';
+import {
+  bodyAnimSheet, bodyAnimFrames, ASSET_MAP,
+  revisedWeaponAttackSrc, revisedWeaponBehindSrc
+} from '../js/sprite/lpc-config.js';
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
@@ -41,6 +44,32 @@ test('M62: bodyAnimFrames gives revised its own counts (slash 7 vs classic 6)', 
   assert.strictEqual(bodyAnimFrames('male', 'thrust'),       8);
 });
 
+// ---------- Phase 2: revised weapon (arming sword) ----------
+
+test('M62 Phase 2: swords resolve the revised arming sword per cut; non-swords/non-cuts → null', () => {
+  assert.strictEqual(revisedWeaponAttackSrc({ name: 'Longsword' }, 'slash'),
+    '/assets/lpc/weapon-revised/arming_slash.png');
+  assert.strictEqual(revisedWeaponAttackSrc({ name: 'Longsword' }, 'backslash'),
+    '/assets/lpc/weapon-revised/arming_backslash.png');
+  assert.strictEqual(revisedWeaponAttackSrc({ name: 'Rapier' }, 'halfslash'),
+    '/assets/lpc/weapon-revised/arming_halfslash.png');
+  assert.strictEqual(revisedWeaponAttackSrc({ name: 'Greatsword' }, 'slash'),
+    '/assets/lpc/weapon-revised/arming_slash.png');   // longsword_alt is a sword
+  // non-swords have no revised art → bare-handed on revised
+  assert.strictEqual(revisedWeaponAttackSrc({ name: 'Greataxe' }, 'slash'), null);
+  assert.strictEqual(revisedWeaponAttackSrc({ name: 'Mace' }, 'slash'), null);
+  assert.strictEqual(revisedWeaponAttackSrc({ name: 'Spear' }, 'slash'), null);
+  // cuts revised weapons don't have → null
+  assert.strictEqual(revisedWeaponAttackSrc({ name: 'Longsword' }, 'thrust'), null);
+  assert.strictEqual(revisedWeaponAttackSrc({ name: 'Longsword' }, null), null);
+});
+
+test('M62 Phase 2: revised behind sheet mirrors the front (swords only)', () => {
+  assert.strictEqual(revisedWeaponBehindSrc({ name: 'Longsword' }, 'slash'),
+    '/assets/lpc/weapon-revised/arming_slash_behind.png');
+  assert.strictEqual(revisedWeaponBehindSrc({ name: 'Greataxe' }, 'slash'), null);
+});
+
 // ---------- assets on disk ----------
 
 test('M62: revised bases are registered and present on disk, decoding to the right frame counts', () => {
@@ -61,6 +90,22 @@ test('M62: revised bases are registered and present on disk, decoding to the rig
       assert.strictEqual(cellW, 64, `${key}_${anim}: cellW ${cellW} ≠ 64`);
       assert.strictEqual(Math.round(w / cellW), frames, `${key}_${anim}: ${w}px ≠ ${frames} frames`);
       assert.strictEqual(bodyAnimFrames(key, anim), frames, `${key}_${anim}: registry count mismatch`);
+    }
+  }
+});
+
+test('M62 Phase 2: revised arming sword sheets exist and frame-match the revised body cuts', () => {
+  // weapon frames MUST equal the body cut's frames or the overlay desyncs.
+  const want = { slash: 7, backslash: 12, halfslash: 6 };
+  for (const [anim, frames] of Object.entries(want)) {
+    for (const suffix of ['', '_behind']) {
+      const p = join(REPO, 'public', 'assets', 'lpc', 'weapon-revised', `arming_${anim}${suffix}.png`);
+      assert.ok(existsSync(p), `missing arming_${anim}${suffix}.png`);
+      const b = readFileSync(p);
+      const w = b.readUInt32BE(16), h = b.readUInt32BE(20), cellW = Math.round(h / 4);
+      assert.strictEqual(h % 4, 0, `arming_${anim}${suffix}: height ${h} not /4`);
+      assert.strictEqual(Math.round(w / cellW), frames, `arming_${anim}${suffix}: ${w}px ≠ ${frames} frames`);
+      assert.strictEqual(frames, bodyAnimFrames('revised', anim), `arming_${anim}: must match body cut frames`);
     }
   }
 });
