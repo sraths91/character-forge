@@ -437,31 +437,31 @@ const TOP_OF_HEAD_HELMS = new Set([
  * `anchor` is the centre point in the target frame for the cropped weapon.
  */
 export const BACK_DERIVED_POSES = {
-  longsword: { rotate: -45, scale: 0.75, anchor: { x: 32, y: 16 } },
-  rapier:    { rotate: -45, scale: 0.75, anchor: { x: 32, y: 19 } },
-  dagger:    { rotate: -45, scale: 0.95, anchor: { x: 30, y: 18 } },
-  mace:      { rotate: -45, scale: 0.95, anchor: { x: 32, y: 16 } },
-  club:      { rotate: -30, scale: 0.85, anchor: { x: 32, y: 16 } },
-  halberd:   { rotate: -50, scale: 0.65, anchor: { x: 32, y: 14 } },
-  spear:     { rotate: -50, scale: 0.65, anchor: { x: 32, y: 14 } },
-  bow:       { rotate: -75, scale: 0.85, anchor: { x: 32, y: 14 } },
+  longsword: { rotate: -45, scale: 0.75, anchor: { x: 32, y: 30 } },
+  rapier:    { rotate: -45, scale: 0.75, anchor: { x: 32, y: 30 } },
+  dagger:    { rotate: -45, scale: 0.95, anchor: { x: 30, y: 30 } },
+  mace:      { rotate: -45, scale: 0.95, anchor: { x: 32, y: 31 } },
+  club:      { rotate: -30, scale: 0.85, anchor: { x: 32, y: 30 } },
+  halberd:   { rotate: -50, scale: 0.65, anchor: { x: 32, y: 29 } },
+  spear:     { rotate: -50, scale: 0.65, anchor: { x: 32, y: 29 } },
+  bow:       { rotate: -75, scale: 0.85, anchor: { x: 32, y: 29 } },
   // Phase A1 — starter values cloned from the closest existing weapon. Tune
   // visually via debug.html before shipping. Wand/cane are mainhand-only.
-  arming:        { rotate: -45, scale: 0.75, anchor: { x: 32, y: 16 } },
-  glowsword:     { rotate: -45, scale: 0.75, anchor: { x: 32, y: 16 } },
-  katana:        { rotate: -45, scale: 0.75, anchor: { x: 32, y: 16 } },
-  longsword_alt: { rotate: -45, scale: 0.75, anchor: { x: 32, y: 16 } },
-  saber:         { rotate: -45, scale: 0.75, anchor: { x: 32, y: 16 } },
-  scimitar:      { rotate: -45, scale: 0.75, anchor: { x: 32, y: 16 } },
-  flail:         { rotate: -45, scale: 0.95, anchor: { x: 32, y: 16 } },
-  waraxe:        { rotate: -45, scale: 0.85, anchor: { x: 32, y: 16 } },
-  scythe:        { rotate: -50, scale: 0.65, anchor: { x: 32, y: 14 } },
-  dragonspear:   { rotate: -50, scale: 0.65, anchor: { x: 32, y: 14 } },
-  longspear:     { rotate: -50, scale: 0.65, anchor: { x: 32, y: 14 } },
-  trident:       { rotate: -50, scale: 0.65, anchor: { x: 32, y: 14 } },
+  arming:        { rotate: -45, scale: 0.75, anchor: { x: 32, y: 30 } },
+  glowsword:     { rotate: -45, scale: 0.75, anchor: { x: 32, y: 30 } },
+  katana:        { rotate: -45, scale: 0.75, anchor: { x: 32, y: 30 } },
+  longsword_alt: { rotate: -45, scale: 0.75, anchor: { x: 32, y: 30 } },
+  saber:         { rotate: -45, scale: 0.75, anchor: { x: 32, y: 30 } },
+  scimitar:      { rotate: -45, scale: 0.75, anchor: { x: 32, y: 30 } },
+  flail:         { rotate: -45, scale: 0.95, anchor: { x: 32, y: 30 } },
+  waraxe:        { rotate: -45, scale: 0.85, anchor: { x: 32, y: 30 } },
+  scythe:        { rotate: -50, scale: 0.65, anchor: { x: 32, y: 29 } },
+  dragonspear:   { rotate: -50, scale: 0.65, anchor: { x: 32, y: 29 } },
+  longspear:     { rotate: -50, scale: 0.65, anchor: { x: 32, y: 29 } },
+  trident:       { rotate: -50, scale: 0.65, anchor: { x: 32, y: 29 } },
   // Phase A2 — ranged. Staves and wand are mainhand-only (no back sheath).
-  crossbow:      { rotate: -75, scale: 0.85, anchor: { x: 32, y: 14 } },
-  slingshot:     { rotate: -75, scale: 0.70, anchor: { x: 32, y: 16 } }
+  crossbow:      { rotate: -75, scale: 0.85, anchor: { x: 32, y: 29 } },
+  slingshot:     { rotate: -75, scale: 0.70, anchor: { x: 32, y: 30 } }
 };
 
 /**
