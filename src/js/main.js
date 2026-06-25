@@ -4262,6 +4262,9 @@ async function render(character) {
 
   stopAnimation();   // reset animation state when loading a new character
   const r = await renderSprite(canvas, effective, { scale: 6, direction: currentDirection, frameIdx: 0 });
+  // M62 — breathe by default: the preview was static until the user toggled
+  // "animate". Start the idle loop on load so the character feels alive.
+  startAnimation();
   return r.generatedCount;
 }
 
