@@ -45,6 +45,38 @@ east/west pre-renders in the existing cache, and flipping
   the cast path's no-dispatch-on-Shield rule. Fix alongside the
   fizzle cinema above (flag `atk.shielded` like the main path does).
 
+## From M63 — sprite-motion review (SWE + design teams, 2026-07-04)
+
+The long-broken idle motion was fixed (commit 7595255: cycle real idle
+frames + integer breath offset, deleted the M53 whole-sprite scale). The
+two-team review surfaced these follow-ups, deliberately scoped OUT of that
+fix:
+
+- **Party/battle view has the same bug + waste.** `startAnimation` party
+  branch (`main.js:~3797`) full-recomposites ~17 layers every 130ms via
+  `setInterval → rerender`. Give it the same bake-per-frame-once + cycle
+  treatment (and cross-fade) instead of re-compositing every tick.
+- **Perf/hygiene: `willReadFrequently`.** The compositor's `getImageData`
+  readbacks (`compositor.js:~1059/1101/1162`) spam the console and are slow;
+  set `getContext('2d', { willReadFrequently: true })` on those contexts.
+  Cheap, separate commit.
+- **Secondary motion.** The idle has no follow-through — head/hair/props move
+  in lockstep. Delay the head ~1 frame and hair/cloth ~2 frames behind the
+  torso; add a decoupled ~3-5s ±1px hip weight-sway (non-harmonic with the
+  breath) so the loop never feels metronomic. Classic bodies only ship 2
+  near-identical idle frames, so their motion leans on the breath offset —
+  authoring more idle frames (or routing through the cinema's
+  `preloadActorSprite`/`makeLpcDrawSprite` actor so both views share one idle
+  brain) is the deeper unification (CLAUDE.md: don't keep two implementations).
+- **Equipment fit on the revised (thinner) body** (design): pauldrons cut for
+  the classic wide torso float off the shoulder (re-cut ~2-3px inward + a
+  collar pixel); commit to one head proportion (no classic head on the
+  revised frame); body-variant-aware crossbow/hip anchor; 3-value chain-maille
+  (reads as noise now); a 1px rim light + warmer lit legs so the silhouette
+  reads as one shape on the dark scene; desaturate the cyan shield emblem
+  ~15-20% so the face wins the focal fight. This is the M62 Phase 3 equipment
+  work.
+
 ## Older deferrals still open
 
 - **Multi-attack combo sequencing.** Extra Attack / Flurry of Blows
