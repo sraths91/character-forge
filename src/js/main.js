@@ -3730,37 +3730,65 @@ let animFrame = 0;
 let animTimer = null;            // party-view frame-cycle interval
 const FRAME_INTERVAL_MS = 130;
 
-// M53 idle state
+// Idle state. M62-fix — the M53 idle baked ONE frame (frameIdx:0) and
+// affine-warped the whole sprite every tick, so the pose never changed and
+// rigid armour/weapons jelly-squashed (the "broken for weeks" motion). We now
+// cycle the REAL idle frames (classic 2, revised 3 — the compositor samples
+// them via frameIdx % frameCount) with only a subtle INTEGER breath offset,
+// never a whole-sprite scale — matching the cinema's idle.
 let idleRaf = null;
 let idleStart = 0;
-let idleBuffer = null;           // baked composite (offscreen canvas)
+let idleBuffers = [];            // baked composites, one per idle frame
 let idleBakeToken = 0;           // invalidates in-flight async bakes
+const IDLE_FRAME_MS = 300;       // per step; ping-ponged → ~0.6-1.2s breath loop
 
-/** Bake the current composed character to an offscreen buffer for the
- *  idle loop. Async (composition); guarded so a newer bake wins. */
+/** Idle frame count for a body: the revised base ships a 3-frame breathing
+ *  idle; classic bodies a 2-frame idle. */
+function idleFrameCount(actor) {
+  return (actor?.body === 'revised' || actor?.body === 'revised_female') ? 3 : 2;
+}
+/** Ping-pong step order so a 3-frame breath eases in and back out (0,1,2,1)
+ *  instead of snapping from peak to neutral; 2-frame → 0,1. */
+function idleFrameSeq(n) {
+  const s = [];
+  for (let i = 0; i < n; i++) s.push(i);
+  for (let i = n - 2; i > 0; i--) s.push(i);
+  return s.length ? s : [0];
+}
+
+/** Bake one offscreen composite per idle frame. Async (composition); guarded
+ *  so a newer bake wins. Rigid layers (helmet, static weapon) are 1-frame so
+ *  they stay identical across buffers (frameIdx % 1 === 0) — no warping. */
 async function bakeIdleBuffer() {
   if (!currentCharacter) return;
   const token = ++idleBakeToken;
-  const off = document.createElement('canvas');
-  try { await renderSprite(off, revisedActor(currentCharacter), { scale: 6, direction: currentDirection, frameIdx: 0 }); }
-  catch { return; }
-  if (token === idleBakeToken) idleBuffer = off;
+  const actor = revisedActor(currentCharacter);
+  const n = idleFrameCount(actor);
+  const bufs = [];
+  for (let i = 0; i < n; i++) {
+    const off = document.createElement('canvas');
+    try { await renderSprite(off, actor, { scale: 6, direction: currentDirection, frameIdx: i }); }
+    catch { return; }
+    bufs.push(off);
+  }
+  if (token === idleBakeToken) idleBuffers = bufs;
 }
 
-/** One frame of the idle loop — draw the baked buffer with the breathing
- *  transform + contact shadow. */
+/** One frame of the idle loop — cycle the real breathing frames with a
+ *  grounding glow and a subtle INTEGER breath offset. No whole-sprite scale
+ *  or skew: the breathing lives in the frames, so feet stay planted and rigid
+ *  armour/weapons never warp. */
 function drawIdleFrame(now) {
   if (!animating) return;
   const ctx = canvas.getContext('2d');
   const W = canvas.width, H = canvas.height;
   ctx.clearRect(0, 0, W, H);
-  if (idleBuffer) {
-    const p = idlePoseAt(now - idleStart);
-    const cx = W / 2;
-    const feetY = H * 0.95;        // pivot near the feet so breathing rises from the ground
-    // Grounding pedestal — a soft additive light pool under the feet that
-    // pulses with the breath. Reads on the dark viewer background (a black
-    // contact shadow would vanish there); harmless on light themes.
+  if (idleBuffers.length) {
+    const t = now - idleStart;
+    const p = idlePoseAt(t);
+    const cx = W / 2, feetY = H * 0.95;
+    // Grounding pedestal — a soft additive light pool that pulses with the
+    // breath. Does NOT move the sprite. Reads on the dark viewer background.
     ctx.save();
     ctx.globalCompositeOperation = 'lighter';
     ctx.translate(cx, feetY + H * 0.025);
@@ -3774,15 +3802,18 @@ function drawIdleFrame(now) {
     ctx.fillStyle = glow;
     ctx.beginPath(); ctx.arc(0, 0, rad, 0, Math.PI * 2); ctx.fill();
     ctx.restore();
-    // Sprite: weight-shift + bob translate, micro-lean, breathing scale
-    // pivoted at the feet.
-    ctx.save();
-    ctx.imageSmoothingEnabled = false;
-    ctx.translate(cx + p.swayX * W, feetY + p.bobY * H);
-    ctx.rotate(p.rot);
-    ctx.scale(p.scaleX, p.scaleY);
-    ctx.drawImage(idleBuffer, -cx, -feetY);
-    ctx.restore();
+    // The breathing is authored into the frames; add only a subtle INTEGER
+    // weight-shift offset (rounded to whole device pixels so the outline never
+    // shimmers). No scale/rotate — that M53 warp was the broken motion.
+    const seq = idleFrameSeq(idleBuffers.length);
+    const fi = seq[Math.floor(t / IDLE_FRAME_MS) % seq.length];
+    const buf = idleBuffers[fi];
+    if (buf) {
+      const ox = Math.round(p.swayX * W);
+      const oy = Math.round(p.bobY * H);
+      ctx.imageSmoothingEnabled = false;
+      ctx.drawImage(buf, ox, oy);
+    }
   }
   idleRaf = requestAnimationFrame(drawIdleFrame);
 }
@@ -3811,7 +3842,7 @@ function stopAnimation() {
   animating = false;
   if (animTimer) { clearInterval(animTimer); animTimer = null; }
   if (idleRaf) { cancelAnimationFrame(idleRaf); idleRaf = null; }
-  idleBuffer = null;
+  idleBuffers = [];
   animFrame = 0;
   const btn = $('animate-toggle');
   if (btn) btn.textContent = '▶ Animate';
