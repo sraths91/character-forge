@@ -177,6 +177,13 @@ fetch "weapon/polearm/spear/thrust/foreground.png" "weapon/spear_thrust.png"
 fetch "torso/armour/legion/male/idle.png"   "torso/legion_male.png"
 fetch "torso/armour/legion/female/idle.png" "torso/legion_female.png"
 
+# M63 — equipment SLASH sheets (6f, frame-matched to the body slash) so the
+# armour follows a swing instead of freezing. Proven on Saris's kit (legion +
+# gauntlets + pants, male); expand to more variants/genders/anims from here.
+fetch "torso/armour/legion/male/slash.png" "torso/legion_male_slash.png"
+fetch "arms/armour/plate/male/slash.png"   "arms/gauntlets_male_slash.png"
+fetch "legs/pants/male/slash.png"          "legs/pants_male_slash.png"
+
 # Phase B — Shield variety (3 new: tower / paladin / round-warrior)
 fetch "shield/scutum/paint/fg/male/walk/scutum.png" "shield/scutum.png"
 fetch "shield/crusader/fg/walk.png"                 "shield/crusader.png"

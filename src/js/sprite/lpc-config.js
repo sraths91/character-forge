@@ -1510,6 +1510,31 @@ function pickLegsVariant(armor) {
   return 'pants';
 }
 
+// M63 — equipment attack frames. Most equipment ships only a 2-frame idle
+// sheet, so a body attack (slash) plays over frozen/flickering armour — the
+// body swings out of a rigid shell. Where we've sourced the matching LPC
+// attack sheet (SAME frame count as the body's, so they sync frame-for-frame),
+// swap the idle src for the attack src so the armour follows the swing. Keyed
+// by "<slot>/<file-stem>" → animations shipped; unlisted → idle (graceful
+// fallback). Proven on Saris's kit (chain mail = legion + gauntlets + pants);
+// expand as more sheets are sourced.
+const EQUIP_ATTACK = {
+  'torso/legion_male':   ['slash'],
+  'arms/gauntlets_male': ['slash'],
+  'legs/pants_male':     ['slash']
+};
+/** Swap an equipment idle src for its attack src when the body plays that
+ *  animation and we shipped a matching sheet; else return the idle src. */
+export function equipAnimSrc(idleSrc, animation) {
+  if (!idleSrc || !animation) return idleSrc;
+  const m = idleSrc.match(/\/([^/]+)\/([^/]+)\.png$/);
+  if (!m) return idleSrc;
+  const anims = EQUIP_ATTACK[`${m[1]}/${m[2]}`];
+  return anims && anims.includes(animation)
+    ? idleSrc.replace(/\.png$/, `_${animation}.png`)
+    : idleSrc;
+}
+
 /**
  * Build the layered render plan. Returns {layers, gender, torsoVariant, skinTone}.
  */
@@ -1664,7 +1689,7 @@ export function buildRenderPlan(rawCharacter, { direction = 'south', animation =
   const drawDress = gender === 'female' && torsoVariant === 'cloth' && !eq.armor &&
                     (character.classes || []).some(c => /bard|cleric|druid|noble/i.test(c.name));
   if (!drawDress) {
-    const legsAsset = ASSET_MAP.legs[legsVariant]?.[gender] || ASSET_MAP.legs.pants[gender];
+    const legsAsset = equipAnimSrc(ASSET_MAP.legs[legsVariant]?.[gender] || ASSET_MAP.legs.pants[gender], animation);
     if (legsAsset) layers.push({ kind: 'lpc', slot: 'legs', src: legsAsset });
   }
 
@@ -1677,7 +1702,7 @@ export function buildRenderPlan(rawCharacter, { direction = 'south', animation =
     layers.push({ kind: 'lpc', slot: 'torso', src: ASSET_MAP.dress.bodice });
   } else {
     const variantSlot = ASSET_MAP.torso[torsoVariant];
-    const torsoSrc = variantSlot?.[gender] || ASSET_MAP.torso.cloth[gender];
+    const torsoSrc = equipAnimSrc(variantSlot?.[gender] || ASSET_MAP.torso.cloth[gender], animation);
     if (eq.armor) {
       layers.push({ kind: 'item', slot: 'torso', src: torsoSrc, item: eq.armor });
     } else {
@@ -1728,7 +1753,7 @@ export function buildRenderPlan(rawCharacter, { direction = 'south', animation =
 
   const armsKey = pickArms(eq.armor, character.classes);
   if (armsKey) {
-    const armsSrc = ASSET_MAP.arms[armsKey]?.[gender];
+    const armsSrc = equipAnimSrc(ASSET_MAP.arms[armsKey]?.[gender], animation);
     if (armsSrc) layers.push({ kind: 'lpc', slot: 'arms', src: armsSrc });
   }
 
