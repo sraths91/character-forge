@@ -178,11 +178,26 @@ fetch "torso/armour/legion/male/idle.png"   "torso/legion_male.png"
 fetch "torso/armour/legion/female/idle.png" "torso/legion_female.png"
 
 # M63 — equipment SLASH sheets (6f, frame-matched to the body slash) so the
-# armour follows a swing instead of freezing. Proven on Saris's kit (legion +
-# gauntlets + pants, male); expand to more variants/genders/anims from here.
-fetch "torso/armour/legion/male/slash.png" "torso/legion_male_slash.png"
-fetch "arms/armour/plate/male/slash.png"   "arms/gauntlets_male_slash.png"
+# armour follows a swing instead of freezing. Rolled out across the armour set
+# (torso plate/legion/leather/cloth, arms bracers/gauntlets, legs pants/leggings,
+# both genders). Female arms/legs use the "thin" body-type folder; female pants
+# is a colour variant. Registered in EQUIP_ATTACK.
+fetch "torso/armour/plate/male/slash.png"                     "torso/plate_male_slash.png"
+fetch "torso/armour/plate/female/slash.png"                   "torso/plate_female_slash.png"
+fetch "torso/armour/legion/male/slash.png"                    "torso/legion_male_slash.png"
+fetch "torso/armour/legion/female/slash.png"                  "torso/legion_female_slash.png"
+fetch "torso/armour/leather/male/slash.png"                   "torso/leather_male_slash.png"
+fetch "torso/armour/leather/female/slash.png"                 "torso/leather_female_slash.png"
+fetch "torso/clothes/longsleeve/longsleeve/male/slash.png"    "torso/cloth_male_slash.png"
+fetch "torso/clothes/longsleeve/longsleeve/female/slash.png"  "torso/cloth_female_slash.png"
+fetch "arms/bracers/male/slash.png"      "arms/bracers_male_slash.png"
+fetch "arms/bracers/thin/slash.png"      "arms/bracers_female_slash.png"
+fetch "arms/armour/plate/male/slash.png" "arms/gauntlets_male_slash.png"
+fetch "arms/armour/plate/thin/slash.png" "arms/gauntlets_female_slash.png"
 fetch "legs/pants/male/slash.png"          "legs/pants_male_slash.png"
+fetch "legs/pants/female/slash/brown.png"  "legs/pants_female_slash.png"
+fetch "legs/leggings/male/slash.png"       "legs/leggings_male_slash.png"
+fetch "legs/leggings/thin/slash.png"       "legs/leggings_female_slash.png"
 
 # Phase B — Shield variety (3 new: tower / paladin / round-warrior)
 fetch "shield/scutum/paint/fg/male/walk/scutum.png" "shield/scutum.png"

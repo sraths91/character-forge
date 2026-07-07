@@ -1518,10 +1518,18 @@ function pickLegsVariant(armor) {
 // by "<slot>/<file-stem>" → animations shipped; unlisted → idle (graceful
 // fallback). Proven on Saris's kit (chain mail = legion + gauntlets + pants);
 // expand as more sheets are sourced.
-const EQUIP_ATTACK = {
-  'torso/legion_male':   ['slash'],
-  'arms/gauntlets_male': ['slash'],
-  'legs/pants_male':     ['slash']
+export const EQUIP_ATTACK = {
+  // torso armour/clothing
+  'torso/plate_male':    ['slash'], 'torso/plate_female':   ['slash'],
+  'torso/legion_male':   ['slash'], 'torso/legion_female':  ['slash'],
+  'torso/leather_male':  ['slash'], 'torso/leather_female': ['slash'],
+  'torso/cloth_male':    ['slash'], 'torso/cloth_female':   ['slash'],
+  // arms
+  'arms/bracers_male':   ['slash'], 'arms/bracers_female':   ['slash'],
+  'arms/gauntlets_male': ['slash'], 'arms/gauntlets_female': ['slash'],
+  // legs
+  'legs/pants_male':     ['slash'], 'legs/pants_female':    ['slash'],
+  'legs/leggings_male':  ['slash'], 'legs/leggings_female': ['slash']
 };
 /** Swap an equipment idle src for its attack src when the body plays that
  *  animation and we shipped a matching sheet; else return the idle src. */
