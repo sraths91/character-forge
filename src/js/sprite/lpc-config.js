@@ -1569,6 +1569,15 @@ export function equipAnimSrc(idleSrc, animation) {
     : idleSrc;
 }
 
+/** When an equipment layer is playing an attack anim it has NO sheet for,
+ *  return 0 so the compositor pins it to frame 0 (a still pose) instead of
+ *  flickering its 2 idle frames across the swing. Otherwise undefined (animate
+ *  normally). Used for the few pieces LPC never drew backslash/halfslash for
+ *  (arms armour, leather torso, female pants). */
+export function equipHoldFrame(idleSrc, animation) {
+  return (animation && equipAnimSrc(idleSrc, animation) === idleSrc) ? 0 : undefined;
+}
+
 /**
  * Build the layered render plan. Returns {layers, gender, torsoVariant, skinTone}.
  */
@@ -1723,8 +1732,9 @@ export function buildRenderPlan(rawCharacter, { direction = 'south', animation =
   const drawDress = gender === 'female' && torsoVariant === 'cloth' && !eq.armor &&
                     (character.classes || []).some(c => /bard|cleric|druid|noble/i.test(c.name));
   if (!drawDress) {
-    const legsAsset = equipAnimSrc(ASSET_MAP.legs[legsVariant]?.[gender] || ASSET_MAP.legs.pants[gender], animation);
-    if (legsAsset) layers.push({ kind: 'lpc', slot: 'legs', src: legsAsset });
+    const legsIdle = ASSET_MAP.legs[legsVariant]?.[gender] || ASSET_MAP.legs.pants[gender];
+    const legsAsset = equipAnimSrc(legsIdle, animation);
+    if (legsAsset) layers.push({ kind: 'lpc', slot: 'legs', src: legsAsset, frameIdx: equipHoldFrame(legsIdle, animation) });
   }
 
   layers.push({ kind: 'lpc', slot: 'feet', src: ASSET_MAP.feet[gender] || ASSET_MAP.feet.male });
@@ -1736,11 +1746,13 @@ export function buildRenderPlan(rawCharacter, { direction = 'south', animation =
     layers.push({ kind: 'lpc', slot: 'torso', src: ASSET_MAP.dress.bodice });
   } else {
     const variantSlot = ASSET_MAP.torso[torsoVariant];
-    const torsoSrc = equipAnimSrc(variantSlot?.[gender] || ASSET_MAP.torso.cloth[gender], animation);
+    const torsoIdle = variantSlot?.[gender] || ASSET_MAP.torso.cloth[gender];
+    const torsoSrc = equipAnimSrc(torsoIdle, animation);
+    const torsoHold = equipHoldFrame(torsoIdle, animation);
     if (eq.armor) {
-      layers.push({ kind: 'item', slot: 'torso', src: torsoSrc, item: eq.armor });
+      layers.push({ kind: 'item', slot: 'torso', src: torsoSrc, item: eq.armor, frameIdx: torsoHold });
     } else {
-      layers.push({ kind: 'lpc', slot: 'torso', src: torsoSrc });
+      layers.push({ kind: 'lpc', slot: 'torso', src: torsoSrc, frameIdx: torsoHold });
     }
   }
 
@@ -1787,8 +1799,9 @@ export function buildRenderPlan(rawCharacter, { direction = 'south', animation =
 
   const armsKey = pickArms(eq.armor, character.classes);
   if (armsKey) {
-    const armsSrc = equipAnimSrc(ASSET_MAP.arms[armsKey]?.[gender], animation);
-    if (armsSrc) layers.push({ kind: 'lpc', slot: 'arms', src: armsSrc });
+    const armsIdle = ASSET_MAP.arms[armsKey]?.[gender];
+    const armsSrc = equipAnimSrc(armsIdle, animation);
+    if (armsSrc) layers.push({ kind: 'lpc', slot: 'arms', src: armsSrc, frameIdx: equipHoldFrame(armsIdle, animation) });
   }
 
   // Helm

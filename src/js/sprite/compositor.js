@@ -742,12 +742,15 @@ async function drawCharacterAt(ctx, character, opts) {
 
   for (let idx = 0; idx < plan.layers.length; idx++) {
     const layer = plan.layers[idx];
+    // M63 — a layer may pin its own frame (equipment with no sheet for the
+    // current attack anim holds frame 0 instead of flickering its idle frames).
+    const lfi = layer.frameIdx != null ? layer.frameIdx : frameIdx;
     if (layer.kind === 'lpc') {
       try {
         const img = await loadImage(layer.src);
         const f0 = getFrame(layer.src, direction, 0);
         const frameCount = Math.max(1, Math.floor(img.width / f0.sw));
-        const f = getFrame(layer.src, direction, frameIdx % frameCount);
+        const f = getFrame(layer.src, direction, lfi % frameCount);
         const prevFilter = ctx.filter;
         if (layer.filter) ctx.filter = layer.filter;
         ctx.drawImage(img, f.sx, f.sy, f.sw, f.sh, x, y, cellW, cellH);
@@ -767,7 +770,7 @@ async function drawCharacterAt(ctx, character, opts) {
           const img = await loadImage(layer.src);
           const f0 = getFrame(layer.src, direction, 0);
           const frameCount = Math.max(1, Math.floor(img.width / f0.sw));
-          const f = getFrame(layer.src, direction, frameIdx % frameCount);
+          const f = getFrame(layer.src, direction, lfi % frameCount);
           ctx.drawImage(img, f.sx, f.sy, f.sw, f.sh, x, y, cellW, cellH);
         }
       } catch {

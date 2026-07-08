@@ -3,7 +3,7 @@ import assert from 'node:assert';
 import { existsSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { equipAnimSrc, EQUIP_ATTACK } from '../js/sprite/lpc-config.js';
+import { equipAnimSrc, equipHoldFrame, EQUIP_ATTACK } from '../js/sprite/lpc-config.js';
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
@@ -37,6 +37,20 @@ test('M63: equipAnimSrc falls back to the idle src when there is no attack sheet
   // malformed / empty
   assert.strictEqual(equipAnimSrc('', 'slash'), '');
   assert.strictEqual(equipAnimSrc('/nope.png', 'slash'), '/nope.png');
+});
+
+// ---------- equipHoldFrame (pin missing-anim pieces to a still frame) ----------
+
+test('M63: equipHoldFrame pins pieces with no sheet for the anim to frame 0', () => {
+  // arms armour + leather torso lack backslash/halfslash upstream → hold still
+  assert.strictEqual(equipHoldFrame('/assets/lpc/arms/gauntlets_male.png', 'backslash'), 0);
+  assert.strictEqual(equipHoldFrame('/assets/lpc/arms/bracers_female.png', 'halfslash'), 0);
+  assert.strictEqual(equipHoldFrame('/assets/lpc/torso/leather_male.png', 'backslash'), 0);
+  // pieces that HAVE the anim animate normally (undefined = use the global frame)
+  assert.strictEqual(equipHoldFrame('/assets/lpc/arms/gauntlets_male.png', 'slash'), undefined);
+  assert.strictEqual(equipHoldFrame('/assets/lpc/torso/legion_male.png', 'backslash'), undefined);
+  // idle render (no animation) never holds
+  assert.strictEqual(equipHoldFrame('/assets/lpc/arms/gauntlets_male.png', null), undefined);
 });
 
 // ---------- assets on disk + frame-match to the body slash ----------
