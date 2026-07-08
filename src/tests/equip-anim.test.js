@@ -28,9 +28,12 @@ test('M63: equipAnimSrc falls back to the idle src when there is no attack sheet
   // variant we haven't sourced an attack sheet for (sleeveless/robe) → idle
   assert.strictEqual(equipAnimSrc('/assets/lpc/torso/sleeveless_male.png', 'slash'),
     '/assets/lpc/torso/sleeveless_male.png');
-  // animation we haven't shipped for this piece (legion has slash, not thrust)
-  assert.strictEqual(equipAnimSrc('/assets/lpc/torso/legion_male.png', 'thrust'),
+  // animation we don't ship for equipment at all (cast) → idle
+  assert.strictEqual(equipAnimSrc('/assets/lpc/torso/legion_male.png', 'cast'),
     '/assets/lpc/torso/legion_male.png');
+  // per-piece gap: leather torso lacks backslash upstream → idle fallback
+  assert.strictEqual(equipAnimSrc('/assets/lpc/torso/leather_male.png', 'backslash'),
+    '/assets/lpc/torso/leather_male.png');
   // malformed / empty
   assert.strictEqual(equipAnimSrc('', 'slash'), '');
   assert.strictEqual(equipAnimSrc('/nope.png', 'slash'), '/nope.png');
@@ -38,24 +41,25 @@ test('M63: equipAnimSrc falls back to the idle src when there is no attack sheet
 
 // ---------- assets on disk + frame-match to the body slash ----------
 
-test('M63: EVERY registered equipment attack sheet exists and frame-matches the body', () => {
-  const bodySlash = pngSize(join(REPO, 'public', 'assets', 'lpc', 'body', 'male_slash.png'));
-  const bodyFrames = bodySlash.w / (bodySlash.h / 4);
+test('M63: EVERY registered equipment attack sheet exists and frame-matches the body anim', () => {
+  // frame count of each body animation is the sync target for its equipment
+  const bodyFrames = {};
+  for (const anim of ['slash', 'thrust', 'backslash', 'halfslash']) {
+    const { w, h } = pngSize(join(REPO, 'public', 'assets', 'lpc', 'body', `male_${anim}.png`));
+    bodyFrames[anim] = w / (h / 4);
+  }
   const entries = Object.entries(EQUIP_ATTACK);
-  assert.ok(entries.length >= 16, `expected the rolled-out set (got ${entries.length})`);
+  assert.ok(entries.length >= 29, `expected the full rolled-out set (got ${entries.length})`);
   for (const [key, anims] of entries) {
     for (const anim of anims) {
-      const rel = `${key}_${anim}.png`;   // e.g. torso/plate_male_slash.png
+      const rel = `${key}_${anim}.png`;   // e.g. torso/plate_male_thrust.png
       const p = join(REPO, 'public', 'assets', 'lpc', rel);
       assert.ok(existsSync(p), `missing ${rel}`);
       const { w, h } = pngSize(p);
-      const cellW = h / 4;
-      // slash sheets must match the classic body slash frame count to stay in sync
-      if (anim === 'slash') {
-        assert.strictEqual(h, bodySlash.h, `${rel}: height ${h} ≠ body ${bodySlash.h}`);
-        assert.strictEqual(w / cellW, bodyFrames, `${rel}: ${w / cellW} frames ≠ body ${bodyFrames} (desync)`);
-      }
-      // resolver actually points at this file for that anim
+      // must match the body anim's frame count or the layer desyncs
+      assert.strictEqual(w / (h / 4), bodyFrames[anim],
+        `${rel}: ${w / (h / 4)} frames ≠ body ${anim} ${bodyFrames[anim]} (desync)`);
+      // resolver points at this file for that anim
       assert.strictEqual(equipAnimSrc(`/assets/lpc/${key}.png`, anim), `/assets/lpc/${rel}`);
     }
   }

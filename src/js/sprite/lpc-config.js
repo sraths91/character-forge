@@ -1518,24 +1518,42 @@ function pickLegsVariant(armor) {
 // by "<slot>/<file-stem>" → animations shipped; unlisted → idle (graceful
 // fallback). Proven on Saris's kit (chain mail = legion + gauntlets + pants);
 // expand as more sheets are sourced.
+// Keyed by the path relative to /assets/lpc/ → the attack animations we've
+// sourced a frame-matched sheet for (slash 6f, thrust 8f, backslash 13f,
+// halfslash 6f). Anything unlisted for a given anim falls back to the idle
+// sheet. Generated from what's on disk (see scripts/download-lpc.sh); arms
+// armour + leather torso + female pants lack the expanded backslash/halfslash
+// upstream, so they carry slash+thrust only.
 export const EQUIP_ATTACK = {
-  // torso armour/clothing
-  'torso/plate_male':    ['slash'], 'torso/plate_female':   ['slash'],
-  'torso/legion_male':   ['slash'], 'torso/legion_female':  ['slash'],
-  'torso/leather_male':  ['slash'], 'torso/leather_female': ['slash'],
-  'torso/cloth_male':    ['slash'], 'torso/cloth_female':   ['slash'],
-  // arms
-  'arms/bracers_male':   ['slash'], 'arms/bracers_female':   ['slash'],
-  'arms/gauntlets_male': ['slash'], 'arms/gauntlets_female': ['slash'],
-  // legs
-  'legs/pants_male':     ['slash'], 'legs/pants_female':    ['slash'],
-  'legs/leggings_male':  ['slash'], 'legs/leggings_female': ['slash'],
-  // head region — so the head/eyes/hair follow the body during a swing
-  // instead of floating. Keys are the path relative to /assets/lpc/.
-  'head/heads/human_male':   ['slash'], 'head/heads/human_female': ['slash'],
-  'eyes/blue':  ['slash'], 'eyes/brown': ['slash'], 'eyes/green': ['slash'], 'eyes/gray': ['slash'],
-  'hair/afro':    ['slash'], 'hair/balding': ['slash'], 'hair/bedhead': ['slash'], 'hair/bob': ['slash'],
-  'hair/buzzcut': ['slash'], 'hair/long':    ['slash'], 'hair/spiked':  ['slash']
+  'arms/bracers_female': ['slash', 'thrust'],
+  'arms/bracers_male': ['slash', 'thrust'],
+  'arms/gauntlets_female': ['slash', 'thrust'],
+  'arms/gauntlets_male': ['slash', 'thrust'],
+  'eyes/blue': ['slash', 'thrust', 'backslash', 'halfslash'],
+  'eyes/brown': ['slash', 'thrust', 'backslash', 'halfslash'],
+  'eyes/gray': ['slash', 'thrust', 'backslash', 'halfslash'],
+  'eyes/green': ['slash', 'thrust', 'backslash', 'halfslash'],
+  'hair/afro': ['slash', 'thrust', 'backslash', 'halfslash'],
+  'hair/balding': ['slash', 'thrust', 'backslash', 'halfslash'],
+  'hair/bedhead': ['slash', 'thrust', 'backslash', 'halfslash'],
+  'hair/bob': ['slash', 'thrust', 'backslash', 'halfslash'],
+  'hair/buzzcut': ['slash', 'thrust', 'backslash', 'halfslash'],
+  'hair/long': ['slash', 'thrust', 'backslash', 'halfslash'],
+  'hair/spiked': ['slash', 'thrust', 'backslash', 'halfslash'],
+  'head/heads/human_female': ['slash', 'thrust', 'backslash', 'halfslash'],
+  'head/heads/human_male': ['slash', 'thrust', 'backslash', 'halfslash'],
+  'legs/leggings_female': ['slash', 'thrust', 'backslash', 'halfslash'],
+  'legs/leggings_male': ['slash', 'thrust', 'backslash', 'halfslash'],
+  'legs/pants_female': ['slash', 'thrust'],
+  'legs/pants_male': ['slash', 'thrust', 'backslash', 'halfslash'],
+  'torso/cloth_female': ['slash', 'thrust', 'backslash', 'halfslash'],
+  'torso/cloth_male': ['slash', 'thrust', 'backslash', 'halfslash'],
+  'torso/leather_female': ['slash', 'thrust'],
+  'torso/leather_male': ['slash', 'thrust'],
+  'torso/legion_female': ['slash', 'thrust', 'backslash', 'halfslash'],
+  'torso/legion_male': ['slash', 'thrust', 'backslash', 'halfslash'],
+  'torso/plate_female': ['slash', 'thrust', 'backslash', 'halfslash'],
+  'torso/plate_male': ['slash', 'thrust', 'backslash', 'halfslash']
 };
 /** Swap an equipment idle src for its attack src when the body plays that
  *  animation and we shipped a matching sheet; else return the idle src. */
