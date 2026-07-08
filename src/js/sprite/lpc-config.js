@@ -1529,15 +1529,23 @@ export const EQUIP_ATTACK = {
   'arms/gauntlets_male': ['slash'], 'arms/gauntlets_female': ['slash'],
   // legs
   'legs/pants_male':     ['slash'], 'legs/pants_female':    ['slash'],
-  'legs/leggings_male':  ['slash'], 'legs/leggings_female': ['slash']
+  'legs/leggings_male':  ['slash'], 'legs/leggings_female': ['slash'],
+  // head region — so the head/eyes/hair follow the body during a swing
+  // instead of floating. Keys are the path relative to /assets/lpc/.
+  'head/heads/human_male':   ['slash'], 'head/heads/human_female': ['slash'],
+  'eyes/blue':  ['slash'], 'eyes/brown': ['slash'], 'eyes/green': ['slash'], 'eyes/gray': ['slash'],
+  'hair/afro':    ['slash'], 'hair/balding': ['slash'], 'hair/bedhead': ['slash'], 'hair/bob': ['slash'],
+  'hair/buzzcut': ['slash'], 'hair/long':    ['slash'], 'hair/spiked':  ['slash']
 };
 /** Swap an equipment idle src for its attack src when the body plays that
  *  animation and we shipped a matching sheet; else return the idle src. */
 export function equipAnimSrc(idleSrc, animation) {
   if (!idleSrc || !animation) return idleSrc;
-  const m = idleSrc.match(/\/([^/]+)\/([^/]+)\.png$/);
+  // Key = the path relative to /assets/lpc/ (handles nested dirs like
+  // head/heads/human_male). Append `_<anim>` to the idle sheet when registered.
+  const m = idleSrc.match(/\/assets\/lpc\/(.+)\.png$/);
   if (!m) return idleSrc;
-  const anims = EQUIP_ATTACK[`${m[1]}/${m[2]}`];
+  const anims = EQUIP_ATTACK[m[1]];
   return anims && anims.includes(animation)
     ? idleSrc.replace(/\.png$/, `_${animation}.png`)
     : idleSrc;
@@ -1643,7 +1651,7 @@ export function buildRenderPlan(rawCharacter, { direction = 'south', animation =
   // Head — LPC v2 bodies are headless; head is a separate sprite that also
   // takes the same composed filter (so wounded/poisoned/etc. affects head too).
   const headRace = pickHeadRace(character);
-  const headSrc = ASSET_MAP.head[headRace]?.[gender] || ASSET_MAP.head.human[gender] || ASSET_MAP.head.human.male;
+  const headSrc = equipAnimSrc(ASSET_MAP.head[headRace]?.[gender] || ASSET_MAP.head.human[gender] || ASSET_MAP.head.human.male, animation);
   layers.push({
     kind: 'lpc',
     slot: 'head',
@@ -1661,7 +1669,7 @@ export function buildRenderPlan(rawCharacter, { direction = 'south', animation =
   if (headRace === 'human') {
     const eyeColor = pickEyes(character);
     if (ASSET_MAP.eyes[eyeColor]) {
-      layers.push({ kind: 'lpc', slot: 'eyes', src: ASSET_MAP.eyes[eyeColor] });
+      layers.push({ kind: 'lpc', slot: 'eyes', src: equipAnimSrc(ASSET_MAP.eyes[eyeColor], animation) });
     }
   }
 
@@ -1670,7 +1678,7 @@ export function buildRenderPlan(rawCharacter, { direction = 'south', animation =
     const hairKey = pickHair(character, helmKey);
     if (hairKey) {
       layers.push({
-        kind: 'lpc', slot: 'hair', src: ASSET_MAP.hair[hairKey],
+        kind: 'lpc', slot: 'hair', src: equipAnimSrc(ASSET_MAP.hair[hairKey], animation),
         filter: HAIR_COLOR_FILTERS[pickHairColor(character)]
       });
     }
