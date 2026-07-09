@@ -25,7 +25,7 @@ import { MONSTER_PRESETS, buildMonsterCharacter } from '../scene/monster-presets
 import { actorStateAt } from './fsm.js';
 import { HURT_TAIL_MS, IDLE_BOB_MS } from './timings.js';
 import { loadImage } from '../sprite/image-cache.js';
-import { weaponSpriteSrc, weaponAttackSrc, weaponAttackBehindSrc, revisedWeaponAttackSrc, revisedWeaponBehindSrc, weaponAnimForBody, FRAME, BODY_ANIMS, bodyAnimSheet, bodyAnimFrames } from '../sprite/lpc-config.js';
+import { weaponSpriteSrc, weaponAttackSrc, weaponAttackBehindSrc, weaponAnimForBody, FRAME, BODY_ANIMS, bodyAnimSheet, bodyAnimFrames } from '../sprite/lpc-config.js';
 import { motionForWeapon } from './weapon-motions.js';
 import { swingRigFor } from './weapon-swing.js';
 
@@ -132,7 +132,7 @@ export async function preloadActorAttack(entity, { animation, scale = 3, directi
   if (!character || !character.id) return null;
   // Only human bodies have attack sheets; a quick probe avoids rendering
   // a full set that would just be the idle body. The frame count is
-  // per-body (revised sheets differ from classic), so read it dynamically.
+  // the frame count is read dynamically per body/anim.
   const bodyKey = character.body || (character.gender === 'female' ? 'female' : 'male');
   if (!bodyAnimSheet(bodyKey, animation)) return null;
   const count = bodyAnimFrames(bodyKey, animation);
@@ -437,29 +437,18 @@ const SLASH_ROW_SOUTH = 2;
  * animation (slash/thrust/…) — M59 uses it to load the matching real
  * weapon attack sheet when one exists.
  */
-export async function setActorWeapon(entity, { swing = null, animation = null, revised = false } = {}) {
+export async function setActorWeapon(entity, { swing = null, animation = null } = {}) {
   void swing;
   _attackerWeapon = null;
   const weapon = entity?.equipment?.mainhand
     || (entity?.presetSlug ? { name: MONSTER_PRESETS[entity.presetSlug]?.attack?.name } : null);
   const classRig = swingRigFor(motionForWeapon(weapon));
   if (!classRig) return null;                  // unarmed → no overlay
-  // M62 Phase 2 — revised body uses ElizaWy's revised weapon art, which is
-  // frame-matched per CUT (slash/backslash/halfslash each get their own
-  // sheet) so it tracks the revised hand. Only swords have revised art;
-  // anything else returns null → bare-handed on revised. The classic path
-  // (M59) collapses the cut to 'slash' (one weapon sheet) and falls back to
-  // the walk sheet when a weapon has no attack art.
-  let attackSrc, behindSrc;
-  if (revised) {
-    attackSrc = revisedWeaponAttackSrc(weapon, animation);
-    if (!attackSrc) return null;               // no revised art → no overlay
-    behindSrc = revisedWeaponBehindSrc(weapon, animation);
-  } else {
-    const attackAnim = weaponAnimForBody(animation);
-    attackSrc = weaponAttackSrc(weapon, attackAnim);
-    behindSrc = weaponAttackBehindSrc(weapon, attackAnim);
-  }
+  // M59 — prefer a real attack sheet (slash/thrust) frame-matched to the body
+  // animation; fall back to the walk sheet when a weapon has no attack art.
+  const attackAnim = weaponAnimForBody(animation);
+  const attackSrc = weaponAttackSrc(weapon, attackAnim);
+  const behindSrc = weaponAttackBehindSrc(weapon, attackAnim);
   const src = attackSrc || weaponSpriteSrc(weapon);
   if (!src) return null;                       // no LPC sprite → effect-only
   let img;

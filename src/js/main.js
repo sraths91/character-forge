@@ -213,7 +213,7 @@ function rerender() {
   // equipment) re-bakes the buffer; the rAF keeps drawing it. Otherwise
   // paint the static composite.
   if (animating && viewMode !== 'party') { bakeIdleBuffer(); return; }
-  renderSprite(canvas, revisedActor(c), { scale: 6, direction: currentDirection, frameIdx: 0 });
+  renderSprite(canvas, c, { scale: 6, direction: currentDirection, frameIdx: 0 });
 }
 
 // M3 — turn the scene's monster instances into the character-shaped
@@ -622,8 +622,8 @@ function setupVersusCinema(active) {
       // with the resolved swing, so it's not loaded here.
       onActorsChanged: async ({ attacker, defender }) => {
         await Promise.all([
-          preloadActorSprite(revisedActor(attacker), { direction: 'south' }),
-          preloadActorSprite(revisedActor(defender), { direction: 'south' })
+          preloadActorSprite(attacker, { direction: 'south' }),
+          preloadActorSprite(defender, { direction: 'south' })
         ]);
       }
     });
@@ -635,22 +635,6 @@ function setupVersusCinema(active) {
   }
 }
 
-// M62 — revised-body flag (?revised=1). Humanoid PCs get ElizaWy's revised
-// base in the combat cinema AND the character-page preview (idle + swing);
-// monsters and the party/grid stay classic. The override is applied to a
-// CLONE so the shared entity record is never mutated (no leak). Animations
-// revised lacks (thrust/cast/hurt) resolve to null and fall back to the
-// revised idle pose; non-sword weapons resolve to bare-handed.
-const REVISED = (() => {
-  try { return new URLSearchParams(window.location.search).has('revised'); } catch { return false; }
-})();
-function revisedActor(entity) {
-  if (!REVISED || !entity || entity._isMonster || entity.presetSlug) return entity;
-  const body = entity.body;
-  if (body && body !== 'male' && body !== 'female') return entity;   // teen/muscular/etc → leave classic
-  const female = entity.gender === 'female' || body === 'female';
-  return { ...entity, body: female ? 'revised_female' : 'revised' };
-}
 
 /** M51 Phase 2 — Map a cinema motion id to the LPC body animation that
  *  the attacker's body should play. */
@@ -790,14 +774,11 @@ async function playCinemaRoundForAttack(attackerHit, targetHit, dmg, opts = {}) 
   // the motion decides.
   const bodyAnim = resolvedSwing ? bodyAnimForSwing(resolvedSwing) : bodyAnimForMotion(motionId);
   await Promise.all([
-    preloadActorAttack(revisedActor(attackerHit.entity), { animation: bodyAnim }),
-    preloadActorAttack(revisedActor(targetHit.entity), { animation: 'hurt' }),
+    preloadActorAttack(attackerHit.entity, { animation: bodyAnim }),
+    preloadActorAttack(targetHit.entity, { animation: 'hurt' }),
     // M59 — load the weapon's real attack sheet matching the body
     // animation (slash/thrust) when one exists; else the walk fallback.
-    // M62 Phase 2 — on the revised body, swords use ElizaWy's revised arming
-    // sword art (frame-matched to the revised hand); non-swords have no
-    // revised art and resolve to bare-handed inside setActorWeapon.
-    setActorWeapon(attackerHit.entity, { swing: resolvedSwing, animation: bodyAnim, revised: REVISED })
+    setActorWeapon(attackerHit.entity, { swing: resolvedSwing, animation: bodyAnim })
   ]);
   versusCinema.resetHp({
     attHp: attackerHit.entity.hp?.current ?? attackerHit.entity.hp ?? 1,
@@ -3730,25 +3711,24 @@ let animFrame = 0;
 let animTimer = null;            // party-view frame-cycle interval
 const FRAME_INTERVAL_MS = 130;
 
-// Idle state. M62-fix — the M53 idle baked ONE frame (frameIdx:0) and
-// affine-warped the whole sprite every tick, so the pose never changed and
-// rigid armour/weapons jelly-squashed (the "broken for weeks" motion). We now
-// cycle the REAL idle frames (classic 2, revised 3 — the compositor samples
-// them via frameIdx % frameCount) with only a subtle INTEGER breath offset,
-// never a whole-sprite scale — matching the cinema's idle.
+// Idle state. The M53 idle baked ONE frame (frameIdx:0) and affine-warped the
+// whole sprite every tick, so the pose never changed and rigid armour/weapons
+// jelly-squashed (the "broken for weeks" motion). We now cycle the REAL idle
+// frames (LPC bodies ship a 2-frame idle; the compositor samples each layer via
+// frameIdx % frameCount) with only a subtle INTEGER breath offset, never a
+// whole-sprite scale — matching the cinema's idle.
 let idleRaf = null;
 let idleStart = 0;
 let idleBuffers = [];            // baked composites, one per idle frame
 let idleBakeToken = 0;           // invalidates in-flight async bakes
-const IDLE_FRAME_MS = 300;       // per step; ping-ponged → ~0.6-1.2s breath loop
+const IDLE_FRAME_MS = 300;       // per step; ping-ponged → ~0.6s breath loop
 
-/** Idle frame count for a body: the revised base ships a 3-frame breathing
- *  idle; classic bodies a 2-frame idle. */
-function idleFrameCount(actor) {
-  return (actor?.body === 'revised' || actor?.body === 'revised_female') ? 3 : 2;
+/** Idle frame count — LPC PC bodies ship a 2-frame idle. */
+function idleFrameCount() {
+  return 2;
 }
-/** Ping-pong step order so a 3-frame breath eases in and back out (0,1,2,1)
- *  instead of snapping from peak to neutral; 2-frame → 0,1. */
+/** Ping-pong step order so a breath eases in and back out instead of snapping
+ *  from peak to neutral (2-frame → 0,1; 3-frame → 0,1,2,1). */
 function idleFrameSeq(n) {
   const s = [];
   for (let i = 0; i < n; i++) s.push(i);
@@ -3762,8 +3742,8 @@ function idleFrameSeq(n) {
 async function bakeIdleBuffer() {
   if (!currentCharacter) return;
   const token = ++idleBakeToken;
-  const actor = revisedActor(currentCharacter);
-  const n = idleFrameCount(actor);
+  const actor = currentCharacter;
+  const n = idleFrameCount();
   const bufs = [];
   for (let i = 0; i < n; i++) {
     const off = document.createElement('canvas');
@@ -3890,9 +3870,9 @@ async function playSwingPreview(swingId) {
   const W = canvas.width, H = canvas.height;
   // Bake the body attack frames + idle + weapon for this swing.
   await Promise.all([
-    preloadActorSprite(revisedActor(ent), { direction: 'south', scale }),
-    preloadActorAttack(revisedActor(ent), { animation: bodyAnimForSwing(swingId), direction: 'south', scale }),
-    setActorWeapon(ent, { swing: swingId, animation: bodyAnimForSwing(swingId), revised: REVISED })
+    preloadActorSprite(ent, { direction: 'south', scale }),
+    preloadActorAttack(ent, { animation: bodyAnimForSwing(swingId), direction: 'south', scale }),
+    setActorWeapon(ent, { swing: swingId, animation: bodyAnimForSwing(swingId) })
   ]);
   const drawSprite = makeLpcDrawSprite();
   const dur = SWING_PREVIEW_MS, impactAt = Math.round(dur * 0.55);
@@ -4292,7 +4272,7 @@ async function render(character) {
   $('raw-json').textContent = JSON.stringify(effective, null, 2);
 
   stopAnimation();   // reset animation state when loading a new character
-  const r = await renderSprite(canvas, revisedActor(effective), { scale: 6, direction: currentDirection, frameIdx: 0 });
+  const r = await renderSprite(canvas, effective, { scale: 6, direction: currentDirection, frameIdx: 0 });
   // M62 — breathe by default: the preview was static until the user toggled
   // "animate". Start the idle loop on load so the character feels alive.
   startAnimation();

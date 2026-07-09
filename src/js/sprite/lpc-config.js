@@ -80,31 +80,19 @@ export const BODY_ANIMS = {
 };
 const BODY_ANIM_BASES = new Set(['male', 'female', 'teen', 'muscular']);
 
-// M62 — ElizaWy's REVISED bases live in their own dir and ship their OWN
-// frame counts (slash 7 vs classic 6, backslash 12 vs 13). Only the
-// slash-family combat exists in revised so far — NO thrust/cast/hurt — so
-// those resolve to null and the caller falls back to the (revised) idle body.
-const REVISED_BASES = new Set(['revised', 'revised_female']);
-const REVISED_ANIM_FRAMES = { slash: 7, backslash: 12, halfslash: 6 };
-
 /** Resolve a body key + animation to its attack sheet path, or null
  *  (monsters / unknown anim / base without that anim → caller falls back
  *  to the idle body). */
 export function bodyAnimSheet(bodyKey, anim) {
-  if (REVISED_BASES.has(bodyKey)) {
-    return REVISED_ANIM_FRAMES[anim] ? `${ASSETS}/body-revised/${bodyKey}_${anim}.png` : null;
-  }
   const spec = BODY_ANIMS[anim];
   if (!BODY_ANIM_BASES.has(bodyKey) || !spec) return null;
   if (spec.bases && !spec.bases.includes(bodyKey)) return null;
   return `${ASSETS}/body/${bodyKey}_${anim}.png`;
 }
 
-/** Per-body frame count for an attack animation. Revised bases override the
- *  global BODY_ANIMS count (their sheets differ); everything else uses the
- *  shared spec. Returns 0 when the body has no sheet for that anim. */
+/** Per-body frame count for an attack animation. Returns 0 when the body has
+ *  no sheet for that anim. */
 export function bodyAnimFrames(bodyKey, anim) {
-  if (REVISED_BASES.has(bodyKey)) return REVISED_ANIM_FRAMES[anim] || 0;
   return BODY_ANIMS[anim]?.frames || 0;
 }
 
@@ -174,12 +162,7 @@ export const ASSET_MAP = {
     // a beefier male variant used by orcs/trolls/minotaurs.
     muscular: `${ASSETS}/body/muscular.png`,
     skeleton: `${ASSETS}/body/skeleton.png`,
-    zombie:   `${ASSETS}/body/zombie.png`,
-    // M62 — ElizaWy's REVISED base (smaller head, thinner build, smoother
-    // combat). Cinema-only for now (see the `revised` flag in main.js); the
-    // base sheet here is the 3-frame breathing idle.
-    revised:        `${ASSETS}/body-revised/revised.png`,
-    revised_female: `${ASSETS}/body-revised/revised_female.png`
+    zombie:   `${ASSETS}/body/zombie.png`
   },
 
   head: {
@@ -858,32 +841,6 @@ export function weaponAttackBehindSrc(weapon, anim) {
   if (!key || !anim) return null;
   return WEAPON_ATTACK_BEHIND.has(`${key}_${anim}`)
     ? `${ASSETS}/weapon/${key}_${anim}_behind.png` : null;
-}
-
-// M62 Phase 2 — ElizaWy ships ONE revised-body weapon (the arming sword),
-// with slash/backslash/halfslash sheets frame-matched to the revised body
-// (cell 128, behind+front layers). All sword-type weapons use it on the
-// revised body — it tracks the hand by construction. The anim is the BODY
-// cut directly (not collapsed to 'slash'), since each cut has its own sheet.
-// Non-sword melee has no revised art yet → bare-handed on revised.
-const REVISED_SWORD_KEYS = new Set([
-  'longsword', 'longsword_alt', 'rapier', 'saber', 'scimitar', 'katana', 'arming', 'glowsword'
-]);
-const REVISED_WEAPON_ANIMS = new Set(['slash', 'backslash', 'halfslash']);
-
-/** Revised-body weapon attack sheet for a weapon + body cut, or null when
- *  the weapon has no revised art (non-sword) / the cut isn't a revised one. */
-export function revisedWeaponAttackSrc(weapon, anim) {
-  if (!REVISED_WEAPON_ANIMS.has(anim)) return null;
-  return REVISED_SWORD_KEYS.has(pickWeapon(weapon))
-    ? `${ASSETS}/weapon-revised/arming_${anim}.png` : null;
-}
-
-/** The behind-body companion for a revised weapon sheet (always present for
- *  the arming sword), or null when there's no revised front sheet. */
-export function revisedWeaponBehindSrc(weapon, anim) {
-  return revisedWeaponAttackSrc(weapon, anim)
-    ? `${ASSETS}/weapon-revised/arming_${anim}_behind.png` : null;
 }
 
 /**

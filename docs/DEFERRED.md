@@ -68,14 +68,25 @@ fix:
   authoring more idle frames (or routing through the cinema's
   `preloadActorSprite`/`makeLpcDrawSprite` actor so both views share one idle
   brain) is the deeper unification (CLAUDE.md: don't keep two implementations).
-- **Equipment fit on the revised (thinner) body** (design): pauldrons cut for
-  the classic wide torso float off the shoulder (re-cut ~2-3px inward + a
-  collar pixel); commit to one head proportion (no classic head on the
-  revised frame); body-variant-aware crossbow/hip anchor; 3-value chain-maille
-  (reads as noise now); a 1px rim light + warmer lit legs so the silhouette
-  reads as one shape on the dark scene; desaturate the cyan shield emblem
-  ~15-20% so the face wins the focal fight. This is the M62 Phase 3 equipment
-  work.
+
+## Revised body (M61/M62) — SHELVED (2026-07-09)
+
+ElizaWy's revised LPC body (smoother idle/run/slash, cinema-first + a
+`?revised=1` flag) was explored and prototyped (M61 research, M62 Phase 1/2).
+It was **removed** because it can't clothe a D&D roster: ElizaWy's revised
+equipment is casual clothing only (shirts/pants/hair) — there is **no revised
+armour** (mail/plate/leather) and none exists anywhere (only she authored the
+7-frame revised art, and drew clothing, not armour). So armoured characters —
+most of a D&D party — can never be clean on the revised body. The classic body
+is now the sole path, and it's much improved (real-frame breathing idle + the
+full layered attack-animation system below). The revised work lives in git
+history (M62 commits) if the armour situation ever changes.
+
+The classic-body animation gains it drove are all kept:
+- **Real-frame idle** (retired the M53 jelly warp).
+- **Layered attack animation** — body + torso/arms/legs + head/hair/eyes follow
+  slash/thrust/backslash/halfslash (`EQUIP_ATTACK` + `equipAnimSrc`), with a
+  hold-frame fallback for the few pieces LPC never drew.
 
 ## Older deferrals still open
 
