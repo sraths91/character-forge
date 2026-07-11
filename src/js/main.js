@@ -75,6 +75,7 @@ import { runOneAttack as engineRunOneAttack } from './scene/combat-engine.js';
 import { applyPolish } from './anim/polish.js';
 import { applyHitReaction } from './anim/hit-reactions.js';
 import { idlePoseAt } from './anim/idle-pose.js';
+import { springConfig, springStep, hipSwayAt } from './anim/secondary-motion.js';
 import {
   preloadActorSprite, makeLpcDrawSprite, clearActorSpriteCache,
   setActorWeapon, clearActorWeapon, drawWeaponOverlay, preloadActorAttack
@@ -3719,9 +3720,29 @@ const FRAME_INTERVAL_MS = 130;
 // whole-sprite scale — matching the cinema's idle.
 let idleRaf = null;
 let idleStart = 0;
-let idleBuffers = [];            // baked composites, one per idle frame
+let idleBuffers = [];            // baked BODY-CORE composites, one per idle frame
+let idleBehindBuffers = [];      // loose parts that sit BEHIND the body
+let idleFrontBuffers = [];       // loose parts that sit IN FRONT of the body
 let idleBakeToken = 0;           // invalidates in-flight async bakes
+let idleLast = 0;                // ms of the previous drawn frame (spring dt)
+let looseSpringX = { x: 0, v: 0 };  // Path A — horizontal follow-through (px)
+let looseSpringY = { x: 0, v: 0 };  // Path A — vertical follow-through (px)
+// Tuned against the SLOW idle sway (~0.3Hz): a stiff spring would track it
+// perfectly and show no lag, so this sits just above the drive with light
+// damping — it perpetually trails the body and slightly overshoots on the
+// turn, which is the follow-through you actually see.
+const LOOSE_SPRING = springConfig(0.95, 0.42);
 const IDLE_FRAME_MS = 300;       // per step; ping-ponged → ~0.6s breath loop
+
+// Path A — the "loose" follow-through parts drag a beat behind the body's
+// weight-shift instead of moving in rigid lockstep. Split by z-order so the
+// split preserves the original compositing: BEHIND parts (cape, strapped
+// back-weapon, quiver) stay behind the body; FRONT parts (hair/beard) stay
+// in front. Everything else (body, armour, helm, held weapon) is the rigid
+// core, drawn between them.
+const LOOSE_BEHIND = ['cape-behind', 'back-weapon', 'quiver'];
+const LOOSE_FRONT = ['hair', 'beard', 'facial'];
+const LOOSE_SLOTS = [...LOOSE_BEHIND, ...LOOSE_FRONT];
 
 /** Idle frame count — LPC PC bodies ship a 2-frame idle. */
 function idleFrameCount() {
@@ -3744,14 +3765,31 @@ async function bakeIdleBuffer() {
   const token = ++idleBakeToken;
   const actor = currentCharacter;
   const n = idleFrameCount();
-  const bufs = [];
+  const core = [], behind = [], front = [];
   for (let i = 0; i < n; i++) {
-    const off = document.createElement('canvas');
-    try { await renderSprite(off, actor, { scale: 6, direction: currentDirection, frameIdx: i }); }
-    catch { return; }
-    bufs.push(off);
+    // Path A — split the composite into three z-ordered buffers so the draw
+    // loop can lag the loose parts behind the body's weight-shift without
+    // disturbing their compositing: behind-body parts, the rigid core, and
+    // front-of-body parts.
+    const behindOff = document.createElement('canvas');
+    const coreOff = document.createElement('canvas');
+    const frontOff = document.createElement('canvas');
+    try {
+      await renderSprite(behindOff, actor, { scale: 6, direction: currentDirection, frameIdx: i, includeSlots: LOOSE_BEHIND });
+      await renderSprite(coreOff, actor, { scale: 6, direction: currentDirection, frameIdx: i, excludeSlots: LOOSE_SLOTS });
+      await renderSprite(frontOff, actor, { scale: 6, direction: currentDirection, frameIdx: i, includeSlots: LOOSE_FRONT });
+    } catch { return; }
+    behind.push(behindOff);
+    core.push(coreOff);
+    front.push(frontOff);
   }
-  if (token === idleBakeToken) idleBuffers = bufs;
+  if (token === idleBakeToken) {
+    idleBuffers = core;
+    idleBehindBuffers = behind;
+    idleFrontBuffers = front;
+    looseSpringX = { x: 0, v: 0 };   // reset the follow-through on a fresh bake
+    looseSpringY = { x: 0, v: 0 };
+  }
 }
 
 /** One frame of the idle loop — cycle the real breathing frames with a
@@ -3787,13 +3825,29 @@ function drawIdleFrame(now) {
     // shimmers). No scale/rotate — that M53 warp was the broken motion.
     const seq = idleFrameSeq(idleBuffers.length);
     const fi = seq[Math.floor(t / IDLE_FRAME_MS) % seq.length];
-    const buf = idleBuffers[fi];
-    if (buf) {
-      const ox = Math.round(p.swayX * W);
-      const oy = Math.round(p.bobY * H);
+    const core = idleBuffers[fi];
+    if (core) {
+      // Body weight-shift + a slow, decoupled hip sway so the loop never ticks
+      // in a single pulse. These are the CORE's real position this frame.
+      const bodyX = p.swayX * W + hipSwayAt(t, 0.006 * W);
+      const bodyY = p.bobY * H;
       ctx.imageSmoothingEnabled = false;
-      ctx.drawImage(buf, ox, oy);
+
+      // Path A — the loose group (hair/cape/strapped weapons) chases the body
+      // a beat behind. The spring lags the core, so the relative offset reads
+      // as follow-through; at rest both align and the pose is unchanged.
+      const dt = idleLast ? now - idleLast : 16;
+      looseSpringX = springStep(looseSpringX, bodyX, dt, LOOSE_SPRING);
+      looseSpringY = springStep(looseSpringY, bodyY, dt, LOOSE_SPRING);
+
+      const lx = Math.round(looseSpringX.x), ly = Math.round(looseSpringY.x);
+      const behind = idleBehindBuffers[fi];
+      const front = idleFrontBuffers[fi];
+      if (behind) ctx.drawImage(behind, lx, ly);                 // cape / back-weapon
+      ctx.drawImage(core, Math.round(bodyX), Math.round(bodyY)); // rigid body
+      if (front) ctx.drawImage(front, lx, ly);                   // hair / beard
     }
+    idleLast = now;
   }
   idleRaf = requestAnimationFrame(drawIdleFrame);
 }
@@ -3813,6 +3867,7 @@ async function startAnimation() {
   } else {
     await bakeIdleBuffer();
     idleStart = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+    idleLast = 0;
     idleRaf = requestAnimationFrame(drawIdleFrame);
   }
 }
@@ -3823,6 +3878,9 @@ function stopAnimation() {
   if (animTimer) { clearInterval(animTimer); animTimer = null; }
   if (idleRaf) { cancelAnimationFrame(idleRaf); idleRaf = null; }
   idleBuffers = [];
+  idleBehindBuffers = [];
+  idleFrontBuffers = [];
+  idleLast = 0;
   animFrame = 0;
   const btn = $('animate-toggle');
   if (btn) btn.textContent = '▶ Animate';
