@@ -76,6 +76,7 @@ import { applyPolish } from './anim/polish.js';
 import { applyHitReaction } from './anim/hit-reactions.js';
 import { idlePoseAt } from './anim/idle-pose.js';
 import { springConfig, springStep, hipSwayAt } from './anim/secondary-motion.js';
+import { createThreeViewer, archetypeForCharacter } from './anim/three-viewer.js';
 import {
   preloadActorSprite, makeLpcDrawSprite, clearActorSpriteCache,
   setActorWeapon, clearActorWeapon, drawWeaponOverlay, preloadActorAttack
@@ -3956,8 +3957,85 @@ async function playSwingPreview(swingId) {
 
 document.addEventListener('click', (e) => {
   if (e.target.id !== 'swing-preview-play') return;
+  // In 3D mode the swing plays on the 3D model; otherwise the 2D sprite cut.
+  if (renderMode === '3d') { threeViewer?.playSwing(); return; }
   const sel = $('swing-preview-select');
   if (sel?.value) playSwingPreview(sel.value);
+});
+
+// ---------- 2D ⟷ 3D render mode ----------
+//
+// A per-player switch between the classic 2D LPC sprite and an animated 3D
+// model (Path B). Purely additive: three.js + the model GLB lazy-load only
+// when a player first picks "3D"; the 2D path is untouched. The 3D side maps
+// the character to the nearest KayKit archetype by class (see three-viewer).
+let renderMode = (typeof localStorage !== 'undefined' && localStorage.getItem('cf-render-mode') === '3d') ? '3d' : '2d';
+let threeViewer = null;
+let threeLoading = false;
+
+/** Reflect `renderMode` into the DOM and mount/tear down the 3D viewer. */
+async function applyRenderMode() {
+  const toggle = $('render-mode');
+  const stage3d = $('three-stage');
+  if (toggle) {
+    toggle.dataset.mode = renderMode;
+    toggle.querySelectorAll('.rm-opt').forEach(b => {
+      const on = b.dataset.mode === renderMode;
+      b.classList.toggle('is-active', on);
+      b.setAttribute('aria-pressed', String(on));
+    });
+  }
+  if (renderMode === '3d') {
+    stopAnimation();                       // the 2D idle loop isn't visible in 3D
+    if (canvas) canvas.hidden = true;
+    if (stage3d) stage3d.hidden = false;
+    await mountThree();
+  } else {
+    if (stage3d) stage3d.hidden = true;
+    if (canvas) canvas.hidden = false;
+    if (threeViewer) { threeViewer.dispose(); threeViewer = null; }
+    if (currentCharacter && !animating) startAnimation();   // resume the 2D idle
+  }
+}
+
+/** Create (or re-point) the 3D viewer for the current character. */
+async function mountThree() {
+  const stage3d = $('three-stage');
+  if (!stage3d || !currentCharacter) return;
+  const arch = archetypeForCharacter(currentCharacter);
+  if (threeViewer) { try { await threeViewer.setArchetype(arch); } catch { /* keep current */ } return; }
+  if (threeLoading) return;
+  threeLoading = true;
+  stage3d.dataset.state = 'loading';
+  stage3d.textContent = 'Loading 3D…';
+  try {
+    threeViewer = await createThreeViewer(stage3d, { archetype: arch, size: 384 });
+    stage3d.dataset.state = 'ready';
+  } catch (err) {
+    console.error('3D viewer failed to load', err);
+    stage3d.textContent = '';
+    stage3d.dataset.state = 'error';
+    renderMode = '2d';                      // fall back gracefully to the sprite
+    if (typeof localStorage !== 'undefined') localStorage.setItem('cf-render-mode', '2d');
+    await applyRenderMode();
+  } finally {
+    threeLoading = false;
+  }
+}
+
+/** Player picked a render mode. */
+function setRenderMode(mode) {
+  if (mode !== '2d' && mode !== '3d') return;
+  if (mode === renderMode && (mode === '2d' || threeViewer)) return;
+  renderMode = mode;
+  if (typeof localStorage !== 'undefined') localStorage.setItem('cf-render-mode', mode);
+  applyRenderMode();
+}
+
+document.addEventListener('click', (e) => {
+  const opt = e.target.closest?.('.rm-opt');
+  if (!opt) return;
+  setRenderMode(opt.dataset.mode);
 });
 
 // ---------- Tier 3.2: Share-link encoding ----------
@@ -4334,6 +4412,11 @@ async function render(character) {
   // M62 — breathe by default: the preview was static until the user toggled
   // "animate". Start the idle loop on load so the character feels alive.
   startAnimation();
+  // Reveal the 2D/3D switch and apply the player's saved preference (points
+  // the 3D model at the newly-loaded character if 3D is active).
+  const modeToggle = $('render-mode');
+  if (modeToggle) modeToggle.hidden = false;
+  applyRenderMode();
   return r.generatedCount;
 }
 

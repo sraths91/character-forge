@@ -19,10 +19,15 @@
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
     "express": "^4.21.1",
-    "express-rate-limit": "^7.4.1"
+    "express-rate-limit": "^7.4.1",
+    "three": "^0.160.0"
   },
   "devDependencies": {
+    "@gltf-transform/core": "^4.4.1",
+    "@gltf-transform/extensions": "^4.4.1",
+    "@gltf-transform/functions": "^4.4.1",
     "concurrently": "^9.1.0",
+    "draco3dgltf": "^1.5.7",
     "eslint": "^9.15.0",
     "pngjs": "^7.0.0",
     "vite": "^6.0.0"

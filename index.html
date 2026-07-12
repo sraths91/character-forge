@@ -71,7 +71,13 @@
 
     <section class="result hidden" id="result">
       <div class="sprite-stage">
+        <div class="render-mode" id="render-mode" data-mode="2d" role="group" aria-label="Preview render mode" hidden>
+          <button type="button" class="rm-opt is-active" data-mode="2d" aria-pressed="true">2D sprite</button>
+          <button type="button" class="rm-opt" data-mode="3d" aria-pressed="false">3D model</button>
+          <span class="rm-thumb" aria-hidden="true"></span>
+        </div>
         <canvas id="sprite-canvas" width="384" height="384" role="img" aria-label="Composed character sprite. Use the controls below to customize."></canvas>
+        <div id="three-stage" class="three-stage" hidden aria-label="Animated 3D character preview. Drag to rotate."></div>
         <div id="attack-preview" class="attack-preview" hidden role="tooltip" aria-live="polite"></div>
         <!-- Battlefield zoom controls (only visible in party-view-mode). -->
         <div id="battlefield-zoom" class="battlefield-zoom" aria-label="Battlefield zoom">
