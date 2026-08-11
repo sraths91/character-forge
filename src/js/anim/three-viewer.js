@@ -15,7 +15,15 @@
  * upgrade; the registry below is deliberately swappable.
  *
  * Assets: real CC0 art (KayKit Adventurers + weapons) under /assets/3d/.
+ *
+ * The character → body archetype and the character's ACTUAL equipped weapon
+ * are resolved by the equipment-aware selectors in archetype-select.js /
+ * weapon-map.js, so a warhammer cleric loads a knight body holding a hammer,
+ * not a fixed sword.
  */
+
+import { archetypeForCharacter } from './archetype-select.js';
+import { weaponMeshForCharacter } from './weapon-map.js';
 
 const BASE = '/assets/3d';
 
@@ -45,23 +53,10 @@ const ARCHETYPE = {
   }
 };
 
-// D&D class → nearest curated archetype. The honest approximate mapping.
-const CLASS_TO_ARCHETYPE = {
-  fighter: 'knight', paladin: 'knight', cleric: 'knight',
-  barbarian: 'barbarian',
-  wizard: 'mage', sorcerer: 'mage', warlock: 'mage', druid: 'mage', artificer: 'mage',
-  rogue: 'rogue', ranger: 'rogue', bard: 'rogue', monk: 'rogue'
-};
-
-/** Pick the 3D archetype key for a character from its primary class. */
-export function archetypeForCharacter(character) {
-  const cls = (
-    character?.classes?.[0]?.name ||
-    character?.classes?.[0]?.definition?.name ||
-    character?.class || ''
-  ).toLowerCase();
-  return CLASS_TO_ARCHETYPE[cls] || 'knight';
-}
+// The archetype keys that actually have a loaded model. Passed to the
+// equipment-aware selectors so they only ever return a key we can render;
+// grows automatically as roster models are added to ARCHETYPE.
+const AVAILABLE = new Set(Object.keys(ARCHETYPE));
 
 export function archetypeLabel(key) {
   return ARCHETYPE[key]?.label || key;
@@ -107,10 +102,10 @@ function fixMaterials(root, THREE) {
 
 /**
  * Mount a 3D character viewer into `container`. Returns a handle with
- * `playSwing()`, `setArchetype(key)`, and `dispose()`. Async: resolves once
- * three, the model, and its weapons are loaded and the idle is playing.
+ * `playSwing()`, `setCharacter(character)`, and `dispose()`. Async: resolves
+ * once three, the model, and its weapons are loaded and the idle is playing.
  */
-export async function createThreeViewer(container, { archetype = 'knight', size = 384 } = {}) {
+export async function createThreeViewer(container, { character = null, size = 384 } = {}) {
   await ensureThree();
 
   const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: 'high-performance' });
@@ -182,28 +177,40 @@ export async function createThreeViewer(container, { archetype = 'knight', size 
     ground.position.y = box.min.y + 0.001;
   }
 
-  async function buildArchetype(archKey) {
+  async function buildForCharacter(char) {
+    // Body from the equipment-aware archetype; weapon from the ACTUAL sheet.
+    const archKey = char ? archetypeForCharacter(char, { available: AVAILABLE }) : 'knight';
     const spec = ARCHETYPE[archKey] || ARCHETYPE.knight;
+    const weaponSel = char ? weaponMeshForCharacter(char, { available: AVAILABLE }) : null;
+
     const gltf = gltfCache[spec.glb] || (gltfCache[spec.glb] = await load(`${BASE}/${spec.glb}`));
     const rig = skeletonClone(gltf.scene);
     fixMaterials(rig, THREE);
 
+    // Attach a weapon mesh to a hand bone. Foreign props (hammer/bow) carry a
+    // scale/offset/rot fixup for the KayKit grip; native KayKit weapons leave
+    // those null and attach at identity.
     const attach = async (w) => {
-      if (!w) return;
+      if (!w || !w.url) return;
       const wg = gltfCache[w.url] || (gltfCache[w.url] = await load(`${BASE}/${w.url}`));
       const mesh = wg.scene.clone(true);
       fixMaterials(mesh, THREE);
+      if (w.scale != null) mesh.scale.setScalar(w.scale);
+      if (w.offset) mesh.position.fromArray(w.offset);
+      if (w.rot) mesh.rotation.fromArray(w.rot);
       const bone = findBone(rig, w.bone);
       if (bone) bone.add(mesh); else rig.add(mesh);
     };
-    await attach(spec.weapon);
-    await attach(spec.offhand);
+    // weaponSel picks the real weapon; fall back to the archetype's own weapon
+    // when there's no character (defensive) .
+    await attach(weaponSel ? weaponSel.mesh : spec.weapon);
+    await attach(weaponSel ? weaponSel.offhand : spec.offhand);
 
     const mixer = new THREE.AnimationMixer(rig);
     const clips = gltf.animations;
     const pick = (n) => clips.find(c => c.name === n) || clips.find(c => c.name.toLowerCase().includes((n || '').toLowerCase())) || clips[0];
     const idleAction = mixer.clipAction(pick(spec.idle));
-    const attackAction = mixer.clipAction(pick(spec.attack));
+    const attackAction = mixer.clipAction(pick((weaponSel && weaponSel.attack) || spec.attack));
     attackAction.loop = THREE.LoopOnce; attackAction.clampWhenFinished = true;
     idleAction.play();
 
@@ -236,7 +243,7 @@ export async function createThreeViewer(container, { archetype = 'knight', size 
     raf = requestAnimationFrame(tick);
   }
 
-  mount(await buildArchetype(archetype));
+  mount(await buildForCharacter(character));
   raf = requestAnimationFrame(tick);
 
   return {
@@ -248,10 +255,10 @@ export async function createThreeViewer(container, { archetype = 'knight', size 
       attackAction.play();
       idleAction.crossFadeTo(attackAction, 0.12, false);
     },
-    /** Swap to a different archetype (keeps the same scene/renderer). */
-    async setArchetype(archKey) {
+    /** Re-point at a (possibly different) character — reselects body + weapon. */
+    async setCharacter(char) {
       if (disposed) return;
-      mount(await buildArchetype(archKey));
+      mount(await buildForCharacter(char));
     },
     /** Tear down: stop the loop, free GPU resources, remove the canvas. */
     dispose() {

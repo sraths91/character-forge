@@ -29,7 +29,7 @@ const nodeGlobals = {
 };
 
 export default [
-  { ignores: ['dist/**', 'node_modules/**', '.plans/**', 'public/**', 'scripts/**', '.github/**'] },
+  { ignores: ['dist/**', 'node_modules/**', '.plans/**', 'public/**', 'scripts/**', '.github/**', 'scratchpad/**'] },
   js.configs.recommended,
   {
     languageOptions: {

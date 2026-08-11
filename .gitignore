@@ -44,3 +44,6 @@ m*-*.png
 art-gen/raw/*
 !art-gen/raw/.gitkeep
 art-gen/preview.html
+
+# Agent scratchpad (throwaway prototypes/assets)
+scratchpad/

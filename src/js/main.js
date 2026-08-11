@@ -76,7 +76,7 @@ import { applyPolish } from './anim/polish.js';
 import { applyHitReaction } from './anim/hit-reactions.js';
 import { idlePoseAt } from './anim/idle-pose.js';
 import { springConfig, springStep, hipSwayAt } from './anim/secondary-motion.js';
-import { createThreeViewer, archetypeForCharacter } from './anim/three-viewer.js';
+import { createThreeViewer } from './anim/three-viewer.js';
 import {
   preloadActorSprite, makeLpcDrawSprite, clearActorSpriteCache,
   setActorWeapon, clearActorWeapon, drawWeaponOverlay, preloadActorAttack
@@ -4002,14 +4002,13 @@ async function applyRenderMode() {
 async function mountThree() {
   const stage3d = $('three-stage');
   if (!stage3d || !currentCharacter) return;
-  const arch = archetypeForCharacter(currentCharacter);
-  if (threeViewer) { try { await threeViewer.setArchetype(arch); } catch { /* keep current */ } return; }
+  if (threeViewer) { try { await threeViewer.setCharacter(currentCharacter); } catch { /* keep current */ } return; }
   if (threeLoading) return;
   threeLoading = true;
   stage3d.dataset.state = 'loading';
   stage3d.textContent = 'Loading 3D…';
   try {
-    threeViewer = await createThreeViewer(stage3d, { archetype: arch, size: 384 });
+    threeViewer = await createThreeViewer(stage3d, { character: currentCharacter, size: 384 });
     stage3d.dataset.state = 'ready';
   } catch (err) {
     console.error('3D viewer failed to load', err);
