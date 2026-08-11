@@ -22,10 +22,15 @@ const DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'public', 'asset
 
 // Per archetype: the exact clips the viewer plays (must match three-viewer.js).
 const KEEP = {
-  'Knight.glb':    ['Idle', '1H_Melee_Attack_Slice_Diagonal'],
-  'Barbarian.glb': ['Idle', '2H_Melee_Attack_Chop'],
-  'Mage.glb':      ['Idle', 'Spellcasting'],
-  'Rogue.glb':     ['Idle', '1H_Melee_Attack_Stab'],
+  'Knight.glb':        ['Idle', '1H_Melee_Attack_Slice_Diagonal'],
+  'Barbarian.glb':     ['Idle', '2H_Melee_Attack_Chop'],
+  'Mage.glb':          ['Idle', 'Spellcasting'],
+  'Rogue.glb':         ['Idle', '1H_Melee_Attack_Stab'],
+  // Roster additions (ranger / warlock / monk). Monk.glb is the raw Rogue
+  // body kept for its Unarmed_* clips.
+  'Rogue_Hooded.glb':  ['Idle', '2H_Ranged_Shoot'],                          // ranger
+  'Skeleton_Mage.glb': ['Idle', 'Spellcast_Shoot'],                          // warlock
+  'Monk.glb':          ['Unarmed_Idle', 'Unarmed_Melee_Attack_Punch_A'],     // monk (unarmed)
 };
 
 const io = new NodeIO()
@@ -41,6 +46,13 @@ for (const [file, keep] of Object.entries(KEEP)) {
   const path = join(DIR, file);
   const before = statSync(path).size;
   const doc = await io.readBinary(readFileSync(path));
+
+  // Idempotent: skip a file that's already been pruned to its KEEP set (so
+  // re-running to add new models doesn't re-encode the committed ones).
+  if (doc.getRoot().listAnimations().length <= keep.length) {
+    console.log(`${file}: already lean (${mb(before)}) — skipped`);
+    continue;
+  }
 
   const keepSet = new Set(keep);
   let dropped = 0;

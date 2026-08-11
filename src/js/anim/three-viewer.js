@@ -50,6 +50,22 @@ const ARCHETYPE = {
     glb: 'Rogue.glb', idle: 'Idle', attack: '1H_Melee_Attack_Stab',
     weapon: { url: 'dagger.gltf', bone: 'handslotr' },
     label: 'Rogue'
+  },
+  // Roster additions — same KayKit rig + hand bone, so they drop in cleanly.
+  ranger: {
+    glb: 'Rogue_Hooded.glb', idle: 'Idle', attack: '2H_Ranged_Shoot',
+    weapon: { url: 'bow.glb', bone: 'handslotr', scale: 0.9 },
+    label: 'Ranger'
+  },
+  warlock: {
+    glb: 'Skeleton_Mage.glb', idle: 'Idle', attack: 'Spellcast_Shoot',
+    weapon: { url: 'staff.gltf', bone: 'handslotr' },
+    label: 'Warlock'
+  },
+  monk: {
+    glb: 'Monk.glb', idle: 'Unarmed_Idle', attack: 'Unarmed_Melee_Attack_Punch_A',
+    weapon: null,   // barehanded — the unarmed idle/punch is the monk's identity
+    label: 'Monk'
   }
 };
 
@@ -208,9 +224,14 @@ export async function createThreeViewer(container, { character = null, size = 38
 
     const mixer = new THREE.AnimationMixer(rig);
     const clips = gltf.animations;
-    const pick = (n) => clips.find(c => c.name === n) || clips.find(c => c.name.toLowerCase().includes((n || '').toLowerCase())) || clips[0];
+    const findOne = (n) => n && (clips.find(c => c.name === n) || clips.find(c => c.name.toLowerCase().includes(n.toLowerCase())));
+    // Try each candidate name in order; clips[0] is the last resort. Since the
+    // pruned model always keeps spec.attack, listing it after the weapon's
+    // preferred clip guarantees a real attack even when the weapon's motion
+    // clip name isn't in this particular body.
+    const pick = (...names) => { for (const n of names) { const c = findOne(n); if (c) return c; } return clips[0]; };
     const idleAction = mixer.clipAction(pick(spec.idle));
-    const attackAction = mixer.clipAction(pick((weaponSel && weaponSel.attack) || spec.attack));
+    const attackAction = mixer.clipAction(pick(weaponSel && weaponSel.attack, spec.attack));
     attackAction.loop = THREE.LoopOnce; attackAction.clampWhenFinished = true;
     idleAction.play();
 

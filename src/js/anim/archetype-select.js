@@ -102,9 +102,12 @@ export function archetypePreferences(character) {
       if (finesse && !heavy) return ['bard', 'rogue', 'mage', 'knight'];
       return ['bard', 'mage', 'rogue', 'knight'];
 
+    case 'warlock':
+      // Prefer the undead-caster model when present; else a plain mage.
+      return ['warlock', 'mage', 'rogue', 'knight'];
+
     case 'wizard':
     case 'sorcerer':
-    case 'warlock':
       return ['mage', 'rogue', 'knight'];
 
     case 'artificer':
