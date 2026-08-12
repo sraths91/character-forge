@@ -189,3 +189,33 @@ formats, discovered by reading each weapon's sheet definition:
 
 Contrast: the CLASSIC attack weapons (dagger/mace/spear) connect as the
 canonical 1:1 LPC slash/thrust pair for our classic body (M59).
+
+## 3D faithful metal armour — WALL (2026-08-12)
+
+The 3D modular composer (Quaternius, opt-in "Realistic" mode) renders
+metal armour as APPROXIMATIONS on purpose: plate → the steel-tinted
+SpaceSuit proxy, chain/heavy → an iron-tinted Adventurer body. The
+loadout flags these honestly (`placeholder:true`, `gaps:['plate-approx']`
+etc.). This is a deliberate ceiling, not a bug — faithful plate/chain is
+not cheaply attainable with available CC0 assets:
+
+- The shipped modular bodies are Quaternius "Universal Base Characters"
+  (62-joint `CharacterArmature`, baked `Idle`/`Sword_Slash` clips, from
+  poly.pizza). No CC0 plate/chain torso exists on THAT rig (the modular
+  acquisition sweep confirmed — poly.pizza has no metal-armour body).
+- The "Modular Character Outfits – Fantasy" pack was downloaded + inspected
+  (2026-08-12). Two independent blockers: (1) the FREE Standard version
+  ships only **Peasant + Ranger** outfits — no plate/chain/knight/helm
+  (metal armour is paywalled in the Source version); (2) the pack is on a
+  DIFFERENT, incompatible rig — **65 joints, Unreal/Mixamo-style names**
+  (`root/pelvis/spine_01/clavicle_l`) with **no baked animations** — vs our
+  62-joint CharacterArmature. The parts cannot `mesh.bind`-graft onto the
+  shipped bodies and carry no clips.
+
+So faithful 3D metal armour would require adopting the 65-joint rig for the
+WHOLE composer + sourcing/retargeting a fresh animation set (Mixamo / UAL
+retarget) + buying the Fantasy Source pack for the plate parts — a second
+3D pipeline, not an asset drop-in. Deliberately NOT pursued. The
+approximations ship; the 2D LPC path remains the faithful-armour option.
+The Team-B plans (pipeline + loadout flip) live in the session scratchpad
+(`plans2/teamB-*`) if the rig-migration project is ever taken on.
