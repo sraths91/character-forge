@@ -54,16 +54,17 @@ export async function createModularViewer(container, { character = null, size = 
     const rig = skeletonClone(gltf.scene);
     fixMaterials(rig);
 
-    // Tint: clone each slot material and colour-multiply (isolated per instance).
+    // Tint the armour/cloth toward the loadout colour — but NOT the head (skin
+    // + face would go grey). Blend (lerp), don't multiply, so the body keeps
+    // its material lightness instead of darkening.
     const materials = [];
     const tint = new THREE.Color(lo.tint);
     rig.traverse(o => {
-      if (o.isSkinnedMesh && o.material) {
-        const mat = o.material.clone();
-        mat.color.multiply(tint);
-        o.material = mat;
-        materials.push(mat);
-      }
+      if (!o.isSkinnedMesh || !o.material) return;
+      const mat = o.material.clone();
+      if (!/head/i.test(o.name)) mat.color.lerp(tint, 0.5);
+      o.material = mat;
+      materials.push(mat);
     });
     const skel = firstSkinned(rig)?.skeleton;
     rig.updateWorldMatrix(true, true);

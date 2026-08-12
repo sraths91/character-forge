@@ -421,6 +421,51 @@ button.primary:disabled { opacity: 0.6; cursor: not-allowed; }
   .render-mode .rm-thumb { transition: none; }
 }
 
+/* 3D-engine sub-toggle (Stylized ⟷ Realistic) — a smaller, secondary slider
+   shown only while 3D is active. */
+.engine-mode {
+  position: relative;
+  display: inline-flex;
+  align-self: center;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 2px;
+  margin-top: -4px;
+}
+.engine-mode .em-opt {
+  position: relative;
+  z-index: 1;
+  flex: 1 1 0;
+  min-width: 68px;
+  border: 0;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 3px 12px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: color 0.18s ease;
+}
+.engine-mode .em-opt.is-active { color: #fff; }
+.engine-mode .em-opt:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.engine-mode .em-thumb {
+  position: absolute;
+  z-index: 0;
+  top: 2px;
+  bottom: 2px;
+  left: 2px;
+  width: calc(50% - 2px);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent, #6366f1) 78%, #000 22%);
+  transition: transform 0.22s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.engine-mode[data-engine="modular"] .em-thumb { transform: translateX(100%); }
+@media (prefers-reduced-motion: reduce) {
+  .engine-mode .em-thumb { transition: none; }
+}
+
 .meta { color: var(--text-dim); font-size: 0.95rem; margin: 0 0 16px; }
 
 .ability-grid {

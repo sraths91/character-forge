@@ -76,6 +76,11 @@
           <button type="button" class="rm-opt" data-mode="3d" aria-pressed="false">3D model</button>
           <span class="rm-thumb" aria-hidden="true"></span>
         </div>
+        <div class="engine-mode" id="engine-mode" data-engine="archetype" role="group" aria-label="3D model style" hidden>
+          <button type="button" class="em-opt is-active" data-engine="archetype" aria-pressed="true" title="Stylized class model (KayKit)">Stylized</button>
+          <button type="button" class="em-opt" data-engine="modular" aria-pressed="false" title="Realistic body composed from your armour (Quaternius)">Realistic</button>
+          <span class="em-thumb" aria-hidden="true"></span>
+        </div>
         <canvas id="sprite-canvas" width="384" height="384" role="img" aria-label="Composed character sprite. Use the controls below to customize."></canvas>
         <div id="three-stage" class="three-stage" hidden aria-label="Animated 3D character preview. Drag to rotate."></div>
         <div id="attack-preview" class="attack-preview" hidden role="tooltip" aria-live="polite"></div>

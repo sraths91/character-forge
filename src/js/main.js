@@ -3970,6 +3970,10 @@ document.addEventListener('click', (e) => {
 // when a player first picks "3D"; the 2D path is untouched. The 3D side maps
 // the character to the nearest KayKit archetype by class (see three-viewer).
 let renderMode = (typeof localStorage !== 'undefined' && localStorage.getItem('cf-render-mode') === '3d') ? '3d' : '2d';
+// Which 3D backend: 'archetype' (stylized KayKit) or 'modular' (realistic
+// Quaternius body composed from the sheet). createThreeViewer reads the same
+// localStorage key, so switching = persist + re-mount.
+let renderEngine = (typeof localStorage !== 'undefined' && localStorage.getItem('cf-3d-engine') === 'modular') ? 'modular' : 'archetype';
 let threeViewer = null;
 let threeLoading = false;
 
@@ -3981,6 +3985,17 @@ async function applyRenderMode() {
     toggle.dataset.mode = renderMode;
     toggle.querySelectorAll('.rm-opt').forEach(b => {
       const on = b.dataset.mode === renderMode;
+      b.classList.toggle('is-active', on);
+      b.setAttribute('aria-pressed', String(on));
+    });
+  }
+  // The 3D-style sub-toggle only applies in 3D.
+  const engineToggle = $('engine-mode');
+  if (engineToggle) {
+    engineToggle.hidden = renderMode !== '3d';
+    engineToggle.dataset.engine = renderEngine;
+    engineToggle.querySelectorAll('.em-opt').forEach(b => {
+      const on = b.dataset.engine === renderEngine;
       b.classList.toggle('is-active', on);
       b.setAttribute('aria-pressed', String(on));
     });
@@ -4035,6 +4050,24 @@ document.addEventListener('click', (e) => {
   const opt = e.target.closest?.('.rm-opt');
   if (!opt) return;
   setRenderMode(opt.dataset.mode);
+});
+
+/** Player picked a 3D style (backend). Persist + re-mount so createThreeViewer
+ *  picks the new backend for the current character. */
+async function setEngine(engine) {
+  if (engine !== 'archetype' && engine !== 'modular') return;
+  if (engine === renderEngine) return;
+  renderEngine = engine;
+  if (typeof localStorage !== 'undefined') localStorage.setItem('cf-3d-engine', engine);
+  // Tear down the current viewer so mountThree rebuilds on the chosen backend.
+  if (threeViewer) { threeViewer.dispose(); threeViewer = null; }
+  await applyRenderMode();
+}
+
+document.addEventListener('click', (e) => {
+  const opt = e.target.closest?.('.em-opt');
+  if (!opt) return;
+  setEngine(opt.dataset.engine);
 });
 
 // ---------- Tier 3.2: Share-link encoding ----------
