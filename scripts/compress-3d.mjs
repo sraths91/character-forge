@@ -21,14 +21,29 @@ import { dirname, join } from 'node:path';
 const DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'public', 'assets', '3d');
 
 // Per archetype: the exact clips the viewer plays (must match three-viewer.js).
+// The full per-weapon attack set shared by every KayKit Adventurers body, so
+// weapon-map.js MOTION_TO_CLIP resolves a DISTINCT animation per weapon (a
+// warhammer chops, a rapier stabs, a bow shoots, a staff casts) instead of
+// every weapon falling back to the body's one kept clip. Every name verified
+// present in all four Adventurer GLBs (76 clips upstream).
+const ADVENTURER_CLIPS = [
+  'Idle',
+  '1H_Melee_Attack_Slice_Diagonal',   // sword-slash
+  '1H_Melee_Attack_Stab',             // sword-thrust / dagger-stab
+  '2H_Melee_Attack_Chop',             // axe-cleave (+ warhammer/mace via the hammer bucket)
+  '2H_Melee_Attack_Stab',             // lance-thrust (spear/polearm)
+  'Spellcasting',                     // staff-cast
+  '1H_Ranged_Shoot',                  // bow-draw
+  'Unarmed_Melee_Attack_Punch_A'      // fist-jab
+];
+
 const KEEP = {
-  'Knight.glb':        ['Idle', '1H_Melee_Attack_Slice_Diagonal'],
-  'Barbarian.glb':     ['Idle', '2H_Melee_Attack_Chop'],
-  'Mage.glb':          ['Idle', 'Spellcasting'],
-  'Rogue.glb':         ['Idle', '1H_Melee_Attack_Stab'],
-  // Roster additions (ranger / warlock / monk). Monk.glb is the raw Rogue
-  // body kept for its Unarmed_* clips.
-  'Rogue_Hooded.glb':  ['Idle', '2H_Ranged_Shoot'],                          // ranger
+  'Knight.glb':        ADVENTURER_CLIPS,
+  'Barbarian.glb':     ADVENTURER_CLIPS,
+  'Mage.glb':          ADVENTURER_CLIPS,
+  'Rogue.glb':         ADVENTURER_CLIPS,
+  'Rogue_Hooded.glb':  ADVENTURER_CLIPS,   // ranger — bow + melee both available now
+  // Warlock (Skeletons pack, different clip set) + monk (unarmed) stay minimal.
   'Skeleton_Mage.glb': ['Idle', 'Spellcast_Shoot'],                          // warlock
   'Monk.glb':          ['Unarmed_Idle', 'Unarmed_Melee_Attack_Punch_A'],     // monk (unarmed)
 };
