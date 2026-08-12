@@ -54,7 +54,7 @@ export function deriveAC(character) {
   return baseAC + dexToAC + shieldBonus;
 }
 
-function classifyArmor(name) {
+export function classifyArmor(name) {
   if (/plate|chain mail|splint|ring mail/.test(name)) return 'heavy';
   if (/chain shirt|scale mail|breastplate|half plate|hide/.test(name)) return 'medium';
   if (/padded|leather|studded/.test(name)) return 'light';

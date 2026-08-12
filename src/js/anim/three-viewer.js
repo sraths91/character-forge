@@ -24,6 +24,8 @@
 
 import { archetypeForCharacter } from './archetype-select.js';
 import { weaponMeshForCharacter } from './weapon-map.js';
+import { createModularViewer } from './modular-viewer.js';
+import { canComposeModular } from './modular-loadout.js';
 
 const BASE = '/assets/3d';
 
@@ -118,10 +120,28 @@ function fixMaterials(root, THREE) {
 
 /**
  * Mount a 3D character viewer into `container`. Returns a handle with
- * `playSwing()`, `setCharacter(character)`, and `dispose()`. Async: resolves
- * once three, the model, and its weapons are loaded and the idle is playing.
+ * `playSwing()`, `setCharacter(character)`, and `dispose()`.
+ *
+ * Dispatches between two backends with an identical handle: the default KayKit
+ * "nearest archetype" viewer, and the opt-in per-item Quaternius modular
+ * composer (localStorage `cf-3d-engine === 'modular'`, guarded by
+ * `canComposeModular`). Ship-dark: the archetype path is unchanged unless a
+ * player opts into modular.
  */
-export async function createThreeViewer(container, { character = null, size = 384 } = {}) {
+export async function createThreeViewer(container, opts = {}) {
+  const wantModular = (typeof localStorage !== 'undefined' && localStorage.getItem('cf-3d-engine') === 'modular');
+  if (wantModular && opts.character && canComposeModular(opts.character)) {
+    return createModularViewer(container, opts);
+  }
+  return createArchetypeViewer(container, opts);
+}
+
+/**
+ * The KayKit archetype backend: a whole-body model chosen by class/equipment,
+ * with the character's real weapon attached. Async: resolves once three, the
+ * model, and its weapons are loaded and the idle is playing.
+ */
+export async function createArchetypeViewer(container, { character = null, size = 384 } = {}) {
   await ensureThree();
 
   const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: 'high-performance' });
