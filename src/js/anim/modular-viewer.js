@@ -16,7 +16,17 @@
  */
 
 import { ensureThree, makeLoader, findBone, fixMaterials, makeStage } from './three-scene.js';
-import { loadoutForCharacter } from './modular-loadout.js';
+import { loadoutForCharacter, nodeFor } from './modular-loadout.js';
+
+/** Normalise a node name for tolerant compare (three strips dots/underscores). */
+export function sanitizeName(name) { return String(name || '').toLowerCase().replace(/[._]/g, ''); }
+
+/** Does a mesh node belong to slot `node`? `===` or `startsWith` because a
+ *  multi-primitive slot loads as a Group `Prefix_Body` over `Prefix_Body_1..N`. */
+export function matchesNode(meshName, node) {
+  const want = sanitizeName(node), got = sanitizeName(meshName);
+  return got === want || got.startsWith(want);
+}
 
 export async function createModularViewer(container, { character = null, size = 384 } = {}) {
   const { THREE, skeletonClone } = await ensureThree();
@@ -54,19 +64,58 @@ export async function createModularViewer(container, { character = null, size = 
     const rig = skeletonClone(gltf.scene);
     fixMaterials(rig);
 
-    // Tint the armour/cloth toward the loadout colour — but NOT the head (skin
-    // + face would go grey). Blend (lerp), don't multiply, so the body keeps
-    // its material lightness instead of darkening.
+    const baseSkinned = firstSkinned(rig);
+    const skel = baseSkinned?.skeleton;                    // the shared 62-joint skeleton
+    const armatureParent = baseSkinned?.parent || rig;     // grafts sit in the ×100 armature frame
     const materials = [];
+    const grafted = [];
+
+    // Clone a donor slot mesh and REBIND it onto the shared skeleton (spike).
+    const graftMesh = (src) => {
+      const m = src.clone();                               // shares geometry, copies bindMatrix
+      m.material = src.material.clone();                   // per-instance material (tint isolation)
+      if (m.material.map) m.material.map.colorSpace = THREE.SRGBColorSpace;
+      m.material.side = THREE.FrontSide;
+      m.frustumCulled = false; m.castShadow = true; m.receiveShadow = true;
+      m.bind(skel, src.bindMatrix);                        // POSITIONAL rebind onto the base rig
+      return m;
+    };
+
+    // Per-slot compose: only graft slots whose donor differs from the base
+    // (a same-file slot is already in the base rig). In practice the loadout
+    // only cross-donors the HEAD (helm/crown); body/legs/feet == base.
+    const slots = Array.isArray(lo.slots) ? lo.slots : [];
+    const overrides = slots.filter(s => s.file && s.file !== lo.base);
+    const overridden = new Set(overrides.map(s => s.which));
+    for (const s of overrides) {
+      const donor = skeletonClone((await load(s.file)).scene);
+      const t = s.tint != null ? new THREE.Color(s.tint) : null;
+      let hit = false;
+      donor.traverse(o => {
+        if (!o.isSkinnedMesh || !matchesNode(o.name, s.node)) return;
+        const m = graftMesh(o);
+        if (t && s.which !== 'head') m.material.color.lerp(t, 0.5);
+        armatureParent.add(m); materials.push(m.material); grafted.push(m);
+        hit = true;
+      });
+      if (!hit) overridden.delete(s.which);                // MISS → keep the base mesh visible
+    }
+
+    // Base meshes: hide overridden slots + STRAY meshes (Adventurer Backpack,
+    // Medieval Sword — not one of the 4 slots); tint the rest, skipping head.
+    const prefix = lo.body?.prefix || '';
+    const baseNodes = { body: nodeFor(prefix, 'body'), legs: nodeFor(prefix, 'legs'), feet: nodeFor(prefix, 'feet'), head: nodeFor(prefix, 'head') };
     const tint = new THREE.Color(lo.tint);
     rig.traverse(o => {
       if (!o.isSkinnedMesh || !o.material) return;
+      let which = null;
+      for (const w of ['body', 'legs', 'feet', 'head']) if (matchesNode(o.name, baseNodes[w])) { which = w; break; }
+      if (which === null || overridden.has(which)) { o.visible = false; return; }   // stray or overridden → hide
       const mat = o.material.clone();
-      if (!/head/i.test(o.name)) mat.color.lerp(tint, 0.5);
+      if (which !== 'head') mat.color.lerp(tint, 0.5);
       o.material = mat;
       materials.push(mat);
     });
-    const skel = firstSkinned(rig)?.skeleton;
     rig.updateWorldMatrix(true, true);
 
     // Attach held items. Weapon scale is derived from the hand-bone world
@@ -103,13 +152,14 @@ export async function createModularViewer(container, { character = null, size = 
       }
     });
 
-    return { rig, mixer, idleAction, attackAction, materials, skel };
+    return { rig, mixer, idleAction, attackAction, materials, skel, grafted };
   }
 
   function disposeBuilt(b) {
     b.mixer.stopAllAction();
     for (const m of b.materials) m.dispose();
     b.rig.traverse(o => { if (o.isMesh && o.geometry) o.geometry.dispose(); });
+    for (const m of (b.grafted || [])) { m.geometry?.dispose?.(); m.material?.dispose?.(); }
   }
 
   function mount(built) {

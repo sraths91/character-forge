@@ -19,10 +19,23 @@ const BASE = '/assets/3d/modular';
 // Groups, so the composer collects skinned meshes by this prefix (spike).
 const BODIES = {
   king:      { file: 'King.glb',       prefix: 'King' },       // robe + crown
-  adventurer:{ file: 'Adventurer.glb', prefix: 'Adventurer' }, // leather
+  adventurer:{ file: 'Adventurer.glb', prefix: 'Adventurer' }, // leather (also carries a Backpack mesh)
+  medieval:  { file: 'Medieval.glb',   prefix: 'Medieval' },   // tunic + hood (also carries a Sword mesh)
   farmer:    { file: 'Farmer.glb',     prefix: 'Farmer' },     // commoner (legs node = *_Pants)
   spacesuit: { file: 'SpaceSuit.glb',  prefix: 'SpaceSuit' }   // full-plate proxy (NOT "Astronaut")
 };
+
+// Exact SkinnedMesh node name for a (body, slot). Reconstruction from
+// `${prefix}_${Cap}` holds for these donors EXCEPT Farmer's legs, authored as
+// `Farmer_Pants`. The composer matches this node (=== or startsWith for the
+// multi-primitive `_1..N` children). Verified against the GLB bytes.
+const SLOT_CAP = { body: 'Body', legs: 'Legs', feet: 'Feet', head: 'Head' };
+/** Exact node name for a body PREFIX + slot (Farmer legs = `Farmer_Pants`). */
+export function nodeFor(prefix, which) {
+  if (which === 'legs' && prefix === 'Farmer') return 'Farmer_Pants';
+  return `${prefix}_${SLOT_CAP[which]}`;
+}
+function slotNode(key, which) { return nodeFor(BODIES[key].prefix, which); }
 
 // Weapon meshes → attach to WristR. `mult` scales the spike's 0.01 base
 // (derived from the hand-bone world scale at compose time).
@@ -100,6 +113,26 @@ function pickWeapon(character) {
   return { file: WEAPONS[key].file, bone: 'WristR', mult: WEAPONS[key].mult };
 }
 
+/**
+ * The head-slot donor, driven by the character's helm. Bare head (the common
+ * case — `equipment.helm` is usually null) keeps the body's own head, so no
+ * cross-slot graft happens. Only a crown / great-helm / wizard-hat swaps it.
+ */
+function pickHead(character, bodyKey) {
+  const helm = (character?.equipment?.helm?.name || '').toLowerCase();
+  if (!helm) return { key: bodyKey, gaps: [], placeholder: false };
+  if (/crown|circlet|diadem|coronet|tiara/.test(helm)) return { key: 'king', gaps: [], placeholder: false };
+  if (/hood|cowl/.test(helm)) return { key: 'medieval', gaps: [], placeholder: false };
+  if (/wizard hat|pointed hat|witch hat|mage hat/.test(helm)
+      || (/\bhat\b/.test(helm) && isCaster(primaryClassName(character)))) {
+    return { key: bodyKey, gaps: ['wizard-hat'], placeholder: true };   // no wizard-hat mesh yet
+  }
+  if (/great\s?helm|full helm|helmet|\bhelm\b|barbute|kettle|sallet|bascinet/.test(helm)) {
+    return { key: 'spacesuit', gaps: ['helm-approx'], placeholder: true };   // proxy great-helm
+  }
+  return { key: bodyKey, gaps: [], placeholder: false };   // headband / mask → body's own head
+}
+
 /** A round shield on WristL when one is worn and the main weapon isn't 2H. */
 function pickShield(character) {
   const off = character?.equipment?.offhand?.name || '';
@@ -109,20 +142,38 @@ function pickShield(character) {
 
 /**
  * @param {object} character - parsed character (ddb-parser shape).
- * @returns {object} a compose() spec: { base, body, tint, weapon, shield, clips, placeholder, gaps, source }.
+ * @returns {object} a compose() spec. `slots` is the per-slot array the
+ *   composer grafts (only slots whose `file` differs from `base`); `base`
+ *   is the body GLB that provides the shared rig + clips. `body`/`tint` are
+ *   back-compat aliases of the body slot.
  */
 export function loadoutForCharacter(character) {
   const b = pickBody(character);
-  const body = BODIES[b.key];
+  const bodyFile = `${BASE}/${BODIES[b.key].file}`;
+  const head = pickHead(character, b.key);
+  const slot = (key, which, tint) => ({
+    file: `${BASE}/${BODIES[key].file}`,
+    prefix: BODIES[key].prefix,
+    which,
+    node: slotNode(key, which),
+    tint
+  });
+  const slots = [
+    slot(b.key, 'body', b.tint),
+    slot(b.key, 'legs', b.tint),
+    slot(b.key, 'feet', b.tint),
+    slot(head.key, 'head', null)   // head is never tinted (skin / face)
+  ];
   return {
-    base: `${BASE}/${body.file}`,          // the GLB whose rig+clips drive everything
-    body: { file: `${BASE}/${body.file}`, prefix: body.prefix },
-    tint: b.tint,
+    base: bodyFile,                        // rig + clips donor (= the body)
+    slots,                                 // per-slot graft list (QA-reconciled contract)
+    body: { file: bodyFile, prefix: BODIES[b.key].prefix },   // back-compat alias
+    tint: b.tint,                          // back-compat alias
     weapon: withBase(pickWeapon(character)),
     shield: withBase(pickShield(character)),
     clips: { idle: 'Idle', attack: 'Sword_Slash' },   // matched by suffix after "CharacterArmature|"
-    placeholder: b.placeholder,
-    gaps: b.gaps,
+    placeholder: b.placeholder || head.placeholder,
+    gaps: [...new Set([...b.gaps, ...head.gaps])],
     source: 'modular'
   };
 }
