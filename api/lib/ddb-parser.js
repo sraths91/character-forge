@@ -6,7 +6,50 @@
  * DDB stat ids: 1=STR, 2=DEX, 3=CON, 4=INT, 5=WIS, 6=CHA.
  */
 
+import { primaryWeaponForCharacter } from '../../src/js/anim/primary-weapon.js';
+
 const STAT_NAMES = { 1: 'STR', 2: 'DEX', 3: 'CON', 4: 'INT', 5: 'WIS', 6: 'CHA' };
+
+/**
+ * Promote the character's ICONIC weapon into `equipment.mainhand`, in place.
+ * The parser flags mainhand purely by inventory order, so a warhammer cleric
+ * who lists a shortsword first ends up "wielding" the sidearm. This swaps the
+ * heuristic-chosen primary into the mainhand slot (mirroring the client-side
+ * `assignCarriedSlots` override swap so the equipment↔carried invariant holds)
+ * — which every consumer inherits: 2D sprite, 3D model, swing list, AND combat
+ * (deriveWeaponAttack / the planner read `equipment.mainhand`). Idempotent.
+ */
+function promotePrimaryWeapon(character) {
+  const { equipment, carried } = character;
+  const primary = primaryWeaponForCharacter(character);
+  if (!primary) return;
+  const prim = carried.includes(primary) ? primary : carried.find(c => c.name === primary.name);
+  if (!prim || prim.slot === 'mainhand') return;   // not found / already in hand
+
+  // Demote whoever currently holds mainhand.
+  const curMain = carried.find(c => c.slot === 'mainhand');
+  if (curMain) curMain.slot = 'overflow';
+  // If the primary came from the off hand, clear that equipment entry.
+  if (prim.slot === 'offhand') equipment.offhand = null;
+
+  prim.slot = 'mainhand';
+  equipment.mainhand = {
+    name: prim.name,
+    rarity: prim.rarity,
+    magical: prim.magical,
+    attuned: prim.attuned,
+    armorClass: prim.armorClass,
+    damage: prim.damage,
+    damageType: prim.damageType,
+    ...(prim.twoHanded ? { twoHanded: true } : {})
+  };
+  // A two-handed primary frees the off hand and sheathes any shield.
+  if (prim.twoHanded) {
+    equipment.offhand = null;
+    const off = carried.find(c => c.slot === 'offhand' && c.name !== prim.name);
+    if (off) off.slot = 'overflow';
+  }
+}
 
 export function parseCharacter(raw) {
   if (!raw || typeof raw !== 'object') {
@@ -20,6 +63,10 @@ export function parseCharacter(raw) {
   const level = classes.reduce((sum, c) => sum + c.level, 0);
   const abilityScores = parseAbilityScores(raw);
   const { slots: equipment, carried } = parseEquipment(raw);
+  // Promote the iconic weapon into mainhand so every downstream consumer
+  // (2D/3D preview, swing list, combat) reflects it, not the incidental
+  // first-in-inventory weapon.
+  promotePrimaryWeapon({ classes, equipment, carried });
   const feats = parseFeats(raw);
   const classFeatures = parseClassFeatures(raw);
   const combatMods = parseCombatModifiers(raw);

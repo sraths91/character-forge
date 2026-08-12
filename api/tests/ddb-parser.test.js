@@ -761,3 +761,58 @@ test('M21: parseSpells — saveOnHalf=false for cantrips with no half-on-save te
   const s = parsed.spells.find(x => x.name === 'Sacred Flame');
   assert.strictEqual(s.saveOnHalf, false);
 });
+
+// ---- primary-weapon promotion (iconic weapon → mainhand) ----
+
+const weaponItem = (name, diceString, { twoHanded = false, damageType = 'Slashing' } = {}) => ({
+  equipped: true,
+  definition: {
+    name, filterType: 'Weapon',
+    damage: { diceString }, damageType,
+    properties: twoHanded ? [{ name: 'Two-Handed' }] : []
+  }
+});
+
+test('promote: a warhammer cleric who lists a shortsword first still wields the warhammer', () => {
+  const raw = rawFixture({
+    classes: [{ definition: { name: 'Cleric' }, level: 5 }],
+    inventory: [
+      weaponItem('Shortsword', '1d6', { damageType: 'Piercing' }),   // first → parser mainhand
+      weaponItem('Warhammer', '1d8', { damageType: 'Bludgeoning' }),
+      weaponItem('Hand Crossbow', '1d6', { damageType: 'Piercing' })
+    ]
+  });
+  const parsed = parseCharacter(raw);
+  assert.strictEqual(parsed.equipment.mainhand.name, 'Warhammer', 'iconic weapon promoted');
+  assert.strictEqual(parsed.equipment.mainhand.damage, '1d8');
+  assert.strictEqual(parsed.equipment.mainhand.damageType, 'Bludgeoning', 'combat now reads the warhammer');
+  // invariant: exactly one carried weapon holds mainhand, matching equipment
+  const mains = parsed.carried.filter(c => c.slot === 'mainhand');
+  assert.strictEqual(mains.length, 1);
+  assert.strictEqual(mains[0].name, 'Warhammer');
+  // the displaced shortsword goes to overflow (client sheathes it to back/waist)
+  assert.strictEqual(parsed.carried.find(c => c.name === 'Shortsword').slot, 'overflow');
+});
+
+test('promote: a two-handed primary frees the off hand', () => {
+  const raw = rawFixture({
+    classes: [{ definition: { name: 'Fighter' }, level: 6 }],
+    inventory: [
+      weaponItem('Handaxe', '1d6'),                              // first
+      weaponItem('Greatsword', '2d6', { twoHanded: true })
+    ]
+  });
+  const parsed = parseCharacter(raw);
+  assert.strictEqual(parsed.equipment.mainhand.name, 'Greatsword');
+  assert.strictEqual(parsed.equipment.mainhand.twoHanded, true);
+  assert.strictEqual(parsed.equipment.offhand, null, '2H weapon nulls the off hand');
+});
+
+test('promote: idempotent — a single-weapon character is unchanged', () => {
+  const raw = rawFixture({
+    classes: [{ definition: { name: 'Rogue' }, level: 4 }],
+    inventory: [weaponItem('Dagger', '1d4', { damageType: 'Piercing' })]
+  });
+  const parsed = parseCharacter(raw);
+  assert.strictEqual(parsed.equipment.mainhand.name, 'Dagger');
+});
