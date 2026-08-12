@@ -164,14 +164,18 @@ export function loadoutForCharacter(character) {
     slot(b.key, 'feet', b.tint),
     slot(head.key, 'head', null)   // head is never tinted (skin / face)
   ];
+  const weapon = pickWeapon(character);
   return {
     base: bodyFile,                        // rig + clips donor (= the body)
     slots,                                 // per-slot graft list (QA-reconciled contract)
     body: { file: bodyFile, prefix: BODIES[b.key].prefix },   // back-compat alias
     tint: b.tint,                          // back-compat alias
-    weapon: withBase(pickWeapon(character)),
+    weapon: withBase(weapon),
     shield: withBase(pickShield(character)),
-    clips: { idle: 'Idle', attack: 'Sword_Slash' },   // matched by suffix after "CharacterArmature|"
+    // Matched by suffix after "CharacterArmature|". Unarmed (monk / no weapon)
+    // throws a punch; the Universal rig ships only Sword_Slash for weapons, so
+    // armed characters share that swing (see DEFERRED — no per-weapon set here).
+    clips: { idle: 'Idle', attack: weapon ? 'Sword_Slash' : 'Punch_Right' },
     placeholder: b.placeholder || head.placeholder,
     gaps: [...new Set([...b.gaps, ...head.gaps])],
     source: 'modular'

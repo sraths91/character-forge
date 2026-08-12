@@ -65,7 +65,7 @@ const WEAPONS = {
 // Clip suffixes kept, matched AFTER the `CharacterArmature|` prefix. Exact
 // match on the suffix — a prefix test would wrongly keep Idle_Sword /
 // Idle_Neutral / HitRecieve_2 alongside Idle / HitRecieve.
-const KEEP_CLIPS = new Set(['Idle', 'Sword_Slash', 'HitRecieve', 'Death']);
+const KEEP_CLIPS = new Set(['Idle', 'Sword_Slash', 'Punch_Right', 'HitRecieve', 'Death']);
 const clipSuffix = (name) => {
   const bar = name.lastIndexOf('|');
   return bar >= 0 ? name.slice(bar + 1) : name;

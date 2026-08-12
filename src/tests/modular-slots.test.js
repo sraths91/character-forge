@@ -68,6 +68,14 @@ test('gaps aggregate across body + head; canComposeModular holds', () => {
 
 // ---------- viewer pure helpers (node matching, no WebGL) ----------
 
+test('Realistic attack clip: unarmed throws a punch, armed uses the sword swing', () => {
+  const monk = loadoutForCharacter(char({ cls: 'Monk' }));   // no mainhand → unarmed
+  assert.strictEqual(monk.weapon, null);
+  assert.strictEqual(monk.clips.attack, 'Punch_Right');
+  const fighter = loadoutForCharacter(char({ cls: 'Fighter', mainhand: { name: 'Longsword' } }));
+  assert.strictEqual(fighter.clips.attack, 'Sword_Slash');
+});
+
 test('sanitizeName strips dots/underscores, lowercases', () => {
   assert.strictEqual(sanitizeName('Wrist.R'), 'wristr');
   assert.strictEqual(sanitizeName('King_Body_1'), 'kingbody1');
