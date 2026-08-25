@@ -47,3 +47,10 @@ art-gen/preview.html
 
 # Agent scratchpad (throwaway prototypes/assets)
 scratchpad/
+
+# --- Claude Code artifacts ---
+.claude/worktrees/
+.claude/agent-memory/
+.claude/plans/
+.claude/artefacts/
+CLAUDE.local.md
