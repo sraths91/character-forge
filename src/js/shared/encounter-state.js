@@ -1,0 +1,390 @@
+/**
+ * M64 contract 1 of 3 — EncounterState v1.
+ *
+ * The complete, pure-JSON state of one grid encounter. The server owns
+ * it, persists it as `encounters.snapshot_json`, and projects it per seat
+ * (`viewFor`) for clients. The engine reaches it only through the
+ * adapters in `src/js/scene/encounter-adapters.js` (M64 T5); today's
+ * wrapper underscore fields are mapped in WRAPPER_FIELD_MAP below — a
+ * wrapper field that is not listed there does NOT survive a snapshot.
+ *
+ * Field list: docs/M64-ONLINE-TABLE-PLAN.md "Contracts" §1 and the E1
+ * engine review §4. Changing anything here bumps ENCOUNTER_STATE_VERSION
+ * and needs acknowledgement from every branch owner.
+ *
+ * Imported by both Vite (browser) and Node (server): no DOM, no Node
+ * built-ins, no `import.meta`.
+ *
+ * Decisions recorded here (v1):
+ *   - Spell slots, pact slots and limited-use features store `{max, spent}`.
+ *     `spent` is the ledger; `max` is derived from the sheet or stat block
+ *     when the encounter starts and is carried so monsters (no sheet) and
+ *     validators work. Remaining = max - spent.
+ *   - `conditions[]` accepts plain strings (today's engine) or the R7
+ *     lifecycle objects `{id, sourceId, endsOn, save}` so E4's R7 lands
+ *     without a version bump.
+ *   - `legendaryBudget` is the REMAINING budget this round (engine
+ *     semantics), not a spent counter.
+ */
+
+import {
+  createCollector, checkSpec, checkJsonSafe, joinPath,
+  str, int, num, bool, oneOf, arrayOf, shape, mapOf, union, anyJson,
+  optional, nullable, VALIDATION_CODES
+} from './check.js';
+
+/** Contract version; `state.v` must equal this. */
+export const ENCOUNTER_STATE_VERSION = 1;
+
+/** Encounter lifecycle phases. */
+export const ENCOUNTER_PHASES = Object.freeze(['setup', 'running', 'awaiting-prompt', 'ended']);
+/** Entity kinds. */
+export const ENTITY_KINDS = Object.freeze(['pc', 'monster']);
+/** Sides. */
+export const SIDES = Object.freeze(['party', 'hostile']);
+/** Who drives an entity's turn. */
+export const CONTROLLER_TYPES = Object.freeze(['player', 'ai', 'dm']);
+/** Ability keys used by saves and conditions. */
+export const ABILITIES = Object.freeze(['STR', 'DEX', 'CON', 'INT', 'WIS', 'CHA']);
+/** RNG algorithms the state may name. */
+export const RNG_ALGOS = Object.freeze(['mulberry32']);
+/** Per-turn flags (reset by the turn manager). */
+export const TURN_FLAG_KEYS = Object.freeze([
+  'sneakUsed', 'cunningUsed', 'recklessUsed', 'recklessUntilNextTurn',
+  'shieldActive', 'surgeFired', 'extraAction', 'smiteSlotUsed'
+]);
+
+/**
+ * Where every engine wrapper field lives in EncounterState v1.
+ * Value = dotted path under `entities[id]`, or `null` for fields that are
+ * transient (recomputed per turn, derived from events, or holding object
+ * references) and therefore never persisted.
+ * @type {Readonly<Record<string, string|null>>}
+ */
+export const WRAPPER_FIELD_MAP = Object.freeze({
+  id: 'id',
+  kind: 'kind',
+  name: 'name',
+  hp: 'hp',
+  hpMax: 'hpMax',
+  ac: 'ac',
+  conditions: 'conditions',
+  position: 'pos',
+  _position: 'pos',
+  presetSlug: 'statBlock.slug',
+  attack: 'statBlock.attacks[0]',
+  _aiProfile: 'statBlock.profile',
+  ref: 'sheetRef',
+  _reactionUsed: 'resources.reactionUsed',
+  _slots: 'resources.slots',
+  _lvl1Slots: 'resources.slots.1',
+  _lvl3Slots: 'resources.slots.3',
+  _innate: 'resources.innate',
+  _legendaryBudget: 'resources.legendaryBudget',
+  _actionSurgeUsed: 'resources.features.action-surge.spent',
+  _secondWindUsed: 'resources.features.second-wind.spent',
+  _concentrating: 'concentration',
+  _sneakAttackUsedThisTurn: 'turnFlags.sneakUsed',
+  _cunningActionUsedThisTurn: 'turnFlags.cunningUsed',
+  _recklessUsedThisTurn: 'turnFlags.recklessUsed',
+  _recklessUntilNextTurn: 'turnFlags.recklessUntilNextTurn',
+  _shieldActive: 'turnFlags.shieldActive',
+  _surgeFiredThisTurn: 'turnFlags.surgeFired',
+  _extraActionThisTurn: 'turnFlags.extraAction',
+  _smiteSlotUsed: 'turnFlags.smiteSlotUsed',
+  // Transient — never persisted.
+  weapon: null,
+  _chosenWeapon: null,
+  _lastPlan: null,
+  _mctsTargetCtx: null,
+  damageDealt: null,
+  combatMods: null
+});
+
+/**
+ * @typedef {object} GridPos
+ * @property {number} col
+ * @property {number} row
+ */
+
+/**
+ * @typedef {object} SlotLedger
+ * @property {number} max   — derived from sheet / stat block at encounter start
+ * @property {number} spent — the ledger; remaining = max - spent
+ */
+
+/**
+ * @typedef {object} EntityResources
+ * @property {boolean} reactionUsed
+ * @property {Record<string, SlotLedger>} slots       — keyed '1'..'9'
+ * @property {{level?: number, max?: number, spent?: number}} pact — {} for non-warlocks
+ * @property {{atWill: string[], recharges: Record<string, boolean>, perDay: Record<string, {id: string, remaining: number}[]>}|null} innate
+ * @property {number} legendaryBudget                 — remaining this round
+ * @property {Record<string, SlotLedger>} features    — e.g. 'action-surge', 'second-wind'
+ */
+
+/**
+ * @typedef {string|{id: string, sourceId?: string|null, endsOn?: string|null, save?: {stat: string, dc: number}|null}} Condition
+ */
+
+/**
+ * @typedef {object} EncounterEntity
+ * @property {string} id
+ * @property {'pc'|'monster'} kind
+ * @property {'party'|'hostile'} side
+ * @property {string} name
+ * @property {{type: 'player'|'ai'|'dm', seatId: string|null}} controller
+ * @property {GridPos} pos
+ * @property {number} hp
+ * @property {number} hpMax
+ * @property {number} hpTemp
+ * @property {number} ac
+ * @property {number} speedFt
+ * @property {Condition[]} conditions
+ * @property {{spellId: string, targetIds: string[]}|null} concentration
+ * @property {EntityResources} resources
+ * @property {Record<string, boolean|number|null>} turnFlags
+ * @property {{characterId: string, rev: number|string}|null} [sheetRef]  — PCs
+ * @property {{slug: string}|null} [statBlock]                           — monsters (other fields opaque in v1)
+ */
+
+/**
+ * @typedef {object} EncounterState
+ * @property {1} v
+ * @property {string} encounterId
+ * @property {number} round
+ * @property {number} turnIndex
+ * @property {'setup'|'running'|'awaiting-prompt'|'ended'} phase
+ * @property {{algo: 'mulberry32', s: number}} [rng] — absent in per-seat projections
+ * @property {{cols: number, rows: number, cellFt: number, flankingEnabled: boolean, terrain?: {v: number, cols: number, rows: number, flags: string}|null}} grid
+ * @property {{imageId?: string|null, imgW?: number, imgH?: number, calib?: {cellPx: number, offsetX: number, offsetY: number}, cinemaBiome?: string|null}|null} map
+ * @property {{entityId: string, score: number}[]} initiative
+ * @property {Record<string, EncounterEntity>} entities
+ * @property {number} lastEventSeq
+ */
+
+const ID = str({ maxLength: 128 });
+const POS = shape({ col: int(0), row: int(0) });
+const LEDGER = shape({ max: int(0), spent: int(0) });
+const SLOT_KEY = /^[1-9]$/;
+
+const CONDITION = union(
+  str({ maxLength: 64 }),
+  shape({
+    id: str({ maxLength: 64 }),
+    sourceId: optional(nullable(ID)),
+    endsOn: optional(nullable(str())),
+    save: optional(nullable(shape({ stat: oneOf(ABILITIES), dc: int(0) })))
+  })
+);
+
+const RESOURCES = shape({
+  reactionUsed: bool(),
+  slots: mapOf(LEDGER, { keyPattern: SLOT_KEY }),
+  pact: shape({ level: optional(int(1, 5)), max: optional(int(0)), spent: optional(int(0)) }),
+  innate: nullable(shape({
+    atWill: arrayOf(str()),
+    recharges: mapOf(bool()),
+    perDay: mapOf(arrayOf(shape({ id: str(), remaining: int(0) })), { keyPattern: /^[0-9]+$/ })
+  })),
+  legendaryBudget: int(0),
+  features: mapOf(LEDGER)
+});
+
+const TURN_FLAGS = shape({
+  sneakUsed: optional(bool()),
+  cunningUsed: optional(bool()),
+  recklessUsed: optional(bool()),
+  recklessUntilNextTurn: optional(bool()),
+  shieldActive: optional(bool()),
+  surgeFired: optional(bool()),
+  extraAction: optional(bool()),
+  smiteSlotUsed: optional(nullable(int(1, 9)))
+});
+
+const ENTITY = shape({
+  id: ID,
+  kind: oneOf(ENTITY_KINDS),
+  side: oneOf(SIDES),
+  name: str({ maxLength: 128 }),
+  controller: shape({ type: oneOf(CONTROLLER_TYPES), seatId: nullable(ID) }),
+  pos: POS,
+  hp: int(0),
+  hpMax: int(1),
+  hpTemp: int(0),
+  ac: int(0, 50),
+  speedFt: int(0, 500),
+  conditions: arrayOf(CONDITION),
+  concentration: nullable(shape({ spellId: str(), targetIds: arrayOf(ID) })),
+  resources: RESOURCES,
+  turnFlags: TURN_FLAGS,
+  sheetRef: optional(nullable(shape({ characterId: ID, rev: union(int(0), str()) }))),
+  statBlock: optional(nullable(shape({ slug: str({ maxLength: 128 }) }, { strict: false })))
+});
+
+const TERRAIN = shape({
+  v: int(1),
+  cols: int(1),
+  rows: int(1),
+  flags: str({ allowEmpty: true, pattern: /^[A-Za-z0-9+/]*={0,2}$/ })
+});
+
+const MAP = shape({
+  imageId: optional(nullable(str())),
+  imgW: optional(int(1)),
+  imgH: optional(int(1)),
+  calib: optional(shape({ cellPx: num(0, Infinity, { exclusiveMin: true }), offsetX: num(), offsetY: num() })),
+  cinemaBiome: optional(nullable(str()))
+});
+
+function topSpec(projected) {
+  return shape({
+    v: anyJson(),   // checked explicitly (VERSION code)
+    encounterId: ID,
+    round: int(0),
+    turnIndex: int(0),
+    phase: oneOf(ENCOUNTER_PHASES),
+    rng: projected
+      ? optional(anyJson())   // presence is reported as FORBIDDEN_FIELD below
+      : shape({ algo: oneOf(RNG_ALGOS), s: int(0, 0xFFFFFFFF) }),
+    grid: shape({
+      cols: int(1, 500),
+      rows: int(1, 500),
+      cellFt: int(1),
+      flankingEnabled: bool(),
+      terrain: optional(nullable(TERRAIN))
+    }),
+    map: nullable(MAP),
+    initiative: arrayOf(shape({ entityId: ID, score: num() })),
+    entities: mapOf(ENTITY),
+    lastEventSeq: int(0)
+  });
+}
+
+const FULL_SPEC = topSpec(false);
+const PROJECTED_SPEC = topSpec(true);
+
+/**
+ * Validate an EncounterState against contract v1.
+ *
+ * Checks shape (unknown fields rejected), JSON purity, the version, and
+ * cross-references: entity keys match ids, initiative and concentration
+ * point at real entities, positions sit inside the grid, ledgers never
+ * overspend, PCs carry a `sheetRef` and monsters a `statBlock`.
+ *
+ * @param {unknown} state
+ * @param {{projected?: boolean}} [opts] — `projected: true` validates a
+ *   per-seat view, which must NOT carry the RNG state.
+ * @returns {import('./check.js').ValidationResult}
+ */
+export function validateEncounterState(state, opts = {}) {
+  const c = createCollector();
+  const projected = !!opts.projected;
+  checkJsonSafe(c, state, '');
+  checkSpec(c, state, projected ? PROJECTED_SPEC : FULL_SPEC, '');
+  if (!state || typeof state !== 'object' || Array.isArray(state)) return c.result();
+
+  if (state.v !== ENCOUNTER_STATE_VERSION) {
+    c.add('v', VALIDATION_CODES.VERSION, `expected ${ENCOUNTER_STATE_VERSION}, got ${JSON.stringify(state.v)}`);
+  }
+  if (projected && state.rng !== undefined) {
+    c.add('rng', VALIDATION_CODES.FORBIDDEN_FIELD, 'RNG state must never be projected to clients');
+  }
+
+  const entities = state.entities && typeof state.entities === 'object' ? state.entities : {};
+  const grid = state.grid || {};
+
+  for (const [key, e] of Object.entries(entities)) {
+    if (!e || typeof e !== 'object') continue;
+    const p = joinPath('entities', key);
+    if (e.id !== key) c.add(joinPath(p, 'id'), VALIDATION_CODES.REF, `must equal its key "${key}"`);
+    if (Number.isInteger(e.hp) && Number.isInteger(e.hpMax) && e.hp > e.hpMax) {
+      c.add(joinPath(p, 'hp'), VALIDATION_CODES.RANGE, `hp ${e.hp} exceeds hpMax ${e.hpMax}`);
+    }
+    if (e.pos && Number.isInteger(grid.cols) && Number.isInteger(grid.rows)) {
+      if (e.pos.col >= grid.cols || e.pos.row >= grid.rows) {
+        c.add(joinPath(p, 'pos'), VALIDATION_CODES.RANGE, `(${e.pos.col},${e.pos.row}) is outside the ${grid.cols}x${grid.rows} grid`);
+      }
+    }
+    if (e.controller?.type === 'player' && !e.controller.seatId) {
+      c.add(joinPath(p, 'controller.seatId'), VALIDATION_CODES.REQUIRED, 'player-controlled entities need a seatId');
+    }
+    if (e.kind === 'pc' && !e.sheetRef) {
+      c.add(joinPath(p, 'sheetRef'), VALIDATION_CODES.REQUIRED, 'PCs need a sheetRef');
+    }
+    if (e.kind === 'monster' && !e.statBlock) {
+      c.add(joinPath(p, 'statBlock'), VALIDATION_CODES.REQUIRED, 'monsters need a statBlock');
+    }
+    if (e.sheetRef && e.statBlock) {
+      c.add(p, VALIDATION_CODES.TYPE, 'carries both sheetRef and statBlock; exactly one is allowed');
+    }
+    const res = e.resources;
+    if (res && typeof res === 'object') {
+      for (const bucket of ['slots', 'features']) {
+        for (const [k, l] of Object.entries(res[bucket] || {})) {
+          if (l && Number.isInteger(l.spent) && Number.isInteger(l.max) && l.spent > l.max) {
+            c.add(joinPath(joinPath(joinPath(p, 'resources'), bucket), k), VALIDATION_CODES.RANGE,
+              `spent ${l.spent} exceeds max ${l.max}`);
+          }
+        }
+      }
+      const pact = res.pact;
+      if (pact && typeof pact === 'object') {
+        const n = ['level', 'max', 'spent'].filter(k => pact[k] !== undefined).length;
+        if (n !== 0 && n !== 3) {
+          c.add(joinPath(p, 'resources.pact'), VALIDATION_CODES.REQUIRED, 'pact is {} or {level, max, spent}');
+        } else if (n === 3 && pact.spent > pact.max) {
+          c.add(joinPath(p, 'resources.pact'), VALIDATION_CODES.RANGE, `spent ${pact.spent} exceeds max ${pact.max}`);
+        }
+      }
+    }
+    for (const tid of e.concentration?.targetIds || []) {
+      if (!Object.prototype.hasOwnProperty.call(entities, tid)) {
+        c.add(joinPath(p, 'concentration.targetIds'), VALIDATION_CODES.REF, `unknown entity "${tid}"`);
+      }
+    }
+  }
+
+  const seen = new Set();
+  (Array.isArray(state.initiative) ? state.initiative : []).forEach((row, i) => {
+    const p = joinPath('initiative', i);
+    if (!row || typeof row.entityId !== 'string') return;
+    if (!Object.prototype.hasOwnProperty.call(entities, row.entityId)) {
+      c.add(joinPath(p, 'entityId'), VALIDATION_CODES.REF, `unknown entity "${row.entityId}"`);
+    }
+    if (seen.has(row.entityId)) c.add(joinPath(p, 'entityId'), VALIDATION_CODES.DUPLICATE, `"${row.entityId}" appears twice`);
+    seen.add(row.entityId);
+  });
+  if (Array.isArray(state.initiative) && state.initiative.length > 0 &&
+      Number.isInteger(state.turnIndex) && state.turnIndex >= state.initiative.length) {
+    c.add('turnIndex', VALIDATION_CODES.RANGE, `must be < initiative.length (${state.initiative.length})`);
+  }
+
+  const terrain = grid.terrain;
+  if (terrain && typeof terrain === 'object' &&
+      (terrain.cols !== grid.cols || terrain.rows !== grid.rows)) {
+    c.add('grid.terrain', VALIDATION_CODES.RANGE, 'terrain cols/rows must match the grid');
+  }
+  return c.result();
+}
+
+/**
+ * Build a minimal valid EncounterState in the `setup` phase.
+ * @param {{encounterId: string, cols: number, rows: number, seed: number, cellFt?: number, flankingEnabled?: boolean}} args
+ * @returns {EncounterState}
+ */
+export function emptyEncounterState({ encounterId, cols, rows, seed, cellFt = 5, flankingEnabled = false }) {
+  return {
+    v: ENCOUNTER_STATE_VERSION,
+    encounterId,
+    round: 0,
+    turnIndex: 0,
+    phase: 'setup',
+    rng: { algo: 'mulberry32', s: seed >>> 0 },
+    grid: { cols, rows, cellFt, flankingEnabled },
+    map: null,
+    initiative: [],
+    entities: {},
+    lastEventSeq: 0
+  };
+}

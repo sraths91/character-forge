@@ -1,0 +1,102 @@
+{
+  "v": 1,
+  "encounterId": "enc_fixture_01",
+  "round": 2,
+  "turnIndex": 1,
+  "phase": "running",
+  "rng": { "algo": "mulberry32", "s": 3141592653 },
+  "grid": {
+    "cols": 12, "rows": 8, "cellFt": 5, "flankingEnabled": true,
+    "terrain": { "v": 1, "cols": 12, "rows": 8, "flags": "AAAAAAAA" }
+  },
+  "map": {
+    "imageId": "map_ab12cd34",
+    "imgW": 1200, "imgH": 800,
+    "calib": { "cellPx": 100, "offsetX": 0, "offsetY": 0 },
+    "cinemaBiome": "forest"
+  },
+  "initiative": [
+    { "entityId": "pc-fighter", "score": 17 },
+    { "entityId": "pc-wizard", "score": 14 },
+    { "entityId": "m-fanatic", "score": 12 },
+    { "entityId": "m-goblin", "score": 9 }
+  ],
+  "entities": {
+    "pc-fighter": {
+      "id": "pc-fighter", "kind": "pc", "side": "party", "name": "Fixture Fighter",
+      "controller": { "type": "player", "seatId": "seat-1" },
+      "pos": { "col": 2, "row": 3 },
+      "hp": 30, "hpMax": 44, "hpTemp": 0, "ac": 18, "speedFt": 30,
+      "conditions": ["paralyzed"],
+      "concentration": null,
+      "resources": {
+        "reactionUsed": false,
+        "slots": {},
+        "pact": {},
+        "innate": null,
+        "legendaryBudget": 0,
+        "features": {
+          "action-surge": { "max": 1, "spent": 0 },
+          "second-wind": { "max": 1, "spent": 1 }
+        }
+      },
+      "turnFlags": { "surgeFired": false, "extraAction": false },
+      "sheetRef": { "characterId": "fighter-l5", "rev": 1 }
+    },
+    "pc-wizard": {
+      "id": "pc-wizard", "kind": "pc", "side": "party", "name": "Fixture Wizard",
+      "controller": { "type": "ai", "seatId": null },
+      "pos": { "col": 1, "row": 5 },
+      "hp": 27, "hpMax": 27, "hpTemp": 5, "ac": 12, "speedFt": 30,
+      "conditions": [],
+      "concentration": null,
+      "resources": {
+        "reactionUsed": true,
+        "slots": { "1": { "max": 4, "spent": 1 }, "2": { "max": 3, "spent": 0 }, "3": { "max": 2, "spent": 1 } },
+        "pact": {},
+        "innate": null,
+        "legendaryBudget": 0,
+        "features": {}
+      },
+      "turnFlags": { "shieldActive": true },
+      "sheetRef": { "characterId": "wizard-l5", "rev": 1 }
+    },
+    "m-fanatic": {
+      "id": "m-fanatic", "kind": "monster", "side": "hostile", "name": "Cult Fanatic",
+      "controller": { "type": "ai", "seatId": null },
+      "pos": { "col": 7, "row": 3 },
+      "hp": 33, "hpMax": 33, "hpTemp": 0, "ac": 13, "speedFt": 30,
+      "conditions": [{ "id": "prone", "sourceId": "pc-fighter", "endsOn": "stand", "save": null }],
+      "concentration": { "spellId": "hold-person", "targetIds": ["pc-fighter"] },
+      "resources": {
+        "reactionUsed": false,
+        "slots": { "1": { "max": 4, "spent": 0 }, "2": { "max": 3, "spent": 1 } },
+        "pact": {},
+        "innate": null,
+        "legendaryBudget": 0,
+        "features": {}
+      },
+      "turnFlags": {},
+      "statBlock": { "slug": "cult-fanatic", "ac": 13, "attacks": [{ "name": "Dagger", "bonus": 4, "dice": "1d4+2" }] }
+    },
+    "m-goblin": {
+      "id": "m-goblin", "kind": "monster", "side": "hostile", "name": "Goblin",
+      "controller": { "type": "dm", "seatId": null },
+      "pos": { "col": 3, "row": 3 },
+      "hp": 0, "hpMax": 7, "hpTemp": 0, "ac": 15, "speedFt": 30,
+      "conditions": [],
+      "concentration": null,
+      "resources": {
+        "reactionUsed": false,
+        "slots": {},
+        "pact": {},
+        "innate": { "atWill": [], "recharges": { "fire-breath": false }, "perDay": { "1": [{ "id": "charm-gaze", "remaining": 1 }] } },
+        "legendaryBudget": 0,
+        "features": {}
+      },
+      "turnFlags": {},
+      "statBlock": { "slug": "goblin" }
+    }
+  },
+  "lastEventSeq": 41
+}
