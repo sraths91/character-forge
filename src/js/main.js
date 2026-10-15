@@ -68,10 +68,6 @@ import {
 import {
   applyModifiers, modifiersForAttack, snapshotAttackerFlags
 } from './anim/modifiers.js';
-// M45 Phase 4b.2 — Live runner dispatches through the unified combat
-// engine. The engine owns rules + reactions; main.js owns prompts +
-// UI side-effects (logs, cinema, animations).
-import { runOneAttack as engineRunOneAttack } from './scene/combat-engine.js';
 import { applyPolish } from './anim/polish.js';
 import { applyHitReaction } from './anim/hit-reactions.js';
 import { idlePoseAt } from './anim/idle-pose.js';
@@ -83,13 +79,19 @@ import {
 } from './anim/cinema-sprites.js';
 import { terrainFromScene, backgroundFor } from './anim/cinema-backgrounds.js';
 import { listBiomes, isBiome } from './scene/map-generator.js';
-// M45 Phase 2 — Wire the PC AI planner into the live auto-fight loop.
-// The simulator has used this since M42; the live runner just never
-// asked. choosePcAction returns a plan with the chosen weapon, target,
-// and feature list — we honor `_chosenWeapon` in getAttackerWeapon.
-import { choosePcAction, nameToSpellId } from './scene/ai/pc-action.js';
-import { resetPerTurnFlags } from './scene/ai/pc-features.js';
-import { slotsForPc } from './scene/reactions.js';
+import { nameToSpellId } from './scene/ai/pc-action.js';
+// M45 Phase 4b.2 / M64 C1 — Live runner dispatches through the unified
+// combat engine via the pure live-bridge (wrap → engine → write-back).
+// The engine owns rules + reactions; main.js owns prompts + UI
+// side-effects (logs, cinema, animations). The PC AI planner
+// (choosePcAction) is reached through planForLivePc.
+import {
+  resolveEntityById as bridgeResolveEntityById,
+  prepareLivePcForPlanning as bridgePrepareLivePcForPlanning,
+  planForLivePc as bridgePlanForLivePc,
+  resolvePlanTarget as bridgeResolvePlanTarget,
+  runTurn as bridgeRunTurn
+} from './scene/live-bridge.js';
 
 const $ = (id) => document.getElementById(id);
 const status = $('status');
@@ -1024,54 +1026,27 @@ async function runVersusPartyAuto() {
   endVersusFight('draw', 30);
 }
 
+// M64 C1 — the live-runner ↔ engine bridge lives in
+// scene/live-bridge.js (pure, Node-safe). These thin wrappers bind it
+// to main.js's module state so existing call sites don't change.
+function bridgeCtx() {
+  return { party: partyComposedCharacters, scene: currentScene };
+}
+
 function resolveEntityById(id, kind) {
-  if (kind === 'pc') return partyComposedCharacters.find(p => String(p.id) === String(id));
-  return (currentScene.monsters || []).find(m => String(m.id) === String(id));
+  return bridgeResolveEntityById(id, kind, bridgeCtx());
 }
 
-/**
- * M45 Phase 2 — Prepare a live PC entity for the AI planner.
- *
- * choosePcAction reads the same fields the simulator wraps onto its
- * per-iteration PC copy: _position, _slots, per-turn feature flags.
- * The live PC record doesn't carry those by default, so we lazy-init
- * them here. Mutates the entity (safe — these are session-scoped
- * runtime flags, never persisted).
- */
+/** M45 Phase 2 — lazy-init planner fields on a live PC (see live-bridge). */
 function prepareLivePcForPlanning(pc, index) {
-  if (!pc) return pc;
-  pc._position = positionOf(currentScene, pc.id, index);
-  if (!pc._slots) pc._slots = slotsForPc(pc);
-  resetPerTurnFlags(pc);
-  return pc;
+  return bridgePrepareLivePcForPlanning(pc, index, currentScene);
 }
 
-/**
- * M45 Phase 2 — Build the PC AI plan for a live PC turn.
- *
- * Mirrors the simulator's call site: gather live enemies + allies,
- * snapshot positions for the gate/range checks, invoke the planner.
- * Returns the plan (with chosen weapon, target, features) or null
- * when the PC has no live enemies.
- */
+/** M45 Phase 2 — PC AI plan for a live PC turn (see live-bridge). */
 function planForLivePc(pc) {
-  if (!pc) return null;
-  const enemies = (currentScene.monsters || [])
-    .filter(m => (m.hp?.current ?? 0) > 0)
-    .map(m => ({ ...m, _position: m.position }));
-  const allies = partyComposedCharacters
-    .map((p, i) => ({ ...p, _position: positionOf(currentScene, p.id, i) }))
-    .filter(p => (p.hp?.current ?? 0) > 0);
-  return choosePcAction({ self: pc, enemies, allies });
+  return bridgePlanForLivePc(pc, { ...bridgeCtx(), rng: Math.random });
 }
 
-/**
- * M45 Phase 2 — Resolve the actual target entity from a PC AI plan.
- *
- * The plan carries `targetId` + `targetSide`. Look up the live entity
- * record on the right side (enemy = monster; ally = pc) and wrap it
- * in the {kind, entity} shape `attackInVersus` expects.
- */
 /**
  * M45 Phase 2 — Format a PC AI plan as a short manual-play hint.
  * Returns a string like "💡 AI: longbow → Goblin Boss" or empty when
@@ -1093,157 +1068,21 @@ function formatPcRecommendationHint(plan) {
   return `💡 AI: ${weaponLabel}${targetName ? ' → ' + targetName : ''}`;
 }
 
+/**
+ * M45 Phase 2 — Resolve the actual target entity from a PC AI plan.
+ *
+ * The plan carries `targetId` + `targetSide`. Look up the live entity
+ * record on the right side (enemy = monster; ally = pc) and wrap it
+ * in the {kind, entity} shape `attackInVersus` expects.
+ */
 function resolvePlanTarget(plan) {
-  if (!plan?.targetId) return null;
-  if (plan.targetSide === 'ally') {
-    const pc = partyComposedCharacters.find(p => String(p.id) === String(plan.targetId));
-    return pc ? { kind: 'pc', entity: pc } : null;
-  }
-  const monster = (currentScene.monsters || []).find(m => String(m.id) === String(plan.targetId));
-  return monster ? { kind: 'monster', entity: monster } : null;
+  return bridgeResolvePlanTarget(plan, bridgeCtx());
 }
 
-/* =====================================================================
- * M45 Phase 4b.2 — Live runner ↔ engine bridge.
- *
- * The combat engine works on per-iteration "wrappers" — flat objects
- * with `hp: number`, `hpMax`, `ac`, `weapon`, `_position`, `_slots`,
- * per-turn flags, etc. The live runner's records are different shapes:
- * PCs carry `hp: { current, max }` and live in `currentScene.positions`;
- * monsters carry `hp: { current, max }` and `position`. The bridge:
- *
- *   1. wrapLivePcForEngine / wrapLiveMonsterForEngine build engine
- *      wrappers from the live records. Mutable runtime pools
- *      (_slots, conditions[]) are SHARED by reference so engine
- *      mutations persist back to the live entity automatically.
- *      Scalar state (hp, position) is copied and written back after.
- *
- *   2. runEngineTurn(entity, entityKind) wraps the active entity +
- *      every enemy + every ally, builds prompt callbacks bound to the
- *      live UI (cinema, reaction dialogs, attack log), calls
- *      engineRunOneAttack, then writes back HP / position / damage.
- *
- *   3. The auto-fight loop calls runEngineTurn per entity instead of
- *      the old attackInVersus / castInVersus split. Manual-click play
- *      still uses runAttackPrompt — the engine is auto-fight only for
- *      v1 of this migration.
- * ===================================================================== */
-
-function wrapLivePcForEngine(pc, idx) {
-  if (!pc) return null;
-  if (!Array.isArray(pc.conditions)) pc.conditions = [];
-  if (!pc._slots) pc._slots = slotsForPc(pc);
-  return {
-    ref: pc,
-    id: pc.id,
-    name: pc.name || 'PC',
-    kind: 'pc',
-    hp: pc.hp?.current ?? pc.hp?.max ?? 1,
-    hpMax: pc.hp?.max ?? 1,
-    ac: deriveAC(pc),
-    weapon: pc._chosenWeapon || pc.equipment?.mainhand || null,
-    _chosenWeapon: pc._chosenWeapon || null,
-    // SHARED — engine push/pop persists to the live record.
-    conditions: pc.conditions,
-    _position: positionOf(currentScene, pc.id, idx),
-    damageDealt: 0,
-    combatMods: pc.combatMods || [],
-    _reactionUsed: !!pc._reactionUsed,
-    _lvl1Slots: pc._lvl1Slots ?? lvl1SlotsForPc(pc),
-    _lvl3Slots: pc._lvl3Slots ?? lvl3SlotsForPc(pc),
-    // SHARED — slot decrements persist directly.
-    _slots: pc._slots,
-    _shieldActive: !!pc._shieldActive,
-    _actionSurgeUsed: pc._actionSurgeUsed ?? 0,
-    _secondWindUsed: !!pc._secondWindUsed,
-    _sneakAttackUsedThisTurn: !!pc._sneakAttackUsedThisTurn,
-    _cunningActionUsedThisTurn: !!pc._cunningActionUsedThisTurn,
-    _recklessUsedThisTurn: !!pc._recklessUsedThisTurn,
-    _recklessUntilNextTurn: !!pc._recklessUntilNextTurn,
-    _smiteSlotUsed: pc._smiteSlotUsed || null
-  };
-}
-
-function wrapLiveMonsterForEngine(m) {
-  if (!m) return null;
-  if (!Array.isArray(m.conditions)) m.conditions = [];
-  const preset = MONSTER_PRESETS[m.presetSlug] || {};
-  return {
-    ref: m,
-    id: m.id,
-    name: m.name || preset.name || 'Monster',
-    kind: 'monster',
-    presetSlug: m.presetSlug,
-    hp: m.hp?.current ?? m.hp?.max ?? 1,
-    hpMax: m.hp?.max ?? 1,
-    ac: preset.ac ?? 12,
-    attack: preset.attack || { name: 'Strike', bonus: 2, dice: '1d6' },
-    secondary: preset.secondary || null,
-    conditions: m.conditions,
-    position: m.position,
-    damageDealt: 0,
-    _innate: m._innate || null,
-    _slots: m._slots || null,
-    _reactionUsed: !!m._reactionUsed,
-    _legendaryBudget: m._legendaryBudget ?? 0,
-    _recklessUntilNextTurn: !!m._recklessUntilNextTurn
-  };
-}
-
-/** Copy mutated state from an engine wrapper back to its live record.
- *  HP shape, position, slot pool, and per-turn flags. */
-function writeBackPcFromEngine(pc, wrapper) {
-  if (!pc || !wrapper) return;
-  if (pc.hp && Number.isFinite(wrapper.hp)) {
-    pc.hp = { ...pc.hp, current: Math.max(0, Math.min(pc.hp.max, wrapper.hp | 0)) };
-  }
-  if (wrapper._position) {
-    currentScene.positions = {
-      ...(currentScene.positions || {}),
-      [String(pc.id)]: wrapper._position
-    };
-  }
-  // Mutable refs are already shared (conditions, _slots); explicit copies
-  // capture state the wrapper may have set during the turn.
-  pc._reactionUsed = !!wrapper._reactionUsed;
-  pc._shieldActive = !!wrapper._shieldActive;
-  pc._actionSurgeUsed = wrapper._actionSurgeUsed ?? 0;
-  pc._secondWindUsed = !!wrapper._secondWindUsed;
-  pc._sneakAttackUsedThisTurn = !!wrapper._sneakAttackUsedThisTurn;
-  pc._cunningActionUsedThisTurn = !!wrapper._cunningActionUsedThisTurn;
-  pc._recklessUsedThisTurn = !!wrapper._recklessUsedThisTurn;
-  pc._recklessUntilNextTurn = !!wrapper._recklessUntilNextTurn;
-  pc._smiteSlotUsed = wrapper._smiteSlotUsed || null;
-  pc._lastPlan = wrapper._lastPlan || null;
-  pc._chosenWeapon = wrapper._chosenWeapon || null;
-}
-
-function writeBackMonsterFromEngine(m, wrapper) {
-  if (!m || !wrapper) return;
-  if (m.hp && Number.isFinite(wrapper.hp)) {
-    m.hp = { ...m.hp, current: Math.max(0, Math.min(m.hp.max, wrapper.hp | 0)) };
-  }
-  if (wrapper.position) m.position = wrapper.position;
-  m._reactionUsed = !!wrapper._reactionUsed;
-  m._legendaryBudget = wrapper._legendaryBudget ?? 0;
-  m._lastPlan = wrapper._lastPlan || null;
-  m._recklessUntilNextTurn = !!wrapper._recklessUntilNextTurn;
-}
-
-/** Build the wrapped enemy + ally lists from the live runner's records. */
-function buildEngineSides(activeEntity, activeKind) {
-  const pcWrappers = partyComposedCharacters
-    .filter(p => (p.hp?.current ?? 0) > 0 || p === activeEntity)
-    .map((p, _) => wrapLivePcForEngine(p, partyComposedCharacters.indexOf(p)));
-  const monWrappers = (currentScene.monsters || [])
-    .filter(m => (m.hp?.current ?? 0) > 0 || m === activeEntity)
-    .map(m => wrapLiveMonsterForEngine(m));
-  const enemies = activeKind === 'pc' ? monWrappers : pcWrappers;
-  const allies  = activeKind === 'pc' ? pcWrappers : monWrappers;
-  const active  = (activeKind === 'pc' ? pcWrappers : monWrappers)
-                    .find(w => w.id === activeEntity.id) || null;
-  return { active, enemies, allies, pcWrappers, monWrappers };
-}
+/* M45 Phase 4b.2 — the wrap / write-back bridge (wrapPcForEngine,
+ * wrapMonsterForEngine, writeBackPc, writeBackMonster, buildEngineSides,
+ * runTurn) moved to scene/live-bridge.js in M64 C1. runEngineTurn below
+ * keeps only the UI prompt wiring (cinema, cast log, Shield dialog). */
 
 /**
  * M45 Phase 4b.2 — Run one entity's turn through the unified combat
@@ -1253,9 +1092,7 @@ function buildEngineSides(activeEntity, activeKind) {
  * can introspect _lastPlan, damageDealt, etc. for logging + replay.
  */
 async function runEngineTurn(entity, entityKind, opts = {}) {
-  const { active, enemies, allies, pcWrappers, monWrappers } = buildEngineSides(entity, entityKind);
-  if (!active) return null;
-  const stepRng = Math.random;
+  if (!entity) return null;
   const preAttackFlags = snapshotAttackerFlags(entity);
   // M45 Phase 4b.3 — In manual mode the player drives target/weapon
   // selection and Shield reactions; auto-fight passes the engine's
@@ -1342,20 +1179,10 @@ async function runEngineTurn(entity, entityKind, opts = {}) {
     onReactionAttack: async () => true   // OAs fire by default
   };
 
-  await engineRunOneAttack(active, enemies, allies, currentScene, stepRng, prompts);
-
-  // Write back all wrapper state to live entities. Order matters only
-  // for the active entity (it might've been damaged by an OA before
-  // its own attack landed); we just walk every wrapper.
-  for (const w of pcWrappers) {
-    const live = partyComposedCharacters.find(p => p.id === w.id);
-    if (live) writeBackPcFromEngine(live, w);
-  }
-  for (const w of monWrappers) {
-    const live = (currentScene.monsters || []).find(m => m.id === w.id);
-    if (live) writeBackMonsterFromEngine(live, w);
-  }
-  return active;
+  return bridgeRunTurn({
+    party: partyComposedCharacters, scene: currentScene,
+    entity, kind: entityKind, rng: Math.random, prompts
+  });
 }
 
 /**
