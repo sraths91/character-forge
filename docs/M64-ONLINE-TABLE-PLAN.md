@@ -7,6 +7,34 @@ the owner 2026-10-14**; Wave 0 and Wave 1 launched the same day. The
 ten source reports live in the session scratchpad; this document is
 the canonical summary.
 
+**2026-10-15 — Wave 0 and Wave 1 merged to main** (E3a, E2a, E6, E1a
+in that order; 22 commits; 1,518 tests, 4 skipped pending T2/T5/T7/T8
+goldens). Found during the build:
+- **F11 (E2):** live versus monsters never received `_slots`,
+  `_innate` or `_reactionUsed` because the seeding loop ran after
+  `buildPartyArenaScene` had copied the instances; the engine's lazy
+  `_innate` init masked it. Fixed; live monsters now actually cast
+  and heal.
+- `choosePcAction` leaves `_mctsTargetCtx` (an entity copy) on the
+  wrapper, breaking JSON round-trip for any AI-planned PC turn.
+  T5 must treat it as transient.
+- Contract naming decisions from E6 win over R1's names: `move`,
+  `spell.cast`, `spell.countered`, `reaction.offered`; reaction kinds
+  `oa|shield|counterspell`; `encounter.ended.outcome`; DM intents
+  `dm.entity.add/remove`, `dm.terrain.paint`; a `redacted` broadcast
+  keeps `seq` gap-free under `viewFor`.
+- The T10 import ban is scoped around `live-bridge.js` until T5 splits
+  `scene-state.js` into a pure model + storage adapter.
+
+**Re-partition for Waves 2–4** (file ownership wins over the original
+task owner): E1 takes R1, R2, R3, R12, R13 (engine/roll files) in
+Wave 2; E4 does R5, R6, R14 now and R4, R7, R8 after E1b merges;
+M8 (input-handler intents in `main.js`) moves to E2; E5 ships the
+calibration UI (M9) as a module under `src/js/map/` that E2 mounts.
+Waves 2, 3 and the pure parts of Wave 4 (C5, C6, C7) run in parallel
+since their files are disjoint; B8's engine wiring and C8/C9 wait
+for E1b.
+
 Decisions taken at approval (override the defaults table below):
 - **Seeding:** imported characters start fully rested; a per-room DM
   toggle imports D&D Beyond's current HP, used slots and used features.
