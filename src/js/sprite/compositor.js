@@ -6,6 +6,8 @@ import { asTerrain } from '../map/terrain.js';
 import { WORLD_CELL_PX, MAX_CANVAS_PIXELS, createCamera, cameraTransform, sizeCanvasToViewport, visibleCellRange } from '../map/camera.js';
 import { legacySceneToView, characterForToken } from '../map/view.js';
 import { MONSTER_PRESETS, buildMonsterCharacter } from '../scene/monster-presets.js';
+import { createTokenCache } from '../map/token-cache.js';
+import { applyFilterMatrix, parseCssFilter } from './filter-matrix.js';
 
 // Tier ranks: higher beats lower. Used to pick the single character-level aura.
 const RARITY_RANK = {
@@ -81,9 +83,46 @@ export async function renderSprite(canvas, character, { scale = 6, direction = '
 export function renderBattleScene(canvas, viewOrCharacters, localOrScene, legacyOpts) {
   if (Array.isArray(viewOrCharacters)) {
     const { view, local } = legacySceneToView(viewOrCharacters, localOrScene, legacyOpts || {});
-    return renderBattleView(canvas, view, local);
+    // The legacy caller expects a complete frame: bake first, then draw.
+    return prepareBattleView(view, local).then(() => renderBattleView(canvas, view, local));
   }
   return renderBattleView(canvas, viewOrCharacters, localOrScene || {});
+}
+
+/**
+ * M64 M7 — warm every asset a frame of `view` needs (background image,
+ * one token bake per visible token) so the next renderBattleScene call
+ * draws a complete frame. Useful before exports / screenshots; the live
+ * loop does not need it (misses bake in the background and call
+ * local.requestRedraw when ready).
+ * @param {object} view — RenderView
+ * @param {object} [local]
+ * @returns {Promise<void>}
+ */
+export async function prepareBattleView(view, local = {}) {
+  const jobs = [];
+  const src = view.map?.kind === 'image' ? (view.map.url || view.map.image) : null;
+  if (src) jobs.push(loadCachedImage(src).catch(() => null));
+  const cache = local.tokenCache || defaultTokenCache;
+  const frameOpts = tokenFrameOpts(local);
+  for (const token of view.tokens) {
+    if (token.hidden && !local.dm?.showHidden) continue;
+    const base = resolveTokenCharacter(token, local);
+    if (!base) continue;
+    const key = cache.keyFor(token, frameOpts);
+    if (cache.get(key)) continue;
+    jobs.push(cache.ensure(key, characterForToken(base, token), frameOpts).then(async (canvas) => {
+      // The first bake teaches the cache the look's frame cycle, which can
+      // change the key; make sure the frame we will draw is baked too.
+      const k2 = cache.keyFor(token, frameOpts);
+      if (canvas && k2 !== key && !cache.get(k2)) await cache.ensure(k2, characterForToken(base, token), frameOpts);
+    }));
+  }
+  await Promise.all(jobs);
+}
+
+function tokenFrameOpts(local) {
+  return { direction: local.direction || 'south', anim: local.anim || null, frameIdx: local.frameIdx || 0 };
 }
 
 const W = WORLD_CELL_PX;
@@ -114,7 +153,7 @@ function resolveTokenCharacter(token, local) {
   return null;
 }
 
-async function renderBattleView(canvas, view, local) {
+function renderBattleView(canvas, view, local) {
   const cols = view.grid.cols;
   const rows = view.grid.rows;
   const worldW = cols * W;
@@ -124,18 +163,15 @@ async function renderBattleView(canvas, view, local) {
   const pixelRatio = sizeBattleCanvas(canvas, camera, worldW, worldH);
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-  const world = cameraTransform(camera, pixelRatio);
-  // Re-applied after every await: main.js fires renders without awaiting
-  // them, so another render may have touched this context meanwhile.
-  const applyWorld = () => { ctx.setTransform(...world); ctx.imageSmoothingEnabled = false; };
-  applyWorld();
+  ctx.setTransform(...cameraTransform(camera, pixelRatio));
+  ctx.imageSmoothingEnabled = false;
   const px = 1 / camera.zoom;                 // one CSS pixel in world units
   _shadowScale = camera.zoom * pixelRatio;    // shadowBlur ignores the transform
   const now = Number.isFinite(local.now) ? local.now : performance.now();
 
-  // 1. Background.
-  await drawBattleBackground(ctx, view.map, cols, rows, camera.zoom * pixelRatio, applyWorld);
-  applyWorld();
+  // 1. Background (an image still decoding shows the fill colour and asks
+  //    for a redraw when ready).
+  drawBattleBackground(ctx, view.map, cols, rows, camera.zoom * pixelRatio, local.requestRedraw);
 
   // 2. Grid lines, one CSS pixel wide at any zoom.
   if (local.grid?.visible !== false) {
@@ -159,7 +195,10 @@ async function renderBattleView(canvas, view, local) {
   const displacementById = effectDisplacements(local.effects, now);
   const showHidden = !!local.dm?.showHidden;
   const drawnPos = new Map();
-  let totalGenerated = 0;
+  const cache = local.tokenCache || defaultTokenCache;
+  const frameOpts = tokenFrameOpts(local);
+  const bakesBefore = cache.stats.bakes;
+  let pendingBakes = 0;
   let drawn = 0;
   for (const token of view.tokens) {
     if (token.hidden && !showHidden) continue;
@@ -168,24 +207,31 @@ async function renderBattleView(canvas, view, local) {
     const y = token.row * W + disp.y;
     drawnPos.set(token.id, { col: token.col, row: token.row });
     if (local.ownEntityId != null && String(local.ownEntityId) === token.id) drawOwnMarker(ctx, x, y, px);
-    applyWorld();
-    ctx.save();
-    if (token.hidden) ctx.globalAlpha = 0.5;
-    const base = resolveTokenCharacter(token, local);
-    if (base) {
-      const r = await drawCharacterAt(ctx, characterForToken(base, token), {
-        x, y, scale: 1, direction: local.direction || 'south', frameIdx: local.frameIdx || 0
-      });
-      totalGenerated += r.generatedCount;
+    // M64 M7 — one drawImage of a baked 64×64 bitmap per token. A miss
+    // bakes in the background and keeps showing the previous bitmap.
+    const key = cache.keyFor(token, frameOpts);
+    let bmp = cache.get(key);
+    if (bmp) {
+      cache.setLast(token.id, bmp);
     } else {
-      drawTokenPlaceholder(ctx, token, x, y, px);
+      const base = resolveTokenCharacter(token, local);
+      if (base) {
+        pendingBakes++;
+        if (!cache.isPending(key)) {
+          cache.ensure(key, characterForToken(base, token), frameOpts)
+            .then(c => { if (c) local.requestRedraw?.(); });
+        }
+      }
+      bmp = cache.lastFor(token.id);
     }
-    ctx.restore();
+    if (token.hidden) { ctx.save(); ctx.globalAlpha = 0.5; }
+    if (bmp) ctx.drawImage(bmp, x, y, W, W);
+    else drawTokenPlaceholder(ctx, token, x, y, px);
+    if (token.hidden) ctx.restore();
     drawn++;
   }
 
   // 5. Overlays above the tokens.
-  applyWorld();
   const at = (id) => drawnPos.get(String(id)) || null;
   if (local.selectionId != null) {
     const pos = at(local.selectionId);
@@ -232,11 +278,11 @@ async function renderBattleView(canvas, view, local) {
     }
   }
   ctx.setTransform(1, 0, 0, 1, 0, 0);
-  return { canvas, generatedCount: totalGenerated, cellCount: drawn, needsRedraw: live };
+  return { canvas, generatedCount: cache.stats.bakes - bakesBefore, cellCount: drawn, needsRedraw: live, pendingBakes };
 }
 
-/** Background for every map kind, in world units. */
-async function drawBattleBackground(ctx, map, cols, rows, deviceScale, applyWorld) {
+/** Background for every map kind, in world units. Synchronous. */
+function drawBattleBackground(ctx, map, cols, rows, deviceScale, requestRedraw) {
   const worldW = cols * W;
   const worldH = rows * W;
   ctx.fillStyle = map?.color || '#3d5a3d';
@@ -244,11 +290,9 @@ async function drawBattleBackground(ctx, map, cols, rows, deviceScale, applyWorl
   if (map?.kind === 'image') {
     const src = map.url || map.image;
     if (!src) return;
-    try {
-      const img = await loadCachedImage(src);
-      applyWorld();
-      drawMapImage(ctx, img, map, cols, rows, W);
-    } catch { /* keep the colour fill */ }
+    const img = loadedImage(src);
+    if (img) drawMapImage(ctx, img, map, cols, rows, W);
+    else if (!imageFailed(src)) loadCachedImage(src).then(() => requestRedraw?.(), () => {});
   } else if (map?.kind === 'generated') {
     // Painted once per (biome, seed, dims, cell size) and blitted. The
     // paint resolution follows the device cell size, capped so the
@@ -659,19 +703,24 @@ function getGeneratedMapCanvas(scene, totalW, totalH, cellPx) {
 
 // M2.5 — Image cache. Decoded HTMLImageElements keyed by data-url so
 // continuous-render loops don't pay decode cost every frame.
-const _bgImageCache = new Map();
+const _bgImageCache = new Map();   // src → {promise, img, failed}
 function loadCachedImage(src) {
   const cached = _bgImageCache.get(src);
-  if (cached) return cached;
-  const promise = new Promise((resolve, reject) => {
+  if (cached) return cached.promise;
+  const rec = { promise: null, img: null, failed: false };
+  rec.promise = new Promise((resolve, reject) => {
     const img = new Image();
-    img.onload  = () => resolve(img);
-    img.onerror = () => reject(new Error('image decode failed'));
+    img.onload  = () => { rec.img = img; resolve(img); };
+    img.onerror = () => { rec.failed = true; reject(new Error('image decode failed')); };
     img.src = src;
   });
-  _bgImageCache.set(src, promise);
-  return promise;
+  rec.promise.catch(() => { rec.failed = true; });
+  _bgImageCache.set(src, rec);
+  return rec.promise;
 }
+/** The decoded image for `src`, or null while loading / after failure. */
+function loadedImage(src) { return _bgImageCache.get(src)?.img || null; }
+function imageFailed(src) { return !!_bgImageCache.get(src)?.failed; }
 
 /** Draw a hollow rectangle outline at (x,y) of size sz, in the given color. */
 function drawCellOutline(ctx, x, y, sz, color, width = 3) {
@@ -740,6 +789,80 @@ export async function renderPartyCanvas(canvas, characters, opts = {}) {
   return { canvas, generatedCount: totalGenerated, cellCount: N };
 }
 
+// ---------------------------------------------------------------------
+// M64 M7 — bake cache support
+// ---------------------------------------------------------------------
+
+function gcd(a, b) { while (b) [a, b] = [b, a % b]; return a; }
+function lcm(a, b) { return (a / gcd(a, b)) * b; }
+
+/** A scratch canvas (DOM or OffscreenCanvas); null when neither exists (Node). */
+function makeCanvas(w, h) {
+  if (typeof document !== 'undefined' && document.createElement) {
+    const c = document.createElement('canvas');
+    c.width = w; c.height = h;
+    return c;
+  }
+  const Off = globalThis.OffscreenCanvas;
+  return typeof Off === 'function' ? new Off(w, h) : null;
+}
+
+// Recoloured LPC frames: (src, frame rect, filter) → canvas. Built once
+// with getImageData + applyFilterMatrix, then plain drawImage forever.
+const _recolourCache = new Map();
+const _RECOLOUR_MAX = 512;
+function recolouredFrame(img, f, srcKey, filter) {
+  const key = `${srcKey}|${f.sx},${f.sy},${f.sw},${f.sh}|${filter}`;
+  if (_recolourCache.has(key)) return _recolourCache.get(key);
+  let out = null;
+  const c = makeCanvas(f.sw, f.sh);
+  const cctx = c?.getContext('2d', { willReadFrequently: true });
+  if (cctx) {
+    cctx.imageSmoothingEnabled = false;
+    cctx.drawImage(img, f.sx, f.sy, f.sw, f.sh, 0, 0, f.sw, f.sh);
+    const data = cctx.getImageData(0, 0, f.sw, f.sh);
+    data.data.set(applyFilterMatrix(data.data, parseCssFilter(filter)));
+    cctx.putImageData(data, 0, 0);
+    out = c;
+  }
+  _recolourCache.set(key, out);
+  if (_recolourCache.size > _RECOLOUR_MAX) _recolourCache.delete(_recolourCache.keys().next().value);
+  return out;
+}
+
+// Item sprites memoised on the same inputs computeItemHash digests, so a
+// cached item costs no SHA-1 (crypto.subtle.digest) per call.
+const _itemSpriteMemo = new Map();
+const _ITEM_MEMO_MAX = 256;
+function memoItemSprite(item, src, slot) {
+  const key = [item?.name || '', item?.rarity || 'common', item?.magical ? 1 : 0, item?.damageType || '', slot || '', src || ''].join('|');
+  let p = _itemSpriteMemo.get(key);
+  if (!p) {
+    p = generateItemSprite(item, src, slot);
+    _itemSpriteMemo.set(key, p);
+    if (_itemSpriteMemo.size > _ITEM_MEMO_MAX) _itemSpriteMemo.delete(_itemSpriteMemo.keys().next().value);
+  }
+  return p;
+}
+
+/**
+ * Default token baker: one 64×64 composite of `character`.
+ * @param {object} character — render-ready (characterForToken)
+ * @param {{direction?: string, frameIdx?: number, animation?: string|null}} opts
+ * @returns {Promise<{canvas: any, frameCycle: number}>}
+ */
+export async function bakeTokenCanvas(character, { direction = 'south', frameIdx = 0, animation = null } = {}) {
+  const canvas = makeCanvas(FRAME, FRAME);
+  const ctx = canvas?.getContext('2d');
+  if (!ctx) return { canvas: null, frameCycle: 1 };
+  ctx.imageSmoothingEnabled = false;
+  const r = await drawCharacterAt(ctx, character, { x: 0, y: 0, scale: 1, direction, frameIdx, animation });
+  return { canvas, frameCycle: r.frameCycle || 1 };
+}
+
+/** The shared token bake cache used when local.tokenCache is not given. */
+export const defaultTokenCache = createTokenCache({ bake: bakeTokenCanvas });
+
 /**
  * Draw a single character at canvas position (x, y). Used by both
  * renderSprite (single, x=y=0) and renderPartyCanvas (offset per slot).
@@ -774,7 +897,7 @@ async function drawCharacterAt(ctx, character, opts) {
   plan.layers.forEach((layer, idx) => {
     if (layer.kind === 'item' || layer.kind === 'derived-item') {
       itemPromises.push(
-        generateItemSprite(layer.item, layer.src, layer.slot)
+        memoItemSprite(layer.item, layer.src, layer.slot)
           .then(r => { itemResults.set(idx, r); })
           .catch(() => { itemResults.set(idx, { canvas: null, mutated: false }); })
       );
@@ -799,6 +922,7 @@ async function drawCharacterAt(ctx, character, opts) {
   applyBodySilhouetteAt(ctx, hints, x, y, cellW, cellH);
 
   let generatedCount = 0;
+  let frameCycle = 1;
 
   for (let idx = 0; idx < plan.layers.length; idx++) {
     const layer = plan.layers[idx];
@@ -810,18 +934,18 @@ async function drawCharacterAt(ctx, character, opts) {
         const img = await loadImage(layer.src);
         const f0 = getFrame(layer.src, direction, 0);
         const frameCount = Math.max(1, Math.floor(img.width / f0.sw));
+        if (layer.frameIdx == null) frameCycle = lcm(frameCycle, frameCount);
         const f = getFrame(layer.src, direction, lfi % frameCount);
-        const prevFilter = ctx.filter;
-        if (layer.filter) ctx.filter = layer.filter;
-        ctx.drawImage(img, f.sx, f.sy, f.sw, f.sh, x, y, cellW, cellH);
-        if (layer.filter) ctx.filter = prevFilter || 'none';
+        // M64 M7 (P0-11) — recolour with pixel math, not ctx.filter
+        // (disabled in Safari / iOS, which dropped every tint).
+        const src = layer.filter ? recolouredFrame(img, f, layer.src, layer.filter) : null;
+        if (src) ctx.drawImage(src, 0, 0, f.sw, f.sh, x, y, cellW, cellH);
+        else ctx.drawImage(img, f.sx, f.sy, f.sw, f.sh, x, y, cellW, cellH);
       } catch {
         drawProceduralSlotAt(ctx, layer.slot, scale, x, y);
       }
     } else if (layer.kind === 'item') {
       const result = itemResults.get(idx);
-      const prevFilter = ctx.filter;
-      ctx.filter = 'none';
       try {
         if (result && result.mutated && result.canvas) {
           ctx.drawImage(result.canvas, x, y, cellW, cellH);
@@ -830,18 +954,15 @@ async function drawCharacterAt(ctx, character, opts) {
           const img = await loadImage(layer.src);
           const f0 = getFrame(layer.src, direction, 0);
           const frameCount = Math.max(1, Math.floor(img.width / f0.sw));
+          if (layer.frameIdx == null) frameCycle = lcm(frameCycle, frameCount);
           const f = getFrame(layer.src, direction, lfi % frameCount);
           ctx.drawImage(img, f.sx, f.sy, f.sw, f.sh, x, y, cellW, cellH);
         }
       } catch {
         drawProceduralSlotAt(ctx, layer.slot, scale, x, y);
-      } finally {
-        ctx.filter = prevFilter;
       }
     } else if (layer.kind === 'derived-item') {
       const result = itemResults.get(idx);
-      const prevFilter = ctx.filter;
-      ctx.filter = 'none';
       try {
         let sourceCanvas;
         if (result && result.mutated && result.canvas) {
@@ -853,8 +974,6 @@ async function drawCharacterAt(ctx, character, opts) {
         drawDerivedItemAt(ctx, sourceCanvas, layer.pose, scale, x, y);
       } catch {
         drawProceduralSlotAt(ctx, layer.slot, scale, x, y);
-      } finally {
-        ctx.filter = prevFilter;
       }
     } else if (layer.kind === 'rect') {
       drawProceduralSlotAt(ctx, layer.slot, scale, x, y, layer.overrideColor);
@@ -870,7 +989,7 @@ async function drawCharacterAt(ctx, character, opts) {
   if (hints.palette === 'saturated') {
     applySaturationBoostAt(ctx, x, y, cellW, cellH);
   }
-  return { plan, generatedCount };
+  return { plan, generatedCount, frameCycle };
 }
 
 /**

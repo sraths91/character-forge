@@ -27,6 +27,7 @@ import { HURT_TAIL_MS, IDLE_BOB_MS } from './timings.js';
 import { loadImage } from '../sprite/image-cache.js';
 import { weaponSpriteSrc, weaponAttackSrc, weaponAttackBehindSrc, weaponAnimForBody, FRAME, BODY_ANIMS, bodyAnimSheet, bodyAnimFrames } from '../sprite/lpc-config.js';
 import { motionForWeapon } from './weapon-motions.js';
+import { appearanceKeyOf, tokenStatusKey, hpStateOf, worstConditionOf, conditionIdsOf } from '../map/view.js';
 import { swingRigFor } from './weapon-swing.js';
 
 // M51 — Slots whose layers the cinema omits from the baked body so the
@@ -54,9 +55,34 @@ const ACTOR_FRAMES = [FRAME_IDLE_A, FRAME_IDLE_B, FRAME_WINDUP, FRAME_STRIKE, FR
 // (defender) directions without one overwriting the other. The
 // composite key also lets us swap an actor between rounds and have
 // them re-face if their role changes.
-// `${id}|${direction}` → { frames: Map<frameIdx, Canvas>, scale, direction }
+// `${id}|${direction}` → { frames: Map<frameIdx, Canvas>, scale, direction, appearanceHash }
+// M64 M7 — an entry is only reused while its appearanceHash (look +
+// status, see visualHashOf) matches, so an equipment or condition change
+// mid-fight re-renders instead of showing a stale sprite.
 const cache = new Map();
 function cacheKey(id, direction) { return `${id}|${direction || 'south'}`; }
+
+/**
+ * M64 M7 — content hash of everything the cinema bake reads: the look
+ * (appearanceKeyOf) plus HP bucket / conditions / temp HP / concentration.
+ * Pure.
+ * @param {object} character
+ * @returns {string}
+ */
+export function visualHashOf(character) {
+  if (!character) return 'none';
+  const hp = character.hp || {};
+  const cur = typeof hp.current === 'number' ? hp.current : null;
+  const conds = conditionIdsOf(character.conditions);
+  const status = tokenStatusKey({
+    hpState: hpStateOf(cur, typeof hp.max === 'number' ? hp.max : null, character.deathSaves?.failures || 0),
+    worstCondition: worstConditionOf(conds),
+    conditions: conds,
+    tempHp: (hp.temp || 0) > 0,
+    concentration: character.concentration || null
+  });
+  return `${appearanceKeyOf(character)}|${status}`;
+}
 
 /**
  * M51 Phase 2 — Both actors face the camera (south). The real LPC
@@ -99,8 +125,9 @@ export async function preloadActorSprite(entity, { scale = 3, direction = 'south
   const character = toLpcCharacter(entity);
   if (!character || !character.id) return null;
   const key = cacheKey(character.id, direction);
+  const appearanceHash = visualHashOf(character);
   const cached = cache.get(key);
-  if (cached && cached.scale === scale) return cached;
+  if (cached && cached.scale === scale && cached.appearanceHash === appearanceHash) return cached;
   const frames = new Map();
   for (const idx of ACTOR_FRAMES) {
     const off = makeOffscreenCanvas();
@@ -111,8 +138,10 @@ export async function preloadActorSprite(entity, { scale = 3, direction = 'south
     frames.set(idx, off);
   }
   if (frames.size === 0) return null;
-  const entry = cache.get(key) || {};
-  entry.frames = frames; entry.scale = scale; entry.direction = direction;
+  const prev = cache.get(key);
+  // A changed look invalidates the attack frames baked for the old one.
+  const entry = prev && prev.appearanceHash === appearanceHash ? prev : {};
+  entry.frames = frames; entry.scale = scale; entry.direction = direction; entry.appearanceHash = appearanceHash;
   cache.set(key, entry);
   return entry;
 }
@@ -146,7 +175,10 @@ export async function preloadActorAttack(entity, { animation, scale = 3, directi
     frames.set(i, off);
   }
   if (frames.size === 0) return null;
-  const entry = cache.get(key) || {};
+  const appearanceHash = visualHashOf(character);
+  const prev = cache.get(key);
+  const entry = prev && (prev.appearanceHash == null || prev.appearanceHash === appearanceHash) ? prev : {};
+  entry.appearanceHash = appearanceHash;
   entry.attack = { animation, frames, count };
   entry.scale = scale; entry.direction = direction;
   cache.set(key, entry);
