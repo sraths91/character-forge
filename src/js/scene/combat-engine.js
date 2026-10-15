@@ -43,8 +43,9 @@ import { choosePcAction } from './ai/pc-action.js';
 import { PC_FEATURES, resetPerTurnFlags } from './ai/pc-features.js';
 import {
   consumeReaction, detectOpportunityAttacks, detectPolearmEntryOAs,
-  shouldCastShield, canCastShield, consumeShield,
-  slotsForPc, shouldCounterspell, consumeCounterspell, resolveCounterspell
+  shouldCastShield, canCastShield, consumeShield, hasReactionAvailable,
+  slotsForPc, shouldCounterspell, canCastCounterspell, consumeCounterspell,
+  resolveCounterspell
 } from './reactions.js';
 import {
   consumeSlot, spellById, spellbookFor, freshInnateState,
@@ -79,9 +80,19 @@ import { MONSTER_DEFAULT_SAVES } from './monster-presets.js';
  */
 /**
  * @typedef {object} EnginePrompts
- * @property {function} [onShieldReaction]  — async ({ defender, atk, weapon, autoAnswer }) → boolean
+ * @property {function} [onShieldReaction]  — async ({ defender, atk, weapon, spell?, autoAnswer }) → boolean
+ *   Offered only when the defender can actually cast Shield and +5 AC
+ *   would turn the hit into a miss. Fires for weapon attacks, OAs,
+ *   spell attacks (`spell` set) and Magic Missile (`spell` set; `atk` is
+ *   `{ hit: true, crit: false, total: null, autoHit: true }`).
  * @property {function} [onCounterspell]    — async ({ witness, caster, spell, autoAnswer }) → boolean
- * @property {function} [onReactionAttack]  — async ({ triggerer, mover, kind }) → boolean
+ *   Offered only to witnesses for whom canCastCounterspell() is true.
+ * @property {function} [onReactionAttack]  — async ({ triggerer, mover, kind, autoAnswer }) → boolean
+ *
+ * M64 N1 — reaction answers are GATED: a `true` answer is re-checked
+ * against the reactor's eligibility (canCastShield / canCastCounterspell
+ * / hasReactionAvailable) after the await resolves, so no caller — a
+ * dialog, a socket, a bug — can grant a reaction the creature lacks.
  * @property {function} [onCinemaRound]     — async ({ attacker, defender, plan, atk, dmg, crit }) → void
  * @property {function} [onCastBegin]       — async ({ attacker, target, plan }) → void
  *
@@ -192,9 +203,10 @@ export async function runOneAttack(attacker, enemies, allies, scene, rng, prompt
         // "always fire the OA"; live runner returns false to skip when
         // the player declines to spend their reaction.
         const fire = prompts.onReactionAttack
-          ? await prompts.onReactionAttack({ triggerer, mover: attacker, kind: 'leave' })
+          ? await prompts.onReactionAttack({ triggerer, mover: attacker, kind: 'leave', autoAnswer: true })
           : true;
-        if (fire) {
+        // M64 N1 — gate the answer: the triggerer must still have its reaction.
+        if (fire && hasReactionAvailable(triggerer)) {
           await runReactionAttack(triggerer, attacker, attackerPos, scene, rng, prompts);
           consumeReaction(triggerer);
         }
@@ -202,9 +214,9 @@ export async function runOneAttack(attacker, enemies, allies, scene, rng, prompt
       for (const { triggerer } of entryTriggers) {
         if (!isAlive(attacker)) break;
         const fire = prompts.onReactionAttack
-          ? await prompts.onReactionAttack({ triggerer, mover: attacker, kind: 'entry' })
+          ? await prompts.onReactionAttack({ triggerer, mover: attacker, kind: 'entry', autoAnswer: true })
           : true;
-        if (fire) {
+        if (fire && hasReactionAvailable(triggerer)) {
           await runReactionAttack(triggerer, attacker, next, scene, rng, prompts);
           consumeReaction(triggerer);
         }
@@ -328,18 +340,11 @@ export async function runOneAttack(attacker, enemies, allies, scene, rng, prompt
   // M33.1 — Shield reaction (target casts AFTER the roll lands).
   // M45 Phase 4b — Optional prompt. Simulator path keeps the auto-cast
   // heuristic; live runner can override via prompts.onShieldReaction.
-  if (atk.hit && !atk.crit && target.kind === 'pc') {
-    const auto = shouldCastShield({ target, attackerTotal: atk.total, targetAc: target.ac });
-    const accepted = prompts.onShieldReaction
-      ? await prompts.onShieldReaction({
-          defender: target, atk, weapon: attacker.weapon, autoAnswer: auto
-        })
-      : auto;
-    if (accepted) {
-      consumeShield(target);
-      atk.hit = false;
-      atk.shielded = true;
-    }
+  // M64 N1 — offered only when Shield could block it; answer gated.
+  if (await askShield(target, atk, { weapon: attacker.weapon }, prompts)) {
+    consumeShield(target);
+    atk.hit = false;
+    atk.shielded = true;
   }
   if (!atk.hit) {
     // Dispatch a cinema round for the miss too — the live runner uses
@@ -426,11 +431,15 @@ export async function runMonsterSpell({ attacker, target, plan, scene: _scene, r
   // the auto path uses the witness's heuristic, the live runner can
   // pop a dialog asking the player whether to spend their reaction.
   for (const witness of witnesses) {
+    // M64 N1 — only eligible witnesses are asked, and a `true` answer is
+    // re-checked after the await (the witness may have spent its
+    // reaction or slot meanwhile; a remote answer is never trusted).
+    if (!canCastCounterspell(witness)) continue;
     const auto = shouldCounterspell(witness, spell.level);
     const fire = prompts.onCounterspell
       ? await prompts.onCounterspell({ witness, caster: attacker, spell, autoAnswer: auto })
       : auto;
-    if (!fire) continue;
+    if (!fire || !canCastCounterspell(witness)) continue;
     const ability = saveBonusFor(witness, abilityForCounterer(witness));
     const result = resolveCounterspell({ spellLevel: spell.level, counterMod: ability }, rng);
     consumeCounterspell(witness);
@@ -463,7 +472,10 @@ export async function runMonsterSpell({ attacker, target, plan, scene: _scene, r
   }
 
   if (spell.kind === 'auto-hit') {
-    if (target.kind === 'pc' && canCastShield(target)) {
+    // Shield (PHB p275) blocks Magic Missile outright. M64 N1 — routed
+    // through onShieldReaction like every other Shield window.
+    const mmAtk = { hit: true, crit: false, total: null, autoHit: true };
+    if (await askShield(target, mmAtk, { weapon: null, spell }, prompts)) {
       consumeShield(target);
       return;
     }
@@ -485,8 +497,7 @@ export async function runMonsterSpell({ attacker, target, plan, scene: _scene, r
       advantage: 'normal',
       targetAC: target.ac
     }, rng);
-    if (atk.hit && !atk.crit && target.kind === 'pc' &&
-        shouldCastShield({ target, attackerTotal: atk.total, targetAc: target.ac })) {
+    if (await askShield(target, atk, { weapon: null, spell }, prompts)) {
       consumeShield(target);
       return;
     }
@@ -611,15 +622,9 @@ export async function runReactionAttack(attacker, target, targetBeforePos, scene
   const atk = verdict.autoCrit
     ? { hit: true, crit: true, total: 20 + verdict.attackBonus.total }
     : rollAttack({ bonus: verdict.attackBonus.total, advantage: verdict.d20.mode, targetAC: target.ac }, rng);
-  if (atk.hit && !atk.crit && target.kind === 'pc') {
-    const auto = shouldCastShield({ target, attackerTotal: atk.total, targetAc: target.ac });
-    const accepted = prompts.onShieldReaction
-      ? await prompts.onShieldReaction({ defender: target, atk, weapon: attacker.weapon, autoAnswer: auto })
-      : auto;
-    if (accepted) {
-      consumeShield(target);
-      atk.hit = false;
-    }
+  if (await askShield(target, atk, { weapon: attacker.weapon }, prompts)) {
+    consumeShield(target);
+    atk.hit = false;
   }
   // M56 Phase 4 — opportunity attacks dramatize through the same
   // onCinemaRound prompt, tagged reaction: true (the bridge forces the
@@ -646,6 +651,52 @@ export async function runReactionAttack(attacker, target, targetBeforePos, scene
       dmg: dmg.total, crit: !!atk.crit, miss: false, reaction: true
     });
   }
+}
+
+// =====================================================================
+// Reaction gating (M64 N1)
+// =====================================================================
+
+/**
+ * Could Shield turn this attack into a miss right now? True only for a
+ * non-crit hit on a PC that can cast Shield (reaction + spell + slot),
+ * where +5 AC beats the attack total. Auto-hit spells (Magic Missile,
+ * `atk.autoHit`) skip the AC test: Shield blocks them outright.
+ *
+ * @param {object} defender — entity wrapper
+ * @param {object} atk — { hit, crit, total, autoHit? }
+ * @returns {boolean}
+ */
+export function shieldCanBlock(defender, atk) {
+  if (!defender || defender.kind !== 'pc' || !atk) return false;
+  if (!atk.hit || atk.crit) return false;
+  if (!canCastShield(defender)) return false;
+  if (atk.autoHit) return true;
+  return atk.total < defender.ac + 5;
+}
+
+/**
+ * Offer the Shield window and return whether Shield should be applied.
+ * The prompt is skipped when Shield could not help; a `true` answer is
+ * re-checked with shieldCanBlock after the await, so an ineligible
+ * defender never gets a free Shield whatever the prompt returns.
+ * Without `prompts.onShieldReaction` the heuristic answers (simulator).
+ *
+ * @param {object} defender
+ * @param {object} atk
+ * @param {{ weapon: object|null, spell?: object }} ctx
+ * @param {object} prompts — EnginePrompts
+ * @returns {Promise<boolean>}
+ */
+async function askShield(defender, atk, ctx, prompts) {
+  if (!shieldCanBlock(defender, atk)) return false;
+  const auto = atk.autoHit
+    ? true
+    : shouldCastShield({ target: defender, attackerTotal: atk.total, targetAc: defender.ac });
+  const accepted = prompts.onShieldReaction
+    ? await prompts.onShieldReaction({ defender, atk, ...ctx, autoAnswer: auto })
+    : auto;
+  return !!accepted && shieldCanBlock(defender, atk);
 }
 
 // =====================================================================
