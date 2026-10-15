@@ -63,5 +63,21 @@ export default [
         ]
       }]
     }
+  },
+  // M64 merge note — live-bridge.js (E2, Wave 1) imports the pure
+  // `positionOf` helper from scene-state.js. T5 (Wave 2) splits
+  // scene-state into a pure model and a localStorage adapter; delete
+  // this override when the bridge imports the pure model instead.
+  {
+    files: ['src/js/scene/live-bridge.js'],
+    rules: {
+      'no-restricted-imports': ['error', {
+        patterns: [
+          { regex: '(^|/)anim/', message: 'M64 T10: no animation-layer imports.' },
+          { regex: '(^|/)main\\.js$', message: 'M64 T10: no main.js import.' },
+          { regex: '(^|/)reaction-prompt\\.js$', message: 'M64 T10: no DOM dialog import.' }
+        ]
+      }]
+    }
   }
 ];
