@@ -1,12 +1,67 @@
 import Database from 'better-sqlite3';
 import { fileURLToPath } from 'node:url';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve, relative, isAbsolute, sep } from 'node:path';
 import { runMigrations, getMigrationVersion } from './migrate.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 /** Local-dev fallback when neither CF_DB_PATH nor a data dir is configured. */
 export const DEFAULT_DB_PATH = join(__dirname, '..', '..', 'character-forge.db');
+
+/** File name used when the DB path is derived from a data directory. */
+export const DB_FILE_NAME = 'character-forge.db';
+
+function isUnder(child, parent) {
+  const rel = relative(resolve(parent), resolve(child));
+  return rel === '' || (!isAbsolute(rel) && rel !== '..' && !rel.startsWith(`..${sep}`));
+}
+
+/**
+ * Resolve where persistent data lives (M64 B5).
+ *
+ * - `dataDir`: `CF_DATA_DIR` → `RAILWAY_VOLUME_MOUNT_PATH` → `dirname(dbPath)`.
+ *   Uploaded maps and other files go here (Wave 3).
+ * - `dbPath`: `CF_DB_PATH` → `<CF_DATA_DIR or volume>/character-forge.db`
+ *   → {@link DEFAULT_DB_PATH} (repo root, local dev only).
+ *
+ * Volume guard: with `NODE_ENV=production` and `RAILWAY_VOLUME_MOUNT_PATH`
+ * set (Railway injects it whenever a volume is attached), throws if the DB
+ * path or the data dir is not under the mount — otherwise the DB would
+ * silently land on the container's ephemeral disk and vanish on redeploy.
+ * Production without any volume or path configured only warns, so a local
+ * `npm start` still works.
+ *
+ * @param {Record<string, string|undefined>} [env=process.env]
+ * @returns {{ dbPath: string, dataDir: string, volume: string|null, warnings: string[] }}
+ * @throws {Error} When the production volume guard fails.
+ */
+export function resolveDataPaths(env = process.env) {
+  const volume = env.RAILWAY_VOLUME_MOUNT_PATH || null;
+  const baseDir = env.CF_DATA_DIR || volume || null;
+  const dbPath = env.CF_DB_PATH || (baseDir ? join(baseDir, DB_FILE_NAME) : DEFAULT_DB_PATH);
+  const dataDir = resolve(baseDir || dirname(dbPath));
+  const warnings = [];
+
+  if (env.NODE_ENV === 'production') {
+    if (volume) {
+      if (dbPath === ':memory:' || !isUnder(dbPath, volume)) {
+        throw new Error(
+          `Refusing to boot: CF_DB_PATH "${dbPath}" is not on the Railway volume mounted at "${volume}". ` +
+          'The database would be lost on the next deploy. Unset CF_DB_PATH or point it under the volume.'
+        );
+      }
+      if (!isUnder(dataDir, volume)) {
+        throw new Error(
+          `Refusing to boot: CF_DATA_DIR "${dataDir}" is not on the Railway volume mounted at "${volume}". ` +
+          'Uploaded files would be lost on the next deploy. Unset CF_DATA_DIR or point it under the volume.'
+        );
+      }
+    } else if (!env.CF_DB_PATH && !env.CF_DATA_DIR) {
+      warnings.push(`production with no volume, CF_DB_PATH or CF_DATA_DIR: using ${dbPath}, which is not persistent on a PaaS host`);
+    }
+  }
+  return { dbPath, dataDir, volume, warnings };
+}
 
 // v2: aura no longer baked into per-item PNGs — drawn once by compositor as
 // a single backdrop. Old v1 PNGs have stale auras and must not be served.

@@ -3,7 +3,7 @@ import cors from 'cors';
 import cookieParser from 'cookie-parser';
 import rateLimit from 'express-rate-limit';
 import { fileURLToPath } from 'node:url';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 
 import { ITEM_GENERATOR_VERSION } from './db/database.js';
 import { extractCharacterId, fetchDdbCharacter } from './lib/ddb-fetch.js';
@@ -26,11 +26,16 @@ function defaultLog(level, msg, extra = {}) {
  * @param {import('./db/database.js').DbHandle} opts.db  Handle from `openDb`.
  * @param {Record<string, string|undefined>} [opts.env=process.env]
  *   Reads NODE_ENV and ALLOWED_ORIGINS.
+ * @param {string|null} [opts.dataDir]  Reported by /api/health; defaults to
+ *   the DB file's directory, or null for an in-memory DB.
  * @param {(level: string, msg: string, extra?: object) => void} [opts.log]
  * @returns {import('express').Express}
  */
-export function createApp({ db, env = process.env, log = defaultLog } = {}) {
+export function createApp({ db, env = process.env, dataDir, log = defaultLog } = {}) {
   if (!db) throw new Error('createApp: db handle (from openDb) is required');
+  const healthDataDir = dataDir !== undefined
+    ? dataDir
+    : (db.path && db.path !== ':memory:' ? dirname(resolve(db.path)) : null);
   const {
     upsertCharacter, getCharacterByDdbId, listRecent,
     getItemSprite, putItemSprite,
@@ -70,8 +75,22 @@ export function createApp({ db, env = process.env, log = defaultLog } = {}) {
     legacyHeaders: false
   });
 
+  // Railway's healthcheck. Touches the DB so a broken or missing volume
+  // fails the check instead of passing on a process that cannot persist.
+  // (Wave 3 adds the live socket count.)
   app.get('/api/health', (_req, res) => {
-    res.json({ ok: true, time: Date.now() });
+    try {
+      db.db.prepare('SELECT 1').get();
+      res.json({
+        ok: true,
+        time: Date.now(),
+        migrationVersion: db.migrationVersion(),
+        dataDir: healthDataDir
+      });
+    } catch (err) {
+      log('error', 'health check failed', { error: err.message });
+      res.status(503).json({ ok: false, error: 'database unavailable' });
+    }
   });
 
   /**

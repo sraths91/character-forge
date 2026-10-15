@@ -32,6 +32,8 @@ test('boots on port 0, serves /api/health, and closes cleanly', async () => {
   assert.equal(res.status, 200);
   const body = await res.json();
   assert.equal(body.ok, true);
+  assert.equal(body.migrationVersion, 1);
+  assert.equal(body.dataDir, srv.dir);
   await srv.close();
   await srv.close(); // idempotent
   assert.equal(srv.httpServer.listening, false);
@@ -114,4 +116,28 @@ test('SIGTERM drains, closes the DB, and exits 0 (injected exit)', async () => {
 test('createApp and startServer require a db handle', async () => {
   assert.throws(() => createApp({}), /db handle/);
   await assert.rejects(startServer({ port: 0 }), /db handle/);
+});
+
+test('/api/health reports an injected dataDir', async () => {
+  const srv = await boot({ dataDir: '/app/data' });
+  try {
+    const body = await (await fetch(`${srv.url}/api/health`)).json();
+    assert.deepEqual({ ok: body.ok, migrationVersion: body.migrationVersion, dataDir: body.dataDir },
+      { ok: true, migrationVersion: 1, dataDir: '/app/data' });
+    assert.equal(typeof body.time, 'number');
+  } finally {
+    await srv.close();
+  }
+});
+
+test('/api/health returns 503 when the database is unusable', async () => {
+  const srv = await boot();
+  try {
+    srv.db.db.close();
+    const res = await fetch(`${srv.url}/api/health`);
+    assert.equal(res.status, 503);
+    assert.deepEqual(await res.json(), { ok: false, error: 'database unavailable' });
+  } finally {
+    await srv.close();
+  }
 });
