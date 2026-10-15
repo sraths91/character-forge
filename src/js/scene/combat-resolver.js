@@ -75,7 +75,12 @@ export function resolveAttack(ctx) {
   // attack-roll rules per PHB), and they use scope='spell' so M12
   // modifiers like Amulet of the Devout +1 finally apply.
   const isSpellAttack = !!ctx.spell;
-  const ranged = isSpellAttack ? true : isRangedWeapon(weapon);
+  // M64 R12 — a touch-range spell (range ≤ 5 ft or spell.melee) is a
+  // melee spell attack (PHB p205): prone targets give advantage and no
+  // adjacent-hostile disadvantage.
+  const ranged = isSpellAttack
+    ? !(ctx.spell.melee === true || (Number.isFinite(ctx.spell.range) && ctx.spell.range <= 5))
+    : isRangedWeapon(weapon);
 
   // --- Hard blockers: refuse the attack outright ---
   const blockers = [];

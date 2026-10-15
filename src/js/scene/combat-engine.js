@@ -335,6 +335,7 @@ async function resolveTurn(attacker, enemies, allies, scene, rng, prompts, ctx) 
       attacker, target: castTarget, plan, scene, rng,
       witnesses: enemies.filter(isAlive).filter(e => e.kind === 'pc'),
       allEnemies: enemies,
+      allies,
       prompts, ctx
     });
     return;
@@ -521,8 +522,7 @@ async function resolveTurn(attacker, enemies, allies, scene, rng, prompts, ctx) 
 // runMonsterSpell — spell casting (both monster + PC)
 // =====================================================================
 
-export async function runMonsterSpell({ attacker, target, plan, scene: _scene, rng, witnesses = [], allEnemies = [], prompts = {}, ctx = NO_CTX }) {
-  void _scene;
+export async function runMonsterSpell({ attacker, target, plan, scene, rng, witnesses = [], allEnemies = [], allies = [], prompts = {}, ctx = NO_CTX }) {
   const baseSpell = spellById(plan.spellId);
   if (!baseSpell) return;
   const spell = applyUpcast(baseSpell, plan.castAtLevel);
@@ -653,27 +653,56 @@ export async function runMonsterSpell({ attacker, target, plan, scene: _scene, r
   }
 
   if (spell.kind === 'spell-attack') {
-    let atk = rollAttack({
-      bonus: effectiveBook.attackBonus,
-      advantage: 'normal',
-      targetAC: target.ac
-    }, rng);
+    // M64 R12 — spell attacks go through resolveAttack: conditions,
+    // prone (melee vs ranged spell attack), a ranged caster next to a
+    // hostile, auto-crits. The book's bonus already folds the 'spell'
+    // attack combatMods, so only damage mods reach the resolver.
+    const verdict = resolveAttack({
+      attacker: {
+        ...attacker.ref,
+        conditions: attacker.conditions,
+        _position: attacker._position || attacker.position,
+        combatMods: combatModsOf(attacker).filter(m => m?.kind === 'damage')
+      },
+      target: { ...target.ref, conditions: target.conditions, _position: target._position || target.position },
+      weapon: null,
+      spell,
+      scene,
+      attackerKind: attacker.kind,
+      targetKind: target.kind,
+      targetAC: target.ac,
+      advantageOverride: 'auto',
+      allies: allies.filter(a => a !== attacker && isAlive(a)).map(a => ({ ...a.ref, _position: a._position || a.position, conditions: a.conditions, id: a.id, name: a.name })),
+      hostiles: allEnemies.filter(isAlive).map(e => ({ ...e.ref, _position: e._position || e.position, conditions: e.conditions, id: e.id, name: e.name })),
+      attackStats: {
+        bonus: effectiveBook.attackBonus, dice: spell.dice, damageType: spell.damageType ?? null,
+        parts: [{ source: spell.name, value: effectiveBook.attackBonus }], damageParts: []
+      }
+    });
+    if (verdict.autoMiss) {
+      await castCinema(target, { dmg: 0, miss: true });
+      return;
+    }
+    const mode = verdict.d20.mode;
+    let atk = verdict.autoCrit
+      ? { hit: true, crit: true, total: 20 + verdict.attackBonus.total }
+      : rollAttack({ bonus: verdict.attackBonus.total, advantage: mode, targetAC: target.ac }, rng);
     if (prompts.onRoll) atk = await reviewRoll(prompts, ctx, group, 'attack', attacker, target, atk);
     if (await askShield(target, atk, { weapon: null, spell }, prompts, ctx, group)) {
       spendShield(target, ctx, group);
       atk.hit = false;
       atk.shielded = true;
-      emitAttackRolled(ctx, group, attacker, target, atk, { weapon: null, isReaction: false, mode: 'normal', bonus: effectiveBook.attackBonus, spellId: String(plan.spellId) });
+      emitAttackRolled(ctx, group, attacker, target, atk, { weapon: null, isReaction: false, mode, bonus: verdict.attackBonus.total, spellId: String(plan.spellId) });
       emitEvent(ctx, 'spell.fizzled', { casterId, reason: 'shield', spellId: String(plan.spellId), targetId: idOf(target) }, group);
       return;
     }
-    emitAttackRolled(ctx, group, attacker, target, atk, { weapon: null, isReaction: false, mode: 'normal', bonus: effectiveBook.attackBonus, spellId: String(plan.spellId) });
+    emitAttackRolled(ctx, group, attacker, target, atk, { weapon: null, isReaction: false, mode, bonus: verdict.attackBonus.total, spellId: String(plan.spellId) });
     if (!isAlive(attacker) || !isAlive(target)) return;
     if (!atk.hit) {
       await castCinema(target, { dmg: 0, miss: true });
       return;
     }
-    let dmg = rollDamage(spell.dice, { crit: atk.crit }, rng);
+    let dmg = rollDamage(verdict.damage.dice || spell.dice, { crit: atk.crit }, rng);
     if (prompts.onRoll) {
       dmg = await reviewRoll(prompts, ctx, group, 'damage', attacker, target, dmg);
       if (!isAlive(attacker) || !isAlive(target)) return;
