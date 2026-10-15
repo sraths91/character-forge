@@ -837,3 +837,98 @@ test('R5: armorTypeId defaults to null when DDB omits it', () => {
   }));
   assert.strictEqual(parsed.equipment.armor.armorTypeId, null);
 });
+
+// ── R6: weapon rules data + weapon proficiencies ───────────────────────
+
+// Real DDB weapon shape (verified against a real export): properties carry
+// { id, name, notes }, mastery tags (Vex, Push) and the "Range" marker.
+function r6Weapon(name, def = {}, item = {}) {
+  return {
+    equipped: true, isAttuned: false, quantity: 1, ...item,
+    definition: { id: def.id ?? 7000, name, filterType: 'Weapon', type: name, rarity: 'Common', magic: false, grantedModifiers: [], ...def }
+  };
+}
+
+test('R6: weapon summaries keep properties, attackType, range, monk flag, category and slug', () => {
+  const parsed = parseCharacter(rawFixture({
+    inventory: [
+      r6Weapon('Crossbow, Hand', {
+        id: 1, damage: { diceString: '1d6' }, damageType: 'Piercing', attackType: 2, range: 30, longRange: 120,
+        isMonkWeapon: false, categoryId: 2,
+        properties: [{ id: 1, name: 'Ammunition', notes: null }, { id: 7, name: 'Range', notes: null },
+          { id: 4, name: 'Light', notes: null }, { id: 5, name: 'Loading', notes: null }, { id: 25, name: 'Vex', notes: null }]
+      }),
+      r6Weapon('Shortsword', {
+        id: 2, damage: { diceString: '1d6' }, attackType: 1, range: 5, longRange: 5, isMonkWeapon: true, categoryId: 2,
+        properties: [{ id: 3, name: 'Finesse', notes: null }, { id: 4, name: 'Light', notes: null }]
+      })
+    ]
+  }));
+  const xbow = parsed.carried.find(c => c.name === 'Crossbow, Hand');
+  assert.deepStrictEqual(xbow.properties, ['ammunition', 'light', 'loading']);
+  assert.strictEqual(xbow.attackType, 2);
+  assert.strictEqual(xbow.range, 30);
+  assert.strictEqual(xbow.longRange, 120);
+  assert.strictEqual(xbow.weaponCategory, 'martial');
+  assert.strictEqual(xbow.weaponType, 'crossbow-hand');
+  const ss = parsed.carried.find(c => c.name === 'Shortsword');
+  assert.deepStrictEqual(ss.properties, ['finesse', 'light']);
+  assert.strictEqual(ss.isMonkWeapon, true);
+  assert.strictEqual(ss.magicBonus, null);
+});
+
+test('R6: versatile die comes from the Versatile property notes; promoted mainhand keeps the fields', () => {
+  const parsed = parseCharacter(rawFixture({
+    classes: [{ definition: { name: 'Cleric' }, level: 4 }],
+    inventory: [
+      r6Weapon('Shortsword', { id: 1, damage: { diceString: '1d6' }, attackType: 1, properties: [{ name: 'Finesse' }, { name: 'Light' }] }),
+      r6Weapon('Warhammer', {
+        id: 2, damage: { diceString: '1d8' }, damageType: 'Bludgeoning', attackType: 1, range: 5, longRange: 5, categoryId: 2,
+        properties: [{ id: 12, name: 'Versatile', notes: '1d10' }, { id: 21, name: 'Push', notes: null }]
+      })
+    ]
+  }));
+  const main = parsed.equipment.mainhand;
+  assert.strictEqual(main.name, 'Warhammer', 'cleric promotes the warhammer');
+  assert.deepStrictEqual(main.properties, ['versatile']);
+  assert.strictEqual(main.versatileDamage, '1d10');
+  assert.strictEqual(main.attackType, 1);
+  assert.strictEqual(main.weaponCategory, 'martial');
+});
+
+test('R6: magic bonus comes from grantedModifiers (bonus/magic), gated by attunement', () => {
+  const magic = (value, requiresAttunement = false) => ({ type: 'bonus', subType: 'magic', value, fixedValue: value, requiresAttunement });
+  const parsed = parseCharacter(rawFixture({
+    inventory: [
+      r6Weapon('Longsword', { id: 1, magic: true, damage: { diceString: '1d8' }, attackType: 1, grantedModifiers: [magic(1)] }),
+      r6Weapon('Flame Tongue Longsword', { id: 2, magic: true, canAttune: true, damage: { diceString: '1d8' }, attackType: 1, grantedModifiers: [magic(2, true)] }, { equipped: true, isAttuned: false }),
+      r6Weapon('Dagger +3', { id: 3, damage: { diceString: '1d4' }, attackType: 1 })
+    ]
+  }));
+  const by = (n) => parsed.carried.find(c => c.name === n);
+  assert.strictEqual(by('Longsword').magicBonus, 1, 'name has no +N; the modifier supplies it');
+  assert.strictEqual(by('Flame Tongue Longsword').magicBonus, 0, 'unattuned');
+  assert.strictEqual(by('Dagger +3').magicBonus, null, 'no modifier: downstream falls back to the name');
+});
+
+test('R6: non-weapon items carry no weapon fields', () => {
+  const parsed = parseCharacter(rawFixture({
+    inventory: [{ equipped: true, definition: { id: 1, name: 'Chain Mail', filterType: 'Armor', armorClass: 16, armorTypeId: 3 } }]
+  }));
+  assert.strictEqual(parsed.equipment.armor.properties, undefined);
+  assert.strictEqual(parsed.equipment.armor.attackType, undefined);
+});
+
+test('R6: weaponProficiencies collects weapon rows only', () => {
+  const p = (subType, entityTypeId) => ({ type: 'proficiency', subType, entityTypeId });
+  const parsed = parseCharacter(rawFixture({
+    modifiers: {
+      class: [p('simple-weapons', 660121713), p('light-armor', 174869515), p('wisdom-saving-throws'), p('insight', 1958004211)],
+      race: [p('longsword', 1782728300), p('shortbow')],
+      background: [p('drum', 2103445194)],
+      feat: [], item: []
+    }
+  }));
+  assert.deepStrictEqual([...parsed.weaponProficiencies].sort(), ['longsword', 'shortbow', 'simple-weapons']);
+  assert.deepStrictEqual(parseCharacter(rawFixture()).weaponProficiencies, []);
+});

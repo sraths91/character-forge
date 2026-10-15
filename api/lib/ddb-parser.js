@@ -41,6 +41,7 @@ function promotePrimaryWeapon(character) {
     armorClass: prim.armorClass,
     damage: prim.damage,
     damageType: prim.damageType,
+    ...pickWeaponFields(prim),
     ...(prim.twoHanded ? { twoHanded: true } : {})
   };
   // A two-handed primary frees the off hand and sheathes any shield.
@@ -72,6 +73,7 @@ export function parseCharacter(raw) {
   const combatMods = parseCombatModifiers(raw);
   const spells = parseSpells(raw);
   const savingThrowProficiencies = parseSavingThrowProficiencies(raw);
+  const weaponProficiencies = parseWeaponProficiencies(raw);
   const hp = parseHitPoints(raw, abilityScores, level);
   const deathSaves = parseDeathSaves(raw);
 
@@ -96,6 +98,8 @@ export function parseCharacter(raw) {
     combatMods,
     spells,
     savingThrowProficiencies,
+    // R6 — weapon proficiency slugs from DDB `proficiency` modifiers.
+    weaponProficiencies,
     // Note: skinTone is intentionally NOT set here. The renderer's
     // inferSkinTone() consults character.appearance.skin first (via the
     // E1 appearance-parser) and falls back to a race default — setting
@@ -893,6 +897,139 @@ export function classifyItem(item) {
   return null;
 }
 
+// R6 — weapon rules data.
+//
+// DDB weapon definitions carry `properties[]` ({ id, name, notes }; the
+// Versatile entry's `notes` is the two-handed die, e.g. "1d10"),
+// `attackType` (1 melee / 2 ranged), `range` / `longRange` in feet
+// (5/5 for melee), `isMonkWeapon`, `categoryId` (1 simple / 2 martial)
+// and `grantedModifiers[]` where a +N weapon has
+// { type: 'bonus', subType: 'magic', value: N }. Verified against a real
+// export (Shortsword: Finesse|Light, Hand Crossbow: Range 30/120,
+// Warhammer: Versatile notes "1d10").
+
+const WEAPON_PROPERTY_NAMES = new Set([
+  'finesse', 'light', 'heavy', 'thrown', 'versatile', 'two-handed',
+  'reach', 'ammunition', 'loading', 'special'
+]);
+
+/** Field names parseWeaponFields may add to an equipment summary. */
+const WEAPON_FIELD_KEYS = [
+  'properties', 'attackType', 'range', 'longRange', 'isMonkWeapon',
+  'magicBonus', 'versatileDamage', 'weaponCategory', 'weaponType'
+];
+
+function isWeaponDefinition(def) {
+  return !!def && (def.filterType === 'Weapon' || def.type === 'Weapon' || def.attackType === 1 || def.attackType === 2);
+}
+
+/**
+ * Normalise DDB weapon properties into a lowercase string list of the 5e
+ * weapon properties (mastery tags like Vex / Push and DDB's internal
+ * "Range" marker are dropped).
+ * @param {Array<{name: string}>} props
+ * @returns {string[]}
+ */
+export function normaliseWeaponProperties(props) {
+  if (!Array.isArray(props)) return [];
+  const out = [];
+  for (const p of props) {
+    const n = String(p?.name ?? p ?? '').trim().toLowerCase().replace(/\s+/g, '-');
+    if (WEAPON_PROPERTY_NAMES.has(n) && !out.includes(n)) out.push(n);
+  }
+  return out;
+}
+
+/**
+ * Magic +N of a weapon from its grantedModifiers (bonus / magic). Returns
+ * null when DDB lists no magic modifier, so the name heuristic can still
+ * apply downstream; 0 when the bonus needs attunement the item lacks.
+ */
+function weaponMagicBonus(item) {
+  const mods = Array.isArray(item?.definition?.grantedModifiers) ? item.definition.grantedModifiers : [];
+  let found = false;
+  let sum = 0;
+  for (const m of mods) {
+    if (m?.type !== 'bonus' || m?.subType !== 'magic') continue;
+    found = true;
+    if (m.requiresAttunement && !item.isAttuned) continue;
+    const v = Number(m.value ?? m.fixedValue);
+    if (Number.isFinite(v)) sum += v;
+  }
+  return found ? sum : null;
+}
+
+/** "Crossbow, Hand" → "crossbow-hand" (DDB proficiency-slug style). */
+function weaponTypeSlug(s) {
+  const t = String(s || '').trim().toLowerCase();
+  if (!t) return null;
+  return t.replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || null;
+}
+
+function parseWeaponFields(item) {
+  const def = item?.definition;
+  if (!isWeaponDefinition(def)) return {};
+  const versatile = Array.isArray(def.properties)
+    ? def.properties.find(p => String(p?.name || '').toLowerCase() === 'versatile')
+    : null;
+  const num = (v) => (Number.isFinite(Number(v)) && v !== null && v !== '' ? Number(v) : null);
+  return {
+    properties: normaliseWeaponProperties(def.properties),
+    attackType: def.attackType === 1 || def.attackType === 2 ? def.attackType : null,
+    range: num(def.range),
+    longRange: num(def.longRange),
+    isMonkWeapon: !!def.isMonkWeapon,
+    magicBonus: weaponMagicBonus(item),
+    versatileDamage: versatile && typeof versatile.notes === 'string' && /^\d+d\d+$/.test(versatile.notes.trim())
+      ? versatile.notes.trim() : null,
+    weaponCategory: def.categoryId === 1 ? 'simple' : def.categoryId === 2 ? 'martial' : null,
+    weaponType: weaponTypeSlug(def.type && def.type !== 'Weapon' ? def.type : def.name)
+  };
+}
+
+function pickWeaponFields(entry) {
+  const out = {};
+  for (const k of WEAPON_FIELD_KEYS) if (entry[k] !== undefined) out[k] = entry[k];
+  return out;
+}
+
+// R6 — weapon proficiencies. DDB lists them as `proficiency` modifiers:
+// category rows ('simple-weapons', 'martial-weapons') and per-weapon rows
+// named by the weapon's slug. Per-weapon rows are recognised by their
+// entityTypeId (DDB's weapon entity type) or by the SRD weapon slug list.
+const WEAPON_ENTITY_TYPE_ID = 1782728300;
+const SRD_WEAPON_SLUGS = new Set([
+  'club', 'dagger', 'greatclub', 'handaxe', 'javelin', 'light-hammer', 'mace',
+  'quarterstaff', 'sickle', 'spear', 'crossbow-light', 'dart', 'shortbow', 'sling',
+  'battleaxe', 'flail', 'glaive', 'greataxe', 'greatsword', 'halberd', 'lance',
+  'longsword', 'maul', 'morningstar', 'pike', 'rapier', 'scimitar', 'shortsword',
+  'trident', 'war-pick', 'warhammer', 'whip', 'blowgun', 'crossbow-hand',
+  'crossbow-heavy', 'longbow', 'net',
+  // plural / reversed spellings seen in class text
+  'light-crossbows', 'hand-crossbows', 'heavy-crossbows', 'longswords', 'rapiers',
+  'shortswords', 'daggers', 'darts', 'slings', 'quarterstaffs', 'light-crossbow',
+  'hand-crossbow', 'heavy-crossbow', 'scimitars', 'shortbows', 'longbows',
+  'handaxes', 'battleaxes', 'light-hammers', 'warhammers', 'clubs', 'maces',
+  'sickles', 'spears', 'javelins'
+]);
+
+/**
+ * Weapon proficiency slugs from every modifier bucket.
+ * @param {object} raw — DDB character
+ * @returns {string[]} e.g. ['simple-weapons', 'martial-weapons', 'crossbow-hand']
+ */
+export function parseWeaponProficiencies(raw) {
+  const out = [];
+  for (const m of collectAllModifiers(raw)) {
+    if (m?.type !== 'proficiency') continue;
+    const sub = String(m.subType || '');
+    const isWeapon = sub === 'simple-weapons' || sub === 'martial-weapons'
+      || m.entityTypeId === WEAPON_ENTITY_TYPE_ID || SRD_WEAPON_SLUGS.has(sub);
+    if (isWeapon && !out.includes(sub)) out.push(sub);
+  }
+  return out;
+}
+
 function parseEquipment(raw) {
   const inventory = Array.isArray(raw.inventory) ? raw.inventory : [];
   const slots = {
@@ -923,7 +1060,9 @@ function parseEquipment(raw) {
       damage: item.definition?.damage?.diceString ?? null,
       damageType: item.definition?.damageType ?? null,
       // R5 — DDB armor category: 1 light / 2 medium / 3 heavy / 4 shield.
-      armorTypeId: item.definition?.armorTypeId ?? null
+      armorTypeId: item.definition?.armorTypeId ?? null,
+      // R6 — weapon rules data (absent on non-weapons).
+      ...parseWeaponFields(item)
     };
 
     let assignedSlot = 'overflow';

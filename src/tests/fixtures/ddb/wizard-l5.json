@@ -100,9 +100,14 @@
         "attackType": 1,
         "properties": [
           {
-            "name": "Versatile"
+            "name": "Versatile",
+            "notes": "1d8"
           }
-        ]
+        ],
+        "categoryId": 1,
+        "isMonkWeapon": true,
+        "range": 5,
+        "longRange": 5
       }
     },
     {
@@ -133,7 +138,9 @@
           }
         ],
         "range": 20,
-        "longRange": 60
+        "longRange": 60,
+        "categoryId": 1,
+        "isMonkWeapon": true
       }
     },
     {
@@ -144,7 +151,7 @@
         "id": 7103,
         "name": "Light Crossbow",
         "filterType": "Weapon",
-        "type": "Light Crossbow",
+        "type": "Crossbow, Light",
         "rarity": "Common",
         "magic": false,
         "damage": {
@@ -164,7 +171,9 @@
           }
         ],
         "range": 80,
-        "longRange": 320
+        "longRange": 320,
+        "categoryId": 1,
+        "isMonkWeapon": false
       }
     }
   ],
@@ -190,6 +199,51 @@
         "type": "proficiency",
         "subType": "wisdom-saving-throws",
         "componentId": 1
+      },
+      {
+        "type": "proficiency",
+        "subType": "dagger",
+        "entityId": 9001,
+        "entityTypeId": 1782728300,
+        "componentId": 5100,
+        "componentTypeId": 12168134,
+        "friendlySubtypeName": "Dagger"
+      },
+      {
+        "type": "proficiency",
+        "subType": "dart",
+        "entityId": 9002,
+        "entityTypeId": 1782728300,
+        "componentId": 5100,
+        "componentTypeId": 12168134,
+        "friendlySubtypeName": "Dart"
+      },
+      {
+        "type": "proficiency",
+        "subType": "sling",
+        "entityId": 9003,
+        "entityTypeId": 1782728300,
+        "componentId": 5100,
+        "componentTypeId": 12168134,
+        "friendlySubtypeName": "Sling"
+      },
+      {
+        "type": "proficiency",
+        "subType": "quarterstaff",
+        "entityId": 9004,
+        "entityTypeId": 1782728300,
+        "componentId": 5100,
+        "componentTypeId": 12168134,
+        "friendlySubtypeName": "Quarterstaff"
+      },
+      {
+        "type": "proficiency",
+        "subType": "crossbow-light",
+        "entityId": 9005,
+        "entityTypeId": 1782728300,
+        "componentId": 5100,
+        "componentTypeId": 12168134,
+        "friendlySubtypeName": "Crossbow, Light"
       }
     ],
     "feat": [],

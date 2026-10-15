@@ -310,3 +310,109 @@ test('R5: synthetic fixtures keep their AC (cleric 18, fighter 18, wizard 12)', 
   assert.strictEqual(deriveAC(parsedDdbFixture('fighter-l5')), 18);
   assert.strictEqual(deriveAC(parsedDdbFixture('wizard-l5')), 10 + parsedDdbFixture('wizard-l5').abilityModifiers.DEX);
 });
+
+// ── R6: weapon properties, attackType, range, proficiency, magic bonus ──
+
+const r6Char = (over = {}) => ({
+  abilityModifiers: { STR: 3, DEX: 1 }, level: 5, equipment: {}, ...over
+});
+
+test('R6: javelin (thrown melee) uses STR, with its 30/120 thrown range', () => {
+  const jav = { name: 'Javelin', damage: '1d6', properties: ['thrown'], attackType: 1, range: 30, longRange: 120, weaponCategory: 'simple' };
+  const a = deriveWeaponAttack(r6Char(), jav);
+  assert.strictEqual(a.ability, 'STR');
+  assert.strictEqual(a.bonus, 3 + 3);
+  assert.strictEqual(a.dice, '1d6+3');
+  assert.strictEqual(a.ranged, false);
+  assert.deepStrictEqual(a.range, { normal: 30, long: 120 });
+});
+
+test('R6: javelin by name only (older rows) also uses STR', () => {
+  const a = deriveWeaponAttack({ abilityModifiers: { STR: 3, DEX: 4 }, level: 1, equipment: {} }, { name: 'Javelin', damage: '1d6' });
+  assert.strictEqual(a.ability, 'STR');
+  assert.strictEqual(a.bonus, 3 + 2);
+});
+
+test('R6: finesse from properties picks max(STR, DEX); a thrown finesse dagger too', () => {
+  const ch = { abilityModifiers: { STR: 1, DEX: 4 }, level: 1, equipment: {} };
+  const a = deriveWeaponAttack(ch, { name: 'Dagger', damage: '1d4', properties: ['finesse', 'light', 'thrown'], attackType: 1, range: 20, longRange: 60 });
+  assert.strictEqual(a.ability, 'DEX');
+  assert.strictEqual(a.dice, '1d4+4');
+  const strong = deriveWeaponAttack({ ...ch, abilityModifiers: { STR: 4, DEX: 1 } }, { name: 'Dagger', damage: '1d4', properties: ['finesse'], attackType: 1 });
+  assert.strictEqual(strong.ability, 'STR');
+});
+
+test('R6: hand crossbow is ranged (DEX) with range 30/120', () => {
+  const xbow = { name: 'Crossbow, Hand', damage: '1d6', properties: ['ammunition', 'light', 'loading'], attackType: 2, range: 30, longRange: 120, weaponCategory: 'martial', weaponType: 'crossbow-hand' };
+  const a = deriveWeaponAttack({ abilityModifiers: { STR: 0, DEX: 3 }, level: 1, equipment: {} }, xbow);
+  assert.strictEqual(a.ranged, true);
+  assert.strictEqual(a.ability, 'DEX');
+  assert.strictEqual(a.reach, null);
+  assert.deepStrictEqual(a.range, { normal: 30, long: 120 });
+});
+
+test('R6: versatile warhammer rolls 1d10 with no shield and no off-hand item', () => {
+  const wh = { name: 'Warhammer', damage: '1d8', properties: ['versatile'], attackType: 1, versatileDamage: '1d10' };
+  const free = deriveWeaponAttack(r6Char({ equipment: { mainhand: wh, offhand: null } }), wh);
+  assert.strictEqual(free.dice, '1d10+3');
+  assert.strictEqual(free.versatile, true);
+  const shield = deriveWeaponAttack(r6Char({ equipment: { mainhand: wh, offhand: { name: 'Shield', armorTypeId: 4 } } }), wh);
+  assert.strictEqual(shield.dice, '1d8+3');
+  assert.strictEqual(shield.versatile, false);
+  const dual = deriveWeaponAttack(r6Char({ equipment: { mainhand: wh, offhand: { name: 'Dagger' } } }), wh);
+  assert.strictEqual(dual.dice, '1d8+3');
+});
+
+test('R6: versatile without an explicit die steps up one size', () => {
+  const qs = { name: 'Quarterstaff', damage: '1d6', properties: ['versatile'], attackType: 1 };
+  assert.strictEqual(deriveWeaponAttack(r6Char(), qs).dice, '1d8+3');
+  // Older rows with no properties keep the one-handed die.
+  assert.strictEqual(deriveWeaponAttack(r6Char(), { name: 'Warhammer', damage: '1d8' }).dice, '1d8+3');
+});
+
+test('R6: a Wizard with a greataxe gets no proficiency bonus', () => {
+  const wiz = parsedDdbFixture('wizard-l5');
+  const axe = { name: 'Greataxe', damage: '1d12', properties: ['heavy', 'two-handed'], attackType: 1, weaponCategory: 'martial', weaponType: 'greataxe' };
+  const a = deriveWeaponAttack(wiz, axe);
+  assert.strictEqual(a.proficient, false);
+  assert.strictEqual(a.bonus, wiz.abilityModifiers.STR);
+  // ...but keeps PB with the quarterstaff and light crossbow it is proficient in.
+  const qs = wiz.carried.find(c => c.name === 'Quarterstaff');
+  const xb = wiz.carried.find(c => c.name === 'Light Crossbow');
+  assert.strictEqual(deriveWeaponAttack(wiz, qs).proficient, true);
+  assert.strictEqual(deriveWeaponAttack(wiz, xb).proficient, true);
+});
+
+test('R6: category proficiencies cover simple/martial; slug spellings match', () => {
+  const fighter = parsedDdbFixture('fighter-l5');
+  const axe = { name: 'Greataxe', damage: '1d12', properties: ['heavy', 'two-handed'], attackType: 1, weaponCategory: 'martial', weaponType: 'greataxe' };
+  assert.strictEqual(deriveWeaponAttack(fighter, axe).proficient, true);
+  const rogue = { abilityModifiers: { STR: 0, DEX: 3 }, level: 1, equipment: {}, weaponProficiencies: ['simple-weapons', 'hand-crossbows', 'rapiers'] };
+  const xbow = { name: 'Crossbow, Hand', damage: '1d6', properties: ['ammunition'], attackType: 2, weaponCategory: 'martial', weaponType: 'crossbow-hand' };
+  assert.strictEqual(deriveWeaponAttack(rogue, xbow).proficient, true);
+  assert.strictEqual(deriveWeaponAttack(rogue, { name: 'Rapier', damage: '1d8', properties: ['finesse'], attackType: 1, weaponCategory: 'martial', weaponType: 'rapier' }).proficient, true);
+  assert.strictEqual(deriveWeaponAttack(rogue, { name: 'Longsword', damage: '1d8', properties: ['versatile'], attackType: 1, weaponCategory: 'martial', weaponType: 'longsword' }).proficient, false);
+  // Older weapon rows with no category fall back to the SRD name table.
+  assert.strictEqual(deriveWeaponAttack(rogue, { name: 'Dagger', damage: '1d4' }).proficient, true);
+  assert.strictEqual(deriveWeaponAttack(rogue, { name: 'Greatsword', damage: '2d6' }).proficient, false);
+});
+
+test('R6: magicBonus from the parser wins over the item name', () => {
+  const ch = r6Char();
+  const plusOne = { name: 'Longsword', damage: '1d8', properties: ['versatile'], attackType: 1, magicBonus: 1 };
+  const a = deriveWeaponAttack(ch, plusOne);
+  assert.strictEqual(a.magicBonus, 1);
+  assert.strictEqual(a.bonus, 3 + 3 + 1);
+  // Explicit 0 (e.g. unattuned) beats a "+2" in the name.
+  assert.strictEqual(deriveWeaponAttack(ch, { name: 'Mace +2', damage: '1d6', magicBonus: 0 }).magicBonus, 0);
+  // null (DDB listed no magic modifier) falls back to the name.
+  assert.strictEqual(deriveWeaponAttack(ch, { name: 'Mace +2', damage: '1d6', magicBonus: null }).magicBonus, 2);
+});
+
+test('R6: reach weapons report 10 ft reach; unarmed strike keeps its shape', () => {
+  const glaive = { name: 'Glaive', damage: '1d10', properties: ['heavy', 'reach', 'two-handed'], attackType: 1 };
+  assert.strictEqual(deriveWeaponAttack(r6Char(), glaive).reach, 10);
+  const u = deriveWeaponAttack(r6Char(), null);
+  assert.strictEqual(u.name, 'Unarmed Strike');
+  assert.strictEqual(u.proficient, true);
+});

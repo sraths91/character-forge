@@ -98,7 +98,11 @@
         },
         "damageType": "Bludgeoning",
         "attackType": 1,
-        "properties": []
+        "properties": [],
+        "categoryId": 1,
+        "isMonkWeapon": true,
+        "range": 5,
+        "longRange": 5
       }
     },
     {
@@ -155,6 +159,15 @@
         "type": "proficiency",
         "subType": "charisma-saving-throws",
         "componentId": 1
+      },
+      {
+        "type": "proficiency",
+        "subType": "simple-weapons",
+        "entityId": 1,
+        "entityTypeId": 660121713,
+        "componentId": 5200,
+        "componentTypeId": 12168134,
+        "friendlySubtypeName": "Simple Weapons"
       }
     ],
     "feat": [],

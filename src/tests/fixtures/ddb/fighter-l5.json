@@ -117,9 +117,14 @@
         "attackType": 1,
         "properties": [
           {
-            "name": "Versatile"
+            "name": "Versatile",
+            "notes": "1d10"
           }
-        ]
+        ],
+        "categoryId": 2,
+        "isMonkWeapon": false,
+        "range": 5,
+        "longRange": 5
       }
     },
     {
@@ -181,7 +186,9 @@
           }
         ],
         "range": 150,
-        "longRange": 600
+        "longRange": 600,
+        "categoryId": 2,
+        "isMonkWeapon": false
       }
     }
   ],
@@ -207,6 +214,24 @@
         "type": "proficiency",
         "subType": "constitution-saving-throws",
         "componentId": 1
+      },
+      {
+        "type": "proficiency",
+        "subType": "simple-weapons",
+        "entityId": 1,
+        "entityTypeId": 660121713,
+        "componentId": 5000,
+        "componentTypeId": 12168134,
+        "friendlySubtypeName": "Simple Weapons"
+      },
+      {
+        "type": "proficiency",
+        "subType": "martial-weapons",
+        "entityId": 2,
+        "entityTypeId": 660121713,
+        "componentId": 5000,
+        "componentTypeId": 12168134,
+        "friendlySubtypeName": "Martial Weapons"
       }
     ],
     "feat": [],

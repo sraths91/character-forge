@@ -133,7 +133,18 @@ const WEAPON_DICE = {
 };
 
 const FINESSE = new Set(['dagger', 'dart', 'rapier', 'scimitar', 'shortsword', 'whip']);
-const RANGED  = new Set(['shortbow', 'longbow', 'sling', 'crossbow', 'heavy crossbow', 'hand crossbow', 'heavycrossbow', 'dart', 'javelin']);
+// Name fallback for rows parsed before R6 (no `properties`). Dart and
+// javelin are thrown MELEE weapons, so they are not listed here: dart is
+// finesse (best of STR/DEX), javelin uses STR.
+const RANGED  = new Set(['shortbow', 'longbow', 'sling', 'crossbow', 'heavy crossbow', 'hand crossbow', 'heavycrossbow']);
+// SRD simple weapons (name keywords); everything else in WEAPON_DICE is martial.
+const SIMPLE_WEAPON_KEYS = new Set([
+  'club', 'dagger', 'greatclub', 'handaxe', 'javelin', 'light hammer', 'mace',
+  'quarterstaff', 'sickle', 'spear', 'crossbow', 'dart', 'shortbow', 'sling'
+]);
+// One die step up for a versatile weapon wielded two-handed when DDB gave
+// no explicit versatile die.
+const VERSATILE_STEP = { 4: 6, 6: 8, 8: 10, 10: 12 };
 
 /**
  * Derive a PC's primary attack: delegates to deriveWeaponAttack with the
@@ -147,19 +158,27 @@ export function deriveAttack(character) {
 
 /**
  * Derive attack stats for any specific weapon (equipped OR carried).
- * Used by M9 to render an attack chip next to every weapon line on the
- * sheet, not just the active main-hand.
  *
- *   - Damage die: prefer the parser-extracted `weapon.damage` (D&DB's
- *     `damage.diceString`). Fall back to WEAPON_DICE keyword lookup if
- *     missing or unparseable (e.g. homebrew with no damage record).
- *   - Ability mod: finesse weapons pick max(STR, DEX); ranged use DEX;
- *     everything else uses STR.
- *   - Magic bonus: +N from weapon.bonus or a "+N" prefix in the name.
- *   - Damage dice include ability mod + magic bonus in the modifier.
- *   - Attack bonus is ability mod + proficiency + magic bonus.
- *     (We assume PC has proficiency in their carried weapons; this is
- *     true for the overwhelming majority of imports.)
+ *   - Damage die: the parser's `weapon.damage` (DDB diceString), else the
+ *     WEAPON_DICE keyword table. A versatile weapon rolls its two-handed
+ *     die (`versatileDamage`, else one die step up) when the wielder has
+ *     no shield and nothing else in the off hand.
+ *   - Ability: from the R6 `properties` / `attackType` when present —
+ *     finesse → max(STR, DEX); ranged (attackType 2) → DEX; melee,
+ *     including thrown melee weapons like the javelin → STR. Rows without
+ *     those fields fall back to name keywords.
+ *   - Proficiency: from `character.weaponProficiencies` (category or
+ *     per-weapon slug). When the character carries no weapon-proficiency
+ *     data (older rows, hand-built test sheets) proficiency is assumed.
+ *   - Magic bonus: `weapon.magicBonus` (DDB grantedModifiers), else
+ *     `weapon.bonus`, else a "+N" in the name.
+ *
+ * @param {object} character — parsed character
+ * @param {object} weapon — equipment / carried weapon summary
+ * @returns {{name: string, bonus: number, dice: string, damageType: string|null,
+ *   ability: 'STR'|'DEX', proficient: boolean, ranged: boolean,
+ *   range: {normal: number, long: number}, reach: number|null, versatile: boolean,
+ *   magicBonus: number}}
  */
 export function deriveWeaponAttack(character, weapon) {
   const strMod = character?.abilityModifiers?.STR ?? 0;
@@ -171,34 +190,99 @@ export function deriveWeaponAttack(character, weapon) {
       name: 'Unarmed Strike',
       bonus: strMod + prof,
       dice: formatDice('1', strMod),
-      damageType: 'Bludgeoning'
+      damageType: 'Bludgeoning',
+      ability: 'STR', proficient: true, ranged: false,
+      range: { normal: 5, long: 5 }, reach: 5, versatile: false, magicBonus: 0
     };
   }
 
   const wn = String(weapon.name).toLowerCase();
   const key = Object.keys(WEAPON_DICE).find(k => wn.includes(k));
-  // Trust the parser's damage string when present; fall back to the
-  // keyword table only when the import didn't carry damage info.
-  const baseDice = weapon.damage || (key ? WEAPON_DICE[key] : '1d4');
-
-  // Finesse / ranged detection: prefer explicit weapon.properties when
-  // available, otherwise fall back to the name keyword.
   const props = Array.isArray(weapon.properties)
-    ? weapon.properties.map(p => String(p?.name || p || '').toLowerCase())
+    ? weapon.properties.map(p => String(p?.name ?? p ?? '').toLowerCase())
     : [];
-  const isFinesse = props.includes('finesse') || (key && FINESSE.has(key));
-  const isRanged  = props.includes('ranged')  || (key && RANGED.has(key));
+  const hasRulesData = props.length > 0 || weapon.attackType === 1 || weapon.attackType === 2;
 
-  const abilityMod = isRanged
-    ? dexMod
-    : (isFinesse ? Math.max(strMod, dexMod) : strMod);
+  const isFinesse = props.includes('finesse') || (!hasRulesData && !!key && FINESSE.has(key));
+  const isRanged = weapon.attackType === 2
+    || (weapon.attackType == null && (props.includes('ranged') || props.includes('ammunition')))
+    || (!hasRulesData && !!key && RANGED.has(key));
+
+  let ability = 'STR';
+  if (isFinesse) ability = dexMod > strMod ? 'DEX' : 'STR';
+  else if (isRanged) ability = 'DEX';
+  const abilityMod = ability === 'DEX' ? dexMod : strMod;
+
+  let baseDice = weapon.damage || (key ? WEAPON_DICE[key] : '1d4');
+  const versatile = !isRanged && props.includes('versatile') && bothHandsFree(character, weapon);
+  if (versatile) baseDice = weapon.versatileDamage || stepUpDie(baseDice);
+
+  const proficient = isProficientWith(character, weapon, key);
   const plus = magicBonus(weapon);
   return {
     name: weapon.name,
-    bonus: abilityMod + prof + plus,
+    bonus: abilityMod + (proficient ? prof : 0) + plus,
     dice: formatDice(baseDice, abilityMod + plus),
-    damageType: weapon.damageType || null
+    damageType: weapon.damageType || null,
+    ability,
+    proficient,
+    ranged: isRanged,
+    range: weaponRange(weapon, isRanged, props),
+    reach: isRanged ? null : (props.includes('reach') ? 10 : 5),
+    versatile,
+    magicBonus: plus
   };
+}
+
+/** True when nothing but `weapon` is held (no shield, no off-hand item). */
+function bothHandsFree(character, weapon) {
+  const off = character?.equipment?.offhand;
+  const main = character?.equipment?.mainhand;
+  if (!off) return true;
+  if (off.name !== weapon.name) return false;
+  // The weapon itself sits in the off hand; the main hand must be empty.
+  return !main || main.name === weapon.name;
+}
+
+function stepUpDie(dice) {
+  const m = String(dice || '').match(/^(\d+)d(\d+)$/);
+  if (!m) return dice;
+  const next = VERSATILE_STEP[Number(m[2])];
+  return next ? `${m[1]}d${next}` : dice;
+}
+
+/** Token set of a weapon slug: "hand-crossbows" and "crossbow-hand" match. */
+function slugTokens(s) {
+  return String(s || '').toLowerCase().split(/[^a-z0-9]+/).filter(Boolean)
+    .map(t => (t.length > 3 && t.endsWith('s') ? t.slice(0, -1) : t)).sort().join(' ');
+}
+
+function isProficientWith(character, weapon, key) {
+  const profs = character?.weaponProficiencies;
+  if (!Array.isArray(profs) || profs.length === 0) return true;   // no data: assume
+  const set = new Set(profs.map(p => String(p).toLowerCase()));
+  const category = weapon.weaponCategory
+    || (key ? (SIMPLE_WEAPON_KEYS.has(key) ? 'simple' : 'martial') : null);
+  if (category === 'simple' && set.has('simple-weapons')) return true;
+  if (category === 'martial' && set.has('martial-weapons')) return true;
+  const own = new Set([slugTokens(weapon.weaponType), slugTokens(weapon.name), key ? slugTokens(key) : ''].filter(Boolean));
+  for (const p of set) if (own.has(slugTokens(p))) return true;
+  // Unknown weapon (homebrew with no category or slug match): assume.
+  return category == null && !key;
+}
+
+/**
+ * Normal/long range in feet. Ranged and thrown weapons use DDB's
+ * range/longRange; melee is 5 ft (10 with reach).
+ */
+function weaponRange(weapon, isRanged, props) {
+  const normal = Number(weapon.range);
+  const long = Number(weapon.longRange);
+  if ((isRanged || props.includes('thrown')) && normal > 0) {
+    return { normal, long: long > 0 ? long : normal };
+  }
+  const reach = props.includes('reach') ? 10 : 5;
+  return { normal: reach, long: reach };
 }
 
 // M18 — Spellcasting stats.
@@ -267,6 +351,7 @@ export function saveBonus(character, stat) {
 
 function magicBonus(weapon) {
   if (!weapon) return 0;
+  if (typeof weapon.magicBonus === 'number') return weapon.magicBonus;
   if (typeof weapon.bonus === 'number') return weapon.bonus;
   const m = String(weapon.name || '').match(/\+(\d)/);
   return m ? parseInt(m[1], 10) : 0;
