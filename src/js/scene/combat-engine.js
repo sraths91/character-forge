@@ -209,6 +209,11 @@ async function resolveTurn(attacker, enemies, allies, scene, rng, prompts, ctx) 
     }
     return;
   }
+  const healsAlly = plan?.kind === 'cast' && plan?.targetSide === 'ally';
+  if (prompts.forcePlan && !isAlive(target) && !healsAlly) {
+    emitEvent(ctx, 'turn.rejected', { actorId, code: 'target-down', reason: `${target.name || idOf(target)} is down` });
+    return;
+  }
 
   // M31 — Movement step before the attack. M32: if the profile said
   // 'flee', the attacker moves AWAY from the nearest threat instead of
@@ -253,6 +258,10 @@ async function resolveTurn(attacker, enemies, allies, scene, rng, prompts, ctx) 
           emitEvent(ctx, 'resource.spent', { entityId: idOf(triggerer), resource: 'reaction', level: null });
         }
       }
+      // M64 T6 — re-check after the reaction awaits: a creature dropped
+      // by an opportunity attack (or a DM edit during a prompt) stops
+      // where it stood.
+      if (!isAlive(attacker)) return;
       if (attacker.kind === 'pc') attacker._position = next;
       else attacker.position = next;
       emitEvent(ctx, 'move', {
@@ -263,6 +272,11 @@ async function resolveTurn(attacker, enemies, allies, scene, rng, prompts, ctx) 
 
   // Fleeing creatures Dash instead of attacking
   if (plan && plan.kind === 'flee') return;
+  // M64 T6 — the target may have dropped while we awaited reactions.
+  if (!isAlive(target) && !healsAlly && !(plan && (plan.kind === 'dash' || plan.kind === 'dodge' || plan.kind === 'disengage'))) {
+    emitEvent(ctx, 'turn.skipped', { actorId, reason: 'target-down' });
+    return;
+  }
   // M42 — Non-attack PC actions skip the resolver entirely.
   if (plan && (plan.kind === 'dash' || plan.kind === 'dodge' || plan.kind === 'disengage')) {
     return;
@@ -396,6 +410,8 @@ async function resolveTurn(attacker, enemies, allies, scene, rng, prompts, ctx) 
     atk.shielded = true;
   }
   emitAttackRolled(ctx, group, attacker, target, atk, { weapon: weaponUsed?.name ?? null, isReaction: false, mode: verdict.d20.mode, bonus: finalBonus });
+  // M64 T6 — re-check after the Shield await (a DM edit can land there).
+  if (!isAlive(attacker) || !isAlive(target)) return;
   const modifiers = {
     sneak: sneakDice > 0,
     reckless: !!plan?.featuresFired?.includes('reckless-attack'),
@@ -506,6 +522,10 @@ export async function runMonsterSpell({ attacker, target, plan, scene: _scene, r
   // paints the spell-cast cinema motion before resolution lands).
   if (prompts.onCastBegin) {
     await prompts.onCastBegin({ attacker, target, plan, spell });
+    // M64 T6 — re-check after the await: a dead caster's spell is lost;
+    // a dropped single target wastes it (heals may still land on 0 HP).
+    if (!isAlive(attacker)) return;
+    if (!spell.aoe && spell.kind !== 'heal' && !isAlive(target)) return;
   }
 
   // M34.1 — Counterspell witness loop.
@@ -519,7 +539,8 @@ export async function runMonsterSpell({ attacker, target, plan, scene: _scene, r
     const { answer, by } = normalizeAnswer(prompts.onCounterspell
       ? await prompts.onCounterspell({ witness, caster: attacker, spell, autoAnswer: auto })
       : auto, !!prompts.onCounterspell);
-    const used = answer && canCastCounterspell(witness);
+    // M64 T6 — re-checked after the await, including both creatures' HP.
+    const used = answer && canCastCounterspell(witness) && isAlive(witness) && isAlive(attacker);
     emitEvent(ctx, 'reaction.resolved', { reactorId: witnessId, kind: 'counterspell', used, by }, group);
     if (!used) continue;
     const ability = abilityModFor(witness, abilityForCounterer(witness));
@@ -568,6 +589,7 @@ export async function runMonsterSpell({ attacker, target, plan, scene: _scene, r
       emitEvent(ctx, 'spell.fizzled', { casterId, reason: 'shield', spellId: String(plan.spellId), targetId: idOf(target) }, group);
       return;
     }
+    if (!isAlive(attacker) || !isAlive(target)) return;
     const darts = spell.darts || 1;
     let totalDmg = 0;
     for (let i = 0; i < darts; i++) {
@@ -596,6 +618,7 @@ export async function runMonsterSpell({ attacker, target, plan, scene: _scene, r
       return;
     }
     emitAttackRolled(ctx, group, attacker, target, atk, { weapon: null, isReaction: false, mode: 'normal', bonus: effectiveBook.attackBonus, spellId: String(plan.spellId) });
+    if (!isAlive(attacker) || !isAlive(target)) return;
     if (!atk.hit) {
       await castCinema(target, { dmg: 0, miss: true });
       return;
@@ -738,6 +761,7 @@ export async function runReactionAttack(attacker, target, targetBeforePos, scene
   emitAttackRolled(ctx, group, attacker, target, atk, {
     weapon: weaponUsed?.name ?? null, isReaction: true, mode: verdict.d20.mode, bonus: verdict.attackBonus.total
   });
+  if (!isAlive(attacker) || !isAlive(target)) return;
   // M56 Phase 4 — opportunity attacks dramatize through the same
   // onCinemaRound prompt, tagged reaction: true.
   if (!atk.hit) {
@@ -866,7 +890,8 @@ async function askReactionAttack(triggerer, mover, trigger, prompts, ctx) {
     ? await prompts.onReactionAttack({ triggerer, mover, kind: trigger, autoAnswer: true })
     : true, !!prompts.onReactionAttack);
   // M64 N1 — gate the answer: the triggerer must still have its reaction.
-  const used = answer && hasReactionAvailable(triggerer);
+  // M64 T6 — and both creatures must still be standing after the await.
+  const used = answer && hasReactionAvailable(triggerer) && isAlive(triggerer) && isAlive(mover);
   emitEvent(ctx, 'reaction.resolved', { reactorId, kind: 'oa', used, by });
   return used;
 }
@@ -916,7 +941,7 @@ async function askShield(defender, atk, info, prompts, ctx = NO_CTX, group = nul
   const { answer, by } = normalizeAnswer(prompts.onShieldReaction
     ? await prompts.onShieldReaction({ defender, atk, ...info, autoAnswer: auto })
     : auto, !!prompts.onShieldReaction);
-  const used = answer && shieldCanBlock(defender, atk);
+  const used = answer && shieldCanBlock(defender, atk) && isAlive(defender);
   emitEvent(ctx, 'reaction.resolved', { reactorId, kind: 'shield', used, by }, group);
   return used;
 }
