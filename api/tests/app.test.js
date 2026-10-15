@@ -32,7 +32,7 @@ test('boots on port 0, serves /api/health, and closes cleanly', async () => {
   assert.equal(res.status, 200);
   const body = await res.json();
   assert.equal(body.ok, true);
-  assert.equal(body.migrationVersion, 1);
+  assert.equal(body.migrationVersion, 2);
   assert.equal(body.dataDir, srv.dir);
   await srv.close();
   await srv.close(); // idempotent
@@ -123,7 +123,7 @@ test('/api/health reports an injected dataDir', async () => {
   try {
     const body = await (await fetch(`${srv.url}/api/health`)).json();
     assert.deepEqual({ ok: body.ok, migrationVersion: body.migrationVersion, dataDir: body.dataDir },
-      { ok: true, migrationVersion: 1, dataDir: '/app/data' });
+      { ok: true, migrationVersion: 2, dataDir: '/app/data' });
     assert.equal(typeof body.time, 'number');
   } finally {
     await srv.close();

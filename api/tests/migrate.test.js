@@ -30,11 +30,15 @@ function openFile(dir, name = 'test.db') {
   db.pragma('foreign_keys = ON');
   return db;
 }
+// Copies only the baseline so these tests can plant their own 0002+ files.
 function migrationsCopy(dir) {
   const target = mkdtempSync(join(dir, 'migrations-'));
-  for (const f of readdirSync(MIGRATIONS_DIR)) copyFileSync(join(MIGRATIONS_DIR, f), join(target, f));
+  copyFileSync(join(MIGRATIONS_DIR, '0001_baseline.sql'), join(target, '0001_baseline.sql'));
   return target;
 }
+const SHIPPED = loadMigrations();
+const LATEST = SHIPPED[SHIPPED.length - 1].version;
+const SHIPPED_NAMES = SHIPPED.map(m => m.name);
 function tableNames(db) {
   return db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name")
     .all().map(r => r.name);
@@ -51,13 +55,13 @@ test('fresh DB: all tables created, version recorded, no backup taken', async ()
   const dir = tempDir();
   const db = openFile(dir);
   const res = await runMigrations(db, { log: quiet });
-  assert.deepEqual(res.applied, ['0001_baseline.sql']);
-  assert.equal(res.version, 1);
+  assert.deepEqual(res.applied, SHIPPED_NAMES);
+  assert.equal(res.version, LATEST);
   assert.equal(res.backupPath, null);
-  assert.deepEqual(tableNames(db), ['characters', 'item_sprites', 'monsters', 'schema_migrations']);
-  assert.equal(getMigrationVersion(db), 1);
-  assert.equal(db.pragma('user_version', { simple: true }), 1);
-  const row = db.prepare('SELECT version, name, checksum, applied_at FROM schema_migrations').get();
+  for (const t of ['characters', 'item_sprites', 'monsters', 'schema_migrations']) assert.ok(tableNames(db).includes(t), t);
+  assert.equal(getMigrationVersion(db), LATEST);
+  assert.equal(db.pragma('user_version', { simple: true }), LATEST);
+  const row = db.prepare('SELECT version, name, checksum, applied_at FROM schema_migrations ORDER BY version').get();
   assert.equal(row.name, '0001_baseline.sql');
   assert.match(row.checksum, /^[a-f0-9]{64}$/);
   assert.ok(row.applied_at > 0);
@@ -72,7 +76,7 @@ test('re-running is a no-op', async () => {
   const before = db.prepare('SELECT * FROM schema_migrations').all();
   const res = await runMigrations(db, { log: quiet });
   assert.deepEqual(res.applied, []);
-  assert.equal(res.version, 1);
+  assert.equal(res.version, LATEST);
   assert.deepEqual(db.prepare('SELECT * FROM schema_migrations').all(), before);
   db.close();
 });
@@ -115,7 +119,7 @@ test('v0 database keeps its rows, is backed up, and reads through the query API'
 
   const db = openFile(dir, 'character-forge.db');
   const res = await runMigrations(db, { log: quiet });
-  assert.deepEqual(res.applied, ['0001_baseline.sql']);
+  assert.deepEqual(res.applied, SHIPPED_NAMES);
   assert.equal(res.backupPath, `${path}.pre-0001.bak`);
   assert.ok(existsSync(res.backupPath));
 
@@ -150,7 +154,7 @@ test('a database newer than the code refuses to boot', async () => {
   const db = openFile(dir);
   await runMigrations(db, { log: quiet });
   db.prepare("INSERT INTO schema_migrations (version, name, checksum, applied_at) VALUES (9999, '9999_future.sql', 'x', 1)").run();
-  await assert.rejects(runMigrations(db, { log: quiet }), /version 9999 but this code only knows up to 1/);
+  await assert.rejects(runMigrations(db, { log: quiet }), new RegExp(`version 9999 but this code only knows up to ${LATEST}`));
   db.close();
 });
 
@@ -186,7 +190,7 @@ test('in-memory DBs migrate without a backup', async () => {
   const db = new Database(':memory:');
   db.exec(V0_SCHEMA);
   const res = await runMigrations(db, { log: quiet });
-  assert.equal(res.version, 1);
+  assert.equal(res.version, LATEST);
   assert.equal(res.backupPath, null);
   db.close();
 });
@@ -217,7 +221,7 @@ test('openDb migrates, exposes the version, and refuses a newer DB', async () =>
   const path = join(dir, 'open.db');
   const h = await openDb(path, { log: quiet });
   assert.equal(h.path, path);
-  assert.equal(h.migrationVersion(), 1);
+  assert.equal(h.migrationVersion(), LATEST);
   assert.equal(h.db.pragma('journal_mode', { simple: true }), 'wal');
   assert.equal(h.db.pragma('foreign_keys', { simple: true }), 1);
   h.db.prepare("INSERT INTO schema_migrations (version, name, checksum, applied_at) VALUES (42, '0042_x.sql', 'x', 1)").run();
