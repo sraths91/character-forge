@@ -9,6 +9,8 @@ import { createRoomRegistry } from './rooms/registry.js';
 import { createStubEngine } from './rooms/engine-port.js';
 import { createSqliteJournal } from './rooms/persistence.js';
 import { attachGateway } from './ws/gateway.js';
+import { createJanitor } from './lib/janitor.js';
+import { dirname, resolve } from 'node:path';
 
 /**
  * @param {object} o
@@ -24,10 +26,11 @@ import { attachGateway } from './ws/gateway.js';
  * @param {object} [o.gatewayOpts]  heartbeatMs, helloTimeoutMs, rate, ...
  * @param {object} [o.serverOpts]   handleSignals, exit, drainTimeoutMs
  * @param {object} [o.roomOpts]     now / setTimer / clearTimer for rooms
+ * @param {object|false} [o.janitorOpts]  createJanitor overrides, or false to disable
  */
 export async function startMultiplayerServer({
   db, env = process.env, dataDir, port = 0, host, log = defaultLog,
-  engine = createStubEngine(), journal, appOpts = {}, gatewayOpts = {}, serverOpts = {}, roomOpts = {}
+  engine = createStubEngine(), journal, appOpts = {}, gatewayOpts = {}, serverOpts = {}, roomOpts = {}, janitorOpts = {}
 }) {
   const service = createRoomService({ db });
   const jr = journal || createSqliteJournal({ db: db.db, log });
@@ -38,6 +41,9 @@ export async function startMultiplayerServer({
   if (recovered) log('info', 'rooms recovered', { rooms: recovered });
   const app = createApp({ db, env, dataDir, log, rooms: service, ...appOpts });
   app.locals.health = () => ({ sockets: registry.socketCount(), rooms: registry.size });
+  const janitor = janitorOpts === false ? null
+    : createJanitor({ db, dataDir: dataDir ?? (db.path && db.path !== ':memory:' ? dirname(resolve(db.path)) : null), registry, log, ...janitorOpts });
+  janitor?.start();
   let gateway = null;
   const srv = await startServer({
     db, env, dataDir, port, host, log, app, ...serverOpts,
@@ -48,12 +54,13 @@ export async function startMultiplayerServer({
     // the close handshakes and terminates stragglers; then start.js runs
     // server.close and closes the DB (WAL checkpoint).
     onClose: async () => {
+      janitor?.stop();
       registry.shutdown();
       if (gateway) await gateway.close();
     }
   });
   gateway = attachGateway({ httpServer: srv.httpServer, registry, service, env, log, ...gatewayOpts });
-  return { ...srv, service, registry, gateway, engine, journal: jr };
+  return { ...srv, service, registry, gateway, engine, journal: jr, janitor };
 }
 
 function defaultLog(level, msg, extra = {}) {
