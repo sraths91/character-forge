@@ -21,7 +21,8 @@
     "cors": "^2.8.5",
     "express": "^4.21.1",
     "express-rate-limit": "^7.4.1",
-    "three": "^0.160.0"
+    "three": "^0.160.0",
+    "ws": "^8.22.0"
   },
   "devDependencies": {
     "@gltf-transform/core": "^4.4.1",
