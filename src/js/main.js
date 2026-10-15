@@ -47,7 +47,6 @@ import {
 import {
   resetReactionsForAll, shouldCastShield, consumeShield
 } from './scene/reactions.js';
-import { rollInnateRecharges } from './scene/monster-spells.js';
 import { promptReaction } from './scene/reaction-prompt.js';
 import { createCinema, phaseAt } from './anim/cinema.js';
 import { buildMotion, motionForWeapon } from './anim/weapon-motions.js';
@@ -900,10 +899,8 @@ async function runVersusPartyAuto() {
     // M33.0 — refresh every combatant's reaction at the top of the round.
     resetReactionsForAll(partyComposedCharacters);
     resetReactionsForAll(currentScene.monsters || []);
-    // M39 — roll recharge for any innate-cast monsters
-    for (const m of (currentScene.monsters || [])) {
-      if (m._innate) rollInnateRecharges(m);
-    }
+    // M39 — innate recharge is rolled by the engine at the start of each
+    // monster's turn (combat-engine runOneAttack); no per-round roll here.
     for (const entry of order) {
       if (!versusActive) return;
       const entity = resolveEntityById(entry.entityId, entry.entityKind);
