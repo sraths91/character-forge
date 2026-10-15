@@ -35,7 +35,7 @@
       "type": "resource.spent",
       "round": 1,
       "turnId": "t1",
-      "cinemaGroup": null,
+      "cinemaGroup": "t1.x1",
       "payload": {
         "entityId": "pc-cleric",
         "resource": "spell-slot",
@@ -44,20 +44,77 @@
     },
     {
       "seq": 4,
+      "type": "spell.cast",
+      "round": 1,
+      "turnId": "t1",
+      "cinemaGroup": "t1.x1",
+      "payload": {
+        "casterId": "pc-cleric",
+        "spellId": "cure-wounds",
+        "castAtLevel": 2,
+        "slotSpent": 2,
+        "innate": false,
+        "targetIds": [
+          "pc-fighter"
+        ]
+      }
+    },
+    {
+      "seq": 5,
       "type": "heal",
       "round": 1,
       "turnId": "t1",
-      "cinemaGroup": null,
+      "cinemaGroup": "t1.x1",
       "payload": {
         "sourceId": "pc-cleric",
         "targetId": "pc-fighter",
         "amount": 10,
         "hpBefore": 10,
-        "hpAfter": 20
+        "hpAfter": 20,
+        "rolled": 10
       }
     },
     {
-      "seq": 5,
+      "seq": 6,
+      "type": "exchange",
+      "round": 1,
+      "turnId": "t1",
+      "cinemaGroup": "t1.x1",
+      "payload": {
+        "exchangeId": "t1.x1",
+        "attackerId": "pc-cleric",
+        "defenderId": "pc-fighter",
+        "reaction": false,
+        "cast": true,
+        "roll": null,
+        "damage": {
+          "amount": 0,
+          "heal": 10
+        },
+        "effects": [
+          {
+            "entityId": "pc-fighter",
+            "hp": {
+              "before": 10,
+              "after": 20,
+              "max": 44
+            }
+          }
+        ],
+        "miss": false,
+        "weapon": null,
+        "spellId": "cure-wounds",
+        "outcome": {
+          "heal": 10
+        },
+        "cinema": {
+          "fxSeed": 1423472275,
+          "killing": false
+        }
+      }
+    },
+    {
+      "seq": 7,
       "type": "turn.ended",
       "round": 1,
       "turnId": "t1",
@@ -69,7 +126,7 @@
       }
     },
     {
-      "seq": 6,
+      "seq": 8,
       "type": "turn.started",
       "round": 2,
       "turnId": "t2",
@@ -79,7 +136,7 @@
       }
     },
     {
-      "seq": 7,
+      "seq": 9,
       "type": "plan.chosen",
       "round": 2,
       "turnId": "t2",
@@ -97,11 +154,11 @@
       }
     },
     {
-      "seq": 8,
+      "seq": 10,
       "type": "resource.spent",
       "round": 2,
       "turnId": "t2",
-      "cinemaGroup": null,
+      "cinemaGroup": "t2.x1",
       "payload": {
         "entityId": "pc-cleric",
         "resource": "spell-slot",
@@ -109,21 +166,78 @@
       }
     },
     {
-      "seq": 9,
+      "seq": 11,
+      "type": "spell.cast",
+      "round": 2,
+      "turnId": "t2",
+      "cinemaGroup": "t2.x1",
+      "payload": {
+        "casterId": "pc-cleric",
+        "spellId": "healing-word",
+        "castAtLevel": 3,
+        "slotSpent": 3,
+        "innate": false,
+        "targetIds": [
+          "pc-fighter"
+        ]
+      }
+    },
+    {
+      "seq": 12,
       "type": "heal",
       "round": 2,
       "turnId": "t2",
-      "cinemaGroup": null,
+      "cinemaGroup": "t2.x1",
       "payload": {
         "sourceId": "pc-cleric",
         "targetId": "pc-fighter",
         "amount": 14,
         "hpBefore": 20,
-        "hpAfter": 34
+        "hpAfter": 34,
+        "rolled": 14
       }
     },
     {
-      "seq": 10,
+      "seq": 13,
+      "type": "exchange",
+      "round": 2,
+      "turnId": "t2",
+      "cinemaGroup": "t2.x1",
+      "payload": {
+        "exchangeId": "t2.x1",
+        "attackerId": "pc-cleric",
+        "defenderId": "pc-fighter",
+        "reaction": false,
+        "cast": true,
+        "roll": null,
+        "damage": {
+          "amount": 0,
+          "heal": 14
+        },
+        "effects": [
+          {
+            "entityId": "pc-fighter",
+            "hp": {
+              "before": 20,
+              "after": 34,
+              "max": 44
+            }
+          }
+        ],
+        "miss": false,
+        "weapon": null,
+        "spellId": "healing-word",
+        "outcome": {
+          "heal": 14
+        },
+        "cinema": {
+          "fxSeed": 462812900,
+          "killing": false
+        }
+      }
+    },
+    {
+      "seq": 14,
       "type": "turn.ended",
       "round": 2,
       "turnId": "t2",

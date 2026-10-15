@@ -17,11 +17,10 @@
  *   { t: 'legendary', entityId }                      blocked on E1 T7 (throws)
  *   { t: 'dm.roll.arm', p }                           blocked on E1 T8 (throws)
  *
- * The engine does not emit events yet (E1 T4). Until it does, this runner
- * DERIVES catalogue-v1 events by diffing a projection of every wrapper
- * before and after each step; every derived event is checked with
- * validateEvent. When T4 lands, capture `ctx.emit` instead and re-bless
- * the goldens once. Since T5 the wrappers come from the real
+ * Since M64 T4 the engine emits its own catalogue-v1 events through
+ * `ctx.emit`; the runner stamps seq/round/turnId and checks every event
+ * with validateEvent. Only the harness-level steps (turn.started/ended,
+ * the DM patch) are still produced here. Since T5 the wrappers come from the real
  * encounter-adapters (toEngineSides) and every step's state is projected
  * back through applyEngineSides, validated and hashed.
  *
@@ -207,8 +206,8 @@ export async function runScenario({ name, state, intents }) {
   let seq = state.lastEventSeq;
   let round = state.round;
   let turnNo = 0;
-  const emit = (type, payload, turnId) => {
-    const ev = { seq: ++seq, type, round, turnId, cinemaGroup: null, payload };
+  const emit = (type, payload, turnId, cinemaGroup = null) => {
+    const ev = { seq: ++seq, type, round, turnId, cinemaGroup, payload };
     const v = validateEvent(ev);
     if (!v.ok) throw new Error(`${name}: derived ${type} event is invalid: ${JSON.stringify(v.errors)}`);
     events.push(ev);
@@ -230,23 +229,17 @@ export async function runScenario({ name, state, intents }) {
       if (!actor) throw new Error(`${where}: unknown actor ${step.actorId}`);
       const turnId = `t${++turnNo}`;
       const drawsBefore = draws;
-      const lastPlanBefore = actor._lastPlan;
       emit('turn.started', { actorId: actor.id }, turnId);
       const allies = wrappers.filter(w => sideOf(w.id) === sideOf(actor.id));
       const enemies = wrappers.filter(w => sideOf(w.id) !== sideOf(actor.id));
       const prompts = step.t === 'turn.act' ? { forcePlan: toForcePlan(actor, step.plan) } : {};
-      await runOneAttack(actor, enemies, allies, scene, rng, prompts);
-      const plan = actor._lastPlan;
-      if (plan && plan !== lastPlanBefore) {
-        emit('plan.chosen', {
-          actorId: actor.id, kind: plan.kind, targetId: plan.targetId ?? null,
-          source: step.t === 'turn.delegate' ? 'ai' : (actor.kind === 'pc' ? 'player' : 'dm'),
-          weapon: plan.weapon?.name ?? null, spellId: plan.spellId ?? null,
-          castAtLevel: plan.castAtLevel ?? null, featuresFired: [...(plan.featuresFired || [])],
-          archetype: plan.archetype ?? null
-        }, turnId);
-      }
-      for (const [type, payload] of diffEvents(before, projectAll(wrappers), actor.id)) emit(type, payload, turnId);
+      // M64 T4 — the engine's own events, captured through ctx.emit.
+      const ctx = {
+        turnId,
+        ...(step.t === 'turn.act' ? { planSource: actor.kind === 'pc' ? 'player' : 'dm' } : {}),
+        emit: (ev) => emit(ev.type, ev.payload, turnId, ev.cinemaGroup)
+      };
+      await runOneAttack(actor, enemies, allies, scene, rng, prompts, ctx);
       emit('turn.ended', { actorId: actor.id, stateHash: stateHash(), rngDraws: draws - drawsBefore }, turnId);
     } else if (step.t === 'dm.entity.patch') {
       const p = step.p;

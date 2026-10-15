@@ -32,21 +32,96 @@
     },
     {
       "seq": 3,
-      "type": "damage",
+      "type": "attack.rolled",
       "round": 1,
       "turnId": "t1",
-      "cinemaGroup": null,
+      "cinemaGroup": "t1.x1",
       "payload": {
-        "sourceId": "pc-fighter",
+        "attackerId": "pc-fighter",
         "targetId": "m-gob",
-        "amount": 4,
-        "type": null,
-        "hpBefore": 7,
-        "hpAfter": 3
+        "weapon": "Longsword",
+        "isReaction": false,
+        "advantage": "normal",
+        "d20": [
+          13
+        ],
+        "kept": 13,
+        "bonus": 6,
+        "total": 19,
+        "ac": 15,
+        "hit": true,
+        "crit": false,
+        "shielded": false
       }
     },
     {
       "seq": 4,
+      "type": "damage",
+      "round": 1,
+      "turnId": "t1",
+      "cinemaGroup": "t1.x1",
+      "payload": {
+        "sourceId": "pc-fighter",
+        "targetId": "m-gob",
+        "amount": 4,
+        "type": "Slashing",
+        "hpBefore": 7,
+        "hpAfter": 3,
+        "rolled": 4,
+        "parts": {
+          "weapon": 4
+        }
+      }
+    },
+    {
+      "seq": 5,
+      "type": "exchange",
+      "round": 1,
+      "turnId": "t1",
+      "cinemaGroup": "t1.x1",
+      "payload": {
+        "exchangeId": "t1.x1",
+        "attackerId": "pc-fighter",
+        "defenderId": "m-gob",
+        "reaction": false,
+        "cast": false,
+        "roll": {
+          "total": 19,
+          "hit": true,
+          "crit": false,
+          "shielded": false
+        },
+        "damage": {
+          "amount": 4,
+          "type": "Slashing",
+          "crit": false
+        },
+        "effects": [
+          {
+            "entityId": "m-gob",
+            "hp": {
+              "before": 7,
+              "after": 3,
+              "max": 7
+            }
+          }
+        ],
+        "miss": false,
+        "weapon": "Longsword",
+        "modifiers": {
+          "sneak": false,
+          "reckless": false,
+          "surge": false,
+          "smiteSlot": null
+        },
+        "cinema": {
+          "fxSeed": 1423472275,
+          "killing": false
+        }
+      }
+    },
+    {
+      "seq": 6,
       "type": "turn.ended",
       "round": 1,
       "turnId": "t1",

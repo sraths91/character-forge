@@ -32,10 +32,37 @@
     },
     {
       "seq": 3,
+      "type": "reaction.offered",
+      "round": 1,
+      "turnId": "t1",
+      "cinemaGroup": "t1.x1",
+      "payload": {
+        "reactorId": "pc-wizard",
+        "kind": "shield",
+        "autoAnswer": true,
+        "deadlineMs": null,
+        "attackTotal": 15
+      }
+    },
+    {
+      "seq": 4,
+      "type": "reaction.resolved",
+      "round": 1,
+      "turnId": "t1",
+      "cinemaGroup": "t1.x1",
+      "payload": {
+        "reactorId": "pc-wizard",
+        "kind": "shield",
+        "used": true,
+        "by": "auto"
+      }
+    },
+    {
+      "seq": 5,
       "type": "resource.spent",
       "round": 1,
       "turnId": "t1",
-      "cinemaGroup": null,
+      "cinemaGroup": "t1.x1",
       "payload": {
         "entityId": "pc-wizard",
         "resource": "reaction",
@@ -43,11 +70,11 @@
       }
     },
     {
-      "seq": 4,
+      "seq": 6,
       "type": "resource.spent",
       "round": 1,
       "turnId": "t1",
-      "cinemaGroup": null,
+      "cinemaGroup": "t1.x1",
       "payload": {
         "entityId": "pc-wizard",
         "resource": "spell-slot",
@@ -55,7 +82,78 @@
       }
     },
     {
-      "seq": 5,
+      "seq": 7,
+      "type": "attack.rolled",
+      "round": 1,
+      "turnId": "t1",
+      "cinemaGroup": "t1.x1",
+      "payload": {
+        "attackerId": "m-bugbear",
+        "targetId": "pc-wizard",
+        "weapon": "Morningstar",
+        "isReaction": false,
+        "advantage": "normal",
+        "d20": [
+          11
+        ],
+        "kept": 11,
+        "bonus": 4,
+        "total": 15,
+        "ac": 12,
+        "hit": false,
+        "crit": false,
+        "shielded": true
+      }
+    },
+    {
+      "seq": 8,
+      "type": "exchange",
+      "round": 1,
+      "turnId": "t1",
+      "cinemaGroup": "t1.x1",
+      "payload": {
+        "exchangeId": "t1.x1",
+        "attackerId": "m-bugbear",
+        "defenderId": "pc-wizard",
+        "reaction": false,
+        "cast": false,
+        "roll": {
+          "total": 15,
+          "hit": false,
+          "crit": false,
+          "shielded": true
+        },
+        "damage": {
+          "amount": 0,
+          "type": null,
+          "crit": false
+        },
+        "effects": [
+          {
+            "entityId": "pc-wizard",
+            "hp": {
+              "before": 32,
+              "after": 32,
+              "max": 32
+            }
+          }
+        ],
+        "miss": true,
+        "weapon": "Morningstar",
+        "modifiers": {
+          "sneak": false,
+          "reckless": false,
+          "surge": false,
+          "smiteSlot": null
+        },
+        "cinema": {
+          "fxSeed": 1423472275,
+          "killing": false
+        }
+      }
+    },
+    {
+      "seq": 9,
       "type": "turn.ended",
       "round": 1,
       "turnId": "t1",
@@ -67,7 +165,7 @@
       }
     },
     {
-      "seq": 6,
+      "seq": 10,
       "type": "turn.started",
       "round": 1,
       "turnId": "t2",
@@ -77,7 +175,7 @@
       }
     },
     {
-      "seq": 7,
+      "seq": 11,
       "type": "plan.chosen",
       "round": 1,
       "turnId": "t2",
@@ -95,22 +193,97 @@
       }
     },
     {
-      "seq": 8,
+      "seq": 12,
+      "type": "attack.rolled",
+      "round": 1,
+      "turnId": "t2",
+      "cinemaGroup": "t2.x1",
+      "payload": {
+        "attackerId": "m-gob",
+        "targetId": "pc-wizard",
+        "weapon": "Scimitar",
+        "isReaction": false,
+        "advantage": "normal",
+        "d20": [
+          19
+        ],
+        "kept": 19,
+        "bonus": 4,
+        "total": 23,
+        "ac": 12,
+        "hit": true,
+        "crit": false,
+        "shielded": false
+      }
+    },
+    {
+      "seq": 13,
       "type": "damage",
       "round": 1,
       "turnId": "t2",
-      "cinemaGroup": null,
+      "cinemaGroup": "t2.x1",
       "payload": {
         "sourceId": "m-gob",
         "targetId": "pc-wizard",
         "amount": 7,
         "type": null,
         "hpBefore": 32,
-        "hpAfter": 25
+        "hpAfter": 25,
+        "rolled": 7,
+        "parts": {
+          "weapon": 7
+        }
       }
     },
     {
-      "seq": 9,
+      "seq": 14,
+      "type": "exchange",
+      "round": 1,
+      "turnId": "t2",
+      "cinemaGroup": "t2.x1",
+      "payload": {
+        "exchangeId": "t2.x1",
+        "attackerId": "m-gob",
+        "defenderId": "pc-wizard",
+        "reaction": false,
+        "cast": false,
+        "roll": {
+          "total": 23,
+          "hit": true,
+          "crit": false,
+          "shielded": false
+        },
+        "damage": {
+          "amount": 7,
+          "type": null,
+          "crit": false
+        },
+        "effects": [
+          {
+            "entityId": "pc-wizard",
+            "hp": {
+              "before": 32,
+              "after": 25,
+              "max": 32
+            }
+          }
+        ],
+        "miss": false,
+        "weapon": "Scimitar",
+        "modifiers": {
+          "sneak": false,
+          "reckless": false,
+          "surge": false,
+          "smiteSlot": null
+        },
+        "cinema": {
+          "fxSeed": 462812900,
+          "killing": false
+        }
+      }
+    },
+    {
+      "seq": 15,
       "type": "turn.ended",
       "round": 1,
       "turnId": "t2",

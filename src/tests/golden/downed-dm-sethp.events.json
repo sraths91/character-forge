@@ -32,31 +32,107 @@
     },
     {
       "seq": 3,
+      "type": "attack.rolled",
+      "round": 1,
+      "turnId": "t1",
+      "cinemaGroup": "t1.x1",
+      "payload": {
+        "attackerId": "m-gob-a",
+        "targetId": "pc-fighter",
+        "weapon": "Scimitar",
+        "isReaction": false,
+        "advantage": "normal",
+        "d20": [
+          15
+        ],
+        "kept": 15,
+        "bonus": 4,
+        "total": 19,
+        "ac": 18,
+        "hit": true,
+        "crit": false,
+        "shielded": false
+      }
+    },
+    {
+      "seq": 4,
       "type": "damage",
       "round": 1,
       "turnId": "t1",
-      "cinemaGroup": null,
+      "cinemaGroup": "t1.x1",
       "payload": {
         "sourceId": "m-gob-a",
         "targetId": "pc-fighter",
         "amount": 2,
         "type": null,
         "hpBefore": 2,
-        "hpAfter": 0
-      }
-    },
-    {
-      "seq": 4,
-      "type": "entity.downed",
-      "round": 1,
-      "turnId": "t1",
-      "cinemaGroup": null,
-      "payload": {
-        "entityId": "pc-fighter"
+        "hpAfter": 0,
+        "rolled": 3,
+        "parts": {
+          "weapon": 3
+        }
       }
     },
     {
       "seq": 5,
+      "type": "entity.downed",
+      "round": 1,
+      "turnId": "t1",
+      "cinemaGroup": "t1.x1",
+      "payload": {
+        "entityId": "pc-fighter",
+        "byId": "m-gob-a"
+      }
+    },
+    {
+      "seq": 6,
+      "type": "exchange",
+      "round": 1,
+      "turnId": "t1",
+      "cinemaGroup": "t1.x1",
+      "payload": {
+        "exchangeId": "t1.x1",
+        "attackerId": "m-gob-a",
+        "defenderId": "pc-fighter",
+        "reaction": false,
+        "cast": false,
+        "roll": {
+          "total": 19,
+          "hit": true,
+          "crit": false,
+          "shielded": false
+        },
+        "damage": {
+          "amount": 3,
+          "type": null,
+          "crit": false
+        },
+        "effects": [
+          {
+            "entityId": "pc-fighter",
+            "hp": {
+              "before": 2,
+              "after": 0,
+              "max": 44
+            }
+          }
+        ],
+        "miss": false,
+        "weapon": "Scimitar",
+        "modifiers": {
+          "sneak": false,
+          "reckless": false,
+          "surge": false,
+          "smiteSlot": null
+        },
+        "cinema": {
+          "fxSeed": 1423472275,
+          "killing": true
+        }
+      }
+    },
+    {
+      "seq": 7,
       "type": "turn.ended",
       "round": 1,
       "turnId": "t1",
@@ -68,7 +144,7 @@
       }
     },
     {
-      "seq": 6,
+      "seq": 8,
       "type": "turn.started",
       "round": 1,
       "turnId": "t2",
@@ -78,7 +154,7 @@
       }
     },
     {
-      "seq": 7,
+      "seq": 9,
       "type": "plan.chosen",
       "round": 1,
       "turnId": "t2",
@@ -96,7 +172,18 @@
       }
     },
     {
-      "seq": 8,
+      "seq": 10,
+      "type": "turn.skipped",
+      "round": 1,
+      "turnId": "t2",
+      "cinemaGroup": null,
+      "payload": {
+        "actorId": "m-gob-b",
+        "reason": "no-target"
+      }
+    },
+    {
+      "seq": 11,
       "type": "turn.ended",
       "round": 1,
       "turnId": "t2",
@@ -108,7 +195,7 @@
       }
     },
     {
-      "seq": 9,
+      "seq": 12,
       "type": "dm.override",
       "round": 1,
       "turnId": null,
@@ -121,7 +208,7 @@
       }
     },
     {
-      "seq": 10,
+      "seq": 13,
       "type": "turn.started",
       "round": 2,
       "turnId": "t3",
@@ -131,7 +218,7 @@
       }
     },
     {
-      "seq": 11,
+      "seq": 14,
       "type": "plan.chosen",
       "round": 2,
       "turnId": "t3",
@@ -149,22 +236,97 @@
       }
     },
     {
-      "seq": 12,
+      "seq": 15,
+      "type": "attack.rolled",
+      "round": 2,
+      "turnId": "t3",
+      "cinemaGroup": "t3.x1",
+      "payload": {
+        "attackerId": "pc-fighter",
+        "targetId": "m-gob-a",
+        "weapon": "Longsword",
+        "isReaction": false,
+        "advantage": "normal",
+        "d20": [
+          10
+        ],
+        "kept": 10,
+        "bonus": 6,
+        "total": 16,
+        "ac": 15,
+        "hit": true,
+        "crit": false,
+        "shielded": false
+      }
+    },
+    {
+      "seq": 16,
       "type": "damage",
       "round": 2,
       "turnId": "t3",
-      "cinemaGroup": null,
+      "cinemaGroup": "t3.x1",
       "payload": {
         "sourceId": "pc-fighter",
         "targetId": "m-gob-a",
         "amount": 4,
-        "type": null,
+        "type": "Slashing",
         "hpBefore": 7,
-        "hpAfter": 3
+        "hpAfter": 3,
+        "rolled": 4,
+        "parts": {
+          "weapon": 4
+        }
       }
     },
     {
-      "seq": 13,
+      "seq": 17,
+      "type": "exchange",
+      "round": 2,
+      "turnId": "t3",
+      "cinemaGroup": "t3.x1",
+      "payload": {
+        "exchangeId": "t3.x1",
+        "attackerId": "pc-fighter",
+        "defenderId": "m-gob-a",
+        "reaction": false,
+        "cast": false,
+        "roll": {
+          "total": 16,
+          "hit": true,
+          "crit": false,
+          "shielded": false
+        },
+        "damage": {
+          "amount": 4,
+          "type": "Slashing",
+          "crit": false
+        },
+        "effects": [
+          {
+            "entityId": "m-gob-a",
+            "hp": {
+              "before": 7,
+              "after": 3,
+              "max": 7
+            }
+          }
+        ],
+        "miss": false,
+        "weapon": "Longsword",
+        "modifiers": {
+          "sneak": false,
+          "reckless": false,
+          "surge": false,
+          "smiteSlot": null
+        },
+        "cinema": {
+          "fxSeed": 1318168309,
+          "killing": false
+        }
+      }
+    },
+    {
+      "seq": 18,
       "type": "turn.ended",
       "round": 2,
       "turnId": "t3",

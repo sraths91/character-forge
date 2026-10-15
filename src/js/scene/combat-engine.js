@@ -59,57 +59,63 @@ import {
 } from './concentration.js';
 import { rollSave } from './save-rolls.js';
 import { MONSTER_DEFAULT_SAVES } from './monster-presets.js';
+import {
+  NO_CTX, canEmit, emitEvent, nextCinemaGroup, fxSeedOf, idOf, normalizeAnswer
+} from './engine-events.js';
 
 // =====================================================================
 // runOneAttack — single-entity-turn entry point
 // =====================================================================
 
 /**
- * Resolve one entity's full turn: planner → movement → attack/cast.
- *
- * The simulator calls this for each entity in initiative order. The live
- * runner can use the same call path (passing async prompt callbacks for
- * the player-facing reactions). All side-effects land on the entity +
- * target records the caller already owns — no globals.
- *
- * @param {object} attacker — Entity wrapper { kind, ref, hp, ac, ... }
- * @param {object[]} enemies — opposing side's wrappers
- * @param {object[]} allies — same-side wrappers
- * @param {object} scene
- * @param {function} rng
- * @param {object} [prompts] — optional async callbacks for UI flows.
- *   Reserved for the live-runner migration; the simulator passes none.
- */
-/**
  * @typedef {object} EnginePrompts
- * @property {function} [onShieldReaction]  — async ({ defender, atk, weapon, spell?, autoAnswer }) → boolean
+ * @property {object} [forcePlan] — a pre-built plan (manual play / DM);
+ *   skips AI planning.
+ * @property {function} [onShieldReaction]  — async ({ defender, atk, weapon, spell?, autoAnswer }) → boolean|{answer, by}
  *   Offered only when the defender can actually cast Shield and +5 AC
  *   would turn the hit into a miss. Fires for weapon attacks, OAs,
  *   spell attacks (`spell` set) and Magic Missile (`spell` set; `atk` is
  *   `{ hit: true, crit: false, total: null, autoHit: true }`).
- * @property {function} [onCounterspell]    — async ({ witness, caster, spell, autoAnswer }) → boolean
+ * @property {function} [onCounterspell]    — async ({ witness, caster, spell, autoAnswer }) → boolean|{answer, by}
  *   Offered only to witnesses for whom canCastCounterspell() is true.
- * @property {function} [onReactionAttack]  — async ({ triggerer, mover, kind, autoAnswer }) → boolean
+ * @property {function} [onReactionAttack]  — async ({ triggerer, mover, kind, autoAnswer }) → boolean|{answer, by}
  *
  * M64 N1 — reaction answers are GATED: a `true` answer is re-checked
  * against the reactor's eligibility (canCastShield / canCastCounterspell
  * / hasReactionAvailable) after the await resolves, so no caller — a
  * dialog, a socket, a bug — can grant a reaction the creature lacks.
- * @property {function} [onCinemaRound]     — async ({ attacker, defender, plan, atk, dmg, crit }) → void
- * @property {function} [onCastBegin]       — async ({ attacker, target, plan }) → void
+ * M64 T4 — an answer may be `{ answer, by }` (the prompt adapter) so the
+ * reaction.resolved event records who answered.
+ * @property {function} [onCinemaRound]     — async ({ attacker, defender, plan, atk, dmg, crit, … }) → void
+ * @property {function} [onCastBegin]       — async ({ attacker, target, plan, spell }) → void
  *
  * Every callback is optional. The simulator passes {} so existing tests
- * see identical behaviour. The live runner passes real callbacks that
- * pop reaction dialogs, dramatize cinema rounds, etc.
- *
- * Each callback receives an `autoAnswer` field (where applicable) — the
- * value the simulator's heuristic would have chosen — so an auto-fight
- * UI can short-circuit prompts when configured.
+ * see identical behaviour. Each reaction callback receives `autoAnswer`
+ * — the value the engine's heuristic would have chosen.
  */
 
-export async function runOneAttack(attacker, enemies, allies, scene, rng, prompts = {}) {
+/**
+ * Resolve one entity's full turn: planner → movement → attack/cast.
+ *
+ * The simulator calls this for each entity in initiative order; the live
+ * runner and the server go through the same call (with prompt callbacks
+ * for player-facing reactions). All side-effects land on the wrappers
+ * the caller passes in — no globals.
+ *
+ * @param {object} attacker — Entity wrapper { kind, ref, hp, ac, ... }
+ * @param {object[]} enemies — opposing side's wrappers
+ * @param {object[]} allies — same-side wrappers
+ * @param {object} scene — { cols, rows, flankingEnabled, … }
+ * @param {function} rng — () → [0, 1); required
+ * @param {EnginePrompts} [prompts] — optional async callbacks
+ * @param {object} [ctx] — M64 T4: optional `{ emit, turnId, planSource,
+ *   reactionDeadlineMs }`; `ctx.emit(ev)` receives every catalogue-v1
+ *   event `{type, payload, cinemaGroup}` synchronously (engine-events.js).
+ * @returns {Promise<void>}
+ */
+export async function runOneAttack(attacker, enemies, allies, scene, rng, prompts = {}, ctx = NO_CTX) {
   try {
-    return await resolveTurn(attacker, enemies, allies, scene, rng, prompts);
+    return await resolveTurn(attacker, enemies, allies, scene, rng, prompts || {}, ctx || NO_CTX);
   } finally {
     // M64 T5 — the planner's MCTS context (`_mctsTargetCtx`, a copy of the
     // target entity) is transient: it never outlives the turn, so wrappers
@@ -120,12 +126,11 @@ export async function runOneAttack(attacker, enemies, allies, scene, rng, prompt
   }
 }
 
-async function resolveTurn(attacker, enemies, allies, scene, rng, prompts) {
+async function resolveTurn(attacker, enemies, allies, scene, rng, prompts, ctx) {
+  const actorId = idOf(attacker);
   // M37 — At the start of each monster's turn, roll d6 for any innate
-  // spells that are cooling down. The recharged-list isn't surfaced in
-  // the simulator path (we have no log here); main.js can read it for
-  // versus. M64 T2 — this is the single source of the per-turn recharge
-  // roll; callers (the live runner included) must not roll it again.
+  // spells that are cooling down. M64 T2 — this is the single source of
+  // the per-turn recharge roll; callers must not roll it again.
   if (attacker.kind === 'monster' && attacker._innate) {
     rollInnateRecharges(attacker, rng);
   }
@@ -137,19 +142,19 @@ async function resolveTurn(attacker, enemies, allies, scene, rng, prompts) {
   // (kind + targetId + weapon/spell) and the engine resolves it as-is.
   let plan = null;
   let target;
+  let planSource = 'ai';
   if (prompts.forcePlan) {
     plan = prompts.forcePlan;
+    planSource = ctx.planSource || (attacker.kind === 'pc' ? 'player' : 'dm');
     attacker._lastPlan = plan;
     // M51.1 — Set BOTH the resolution weapon (_chosenWeapon) AND the
     // display/movement weapon (attacker.weapon) so a player-chosen weapon
-    // (e.g. the warhammer) drives reach, the to-hit/damage in the log,
-    // and the cinema — not just the damage roll. Without updating
-    // attacker.weapon the log mislabeled the swing with the mainhand.
+    // drives reach, the to-hit/damage in the log, and the cinema.
     if (plan.weapon) { attacker._chosenWeapon = plan.weapon; attacker.weapon = plan.weapon; }
     if (plan.targetSide === 'ally') {
-      target = allies.find(a => String(a.id) === String(plan.targetId));
+      target = allies.find(a => sameId(a.id, plan.targetId));
     } else if (plan.targetId) {
-      target = enemies.find(e => String(e.id) === String(plan.targetId));
+      target = enemies.find(e => sameId(e.id, plan.targetId));
     } else {
       target = pickTarget(enemies);
     }
@@ -177,13 +182,33 @@ async function resolveTurn(attacker, enemies, allies, scene, rng, prompts) {
       rng
     });
     attacker._lastPlan = plan;
-    // M51.1 — keep the display/movement weapon in sync with the AI's pick
-    // so weapon switches show correctly in the live cinema + attack log.
+    // M51.1 — keep the display/movement weapon in sync with the AI's pick.
     if (plan?.weapon) { attacker._chosenWeapon = plan.weapon; attacker.weapon = plan.weapon; }
     if (plan?.targetId) target = enemies.find(e => sameId(e.id, plan.targetId));
     else target = pickTarget(enemies);
   }
-  if (!target) return;
+  if (plan && canEmit(ctx)) {
+    emitEvent(ctx, 'plan.chosen', {
+      actorId, kind: String(plan.kind), targetId: plan.targetId != null ? String(plan.targetId) : null,
+      source: planSource,
+      weapon: plan.weapon?.name ?? null,
+      spellId: plan.spellId ?? null,
+      castAtLevel: Number.isInteger(plan.castAtLevel) ? plan.castAtLevel : null,
+      featuresFired: [...(plan.featuresFired || [])],
+      archetype: plan.archetype ?? null
+    });
+  }
+  if (!target) {
+    if (prompts.forcePlan) {
+      emitEvent(ctx, 'turn.rejected', {
+        actorId, code: 'target-not-found',
+        reason: `target ${plan?.targetId ?? '(none)'} is not a valid ${plan?.targetSide === 'ally' ? 'ally' : 'enemy'}`
+      });
+    } else {
+      emitEvent(ctx, 'turn.skipped', { actorId, reason: 'no-target' });
+    }
+    return;
+  }
 
   // M31 — Movement step before the attack. M32: if the profile said
   // 'flee', the attacker moves AWAY from the nearest threat instead of
@@ -214,30 +239,25 @@ async function resolveTurn(attacker, enemies, allies, scene, rng, prompts) {
       });
       for (const { triggerer } of leaveTriggers) {
         if (!isAlive(attacker)) break;
-        // M45 Phase 4b — Optional prompt. Default (simulator path) is
-        // "always fire the OA"; live runner returns false to skip when
-        // the player declines to spend their reaction.
-        const fire = prompts.onReactionAttack
-          ? await prompts.onReactionAttack({ triggerer, mover: attacker, kind: 'leave', autoAnswer: true })
-          : true;
-        // M64 N1 — gate the answer: the triggerer must still have its reaction.
-        if (fire && hasReactionAvailable(triggerer)) {
-          await runReactionAttack(triggerer, attacker, attackerPos, scene, rng, prompts);
+        if (await askReactionAttack(triggerer, attacker, 'leave', prompts, ctx)) {
+          await runReactionAttack(triggerer, attacker, attackerPos, scene, rng, prompts, ctx);
           consumeReaction(triggerer);
+          emitEvent(ctx, 'resource.spent', { entityId: idOf(triggerer), resource: 'reaction', level: null });
         }
       }
       for (const { triggerer } of entryTriggers) {
         if (!isAlive(attacker)) break;
-        const fire = prompts.onReactionAttack
-          ? await prompts.onReactionAttack({ triggerer, mover: attacker, kind: 'entry', autoAnswer: true })
-          : true;
-        if (fire && hasReactionAvailable(triggerer)) {
-          await runReactionAttack(triggerer, attacker, next, scene, rng, prompts);
+        if (await askReactionAttack(triggerer, attacker, 'entry', prompts, ctx)) {
+          await runReactionAttack(triggerer, attacker, next, scene, rng, prompts, ctx);
           consumeReaction(triggerer);
+          emitEvent(ctx, 'resource.spent', { entityId: idOf(triggerer), resource: 'reaction', level: null });
         }
       }
       if (attacker.kind === 'pc') attacker._position = next;
       else attacker.position = next;
+      emitEvent(ctx, 'move', {
+        actorId, from: { col: attackerPos.col, row: attackerPos.row }, to: { col: next.col, row: next.row }
+      });
     }
   }
 
@@ -262,7 +282,7 @@ async function resolveTurn(attacker, enemies, allies, scene, rng, prompts) {
       attacker, target: castTarget, plan, scene, rng,
       witnesses: enemies.filter(isAlive).filter(e => e.kind === 'pc'),
       allEnemies: enemies,
-      prompts
+      prompts, ctx
     });
     return;
   }
@@ -287,10 +307,12 @@ async function resolveTurn(attacker, enemies, allies, scene, rng, prompts) {
       const lvl = (attacker.ref.classes || []).find(c => /rogue/i.test(c.name))?.level || 1;
       sneakDice = Math.max(1, Math.ceil(lvl / 2));
       PC_FEATURES['sneak-attack'].consume(attacker);
+      emitEvent(ctx, 'feature.used', { entityId: actorId, featureId: 'sneak-attack' });
     }
     // M42.1 — Reckless Attack
     if (plan?.featuresFired?.includes('reckless-attack')) {
       PC_FEATURES['reckless-attack'].consume(attacker);
+      emitEvent(ctx, 'feature.used', { entityId: actorId, featureId: 'reckless-attack' });
     }
   } else {
     attackStats = {
@@ -330,10 +352,11 @@ async function resolveTurn(attacker, enemies, allies, scene, rng, prompts) {
   } else if (attacker.kind === 'monster' && target?._recklessUntilNextTurn) {
     advantageOverride = 'advantage';
   }
+  const weaponUsed = attacker.kind === 'pc' ? attacker.weapon : { name: attacker.attack.name };
   const verdict = resolveAttack({
     attacker: attackerForResolver,
     target: targetForResolver,
-    weapon: attacker.kind === 'pc' ? attacker.weapon : { name: attacker.attack.name },
+    weapon: weaponUsed,
     scene,
     attackerKind: attacker.kind,
     targetKind: target.kind,
@@ -344,8 +367,17 @@ async function resolveTurn(attacker, enemies, allies, scene, rng, prompts) {
     attackStats
   });
 
-  if (verdict.autoMiss) return;
+  if (verdict.autoMiss) {
+    if (prompts.forcePlan) {
+      emitEvent(ctx, 'turn.rejected', {
+        actorId, code: 'blocked', reason: (verdict.blockers || []).join('; ') || 'attack not possible'
+      });
+    }
+    return;
+  }
 
+  const group = nextCinemaGroup(ctx);
+  const targetHpBefore = target.hp;
   const finalBonus = verdict.attackBonus.total;
   const finalDmgDice = sneakDice > 0
     ? `${verdict.damage.dice}+${sneakDice}d6`
@@ -357,57 +389,68 @@ async function resolveTurn(attacker, enemies, allies, scene, rng, prompts) {
     atk = rollAttack({ bonus: finalBonus, advantage: verdict.d20.mode, targetAC: target.ac }, rng);
   }
   // M33.1 — Shield reaction (target casts AFTER the roll lands).
-  // M45 Phase 4b — Optional prompt. Simulator path keeps the auto-cast
-  // heuristic; live runner can override via prompts.onShieldReaction.
   // M64 N1 — offered only when Shield could block it; answer gated.
-  if (await askShield(target, atk, { weapon: attacker.weapon }, prompts)) {
-    consumeShield(target);
+  if (await askShield(target, atk, { weapon: attacker.weapon }, prompts, ctx, group)) {
+    spendShield(target, ctx, group);
     atk.hit = false;
     atk.shielded = true;
   }
+  emitAttackRolled(ctx, group, attacker, target, atk, { weapon: weaponUsed?.name ?? null, isReaction: false, mode: verdict.d20.mode, bonus: finalBonus });
+  const modifiers = {
+    sneak: sneakDice > 0,
+    reckless: !!plan?.featuresFired?.includes('reckless-attack'),
+    surge: !!plan?.featuresFired?.includes('action-surge'),
+    smiteSlot: null
+  };
   if (!atk.hit) {
     // Dispatch a cinema round for the miss too — the live runner uses
     // this to dramatize the swing even when no damage lands.
-    if (prompts.onCinemaRound) {
-      await prompts.onCinemaRound({
-        attacker, defender: target, plan, atk, dmg: 0, crit: false, miss: true
-      });
-    }
+    await dispatchCinema(prompts, ctx, group, {
+      attacker, defender: target, plan, atk, dmg: 0, crit: false, miss: true
+    }, { reaction: false, cast: false, targetHpBefore, modifiers });
     return;
   }
   const dmg = rollDamage(finalDmgDice, { crit: atk.crit }, rng);
+  const hpBeforeHit = target.hp;
   target.hp = Math.max(0, target.hp - dmg.total);
   attacker.damageDealt += dmg.total;
+  emitDamage(ctx, group, attacker, target, hpBeforeHit, dmg.total, verdict.damage.damageType ?? null,
+    { weapon: dmg.total, ...(sneakDice > 0 ? { sneakDice } : {}) });
 
   // M42.1 — Divine Smite
   let smiteTotal = 0;
   if (attacker.kind === 'pc' && plan?.featuresFired?.includes('divine-smite')) {
     PC_FEATURES['divine-smite'].consume(attacker, rng);
     const slotLevel = attacker._smiteSlotUsed || 1;
+    modifiers.smiteSlot = slotLevel;
+    emitEvent(ctx, 'feature.used', { entityId: actorId, featureId: 'divine-smite' }, group);
+    if (attacker._smiteSlotUsed) {
+      emitEvent(ctx, 'resource.spent', { entityId: actorId, resource: 'spell-slot', level: attacker._smiteSlotUsed }, group);
+    }
     let smiteDice = Math.min(5, 2 + (slotLevel - 1));
     const tType = String(target?.ref?.race?.name || target?.presetSlug || '').toLowerCase();
     if (/fiend|devil|demon|undead|zombie|skeleton|vampire|ghoul/.test(tType)) smiteDice += 1;
     const smiteRoll = rollDamage(`${smiteDice}d8`, { crit: atk.crit }, rng);
+    const hpBeforeSmite = target.hp;
     target.hp = Math.max(0, target.hp - smiteRoll.total);
     attacker.damageDealt += smiteRoll.total;
     smiteTotal = smiteRoll.total;
+    emitDamage(ctx, group, attacker, target, hpBeforeSmite, smiteRoll.total, 'Radiant', { smite: smiteRoll.total });
   }
 
-  // M45 Phase 4b — Dramatize the resolved exchange. Live runner uses
-  // this to play the cinema motion; simulator passes nothing.
-  if (prompts.onCinemaRound) {
-    await prompts.onCinemaRound({
-      attacker, defender: target, plan, atk,
-      dmg: dmg.total + smiteTotal, crit: !!atk.crit, miss: false
-    });
-  }
+  // M45 Phase 4b — Dramatize the resolved exchange.
+  await dispatchCinema(prompts, ctx, group, {
+    attacker, defender: target, plan, atk,
+    dmg: dmg.total + smiteTotal, crit: !!atk.crit, miss: false
+  }, { reaction: false, cast: false, targetHpBefore, modifiers, damageType: verdict.damage.damageType ?? null });
 
   // M42 — Action Surge: a second action right now.
   if (plan?.featuresFired?.includes('action-surge') && !attacker._surgeFiredThisTurn) {
     attacker._surgeFiredThisTurn = true;
     PC_FEATURES['action-surge'].consume(attacker);
+    emitEvent(ctx, 'feature.used', { entityId: actorId, featureId: 'action-surge' });
     if (isAlive(attacker) && sideAlive(enemies) > 0) {
-      await runOneAttack(attacker, enemies, allies, scene, rng, prompts);
+      await runOneAttack(attacker, enemies, allies, scene, rng, prompts, ctx);
     }
     attacker._surgeFiredThisTurn = false;
   }
@@ -417,7 +460,7 @@ async function resolveTurn(attacker, enemies, allies, scene, rng, prompts) {
 // runMonsterSpell — spell casting (both monster + PC)
 // =====================================================================
 
-export async function runMonsterSpell({ attacker, target, plan, scene: _scene, rng, witnesses = [], allEnemies = [], prompts = {} }) {
+export async function runMonsterSpell({ attacker, target, plan, scene: _scene, rng, witnesses = [], allEnemies = [], prompts = {}, ctx = NO_CTX }) {
   void _scene;
   const baseSpell = spellById(plan.spellId);
   if (!baseSpell) return;
@@ -430,62 +473,88 @@ export async function runMonsterSpell({ attacker, target, plan, scene: _scene, r
     ? pcSpellBook(attacker, baseSpell) : null;
   const effectiveBook = book || innateBook || pcBook;
   if (!effectiveBook) return;
+  const casterId = idOf(attacker);
+  const group = nextCinemaGroup(ctx);
 
-  if (spell.concentration && isConcentrating(attacker)) dropConcentration(attacker);
+  if (spell.concentration && isConcentrating(attacker)) {
+    const dropped = dropConcentration(attacker);
+    emitEvent(ctx, 'concentration.broken', { casterId, spellId: String(dropped?.spellId), reason: 'recast' }, group);
+  }
 
+  let slotSpent = null;
   if (plan.isInnate) {
     if (!attacker._innate) attacker._innate = freshInnateState(attacker.presetSlug);
     consumeInnate(attacker, plan.spellId);
+    emitEvent(ctx, 'resource.spent', { entityId: casterId, resource: `innate:${plan.spellId}`, level: null }, group);
   } else {
+    const lvl = baseSpell.level > 0 ? Math.max(baseSpell.level, plan.castAtLevel || baseSpell.level) : 0;
+    const had = lvl > 0 ? (attacker._slots?.[lvl] ?? 0) : 0;
     consumeSlot(attacker._slots, baseSpell, plan.castAtLevel);
+    if (lvl > 0 && had > 0) {
+      slotSpent = lvl;
+      emitEvent(ctx, 'resource.spent', { entityId: casterId, resource: 'spell-slot', level: lvl }, group);
+    }
   }
+  emitEvent(ctx, 'spell.cast', {
+    casterId, spellId: String(plan.spellId),
+    castAtLevel: Math.max(spell.level || 0, plan.castAtLevel || 0),
+    slotSpent, innate: !!plan.isInnate,
+    targetIds: target ? [idOf(target)] : []
+  }, group);
 
-  // M45 Phase 4b — Cast announcement (live runner uses this to log the
-  // cast + paint the spell-cast cinema motion before resolution lands).
+  // M45 Phase 4b — Cast announcement (live runner logs the cast and
+  // paints the spell-cast cinema motion before resolution lands).
   if (prompts.onCastBegin) {
     await prompts.onCastBegin({ attacker, target, plan, spell });
   }
 
-  // M34.1 — Counterspell witness loop. M45 Phase 4b — Optional prompt:
-  // the auto path uses the witness's heuristic, the live runner can
-  // pop a dialog asking the player whether to spend their reaction.
+  // M34.1 — Counterspell witness loop.
   for (const witness of witnesses) {
     // M64 N1 — only eligible witnesses are asked, and a `true` answer is
-    // re-checked after the await (the witness may have spent its
-    // reaction or slot meanwhile; a remote answer is never trusted).
+    // re-checked after the await.
     if (!canCastCounterspell(witness)) continue;
     const auto = shouldCounterspell(witness, spell.level);
-    const fire = prompts.onCounterspell
+    const witnessId = idOf(witness);
+    emitEvent(ctx, 'reaction.offered', offeredPayload(ctx, witnessId, 'counterspell', auto, { casterId, spellId: String(plan.spellId) }), group);
+    const { answer, by } = normalizeAnswer(prompts.onCounterspell
       ? await prompts.onCounterspell({ witness, caster: attacker, spell, autoAnswer: auto })
-      : auto;
-    if (!fire || !canCastCounterspell(witness)) continue;
+      : auto, !!prompts.onCounterspell);
+    const used = answer && canCastCounterspell(witness);
+    emitEvent(ctx, 'reaction.resolved', { reactorId: witnessId, kind: 'counterspell', used, by }, group);
+    if (!used) continue;
     const ability = abilityModFor(witness, abilityForCounterer(witness));
     const result = resolveCounterspell({ spellLevel: spell.level, counterMod: ability }, rng);
-    consumeCounterspell(witness);
-    if (result.countered) return;
+    const lvl = consumeCounterspell(witness);
+    emitEvent(ctx, 'resource.spent', { entityId: witnessId, resource: 'reaction', level: null }, group);
+    if (lvl) emitEvent(ctx, 'resource.spent', { entityId: witnessId, resource: 'spell-slot', level: lvl }, group);
+    if (result.countered) {
+      emitEvent(ctx, 'spell.countered', {
+        casterId, counterId: witnessId,
+        check: result.mode === 'check' ? { d20: result.d20, total: result.total, dc: result.dc } : null
+      }, group);
+      emitEvent(ctx, 'spell.fizzled', { casterId, reason: 'counterspell', spellId: String(plan.spellId) }, group);
+      return;
+    }
     break;
   }
 
   // M56 Phase 2 — Every resolved cast dramatizes through the same
   // onCinemaRound prompt as weapon swings, tagged `cast: true` with a
-  // per-kind `outcome` payload. Shield-negated casts dispatch nothing
-  // (the cast fizzles silently; a fizzle cinema is deferred). Guarded
-  // exactly like the weapon path so the simulator's prompts:{} hot
-  // loop is untouched.
-  const castCinema = async (defender, outcome) => {
-    if (!prompts.onCinemaRound) return;
-    await prompts.onCinemaRound({
-      attacker, defender, plan, spell, cast: true, outcome
-    });
-  };
+  // per-kind `outcome` payload. Shield-negated casts dispatch no cinema
+  // (M64 T4: they emit spell.fizzled instead).
+  const castCinema = (defender, outcome, extra = {}) => dispatchCinema(prompts, ctx, group, {
+    attacker, defender, plan, spell, cast: true, outcome
+  }, { reaction: false, cast: true, targetHpBefore: extra.hpBefore ?? defender?.hp, spellId: String(plan.spellId), outcome, effects: extra.effects });
 
   if (spell.kind === 'heal') {
     const dmgRoll = rollDamage(spell.dice, { crit: false }, rng);
     const mod = spell.addsAbilityMod ? (effectiveBook.abilityMod || 0) : 0;
     const heal = dmgRoll.total + mod;
     if (target?.hpMax > 0) {
+      const before = target.hp;
       target.hp = Math.min(target.hpMax, target.hp + heal);
-      await castCinema(target, { heal });
+      emitEvent(ctx, 'heal', { sourceId: casterId, targetId: idOf(target), amount: target.hp - before, hpBefore: before, hpAfter: target.hp, rolled: heal }, group);
+      await castCinema(target, { heal }, { hpBefore: before });
     }
     return;
   }
@@ -494,8 +563,9 @@ export async function runMonsterSpell({ attacker, target, plan, scene: _scene, r
     // Shield (PHB p275) blocks Magic Missile outright. M64 N1 — routed
     // through onShieldReaction like every other Shield window.
     const mmAtk = { hit: true, crit: false, total: null, autoHit: true };
-    if (await askShield(target, mmAtk, { weapon: null, spell }, prompts)) {
-      consumeShield(target);
+    if (await askShield(target, mmAtk, { weapon: null, spell }, prompts, ctx, group)) {
+      spendShield(target, ctx, group);
+      emitEvent(ctx, 'spell.fizzled', { casterId, reason: 'shield', spellId: String(plan.spellId), targetId: idOf(target) }, group);
       return;
     }
     const darts = spell.darts || 1;
@@ -504,9 +574,10 @@ export async function runMonsterSpell({ attacker, target, plan, scene: _scene, r
       const r = rollDamage(spell.perDart, { crit: false }, rng);
       totalDmg += r.total;
     }
-    applyDamageToEntity(target, totalDmg, rng);
+    const before = target.hp;
+    applyDamageToEntity(target, totalDmg, rng, ctx, { source: attacker, type: spell.damageType ?? null, parts: { darts }, group });
     attacker.damageDealt += totalDmg;
-    await castCinema(target, { dmg: totalDmg, darts });
+    await castCinema(target, { dmg: totalDmg, darts }, { hpBefore: before });
     return;
   }
 
@@ -516,18 +587,24 @@ export async function runMonsterSpell({ attacker, target, plan, scene: _scene, r
       advantage: 'normal',
       targetAC: target.ac
     }, rng);
-    if (await askShield(target, atk, { weapon: null, spell }, prompts)) {
-      consumeShield(target);
+    if (await askShield(target, atk, { weapon: null, spell }, prompts, ctx, group)) {
+      spendShield(target, ctx, group);
+      atk.hit = false;
+      atk.shielded = true;
+      emitAttackRolled(ctx, group, attacker, target, atk, { weapon: null, isReaction: false, mode: 'normal', bonus: effectiveBook.attackBonus, spellId: String(plan.spellId) });
+      emitEvent(ctx, 'spell.fizzled', { casterId, reason: 'shield', spellId: String(plan.spellId), targetId: idOf(target) }, group);
       return;
     }
+    emitAttackRolled(ctx, group, attacker, target, atk, { weapon: null, isReaction: false, mode: 'normal', bonus: effectiveBook.attackBonus, spellId: String(plan.spellId) });
     if (!atk.hit) {
       await castCinema(target, { dmg: 0, miss: true });
       return;
     }
     const dmg = rollDamage(spell.dice, { crit: atk.crit }, rng);
-    applyDamageToEntity(target, dmg.total, rng);
+    const before = target.hp;
+    applyDamageToEntity(target, dmg.total, rng, ctx, { source: attacker, type: spell.damageType ?? null, group });
     attacker.damageDealt += dmg.total;
-    await castCinema(target, { dmg: dmg.total, crit: !!atk.crit });
+    await castCinema(target, { dmg: dmg.total, crit: !!atk.crit }, { hpBefore: before });
     return;
   }
 
@@ -544,22 +621,25 @@ export async function runMonsterSpell({ attacker, target, plan, scene: _scene, r
         if (chebyshevFeet(center, ep) > (spell.range || 15)) continue;
         const eBonus = saveBonusFor(e, spell.saveStat);
         const eSave = rollSave({ bonus: eBonus, dc: effectiveBook.dc }, rng);
+        emitSave(ctx, group, e, spell.saveStat, eSave, 'spell');
         const dmgRoll = rollDamage(spell.dice, { crit: false }, rng);
         let dmg = dmgRoll.total;
         if (eSave.success) dmg = spell.saveOnHalf ? Math.floor(dmg / 2) : 0;
-        applyDamageToEntity(e, dmg, rng);
+        const before = e.hp;
+        applyDamageToEntity(e, dmg, rng, ctx, { source: attacker, type: spell.damageType ?? null, group });
         totalDmg += dmg;
-        aoeResults.push({ entity: e, dmg, saved: eSave.success });
+        aoeResults.push({ entity: e, dmg, saved: eSave.success, before });
       }
       attacker.damageDealt += totalDmg;
-      // Frame the hardest-hit target — the planner's `target` may have
-      // been range-excluded or saved for 0, so don't frame it blindly.
-      // Nobody in range → nothing happened on screen → no dispatch.
+      // Frame the hardest-hit target; nobody in range → no dispatch.
       if (aoeResults.length > 0) {
         const framed = aoeResults.reduce((a, b) => (b.dmg > a.dmg ? b : a));
         await castCinema(framed.entity, {
           dmg: framed.dmg, saved: framed.saved,
           total: totalDmg, targets: aoeResults.length
+        }, {
+          hpBefore: framed.before,
+          effects: aoeResults.map(r => ({ entityId: idOf(r.entity), hp: { before: r.before, after: r.entity.hp, max: r.entity.hpMax ?? r.before } }))
         });
       }
     }
@@ -570,33 +650,37 @@ export async function runMonsterSpell({ attacker, target, plan, scene: _scene, r
   const saveStat = spell.saveStat;
   const targetSaveBonus = saveBonusFor(target, saveStat);
   const save = rollSave({ bonus: targetSaveBonus, dc: effectiveBook.dc }, rng);
+  emitSave(ctx, group, target, saveStat, save, 'spell');
+  const before = target.hp;
   let saveDmg = 0;
   if (spell.dice) {
     const dmgRoll = rollDamage(spell.dice, { crit: false }, rng);
     let dmg = dmgRoll.total;
     if (save.success) dmg = spell.saveOnHalf ? Math.floor(dmg / 2) : 0;
-    applyDamageToEntity(target, dmg, rng);
+    applyDamageToEntity(target, dmg, rng, ctx, { source: attacker, type: spell.damageType ?? null, group });
     attacker.damageDealt += dmg;
     saveDmg = dmg;
   }
   if (!save.success && spell.appliesCondition) {
     if (!target.conditions.includes(spell.appliesCondition)) {
       target.conditions.push(spell.appliesCondition);
+      emitEvent(ctx, 'condition.applied', { entityId: idOf(target), condition: spell.appliesCondition, sourceId: casterId }, group);
     }
     if (spell.concentration) {
       startConcentration(attacker, spell, [target.id]);
+      emitEvent(ctx, 'concentration.started', { casterId, spellId: String(spell.id), targetIds: [idOf(target)] }, group);
     }
   }
   // Condition-only spells (dice: null) dispatch dmg 0 — the bridge
   // pins miss: false so a landed Hold Person never reads as a whiff.
-  await castCinema(target, { dmg: saveDmg, saved: save.success });
+  await castCinema(target, { dmg: saveDmg, saved: save.success }, { hpBefore: before });
 }
 
 // =====================================================================
 // runReactionAttack — opportunity / reaction attacks
 // =====================================================================
 
-export async function runReactionAttack(attacker, target, targetBeforePos, scene, rng, prompts = {}) {
+export async function runReactionAttack(attacker, target, targetBeforePos, scene, rng, prompts = {}, ctx = NO_CTX) {
   if (!attacker || !target) return;
   let attackStats;
   if (attacker.kind === 'pc') {
@@ -625,10 +709,11 @@ export async function runReactionAttack(attacker, target, targetBeforePos, scene
     _position: attacker._position || attacker.position,
     combatMods: attacker.combatMods || attacker.ref?.combatMods || []
   };
+  const weaponUsed = attacker.kind === 'pc' ? attacker.weapon : { name: attacker.attack.name };
   const verdict = resolveAttack({
     attacker: attackerForResolver,
     target: targetForResolver,
-    weapon: attacker.kind === 'pc' ? attacker.weapon : { name: attacker.attack.name },
+    weapon: weaponUsed,
     scene,
     attackerKind: attacker.kind,
     targetKind: target.kind,
@@ -638,38 +723,152 @@ export async function runReactionAttack(attacker, target, targetBeforePos, scene
     attackStats
   });
   if (verdict.autoMiss) return;
+  const group = nextCinemaGroup(ctx);
+  const targetHpBefore = target.hp;
   const atk = verdict.autoCrit
     ? { hit: true, crit: true, total: 20 + verdict.attackBonus.total }
     : rollAttack({ bonus: verdict.attackBonus.total, advantage: verdict.d20.mode, targetAC: target.ac }, rng);
-  if (await askShield(target, atk, { weapon: attacker.weapon }, prompts)) {
-    consumeShield(target);
+  if (await askShield(target, atk, { weapon: attacker.weapon }, prompts, ctx, group)) {
+    spendShield(target, ctx, group);
     atk.hit = false;
+    // M64 T4 — the OA path now flags a Shield-negated swing like the main
+    // attack path (was DEFERRED.md "shielded OA flag").
+    atk.shielded = true;
   }
+  emitAttackRolled(ctx, group, attacker, target, atk, {
+    weapon: weaponUsed?.name ?? null, isReaction: true, mode: verdict.d20.mode, bonus: verdict.attackBonus.total
+  });
   // M56 Phase 4 — opportunity attacks dramatize through the same
-  // onCinemaRound prompt, tagged reaction: true (the bridge forces the
-  // Quick style and skips class-feature modifier diffing — the
-  // captured pre-attack flags belong to the ACTIVE entity, not the OA
-  // attacker). The autoMiss return above stays silent (nothing
-  // happened on screen); a Shield-negated OA reaches here as a plain
-  // miss — known v1 inconsistency with the cast path, see DEFERRED.md.
+  // onCinemaRound prompt, tagged reaction: true.
   if (!atk.hit) {
-    if (prompts.onCinemaRound) {
-      await prompts.onCinemaRound({
-        attacker, defender: target, plan: null, atk,
-        dmg: 0, crit: false, miss: true, reaction: true
-      });
-    }
+    await dispatchCinema(prompts, ctx, group, {
+      attacker, defender: target, plan: null, atk,
+      dmg: 0, crit: false, miss: true, reaction: true
+    }, { reaction: true, cast: false, targetHpBefore });
     return;
   }
   const dmg = rollDamage(verdict.damage.dice, { crit: atk.crit }, rng);
+  const before = target.hp;
   target.hp = Math.max(0, target.hp - dmg.total);
   attacker.damageDealt += dmg.total;
-  if (prompts.onCinemaRound) {
-    await prompts.onCinemaRound({
-      attacker, defender: target, plan: null, atk,
-      dmg: dmg.total, crit: !!atk.crit, miss: false, reaction: true
-    });
+  emitDamage(ctx, group, attacker, target, before, dmg.total, verdict.damage.damageType ?? null, { weapon: dmg.total });
+  await dispatchCinema(prompts, ctx, group, {
+    attacker, defender: target, plan: null, atk,
+    dmg: dmg.total, crit: !!atk.crit, miss: false, reaction: true
+  }, { reaction: true, cast: false, targetHpBefore, damageType: verdict.damage.damageType ?? null });
+}
+
+// =====================================================================
+// Event helpers (M64 T4)
+// =====================================================================
+
+function offeredPayload(ctx, reactorId, kind, autoAnswer, extra = {}) {
+  return {
+    reactorId, kind, autoAnswer: !!autoAnswer,
+    deadlineMs: Number.isInteger(ctx.reactionDeadlineMs) ? ctx.reactionDeadlineMs : null,
+    ...extra
+  };
+}
+
+function emitAttackRolled(ctx, group, attacker, target, atk, { weapon, isReaction, mode, bonus, spellId }) {
+  if (!canEmit(ctx)) return;
+  const d20 = atk.d20 || { kept: 20, dice: [20], advantage: mode || 'normal' };
+  emitEvent(ctx, 'attack.rolled', {
+    attackerId: idOf(attacker), targetId: idOf(target),
+    weapon: weapon ?? null,
+    isReaction: !!isReaction,
+    advantage: d20.advantage || mode || 'normal',
+    d20: [...d20.dice],
+    kept: d20.kept,
+    bonus: Number.isFinite(atk.bonus) ? atk.bonus : (bonus ?? 0),
+    total: Number.isFinite(atk.total) ? atk.total : d20.kept + (bonus ?? 0),
+    ac: Number.isFinite(atk.ac) ? atk.ac : (target.ac ?? 0),
+    hit: !!atk.hit,
+    crit: !!atk.crit,
+    shielded: !!atk.shielded,
+    ...(atk.d20 ? {} : { autoCrit: true }),
+    ...(spellId ? { spellId } : {})
+  }, group);
+}
+
+function emitDamage(ctx, group, source, target, hpBefore, rolled, type, parts) {
+  if (!canEmit(ctx)) return;
+  emitEvent(ctx, 'damage', {
+    sourceId: idOf(source), targetId: idOf(target),
+    amount: Math.max(0, hpBefore - target.hp),
+    type: type ?? null,
+    hpBefore, hpAfter: target.hp,
+    rolled,
+    ...(parts ? { parts } : {})
+  }, group);
+  if (hpBefore > 0 && target.hp <= 0) emitEvent(ctx, 'entity.downed', { entityId: idOf(target), byId: idOf(source) }, group);
+}
+
+function emitSave(ctx, group, entity, stat, save, reason) {
+  if (!canEmit(ctx)) return;
+  emitEvent(ctx, 'save.rolled', {
+    entityId: idOf(entity), stat, dc: save.dc,
+    d20: save.dice ? [...save.dice] : [save.d20],
+    total: save.total, success: !!save.success, reason
+  }, group);
+}
+
+function spendShield(target, ctx, group) {
+  const lvl = consumeShield(target);
+  const id = idOf(target);
+  emitEvent(ctx, 'resource.spent', { entityId: id, resource: 'reaction', level: null }, group);
+  if (lvl) emitEvent(ctx, 'resource.spent', { entityId: id, resource: 'spell-slot', level: lvl }, group);
+}
+
+/**
+ * Emit the `exchange` event (the cinema spec) and await onCinemaRound.
+ * The exchange carries ids and resolved numbers only; `fxSeed` is a hash
+ * of the exchange id, never an rng draw.
+ */
+async function dispatchCinema(prompts, ctx, group, roundPayload, info) {
+  if (canEmit(ctx)) {
+    const { attacker, defender, atk } = roundPayload;
+    const effects = info.effects || (defender ? [{
+      entityId: idOf(defender),
+      hp: { before: info.targetHpBefore ?? defender.hp, after: defender.hp, max: defender.hpMax ?? defender.hp }
+    }] : []);
+    emitEvent(ctx, 'exchange', {
+      exchangeId: group,
+      attackerId: idOf(attacker),
+      defenderId: idOf(defender),
+      reaction: !!info.reaction,
+      cast: !!info.cast,
+      roll: atk && atk.total != null ? { total: atk.total, hit: !!atk.hit, crit: !!atk.crit, shielded: !!atk.shielded } : null,
+      damage: info.cast
+        ? { amount: info.outcome?.dmg ?? 0, heal: info.outcome?.heal ?? null }
+        : { amount: roundPayload.dmg | 0, type: info.damageType ?? null, crit: !!roundPayload.crit },
+      effects,
+      miss: !!roundPayload.miss,
+      weapon: info.cast ? null : (roundPayload.plan?.weapon?.name ?? attacker?.weapon?.name ?? attacker?.attack?.name ?? null),
+      ...(info.spellId ? { spellId: info.spellId } : {}),
+      ...(info.outcome ? { outcome: { ...info.outcome } } : {}),
+      ...(info.modifiers ? { modifiers: { ...info.modifiers } } : {}),
+      cinema: {
+        fxSeed: fxSeedOf(group),
+        killing: !!defender && (info.targetHpBefore ?? 0) > 0 && defender.hp <= 0
+      }
+    }, group);
   }
+  if (prompts.onCinemaRound) await prompts.onCinemaRound(roundPayload);
+}
+
+async function askReactionAttack(triggerer, mover, trigger, prompts, ctx) {
+  const reactorId = idOf(triggerer);
+  emitEvent(ctx, 'reaction.offered', offeredPayload(ctx, reactorId, 'oa', true, { trigger, moverId: idOf(mover) }));
+  // Default (simulator path) is "always fire the OA"; the live runner
+  // can return false to skip when the player declines.
+  const { answer, by } = normalizeAnswer(prompts.onReactionAttack
+    ? await prompts.onReactionAttack({ triggerer, mover, kind: trigger, autoAnswer: true })
+    : true, !!prompts.onReactionAttack);
+  // M64 N1 — gate the answer: the triggerer must still have its reaction.
+  const used = answer && hasReactionAvailable(triggerer);
+  emitEvent(ctx, 'reaction.resolved', { reactorId, kind: 'oa', used, by });
+  return used;
 }
 
 // =====================================================================
@@ -707,15 +906,19 @@ export function shieldCanBlock(defender, atk) {
  * @param {object} prompts — EnginePrompts
  * @returns {Promise<boolean>}
  */
-async function askShield(defender, atk, ctx, prompts) {
+async function askShield(defender, atk, info, prompts, ctx = NO_CTX, group = null) {
   if (!shieldCanBlock(defender, atk)) return false;
   const auto = atk.autoHit
     ? true
     : shouldCastShield({ target: defender, attackerTotal: atk.total, targetAc: defender.ac });
-  const accepted = prompts.onShieldReaction
-    ? await prompts.onShieldReaction({ defender, atk, ...ctx, autoAnswer: auto })
-    : auto;
-  return !!accepted && shieldCanBlock(defender, atk);
+  const reactorId = idOf(defender);
+  emitEvent(ctx, 'reaction.offered', offeredPayload(ctx, reactorId, 'shield', auto, { attackTotal: atk.total ?? null }), group);
+  const { answer, by } = normalizeAnswer(prompts.onShieldReaction
+    ? await prompts.onShieldReaction({ defender, atk, ...info, autoAnswer: auto })
+    : auto, !!prompts.onShieldReaction);
+  const used = answer && shieldCanBlock(defender, atk);
+  emitEvent(ctx, 'reaction.resolved', { reactorId, kind: 'shield', used, by }, group);
+  return used;
 }
 
 // =====================================================================
@@ -725,21 +928,31 @@ async function askShield(defender, atk, ctx, prompts) {
 /**
  * Apply damage to an entity wrapper, then roll the concentration save
  * (PHB p203) if it was concentrating. M64 T2 — `rng` is threaded into
- * the concentration save; it used to fall back to Math.random, which
- * broke seeded replay for any fight with a concentrating caster.
+ * the concentration save. M64 T4 — emits `damage`, `entity.downed`,
+ * `save.rolled` (reason 'concentration') and `concentration.broken`.
  *
  * @param {object} target — entity wrapper ({ hp, _concentrating, ... })
  * @param {number} damage — non-positive values are a no-op
  * @param {function} rng — () → [0,1); required when target may be concentrating
+ * @param {object} [ctx] — engine ctx ({ emit })
+ * @param {{source?: object, type?: string|null, parts?: object, group?: string|null}} [meta]
  */
-export function applyDamageToEntity(target, damage, rng) {
+export function applyDamageToEntity(target, damage, rng, ctx = NO_CTX, meta = {}) {
   if (!target || damage <= 0) return;
   const before = target.hp;
   target.hp = Math.max(0, target.hp - damage);
   const dealtDamage = before - target.hp;
+  const group = meta.group ?? null;
+  emitDamage(ctx, group, meta.source ?? null, target, before, damage, meta.type ?? null, meta.parts);
   if (dealtDamage > 0 && isConcentrating(target)) {
     const conMod = saveBonusFor(target, 'CON');
-    handleDamageOnConcentration({ caster: target, damage: dealtDamage, conMod }, rng);
+    const res = handleDamageOnConcentration({ caster: target, damage: dealtDamage, conMod }, rng);
+    if (res.save) emitSave(ctx, group, target, 'CON', res.save, 'concentration');
+    if (res.broke) {
+      emitEvent(ctx, 'concentration.broken', {
+        casterId: idOf(target), spellId: String(res.dropped?.spellId), reason: 'damage'
+      }, group);
+    }
   }
 }
 
