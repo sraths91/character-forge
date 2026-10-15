@@ -35,7 +35,9 @@
 
 import { resolveAttack } from './combat-resolver.js';
 import { rollAttack, rollDamage } from './combat-roll.js';
-import { deriveWeaponAttack, saveBonus as pcSaveBonus } from './pc-stats.js';
+import {
+  deriveWeaponAttack, saveBonus as pcSaveBonus, proficiencyBonus, totalLevel
+} from './pc-stats.js';
 import { factionLists, chebyshevFeet } from './grid-rules.js';
 import { planMovement, occupiedCellsOf } from './movement.js';
 import { chooseAction, fleeTargetCell } from './ai/profile.js';
@@ -412,7 +414,7 @@ export async function runMonsterSpell({ attacker, target, plan, scene: _scene, r
     ? { dc: 12, attackBonus: 4, abilityMod: 3 }
     : null;
   const pcBook = !book && !innateBook && attacker.kind === 'pc'
-    ? pcSpellBook(attacker) : null;
+    ? pcSpellBook(attacker, baseSpell) : null;
   const effectiveBook = book || innateBook || pcBook;
   if (!effectiveBook) return;
 
@@ -728,23 +730,57 @@ export function applyDamageToEntity(target, damage, rng) {
   }
 }
 
-export function pcSpellBook(attacker) {
-  const ref = attacker.ref || attacker;
-  const classes = ref?.classes || [];
-  let stat = 'INT';
-  for (const c of classes) {
-    const name = String(c?.name || '').toLowerCase();
-    if (name === 'cleric' || name === 'druid' || name === 'ranger') { stat = 'WIS'; break; }
-    if (name === 'bard' || name === 'sorcerer' || name === 'warlock' || name === 'paladin') { stat = 'CHA'; break; }
-    if (name === 'wizard' || name === 'artificer') { stat = 'INT'; break; }
-  }
+/**
+ * A PC's spellcasting numbers for one cast (M64 R3).
+ *
+ *   ability — the spell's own `spellCastingAbility` when the character's
+ *             parsed spell list carries this spell (matched by name),
+ *             else the first spellcasting class's default ability
+ *   prof    — proficiency bonus from TOTAL character level (multiclass)
+ *   attackBonus = prof + mod + active combatMods kind 'attack' scoped
+ *             'spell' or 'all' (Amulet of the Devout, Rod of the Pact
+ *             Keeper)
+ *   dc      = 8 + prof + mod + active combatMods kind 'save-dc'
+ *
+ * @param {object} attacker — wrapper ({ ref, combatMods? }) or a bare sheet
+ * @param {object} [spell] — registry spell (name used for the lookup)
+ * @returns {{ dc: number, attackBonus: number, abilityMod: number, ability: string }}
+ */
+export function pcSpellBook(attacker, spell = null) {
+  const ref = attacker?.ref || attacker;
+  const stat = spellAbilityFor(ref, spell);
   const mod = ref?.abilityModifiers?.[stat] ?? 0;
-  const prof = 2 + Math.floor(((classes[0]?.level || 1) - 1) / 4);
+  const prof = proficiencyBonus(totalLevel(ref));
+  let atkMods = 0;
+  let dcMods = 0;
+  for (const m of combatModsOf(attacker)) {
+    if (!m || m.inactive) continue;
+    const v = Number(m.value) || 0;
+    if (m.kind === 'attack' && (m.scope === 'spell' || m.scope === 'all')) atkMods += v;
+    else if (m.kind === 'save-dc' && (m.scope === 'spell' || m.scope === 'all')) dcMods += v;
+  }
   return {
-    dc: 8 + prof + mod,
-    attackBonus: prof + mod,
-    abilityMod: mod
+    dc: 8 + prof + mod + dcMods,
+    attackBonus: prof + mod + atkMods,
+    abilityMod: mod,
+    ability: stat
   };
+}
+
+function spellAbilityFor(ref, spell) {
+  const wanted = String(spell?.name || '').toLowerCase();
+  if (spell?.spellCastingAbility) return spell.spellCastingAbility;
+  if (wanted) {
+    const own = (ref?.spells || []).find(s => String(s?.name || '').toLowerCase() === wanted);
+    if (own?.spellCastingAbility) return own.spellCastingAbility;
+  }
+  for (const c of ref?.classes || []) {
+    const name = String(c?.name || '').toLowerCase();
+    if (name === 'cleric' || name === 'druid' || name === 'ranger') return 'WIS';
+    if (name === 'bard' || name === 'sorcerer' || name === 'warlock' || name === 'paladin') return 'CHA';
+    if (name === 'wizard' || name === 'artificer') return 'INT';
+  }
+  return 'INT';
 }
 
 export function abilityForCounterer(pc) {
