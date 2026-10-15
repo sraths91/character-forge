@@ -1,0 +1,241 @@
+{
+  "fixtureNote": "SYNTHETIC fixture for character-forge tests. Hand-written in the D&D Beyond v5 character shape; not derived from any real export.",
+  "id": 900000001,
+  "name": "Fixture Fighter",
+  "gender": null,
+  "faith": null,
+  "inspiration": false,
+  "race": {
+    "fullName": "Human",
+    "baseRaceName": "Human"
+  },
+  "classes": [
+    {
+      "id": 91001,
+      "level": 5,
+      "definition": {
+        "id": 1,
+        "name": "Fighter"
+      },
+      "subclassDefinition": {
+        "id": 101,
+        "name": "Champion"
+      },
+      "classFeatures": [
+        {
+          "definition": {
+            "id": 5001,
+            "name": "Fighting Style",
+            "requiredLevel": 1,
+            "classId": 1,
+            "description": "<p>Fighting Style (synthetic text).</p>"
+          }
+        },
+        {
+          "definition": {
+            "id": 5002,
+            "name": "Second Wind",
+            "requiredLevel": 1,
+            "classId": 1,
+            "description": "<p>Second Wind (synthetic text).</p>"
+          }
+        },
+        {
+          "definition": {
+            "id": 5003,
+            "name": "Action Surge",
+            "requiredLevel": 2,
+            "classId": 1,
+            "description": "<p>Action Surge (synthetic text).</p>"
+          }
+        },
+        {
+          "definition": {
+            "id": 5004,
+            "name": "Improved Critical",
+            "requiredLevel": 3,
+            "classId": 101,
+            "description": "<p>Improved Critical (synthetic text).</p>"
+          }
+        },
+        {
+          "definition": {
+            "id": 5005,
+            "name": "Extra Attack",
+            "requiredLevel": 5,
+            "classId": 1,
+            "description": "<p>Extra Attack (synthetic text).</p>"
+          }
+        }
+      ]
+    }
+  ],
+  "stats": [
+    {
+      "id": 1,
+      "value": 16
+    },
+    {
+      "id": 2,
+      "value": 14
+    },
+    {
+      "id": 3,
+      "value": 14
+    },
+    {
+      "id": 4,
+      "value": 10
+    },
+    {
+      "id": 5,
+      "value": 12
+    },
+    {
+      "id": 6,
+      "value": 8
+    }
+  ],
+  "bonusStats": [],
+  "overrideStats": [],
+  "inventory": [
+    {
+      "id": 8001,
+      "equipped": true,
+      "isAttuned": false,
+      "definition": {
+        "id": 7001,
+        "name": "Longsword",
+        "filterType": "Weapon",
+        "type": "Longsword",
+        "rarity": "Common",
+        "magic": false,
+        "damage": {
+          "diceString": "1d8"
+        },
+        "damageType": "Slashing",
+        "attackType": 1,
+        "properties": [
+          {
+            "name": "Versatile"
+          }
+        ]
+      }
+    },
+    {
+      "id": 8002,
+      "equipped": true,
+      "isAttuned": false,
+      "definition": {
+        "id": 7002,
+        "name": "Chain Mail",
+        "filterType": "Armor",
+        "type": "Chain Mail",
+        "armorClass": 16,
+        "rarity": "Common",
+        "magic": false
+      }
+    },
+    {
+      "id": 8003,
+      "equipped": true,
+      "isAttuned": false,
+      "definition": {
+        "id": 7003,
+        "name": "Shield",
+        "filterType": "Armor",
+        "type": "Shield",
+        "armorClass": 2,
+        "rarity": "Common",
+        "magic": false,
+        "subType": "Shield"
+      }
+    },
+    {
+      "id": 8004,
+      "equipped": false,
+      "isAttuned": false,
+      "definition": {
+        "id": 7004,
+        "name": "Longbow",
+        "filterType": "Weapon",
+        "type": "Longbow",
+        "rarity": "Common",
+        "magic": false,
+        "damage": {
+          "diceString": "1d8"
+        },
+        "damageType": "Piercing",
+        "attackType": 2,
+        "properties": [
+          {
+            "name": "Ammunition"
+          },
+          {
+            "name": "Heavy"
+          },
+          {
+            "name": "Two-Handed"
+          }
+        ],
+        "range": 150,
+        "longRange": 600
+      }
+    }
+  ],
+  "feats": [],
+  "baseHitPoints": 34,
+  "bonusHitPoints": 0,
+  "overrideHitPoints": null,
+  "temporaryHitPoints": 0,
+  "removedHitPoints": 0,
+  "deathSaves": {
+    "successCount": 0,
+    "failCount": 0
+  },
+  "modifiers": {
+    "race": [],
+    "class": [
+      {
+        "type": "proficiency",
+        "subType": "strength-saving-throws",
+        "componentId": 1
+      },
+      {
+        "type": "proficiency",
+        "subType": "constitution-saving-throws",
+        "componentId": 1
+      }
+    ],
+    "feat": [],
+    "background": [],
+    "item": []
+  },
+  "actions": {
+    "class": [
+      {
+        "componentId": 5002,
+        "name": "Second Wind",
+        "limitedUse": {
+          "maxUses": 1,
+          "resetType": "1"
+        }
+      },
+      {
+        "componentId": 5003,
+        "name": "Action Surge",
+        "limitedUse": {
+          "maxUses": 1,
+          "resetType": "1"
+        }
+      }
+    ]
+  },
+  "classSpells": [],
+  "spells": {
+    "race": [],
+    "feat": [],
+    "item": [],
+    "background": []
+  }
+}

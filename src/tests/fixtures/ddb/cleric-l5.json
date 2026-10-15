@@ -1,0 +1,390 @@
+{
+  "fixtureNote": "SYNTHETIC fixture for character-forge tests. Hand-written in the D&D Beyond v5 character shape; not derived from any real export.",
+  "id": 900000003,
+  "name": "Fixture Cleric",
+  "gender": null,
+  "faith": null,
+  "inspiration": false,
+  "race": {
+    "fullName": "Human",
+    "baseRaceName": "Human"
+  },
+  "classes": [
+    {
+      "id": 91003,
+      "level": 5,
+      "definition": {
+        "id": 3,
+        "name": "Cleric",
+        "spellCastingAbilityId": 5
+      },
+      "subclassDefinition": {
+        "id": 103,
+        "name": "Life Domain"
+      },
+      "classFeatures": [
+        {
+          "definition": {
+            "id": 5201,
+            "name": "Disciple of Life",
+            "requiredLevel": 1,
+            "classId": 103,
+            "description": "<p>Disciple of Life (synthetic text).</p>"
+          }
+        },
+        {
+          "definition": {
+            "id": 5202,
+            "name": "Channel Divinity",
+            "requiredLevel": 2,
+            "classId": 3,
+            "description": "<p>Channel Divinity (synthetic text).</p>"
+          }
+        },
+        {
+          "definition": {
+            "id": 5203,
+            "name": "Destroy Undead",
+            "requiredLevel": 5,
+            "classId": 3,
+            "description": "<p>Destroy Undead (synthetic text).</p>"
+          }
+        }
+      ]
+    }
+  ],
+  "stats": [
+    {
+      "id": 1,
+      "value": 14
+    },
+    {
+      "id": 2,
+      "value": 10
+    },
+    {
+      "id": 3,
+      "value": 14
+    },
+    {
+      "id": 4,
+      "value": 10
+    },
+    {
+      "id": 5,
+      "value": 16
+    },
+    {
+      "id": 6,
+      "value": 12
+    }
+  ],
+  "bonusStats": [],
+  "overrideStats": [],
+  "inventory": [
+    {
+      "id": 8201,
+      "equipped": true,
+      "isAttuned": false,
+      "definition": {
+        "id": 7201,
+        "name": "Mace",
+        "filterType": "Weapon",
+        "type": "Mace",
+        "rarity": "Common",
+        "magic": false,
+        "damage": {
+          "diceString": "1d6"
+        },
+        "damageType": "Bludgeoning",
+        "attackType": 1,
+        "properties": []
+      }
+    },
+    {
+      "id": 8202,
+      "equipped": true,
+      "isAttuned": false,
+      "definition": {
+        "id": 7202,
+        "name": "Chain Mail",
+        "filterType": "Armor",
+        "type": "Chain Mail",
+        "armorClass": 16,
+        "rarity": "Common",
+        "magic": false
+      }
+    },
+    {
+      "id": 8203,
+      "equipped": true,
+      "isAttuned": false,
+      "definition": {
+        "id": 7203,
+        "name": "Shield",
+        "filterType": "Armor",
+        "type": "Shield",
+        "armorClass": 2,
+        "rarity": "Common",
+        "magic": false,
+        "subType": "Shield"
+      }
+    }
+  ],
+  "feats": [],
+  "baseHitPoints": 28,
+  "bonusHitPoints": 0,
+  "overrideHitPoints": null,
+  "temporaryHitPoints": 0,
+  "removedHitPoints": 0,
+  "deathSaves": {
+    "successCount": 0,
+    "failCount": 0
+  },
+  "modifiers": {
+    "race": [],
+    "class": [
+      {
+        "type": "proficiency",
+        "subType": "wisdom-saving-throws",
+        "componentId": 1
+      },
+      {
+        "type": "proficiency",
+        "subType": "charisma-saving-throws",
+        "componentId": 1
+      }
+    ],
+    "feat": [],
+    "background": [],
+    "item": []
+  },
+  "actions": {
+    "class": [
+      {
+        "componentId": 5202,
+        "name": "Channel Divinity",
+        "limitedUse": {
+          "maxUses": 1,
+          "resetType": "1"
+        }
+      }
+    ]
+  },
+  "classSpells": [
+    {
+      "characterClassId": 91003,
+      "spells": [
+        {
+          "definition": {
+            "id": 8101,
+            "name": "Sacred Flame",
+            "level": 0,
+            "school": "Evocation",
+            "range": {
+              "origin": "Ranged",
+              "rangeValue": 60
+            },
+            "requiresAttackRoll": false,
+            "requiresSavingThrow": true,
+            "duration": {
+              "durationType": "Instantaneous"
+            },
+            "modifiers": [
+              {
+                "type": "damage",
+                "subType": "radiant-damage",
+                "die": {
+                  "diceString": "1d8"
+                }
+              }
+            ],
+            "description": "<p>Sacred Flame (synthetic text).</p>",
+            "saveDcAbilityId": 2
+          },
+          "prepared": false,
+          "alwaysPrepared": false,
+          "usesSpellSlot": false,
+          "castAtLevel": null,
+          "spellCastingAbilityId": null
+        },
+        {
+          "definition": {
+            "id": 8102,
+            "name": "Cure Wounds",
+            "level": 1,
+            "school": "Evocation",
+            "range": {
+              "origin": "Self"
+            },
+            "requiresAttackRoll": false,
+            "requiresSavingThrow": false,
+            "duration": {
+              "durationType": "Instantaneous"
+            },
+            "modifiers": [],
+            "description": "<p>Cure Wounds (synthetic text).</p>",
+            "healingDice": [
+              {
+                "diceString": "1d8"
+              }
+            ]
+          },
+          "prepared": true,
+          "alwaysPrepared": false,
+          "usesSpellSlot": true,
+          "castAtLevel": null,
+          "spellCastingAbilityId": null
+        },
+        {
+          "definition": {
+            "id": 8103,
+            "name": "Healing Word",
+            "level": 1,
+            "school": "Evocation",
+            "range": {
+              "origin": "Ranged",
+              "rangeValue": 60
+            },
+            "requiresAttackRoll": false,
+            "requiresSavingThrow": false,
+            "duration": {
+              "durationType": "Instantaneous"
+            },
+            "modifiers": [],
+            "description": "<p>Healing Word (synthetic text).</p>",
+            "healingDice": [
+              {
+                "diceString": "1d4"
+              }
+            ]
+          },
+          "prepared": true,
+          "alwaysPrepared": false,
+          "usesSpellSlot": true,
+          "castAtLevel": null,
+          "spellCastingAbilityId": null
+        },
+        {
+          "definition": {
+            "id": 8104,
+            "name": "Bless",
+            "level": 1,
+            "school": "Enchantment",
+            "range": {
+              "origin": "Ranged",
+              "rangeValue": 30
+            },
+            "requiresAttackRoll": false,
+            "requiresSavingThrow": false,
+            "duration": {
+              "durationType": "Concentration"
+            },
+            "modifiers": [],
+            "description": "<p>Bless (synthetic text).</p>"
+          },
+          "prepared": true,
+          "alwaysPrepared": false,
+          "usesSpellSlot": true,
+          "castAtLevel": null,
+          "spellCastingAbilityId": null
+        },
+        {
+          "definition": {
+            "id": 8105,
+            "name": "Hold Person",
+            "level": 2,
+            "school": "Enchantment",
+            "range": {
+              "origin": "Ranged",
+              "rangeValue": 60
+            },
+            "requiresAttackRoll": false,
+            "requiresSavingThrow": true,
+            "duration": {
+              "durationType": "Concentration"
+            },
+            "modifiers": [],
+            "description": "<p>Hold Person (synthetic text).</p>",
+            "saveDcAbilityId": 5
+          },
+          "prepared": true,
+          "alwaysPrepared": false,
+          "usesSpellSlot": true,
+          "castAtLevel": null,
+          "spellCastingAbilityId": null
+        },
+        {
+          "definition": {
+            "id": 8106,
+            "name": "Spiritual Weapon",
+            "level": 2,
+            "school": "Evocation",
+            "range": {
+              "origin": "Ranged",
+              "rangeValue": 60
+            },
+            "requiresAttackRoll": true,
+            "requiresSavingThrow": false,
+            "duration": {
+              "durationType": "Instantaneous"
+            },
+            "modifiers": [
+              {
+                "type": "damage",
+                "subType": "force-damage",
+                "die": {
+                  "diceString": "1d8"
+                }
+              }
+            ],
+            "description": "<p>Spiritual Weapon (synthetic text).</p>"
+          },
+          "prepared": true,
+          "alwaysPrepared": false,
+          "usesSpellSlot": true,
+          "castAtLevel": null,
+          "spellCastingAbilityId": null
+        },
+        {
+          "definition": {
+            "id": 8107,
+            "name": "Spirit Guardians",
+            "level": 3,
+            "school": "Conjuration",
+            "range": {
+              "origin": "Self"
+            },
+            "requiresAttackRoll": false,
+            "requiresSavingThrow": true,
+            "duration": {
+              "durationType": "Concentration"
+            },
+            "modifiers": [
+              {
+                "type": "damage",
+                "subType": "radiant-damage",
+                "die": {
+                  "diceString": "3d8"
+                }
+              }
+            ],
+            "description": "<p>A creature takes 3d8 radiant damage on a failed save, or half as much damage on a successful one.</p>",
+            "saveDcAbilityId": 5
+          },
+          "prepared": true,
+          "alwaysPrepared": false,
+          "usesSpellSlot": true,
+          "castAtLevel": null,
+          "spellCastingAbilityId": null
+        }
+      ]
+    }
+  ],
+  "spells": {
+    "race": [],
+    "feat": [],
+    "item": [],
+    "background": []
+  }
+}
