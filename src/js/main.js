@@ -51,7 +51,7 @@ import {
   lvl1SlotsForPc, lvl3SlotsForPc
 } from './scene/reactions.js';
 import {
-  spellById, spellbookFor,
+  spellbookFor,
   innateBlockFor, freshInnateState, rollInnateRecharges
 } from './scene/monster-spells.js';
 import { promptReaction } from './scene/reaction-prompt.js';
@@ -79,7 +79,6 @@ import {
 } from './anim/cinema-sprites.js';
 import { terrainFromScene, backgroundFor } from './anim/cinema-backgrounds.js';
 import { listBiomes, isBiome } from './scene/map-generator.js';
-import { nameToSpellId } from './scene/ai/pc-action.js';
 // M45 Phase 4b.2 / M64 C1 — Live runner dispatches through the unified
 // combat engine via the pure live-bridge (wrap → engine → write-back).
 // The engine owns rules + reactions; main.js owns prompts + UI
@@ -92,6 +91,7 @@ import {
   resolvePlanTarget as bridgeResolvePlanTarget,
   runTurn as bridgeRunTurn
 } from './scene/live-bridge.js';
+import { buildWeaponPlan, buildCastPlan } from './scene/manual-plan.js';
 
 const $ = (id) => document.getElementById(id);
 const status = $('status');
@@ -1204,20 +1204,10 @@ async function runManualWeaponAttack(attackerHit, targetHit, weaponOverride = nu
   // it overrides the mainhand default so e.g. a Cleric can swing the
   // warhammer instead of the equipped shortsword.
   const weapon = weaponOverride || getAttackerWeapon(attackerHit);
-  // Heuristic: ranged weapons get a 'ranged' plan kind so the engine's
-  // gate logic treats range correctly. Everything else is 'melee'.
-  const wname = String(weapon?.name || '').toLowerCase();
-  const isRanged = /bow|sling|crossbow|dart|javelin|throwing/.test(wname);
-  const plan = {
-    kind: isRanged ? 'ranged' : 'melee',
-    targetId: targetHit.entity.id,
-    targetSide: 'enemy',
-    weapon,
-    featuresFired: [],
-    archetype: 'manual',
-    score: 0,
-    breakdown: []
-  };
+  // M64 C3 — plan construction (incl. the ranged heuristic) lives in
+  // scene/manual-plan.js so the server can build the same forcePlan.
+  const plan = buildWeaponPlan({ weapon, targetId: targetHit.entity.id });
+  const isRanged = plan.kind === 'ranged';
   // Snapshot defender HP before so we can compute dmg for the return
   // value. The engine's onCinemaRound prompt already fires; this is
   // just for the call-site's bookkeeping.
@@ -1279,27 +1269,10 @@ async function runManualWeaponAttack(attackerHit, targetHit, weaponOverride = nu
  */
 async function runManualCast(attackerHit, targetHit, spell) {
   if (!attackerHit?.entity || !targetHit?.entity || !spell) return false;
-  // Resolve the spell to a registry entry. PC spell records carry a
-  // .name; the AI's nameToSpellId helper produces the same slug the
-  // monster-spells registry uses.
-  const id = spell.id || nameToSpellId(spell.name);
-  if (!id) return false;
-  const registrySpell = spellById(id);
-  if (!registrySpell) return false;
-  // Heals target an ally; everything else targets the chosen entity.
-  const isHeal = registrySpell.kind === 'heal' || registrySpell.targetSide === 'ally';
-  const plan = {
-    kind: 'cast',
-    spellId: id,
-    castAtLevel: spell.castAtLevel || registrySpell.level || 0,
-    targetId: targetHit.entity.id,
-    targetSide: isHeal ? 'ally' : 'enemy',
-    weapon: null,
-    featuresFired: [],
-    archetype: 'manual',
-    score: 0,
-    breakdown: []
-  };
+  // M64 C3 — resolve the spell to a registry entry (by id or name slug)
+  // and build the cast plan in scene/manual-plan.js; null = no entry.
+  const plan = buildCastPlan({ spell, targetId: targetHit.entity.id });
+  if (!plan) return false;
   await runEngineTurn(attackerHit.entity, attackerHit.kind, {
     forcePlan: plan, interactive: true
   });
