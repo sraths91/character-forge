@@ -816,3 +816,24 @@ test('promote: idempotent — a single-weapon character is unchanged', () => {
   const parsed = parseCharacter(raw);
   assert.strictEqual(parsed.equipment.mainhand.name, 'Dagger');
 });
+
+// ── R5: armorTypeId survives into equipment ────────────────────────────
+
+test('R5: parseEquipment keeps DDB armorTypeId on armor and shield', () => {
+  const parsed = parseCharacter(rawFixture({
+    inventory: [
+      { equipped: true, definition: { id: 1, name: 'Breastplate', filterType: 'Armor', type: 'Medium Armor', armorClass: 14, armorTypeId: 2 } },
+      { equipped: true, definition: { id: 2, name: 'Shield', filterType: 'Armor', type: 'Shield', armorClass: 2, armorTypeId: 4 } }
+    ]
+  }));
+  assert.strictEqual(parsed.equipment.armor.armorTypeId, 2);
+  assert.strictEqual(parsed.equipment.offhand.armorTypeId, 4);
+  assert.strictEqual(parsed.carried.find(c => c.name === 'Breastplate').armorTypeId, 2);
+});
+
+test('R5: armorTypeId defaults to null when DDB omits it', () => {
+  const parsed = parseCharacter(rawFixture({
+    inventory: [{ equipped: true, definition: { id: 1, name: 'Leather', filterType: 'Armor', armorClass: 11 } }]
+  }));
+  assert.strictEqual(parsed.equipment.armor.armorTypeId, null);
+});

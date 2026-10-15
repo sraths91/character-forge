@@ -921,7 +921,9 @@ function parseEquipment(raw) {
       attuned: !!item.isAttuned,
       armorClass: item.definition?.armorClass ?? null,
       damage: item.definition?.damage?.diceString ?? null,
-      damageType: item.definition?.damageType ?? null
+      damageType: item.definition?.damageType ?? null,
+      // R5 — DDB armor category: 1 light / 2 medium / 3 heavy / 4 shield.
+      armorTypeId: item.definition?.armorTypeId ?? null
     };
 
     let assignedSlot = 'overflow';

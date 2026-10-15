@@ -23,52 +23,88 @@ export function totalLevel(character) {
 }
 
 /**
- * Compute AC for a PC. Best-effort: looks at armor + shield, applies
- * DEX cap based on armor type name keywords. Falls back to 10 + DEX mod
- * (unarmored) if no armor is equipped.
+ * DDB `definition.armorTypeId` → armor category. Verified against a real
+ * export: Chain Mail is 3 ("Heavy Armor"), Shield is 4.
+ */
+export const ARMOR_TYPE_BY_ID = Object.freeze({ 1: 'light', 2: 'medium', 3: 'heavy', 4: 'shield' });
+
+/**
+ * Compute AC for a PC: armor base + DEX (capped by armor category) +
+ * shield + every active `combatMods` entry of kind `ac` (Ring / Cloak of
+ * Protection, +N armor). The category comes from the parser's
+ * `armorTypeId` when present and from the armor name otherwise (older
+ * parsed rows). Falls back to 10 + DEX when no armor is equipped.
  *
- * This is intentionally simple — proper 5e AC depends on class features
- * (Unarmored Defense for Barbarians/Monks, Mage Armor, etc.) that we
- * don't have a clean source for. The user can always override via the
- * existing AppearancePicker if we add an override field later.
+ * Class features that replace the formula (Unarmored Defense, Mage
+ * Armor) are not modelled here.
+ *
+ * @param {object} character — parsed character (parseCharacter output)
+ * @returns {number}
  */
 export function deriveAC(character) {
   if (!character) return 10;
   const dex = character.abilityModifiers?.DEX ?? 0;
   const armor = character.equipment?.armor;
   const shield = character.equipment?.offhand;
-  const hasShield = shield && /shield/i.test(String(shield.name || ''));
+  const hasShield = !!shield && (shield.armorTypeId === 4 || /shield/i.test(String(shield.name || '')));
   const shieldBonus = hasShield ? 2 : 0;
+  const modBonus = acModBonus(character.combatMods, !armor);
 
   if (!armor) {
-    // Unarmored
-    return 10 + dex + shieldBonus;
+    return 10 + dex + shieldBonus + modBonus;
   }
   const armorName = String(armor.name || '').toLowerCase();
   const baseAC = Number(armor.armorClass) || armorBaseFromName(armorName);
+  const fromId = ARMOR_TYPE_BY_ID[armor.armorTypeId];
+  const armorType = fromId && fromId !== 'shield' ? fromId : classifyArmor(armorName);
   // Heavy armor caps DEX at 0; medium at +2; light unlimited.
-  const armorType = classifyArmor(armorName);
   let dexToAC = dex;
   if (armorType === 'heavy') dexToAC = 0;
   else if (armorType === 'medium') dexToAC = Math.min(dex, 2);
-  return baseAC + dexToAC + shieldBonus;
+  return baseAC + dexToAC + shieldBonus + modBonus;
 }
 
+/**
+ * Sum of active AC bonuses from parsed combatMods. Scope `all` always
+ * applies; scope `unarmored` only when no armor is worn. Inactive mods
+ * (attunement required but not attuned) are skipped.
+ */
+function acModBonus(combatMods, unarmored) {
+  if (!Array.isArray(combatMods)) return 0;
+  let sum = 0;
+  for (const m of combatMods) {
+    if (!m || m.kind !== 'ac' || m.inactive) continue;
+    if (m.scope === 'unarmored' && !unarmored) continue;
+    const v = Number(m.value);
+    if (Number.isFinite(v)) sum += v;
+  }
+  return sum;
+}
+
+/**
+ * Armor category from the armor's name (fallback when the parser did not
+ * carry `armorTypeId`). Medium is tested first so "breastplate" and
+ * "half plate" are not swallowed by the heavy `plate` pattern.
+ *
+ * @param {string} name
+ * @returns {'light'|'medium'|'heavy'}
+ */
 export function classifyArmor(name) {
-  if (/plate|chain mail|splint|ring mail/.test(name)) return 'heavy';
-  if (/chain shirt|scale mail|breastplate|half plate|hide/.test(name)) return 'medium';
-  if (/padded|leather|studded/.test(name)) return 'light';
+  const n = String(name || '').toLowerCase();
+  if (/chain shirt|scale mail|breastplate|half plate|hide/.test(n)) return 'medium';
+  if (/plate|chain mail|splint|ring mail/.test(n)) return 'heavy';
+  if (/padded|leather|studded/.test(n)) return 'light';
   return 'light';
 }
 
 /** Fallback AC values (before DEX) when armor.armorClass is absent. */
 function armorBaseFromName(name) {
-  if (/plate/.test(name) && !/half/.test(name)) return 18;
   if (/half plate/.test(name)) return 15;
+  if (/breastplate|scale mail/.test(name)) return 14;
+  if (/plate/.test(name)) return 18;
   if (/chain mail/.test(name)) return 16;
   if (/splint/.test(name)) return 17;
   if (/ring mail/.test(name)) return 14;
-  if (/scale mail|breastplate/.test(name)) return 14;
   if (/chain shirt/.test(name)) return 13;
   if (/hide/.test(name)) return 12;
   if (/studded leather/.test(name)) return 12;

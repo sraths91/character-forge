@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert';
-import { proficiencyBonus, totalLevel, deriveAC, deriveAttack, deriveWeaponAttack, spellcastingAbility, spellAttackBonus, spellSaveDC, saveBonus } from '../js/scene/pc-stats.js';
+import { proficiencyBonus, totalLevel, deriveAC, deriveAttack, deriveWeaponAttack, spellcastingAbility, spellAttackBonus, spellSaveDC, saveBonus, classifyArmor, ARMOR_TYPE_BY_ID } from '../js/scene/pc-stats.js';
+import { parsedDdbFixture } from './helpers/entities.js';
 
 test('M6: proficiencyBonus follows the 5e ladder', () => {
   assert.strictEqual(proficiencyBonus(1),  2);
@@ -221,4 +222,91 @@ test('M21: saveBonus — non-proficient is just the ability mod', () => {
 
 test('M21: saveBonus — empty character returns 0 (no ability, no proficiency)', () => {
   assert.strictEqual(saveBonus({}, 'WIS'), 0);
+});
+
+// ── R5: AC from DDB armorTypeId + combatMods of kind `ac` ──────────────
+
+test('R5: deriveAC — breastplate (armorTypeId 2) + DEX +3 → 16 (medium cap +2)', () => {
+  const ch = { abilityModifiers: { DEX: 3 }, equipment: { armor: { name: 'Breastplate', armorClass: 14, armorTypeId: 2 } } };
+  assert.strictEqual(deriveAC(ch), 16);
+});
+
+test('R5: deriveAC — breastplate by name only (older rows) is medium, not heavy', () => {
+  const ch = { abilityModifiers: { DEX: 3 }, equipment: { armor: { name: 'Breastplate', armorClass: 14 } } };
+  assert.strictEqual(deriveAC(ch), 16);
+  // and without armorClass the name fallback base is 14, not plate's 18
+  assert.strictEqual(deriveAC({ abilityModifiers: { DEX: 3 }, equipment: { armor: { name: 'Breastplate' } } }), 16);
+});
+
+test('R5: deriveAC — half plate + DEX +3 → 17 (by id and by name)', () => {
+  assert.strictEqual(deriveAC({ abilityModifiers: { DEX: 3 }, equipment: { armor: { name: 'Half Plate', armorClass: 15, armorTypeId: 2 } } }), 17);
+  assert.strictEqual(deriveAC({ abilityModifiers: { DEX: 3 }, equipment: { armor: { name: 'Half Plate', armorClass: 15 } } }), 17);
+  assert.strictEqual(deriveAC({ abilityModifiers: { DEX: 3 }, equipment: { armor: { name: 'Half Plate' } } }), 17);
+});
+
+test('R5: deriveAC — plate → 18 regardless of DEX', () => {
+  for (const dex of [-1, 0, 3, 5]) {
+    assert.strictEqual(deriveAC({ abilityModifiers: { DEX: dex }, equipment: { armor: { name: 'Plate', armorClass: 18, armorTypeId: 3 } } }), 18, `DEX ${dex}`);
+  }
+  assert.strictEqual(deriveAC({ abilityModifiers: { DEX: 3 }, equipment: { armor: { name: 'Plate' } } }), 18);
+});
+
+test('R5: deriveAC — armorTypeId wins over a misleading name', () => {
+  // A homebrew "Mithral Plate" flagged medium by DDB keeps DEX (capped).
+  const ch = { abilityModifiers: { DEX: 4 }, equipment: { armor: { name: 'Mithral Plate', armorClass: 15, armorTypeId: 2 } } };
+  assert.strictEqual(deriveAC(ch), 17);
+  const light = { abilityModifiers: { DEX: 4 }, equipment: { armor: { name: 'Elven Plate', armorClass: 12, armorTypeId: 1 } } };
+  assert.strictEqual(deriveAC(light), 16);
+});
+
+test('R5: deriveAC — shield detected by armorTypeId 4', () => {
+  const ch = { abilityModifiers: { DEX: 1 }, equipment: { armor: null, offhand: { name: 'Sentinel Kite', armorTypeId: 4 } } };
+  assert.strictEqual(deriveAC(ch), 13);
+});
+
+test('R5: deriveAC — Ring of Protection +1 (combatMods kind ac) applies', () => {
+  const ring = { kind: 'ac', scope: 'all', value: 1, inactive: false, source: 'Ring of Protection' };
+  const ch = {
+    abilityModifiers: { DEX: 2 },
+    equipment: { armor: { name: 'Chain Mail', armorClass: 16, armorTypeId: 3 }, offhand: { name: 'Shield', armorTypeId: 4 } },
+    combatMods: [ring]
+  };
+  assert.strictEqual(deriveAC(ch), 19);
+  // Cloak of Protection stacks with the ring.
+  ch.combatMods = [ring, { ...ring, source: 'Cloak of Protection' }];
+  assert.strictEqual(deriveAC(ch), 20);
+});
+
+test('R5: deriveAC — unattuned AC item is ignored; non-AC mods are ignored', () => {
+  const ch = {
+    abilityModifiers: { DEX: 2 },
+    equipment: { armor: { name: 'Leather', armorClass: 11, armorTypeId: 1 } },
+    combatMods: [
+      { kind: 'ac', scope: 'all', value: 1, inactive: true },
+      { kind: 'attack', scope: 'spell', value: 1, inactive: false },
+      { kind: 'save', scope: 'all', value: 1, inactive: false }
+    ]
+  };
+  assert.strictEqual(deriveAC(ch), 13);
+});
+
+test('R5: deriveAC — unarmored-scope AC bonus applies only without armor', () => {
+  const bracers = { kind: 'ac', scope: 'unarmored', value: 2, inactive: false };
+  assert.strictEqual(deriveAC({ abilityModifiers: { DEX: 2 }, equipment: {}, combatMods: [bracers] }), 14);
+  assert.strictEqual(deriveAC({ abilityModifiers: { DEX: 2 }, equipment: { armor: { name: 'Leather', armorClass: 11 } }, combatMods: [bracers] }), 13);
+});
+
+test('R5: classifyArmor — medium names are not swallowed by /plate/; case-insensitive', () => {
+  assert.strictEqual(classifyArmor('breastplate'), 'medium');
+  assert.strictEqual(classifyArmor('Half Plate'), 'medium');
+  assert.strictEqual(classifyArmor('plate'), 'heavy');
+  assert.strictEqual(classifyArmor('chain mail'), 'heavy');
+  assert.strictEqual(classifyArmor('studded leather'), 'light');
+  assert.deepStrictEqual({ ...ARMOR_TYPE_BY_ID }, { 1: 'light', 2: 'medium', 3: 'heavy', 4: 'shield' });
+});
+
+test('R5: synthetic fixtures keep their AC (cleric 18, fighter 18, wizard 12)', () => {
+  assert.strictEqual(deriveAC(parsedDdbFixture('cleric-l5')), 18);
+  assert.strictEqual(deriveAC(parsedDdbFixture('fighter-l5')), 18);
+  assert.strictEqual(deriveAC(parsedDdbFixture('wizard-l5')), 10 + parsedDdbFixture('wizard-l5').abilityModifiers.DEX);
 });

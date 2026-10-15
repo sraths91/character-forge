@@ -112,7 +112,8 @@
         "type": "Chain Mail",
         "armorClass": 16,
         "rarity": "Common",
-        "magic": false
+        "magic": false,
+        "armorTypeId": 3
       }
     },
     {
@@ -127,7 +128,8 @@
         "armorClass": 2,
         "rarity": "Common",
         "magic": false,
-        "subType": "Shield"
+        "subType": "Shield",
+        "armorTypeId": 4
       }
     }
   ],
