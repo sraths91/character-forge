@@ -2,13 +2,21 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, 'p1/**']
   pull_request:
     branches: [main]
+
+# GitHub runs `shell: bash` as `bash --noprofile --norc -eo pipefail {0}`,
+# so a failing command inside a pipe fails the step (the default shell has
+# no pipefail).
+defaults:
+  run:
+    shell: bash
 
 jobs:
   lint:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - name: Setup Node.js
@@ -18,14 +26,16 @@ jobs:
           cache: 'npm'
       - name: Install dependencies
         run: npm ci
-      - name: Lint
-        run: npm run lint
+      - name: Lint (warning ratchet — current count is 4, do not add any)
+        run: npx eslint . --max-warnings 4
 
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     strategy:
+      fail-fast: false
       matrix:
-        node-version: [20, 22]
+        node-version: [22, 24]
     steps:
       - uses: actions/checkout@v4
       - name: Setup Node.js ${{ matrix.node-version }}
@@ -40,6 +50,7 @@ jobs:
 
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     needs: [lint, test]
     steps:
       - uses: actions/checkout@v4
@@ -54,3 +65,30 @@ jobs:
         run: npm run build
       - name: Verify dist exists
         run: test -f dist/index.html
+
+  # M64 decision 10: the Three.js track is frozen — review only, no edits.
+  frozen-3d:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Fail on any change under the frozen 3D paths
+        run: |
+          base="origin/main"
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            base="origin/${{ github.base_ref }}"
+          fi
+          changed="$(git diff --name-only "${base}...HEAD" -- \
+            src/js/anim/three-viewer.js \
+            src/js/anim/three-scene.js \
+            src/js/anim/modular-viewer.js \
+            src/js/anim/modular-loadout.js \
+            public/assets/3d)"
+          if [ -n "${changed}" ]; then
+            echo "::error::The 3D track is frozen (M64 decision 10). These files changed against ${base}:"
+            echo "${changed}"
+            exit 1
+          fi
+          echo "No changes under the frozen 3D paths against ${base}."
