@@ -28,7 +28,7 @@ import { deriveAC } from './pc-stats.js';
 import { MONSTER_PRESETS } from './monster-presets.js';
 import {
   resetReactionsForAll, shouldCastShield, consumeShield,
-  slotsForPc
+  slotsForPc, pactForPc
 } from './reactions.js';
 import {
   freshSlots, isSpellcaster, isInnateCaster, freshInnateState
@@ -137,6 +137,7 @@ async function runOneIteration({ party, monsters, scene, maxRounds, rng, index =
     // M64 T5 — the one slot ledger: leveled spells, Smite, Shield and
     // Counterspell all draw from _slots.
     _slots: slotsForPc(p),
+    _pact: pactForPc(p),
     _shieldActive: false,
     // M42 — Per-encounter feature usage flags (Action Surge, Second Wind)
     _actionSurgeUsed: 0,

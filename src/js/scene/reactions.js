@@ -306,9 +306,21 @@ function tablesFor(name) {
   return null;
 }
 
-/** M42.1 — Estimate PC's full spell-slot pool. Returns { 1: N, 2: M, ... }
- *  shaped like monster `_slots`. Used by Divine Smite + Healing Word. */
+/** M42.1 — PC's full spell-slot pool. Returns { 1: N, 2: M, ... } shaped
+ *  like monster `_slots` — the one slot ledger's maxima (M64 T5).
+ *  M64 — when the parser supplies `spellSlotTable.spell` (DDB's own
+ *  multiclass table, E4 R4) it wins; otherwise this estimates from the
+ *  deepest caster class (older parsed rows). Pact slots are separate
+ *  (pactForPc). */
 export function slotsForPc(pc) {
+  const parsed = pc?.spellSlotTable?.spell;
+  if (parsed && typeof parsed === 'object') {
+    const out = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
+    for (const [lvl, max] of Object.entries(parsed)) {
+      if (/^[1-9]$/.test(String(lvl)) && Number.isFinite(Number(max))) out[lvl] = Math.max(0, Math.trunc(Number(max)));
+    }
+    return out;
+  }
   const classes = pc?.classes || [];
   // 1st-level slot table per full-caster level (already exported). We
   // populate 1-5 from FULL_CASTER tables and a parallel 2/4/5 tables.
@@ -347,6 +359,19 @@ export function slotsForPc(pc) {
   const table = FULL_CASTERS.has(pickClass) ? FULL : HALF;
   const row = table[Math.max(1, Math.min(11, pickLvl))] || {};
   return { ...out, ...row };
+}
+
+/**
+ * M64 T5 — Pact Magic pool for the one ledger: `{level, max, spent: 0}`
+ * from the parser's `spellSlotTable.pact`, or null (non-warlocks, older
+ * parsed rows).
+ * @param {object} pc — parsed character
+ * @returns {{level: number, max: number, spent: number}|null}
+ */
+export function pactForPc(pc) {
+  const pact = pc?.spellSlotTable?.pact;
+  if (!pact || !Number.isInteger(Number(pact.level)) || Number(pact.level) < 1) return null;
+  return { level: Math.min(5, Math.trunc(Number(pact.level))), max: Math.max(0, Math.trunc(Number(pact.max) || 0)), spent: 0 };
 }
 
 /** Estimate PC's starting 1st-level slot pool. 0 for non-casters. */

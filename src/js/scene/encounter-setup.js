@@ -11,7 +11,7 @@
 
 import { MONSTER_PRESETS } from './monster-presets.js';
 import { buildPartyArenaScene, rollPartyInitiative } from './versus.js';
-import { slotsForPc } from './reactions.js';
+import { slotsForPc, pactForPc } from './reactions.js';
 import { spellbookFor, innateBlockFor, freshInnateState } from './monster-spells.js';
 
 /**
@@ -83,6 +83,7 @@ export function createVersusEncounter({ party = [], pcIds = [], encounter = [], 
     // M64 T5 — one slot ledger, fully rested at fight start (owner
     // decision: imported characters start rested).
     pc._slots = slotsForPc(pc);
+    pc._pact = pactForPc(pc);
   }
 
   const initiative = rollPartyInitiative({ pcs: selected, monsters: monsterInstances }, rng);

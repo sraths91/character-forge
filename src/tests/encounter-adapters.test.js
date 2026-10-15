@@ -134,3 +134,26 @@ test('adapters: statBlock.profile (_aiProfile) changes the monster\'s choice', a
   assert.equal(await run(null), 'flee');
   assert.notEqual(await run(MONSTER_PROFILES.orc), 'flee', 'orc profile never retreats');
 });
+
+test('adapters: entityFromSheet / entityFromPreset build valid, rested entities', async () => {
+  const { entityFromSheet, entityFromPreset } = await import('../js/scene/encounter-adapters.js');
+  const { emptyEncounterState } = await import('../js/shared/encounter-state.js');
+  const fighter = parsedDdbFixture('fighter-l5');
+  const wizard = parsedDdbFixture('wizard-l5');
+  const state = emptyEncounterState({ encounterId: 'e1', cols: 10, rows: 6, seed: 1 });
+  const f = entityFromSheet(fighter, { pos: { col: 1, row: 1 }, controller: { type: 'player', seatId: 's1' } });
+  const w = entityFromSheet(wizard, { pos: { col: 1, row: 2 } });
+  const d = entityFromPreset('young-dragon', { id: 'm1', pos: { col: 8, row: 3 } });
+  const g = entityFromPreset('goblin', { id: 'm2', pos: { col: 7, row: 3 }, statBlock: { name: 'Boss', ac: 17, hpMax: 21, attacks: [{ name: 'Axe', bonus: 5, dice: '1d8+3' }] } });
+  for (const e of [f, w, d, g]) state.entities[e.id] = e;
+  const v = validateEncounterState(state);
+  assert.ok(v.ok, JSON.stringify(v.errors));
+  assert.deepEqual(f.resources.features['action-surge'], { max: 1, spent: 0 });
+  assert.deepEqual(w.resources.slots, { 1: { max: 4, spent: 0 }, 2: { max: 3, spent: 0 }, 3: { max: 2, spent: 0 } });
+  assert.ok(d.resources.innate && d.resources.legendaryBudget > 0);
+  assert.equal(g.ac, 17);
+  assert.equal(g.hpMax, 21);
+  const sides = toEngineSides(state, { [fighter.id]: fighter, [wizard.id]: wizard }, 'm2');
+  assert.equal(sides.active.attack.name, 'Axe');
+  assert.throws(() => entityFromPreset('nope', { id: 'x', pos: { col: 0, row: 0 } }), /unknown monster preset/);
+});

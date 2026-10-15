@@ -25,7 +25,10 @@
  */
 
 import { MONSTER_PRESETS } from './monster-presets.js';
-import { spellById } from './monster-spells.js';
+import { spellById, freshSlots, freshInnateState } from './monster-spells.js';
+import { isLegendary, freshLegendaryBudget } from './monster-legendary.js';
+import { deriveAC } from './pc-stats.js';
+import { slotsForPc, pactForPc } from './reactions.js';
 
 /** Wrapper fields that are recomputed per turn and never persisted. */
 export const TRANSIENT_WRAPPER_FIELDS = Object.freeze([
@@ -330,5 +333,111 @@ export function dynamicStateOf(state) {
     turnIndex: state?.turnIndex ?? 0,
     initiative: state?.initiative || [],
     entities
+  };
+}
+
+// ---------------------------------------------------------------------
+// Entity builders (encounter setup: the server and tests build
+// EncounterState entities from sheets and presets with these)
+// ---------------------------------------------------------------------
+
+function fullLedger(pool) {
+  const out = {};
+  for (const [lvl, n] of Object.entries(pool || {})) {
+    if (/^[1-9]$/.test(String(lvl)) && n > 0) out[lvl] = { max: n, spent: 0 };
+  }
+  return out;
+}
+
+function fighterLevel(sheet) {
+  return (sheet?.classes || []).filter(c => /fighter/i.test(c?.name || ''))
+    .reduce((a, c) => a + (Number(c.level) || 0), 0);
+}
+
+/**
+ * A fully rested PC entity from a parsed character sheet. Slot maxima
+ * come from the sheet (`spellSlotTable` when the parser provides it, else
+ * the slotsForPc estimate); Action Surge / Second Wind ledgers for
+ * fighters.
+ *
+ * @param {object} sheet — parseCharacter output (`id`, `hp`, `classes`, …)
+ * @param {{id?: string, side?: 'party'|'hostile', pos: {col: number, row: number},
+ *          controller?: {type: 'player'|'ai'|'dm', seatId: string|null},
+ *          speedFt?: number, rev?: number|string}} opts
+ * @returns {object} EncounterState entity (sheetRef.characterId = String(sheet.id))
+ */
+export function entityFromSheet(sheet, opts) {
+  const max = Math.max(1, Math.trunc(sheet?.hp?.max ?? 1));
+  const pact = pactForPc(sheet);
+  const fl = fighterLevel(sheet);
+  const features = {};
+  if (fl >= 2) features['action-surge'] = { max: fl >= 17 ? 2 : 1, spent: 0 };
+  if (fl >= 1) features['second-wind'] = { max: 1, spent: 0 };
+  return {
+    id: String(opts?.id ?? sheet.id),
+    kind: 'pc',
+    side: opts?.side || 'party',
+    name: String(sheet?.name || 'PC'),
+    controller: opts?.controller || { type: 'ai', seatId: null },
+    pos: { col: opts.pos.col, row: opts.pos.row },
+    hp: max,
+    hpMax: max,
+    hpTemp: 0,
+    ac: deriveAC(sheet),
+    speedFt: Math.trunc(opts?.speedFt ?? sheet?.speedFt ?? sheet?.speed ?? 30) || 30,
+    conditions: [],
+    concentration: null,
+    resources: {
+      reactionUsed: false,
+      slots: fullLedger(slotsForPc(sheet)),
+      pact: pact ? { level: pact.level, max: pact.max, spent: 0 } : {},
+      innate: null,
+      legendaryBudget: 0,
+      features
+    },
+    turnFlags: {},
+    sheetRef: { characterId: String(sheet.id), rev: opts?.rev ?? 0 }
+  };
+}
+
+/**
+ * A fresh monster entity from a MONSTER_PRESETS slug, optionally with an
+ * imported stat block (`{name, ac, hpMax, attacks[], saves{}, profile}`)
+ * layered over the preset.
+ *
+ * @param {string} slug — preset slug (also the sprite)
+ * @param {{id: string, side?: 'party'|'hostile', pos: {col: number, row: number},
+ *          name?: string, statBlock?: object, controller?: object, speedFt?: number}} opts
+ * @returns {object} EncounterState entity
+ */
+export function entityFromPreset(slug, opts) {
+  const preset = MONSTER_PRESETS[slug];
+  if (!preset) throw new Error(`encounter-adapters: unknown monster preset "${slug}"`);
+  const sb = opts?.statBlock ? clone(opts.statBlock) : {};
+  const max = Math.max(1, Math.trunc(sb.hpMax ?? preset.defaultHp?.max ?? 1));
+  return {
+    id: String(opts.id),
+    kind: 'monster',
+    side: opts?.side || 'hostile',
+    name: String(opts?.name || sb.name || preset.name),
+    controller: opts?.controller || { type: 'ai', seatId: null },
+    pos: { col: opts.pos.col, row: opts.pos.row },
+    hp: max,
+    hpMax: max,
+    hpTemp: 0,
+    ac: Math.trunc(sb.ac ?? preset.ac ?? 12),
+    speedFt: Math.trunc(opts?.speedFt ?? sb.speedFt ?? preset.speedFt ?? 30) || 30,
+    conditions: [],
+    concentration: null,
+    resources: {
+      reactionUsed: false,
+      slots: fullLedger(freshSlots(slug)),
+      pact: {},
+      innate: freshInnateState(slug),
+      legendaryBudget: isLegendary(slug) ? freshLegendaryBudget(slug) : 0,
+      features: {}
+    },
+    turnFlags: {},
+    statBlock: { ...sb, slug }
   };
 }

@@ -54,3 +54,18 @@ test('T5: consumeShield / consumeCounterspell return the level spent', () => {
   w._reactionUsed = false;
   assert.equal(canCastCounterspell(w), false, 'no 3rd+ slot left');
 });
+
+test('T5: slotsForPc prefers the parser\'s spellSlotTable; pactForPc reads the pact row', async () => {
+  const { slotsForPc, pactForPc } = await import('../js/scene/reactions.js');
+  const multi = {
+    classes: [{ name: 'Wizard', level: 3 }, { name: 'Cleric', level: 3 }],
+    spellSlotTable: { spell: { 1: 4, 2: 3, 3: 3 }, pact: null }
+  };
+  assert.deepEqual(slotsForPc(multi), { 1: 4, 2: 3, 3: 3, 4: 0, 5: 0 });
+  assert.equal(pactForPc(multi), null);
+  const lock = { classes: [{ name: 'Warlock', level: 5 }], spellSlotTable: { spell: {}, pact: { level: 3, max: 2 } } };
+  assert.deepEqual(pactForPc(lock), { level: 3, max: 2, spent: 0 });
+  assert.deepEqual(slotsForPc(lock), { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 }, 'warlocks get pact slots, not full-caster slots');
+  // Older parsed rows (no table) keep the estimate.
+  assert.deepEqual(slotsForPc({ classes: [{ name: 'Wizard', level: 5 }] }), { 1: 4, 2: 3, 3: 2, 4: 0, 5: 0 });
+});

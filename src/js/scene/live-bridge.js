@@ -31,7 +31,7 @@
 import { positionOf } from './scene-model.js';
 import { MONSTER_PRESETS } from './monster-presets.js';
 import { deriveAC } from './pc-stats.js';
-import { slotsForPc } from './reactions.js';
+import { slotsForPc, pactForPc } from './reactions.js';
 import { freshSlots } from './monster-spells.js';
 import { choosePcAction } from './ai/pc-action.js';
 import { resetPerTurnFlags } from './ai/pc-features.js';
@@ -180,7 +180,8 @@ export function entityFromLivePc(pc, idx, scene) {
   });
   const fresh = slotsForPc(pc);
   e.resources.slots = ledgerFromPool(fullLedger(fresh), pc._slots || fresh);
-  if (pc._pact && Number.isInteger(pc._pact.level)) e.resources.pact = { ...pc._pact };
+  const pact = pc._pact && Number.isInteger(pc._pact.level) ? pc._pact : pactForPc(pc);
+  if (pact) e.resources.pact = { level: pact.level, max: pact.max, spent: Math.min(pact.max, pact.spent ?? 0) };
   e.sheetRef = { characterId: String(pc.id), rev: 0 };
   return applyWrapperToEntity(e, {
     ...pick(pc, LIVE_PC_FIELDS),
