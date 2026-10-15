@@ -7,6 +7,7 @@ import { startServer } from './start.js';
 import { createRoomService } from './rooms/service.js';
 import { createRoomRegistry } from './rooms/registry.js';
 import { createStubEngine } from './rooms/engine-port.js';
+import { createSqliteJournal } from './rooms/persistence.js';
 import { attachGateway } from './ws/gateway.js';
 
 /**
@@ -18,7 +19,7 @@ import { attachGateway } from './ws/gateway.js';
  * @param {string} [o.host]
  * @param {(level: string, msg: string, extra?: object) => void} [o.log]
  * @param {import('./rooms/engine-port.js').EnginePort} [o.engine]  default: the Wave 3 stub
- * @param {object} [o.journal]   default: null journal (B8 swaps in SQLite)
+ * @param {object} [o.journal]   default: the SQLite journal over `db` (persistence.js)
  * @param {object} [o.appOpts]   extra createApp options (limits, fetchImpl, ...)
  * @param {object} [o.gatewayOpts]  heartbeatMs, helloTimeoutMs, rate, ...
  * @param {object} [o.serverOpts]   handleSignals, exit, drainTimeoutMs
@@ -29,7 +30,12 @@ export async function startMultiplayerServer({
   engine = createStubEngine(), journal, appOpts = {}, gatewayOpts = {}, serverOpts = {}, roomOpts = {}
 }) {
   const service = createRoomService({ db });
-  const registry = createRoomRegistry({ service, engine, journal, log, ...roomOpts });
+  const jr = journal || createSqliteJournal({ db: db.db, log });
+  const registry = createRoomRegistry({ service, engine, journal: jr, log, ...roomOpts });
+  // Boot recovery: every room with a setup/active encounter comes back
+  // (active ones paused, resuming on the DM's dm.resume).
+  const recovered = registry.recover();
+  if (recovered) log('info', 'rooms recovered', { rooms: recovered });
   const app = createApp({ db, env, dataDir, log, rooms: service, ...appOpts });
   app.locals.health = () => ({ sockets: registry.socketCount(), rooms: registry.size });
   let gateway = null;
@@ -41,7 +47,7 @@ export async function startMultiplayerServer({
     }
   });
   gateway = attachGateway({ httpServer: srv.httpServer, registry, service, env, log, ...gatewayOpts });
-  return { ...srv, service, registry, gateway, engine };
+  return { ...srv, service, registry, gateway, engine, journal: jr };
 }
 
 function defaultLog(level, msg, extra = {}) {

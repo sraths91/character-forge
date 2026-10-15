@@ -395,7 +395,7 @@ test('reaction prompt times out to the auto answer; an offline owner is auto-ans
     await ps[0].find(m => m.t === 'prompt.closed' && m.p.reason === 'timeout');
     // pc-1's turn now waits for an intent; act, then next goblin turn with pc-1 offline.
     const ts = await dm.find(m => m.t === 'turn.started' && m.p.payload.actorId === 'pc-1');
-    await ps[0].send('turn.act', { turnId: ts.turnId ?? ts.p.turnId, plan: { kind: 'melee', targetId: 'gob' } });
+    await ps[0].send('turn.act', { turnId: ts.p.turnId, plan: { kind: 'melee', targetId: 'gob' } });
     const ex = await dm.find(m => m.t === 'exchange' && m.p.payload.attackerId === 'pc-1');
     await dm.send('dm.roll.arm', { entityId: 'gob', rollKind: 'attack', value: 12 });
     ps[0].ws.close();
@@ -433,7 +433,7 @@ test('DM edits: between turns apply now (entity.updated + dm.override); during a
     assert.equal((await dm.send('dm.initiative.set', { order: ['gob', 'pc-1'] })).p.code, 'E_STALE');
     // Skip the waiting turn.
     assert.equal((await dm.send('dm.turn.skip', {})).t, 'ack');
-    const skipped = await dm.find(m => m.t === 'turn.skipped' && m.turnId === ts.turnId);
+    const skipped = await dm.find(m => m.t === 'turn.skipped' && m.p.turnId === ts.p.turnId);
     assert.equal(skipped.p.payload.actorId, 'pc-1');
     // DM pauses then ends the encounter.
     await dm.find(m => m.t === 'turn.started' && m.p.payload.actorId === 'gob');

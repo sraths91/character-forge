@@ -373,6 +373,7 @@ export class Room {
   #restore(live) {
     if (live.engineVersion !== this.engine.version) {
       this.journal.setStatus(live.encounterId, 'abandoned', null);
+      this.store.setRoomStatus(this.id, 'lobby');
       this.log('warn', 'room: encounter abandoned (engine version changed)', {
         roomId: this.id, encounterId: live.encounterId, stored: live.engineVersion, running: this.engine.version
       });
