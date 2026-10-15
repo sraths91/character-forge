@@ -16,6 +16,8 @@
   },
   "deploy": {
     "startCommand": "NODE_ENV=production node api/server.js",
+    "numReplicas": 1,
+    "requiredMountPath": "/app/data",
     "restartPolicyType": "ON_FAILURE",
     "restartPolicyMaxRetries": 10,
     "healthcheckPath": "/api/health",
