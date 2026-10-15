@@ -32,8 +32,9 @@ import { spellbookFor, innateBlockFor, freshInnateState } from './monster-spells
  * @returns {{scene: object, party: object[], monsters: object[],
  *            initiative: Array<{entityId, entityKind, name, score}>}}
  *   `scene` is the arena (with `scene.initiative` set, first entry
- *   active), `party` the selected PCs, `monsters` the seeded monster
- *   instance records, `initiative` the sorted roll.
+ *   active; its monsters carry the seeded `_slots` / `_innate` /
+ *   `_reactionUsed`), `party` the selected PCs, `monsters` the seeded
+ *   pre-arena instance records, `initiative` the sorted roll.
  */
 export function createVersusEncounter({ party = [], pcIds = [], encounter = [], flanking = false, rng, mintId }) {
   if (typeof rng !== 'function') {
@@ -53,6 +54,19 @@ export function createVersusEncounter({ party = [], pcIds = [], encounter = [], 
     };
   });
 
+  // M39 — Seed spell resources on every spell-casting monster (mirrors
+  // the simulator's iteration start). F11: this must run BEFORE
+  // buildPartyArenaScene, which copies each instance into the arena —
+  // seeding afterwards left the live arena monsters with no slot pool
+  // and no innate state.
+  for (const m of monsterInstances) {
+    m._reactionUsed = false;
+    const book = spellbookFor(m.presetSlug);
+    if (book) m._slots = { ...(book.slots || {}) };
+    const innate = innateBlockFor(m.presetSlug);
+    if (innate) m._innate = freshInnateState(m.presetSlug);
+  }
+
   // Party PCs left, monsters right.
   const scene = buildPartyArenaScene({
     pcIds, monsterInstances,
@@ -68,15 +82,6 @@ export function createVersusEncounter({ party = [], pcIds = [], encounter = [], 
     pc._reactionUsed = false;
     pc._lvl1Slots = lvl1SlotsForPc(pc);
     pc._lvl3Slots = lvl3SlotsForPc(pc);
-  }
-  // M39 — Seed spell resources on every spell-casting monster (mirrors
-  // the simulator's iteration start).
-  for (const m of monsterInstances) {
-    m._reactionUsed = false;
-    const book = spellbookFor(m.presetSlug);
-    if (book) m._slots = { ...(book.slots || {}) };
-    const innate = innateBlockFor(m.presetSlug);
-    if (innate) m._innate = freshInnateState(m.presetSlug);
   }
 
   const initiative = rollPartyInitiative({ pcs: selected, monsters: monsterInstances }, rng);

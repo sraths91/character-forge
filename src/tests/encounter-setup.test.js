@@ -72,3 +72,24 @@ test('encounter-setup: rng and mintId are required', () => {
   assert.throws(() => createVersusEncounter({ party: party(), pcIds: ['p1'], encounter, mintId: (i) => `m${i}` }), TypeError);
   assert.throws(() => createVersusEncounter({ party: party(), pcIds: ['p1'], encounter, rng: seedRng(1) }), TypeError);
 });
+
+test('encounter-setup: F11 — the arena monsters themselves carry _slots, _innate and _reactionUsed', () => {
+  const { scene } = createVersusEncounter({
+    party: party(), pcIds: ['p1'],
+    encounter: [
+      { slug: 'cult-fanatic', name: 'Cult Fanatic' },
+      { slug: 'young-dragon', name: 'Young Dragon' },
+      { slug: 'goblin', name: 'Goblin' }
+    ],
+    rng: seedRng(2), mintId: (i) => `m_${i}`
+  });
+  const [fanatic, dragon, goblin] = scene.monsters;
+  assert.deepEqual(fanatic._slots, { 1: 4, 2: 3 });
+  assert.equal(fanatic._reactionUsed, false);
+  assert.ok(dragon._innate, 'innate caster has recharge state');
+  assert.equal(dragon._innate.recharges['fire-breath'], true);
+  assert.equal(dragon._reactionUsed, false);
+  assert.equal(goblin._reactionUsed, false);
+  assert.equal(goblin._slots, undefined, 'non-casters get no slot pool');
+  assert.equal(goblin._innate, undefined);
+});
