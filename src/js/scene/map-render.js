@@ -150,6 +150,66 @@ export function drawGridLines(ctx, cols, rows, cellPx, { color = 'rgba(255,255,2
 }
 
 /* =====================================================================
+ * M64 M6 — terrain overlay (after the grid, before tokens)
+ * ===================================================================== */
+
+/** Overlay colours per flag, strongest first (a cell shows its strongest flag). */
+export const TERRAIN_OVERLAY_STYLES = Object.freeze([
+  { flag: 16, fill: 'rgba(15,23,42,0.55)', stroke: 'rgba(148,163,184,0.9)', label: 'total cover' },
+  { flag: 1, fill: 'rgba(220,38,38,0.35)', stroke: 'rgba(248,113,113,0.9)', label: 'blocked' },
+  { flag: 8, fill: 'rgba(124,58,237,0.30)', stroke: 'rgba(167,139,250,0.9)', label: 'three-quarters cover' },
+  { flag: 4, fill: 'rgba(37,99,235,0.28)', stroke: 'rgba(96,165,250,0.9)', label: 'half cover' },
+  { flag: 2, fill: 'rgba(202,138,4,0.30)', stroke: 'rgba(250,204,21,0.9)', label: 'difficult' }
+]);
+
+/**
+ * Paint terrain flags as translucent cell fills. `mode: 'dm'` shows every
+ * flag; `'player'` shows only what changes movement (blocked, difficult).
+ * Difficult terrain also gets a diagonal hatch so it reads without colour.
+ * @param {CanvasRenderingContext2D} ctx
+ * @param {{cols: number, rows: number, cells: Uint8Array}} terrain — working form (map/terrain.js asTerrain)
+ * @param {number} cellPx — world units per cell
+ * @param {{mode?: 'dm'|'player', lineWidth?: number, range?: {c0: number, c1: number, r0: number, r1: number}}} [opts]
+ * @returns {number} cells painted
+ */
+export function paintTerrainOverlay(ctx, terrain, cellPx, { mode = 'dm', lineWidth = 1, range = null } = {}) {
+  if (!ctx || !terrain?.cells) return 0;
+  const allowed = mode === 'dm' ? 31 : 3;
+  const c0 = range ? Math.max(0, range.c0) : 0;
+  const c1 = range ? Math.min(terrain.cols - 1, range.c1) : terrain.cols - 1;
+  const r0 = range ? Math.max(0, range.r0) : 0;
+  const r1 = range ? Math.min(terrain.rows - 1, range.r1) : terrain.rows - 1;
+  let painted = 0;
+  ctx.save();
+  ctx.lineWidth = lineWidth;
+  for (let r = r0; r <= r1; r++) {
+    for (let c = c0; c <= c1; c++) {
+      const f = terrain.cells[r * terrain.cols + c] & allowed;
+      if (!f) continue;
+      const style = TERRAIN_OVERLAY_STYLES.find(s => f & s.flag);
+      const x = c * cellPx, y = r * cellPx;
+      ctx.fillStyle = style.fill;
+      ctx.fillRect(x, y, cellPx, cellPx);
+      ctx.strokeStyle = style.stroke;
+      ctx.strokeRect(x + lineWidth / 2, y + lineWidth / 2, cellPx - lineWidth, cellPx - lineWidth);
+      if (f & 2) {
+        ctx.beginPath();
+        for (let k = 0.25; k < 2; k += 0.5) {
+          const a = Math.min(k, 1) * cellPx, b = Math.max(k - 1, 0) * cellPx;
+          ctx.moveTo(x + a, y + b);
+          ctx.lineTo(x + b, y + a);
+        }
+        ctx.strokeStyle = 'rgba(250,204,21,0.55)';
+        ctx.stroke();
+      }
+      painted++;
+    }
+  }
+  ctx.restore();
+  return painted;
+}
+
+/* =====================================================================
  * Waterways + roads (Phase 2)
  * ===================================================================== */
 

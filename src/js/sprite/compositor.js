@@ -1,8 +1,9 @@
 import { FRAME, SLOT_COLORS, SLOT_BOXES, buildRenderPlan, getFrame } from './lpc-config.js';
 import { loadImage } from './image-cache.js';
 import { generateItemSprite, rarityToAuraTier } from './item-generator.js';
-import { paintGeneratedBackground, drawMapImage, drawGridLines } from '../scene/map-render.js';
-import { WORLD_CELL_PX, MAX_CANVAS_PIXELS, createCamera, cameraTransform, sizeCanvasToViewport } from '../map/camera.js';
+import { paintGeneratedBackground, drawMapImage, drawGridLines, paintTerrainOverlay } from '../scene/map-render.js';
+import { asTerrain } from '../map/terrain.js';
+import { WORLD_CELL_PX, MAX_CANVAS_PIXELS, createCamera, cameraTransform, sizeCanvasToViewport, visibleCellRange } from '../map/camera.js';
 import { legacySceneToView, characterForToken } from '../map/view.js';
 import { MONSTER_PRESETS, buildMonsterCharacter } from '../scene/monster-presets.js';
 
@@ -71,7 +72,7 @@ export async function renderSprite(canvas, character, { scale = 6, direction = '
  *   renderBattleScene(canvas, characters, scene, opts) — legacy (main.js
  *     today); adapted through legacySceneToView, output unchanged.
  *
- * Draw order: background → grid → (terrain) → AoE / path previews →
+ * Draw order: background → grid → terrain overlay → AoE / path previews →
  * tokens → (fog) → selection / turn / hover / flashes / popups / effects.
  * The renderer imports no scene-state mutator (asserted by a test).
  *
@@ -139,6 +140,15 @@ async function renderBattleView(canvas, view, local) {
   // 2. Grid lines, one CSS pixel wide at any zoom.
   if (local.grid?.visible !== false) {
     drawGridLines(ctx, cols, rows, W, { color: local.grid?.color || 'rgba(255,255,255,0.18)', lineWidth: px });
+  }
+
+  // 2.5 M64 M6 — terrain overlay: every flag for the DM, movement flags
+  //     for players who toggle it on.
+  const terrainMode = local.dm?.showTerrain ? 'dm' : local.showTerrain ? 'player' : null;
+  if (terrainMode && view.terrain) {
+    paintTerrainOverlay(ctx, asTerrain(view.terrain), W, {
+      mode: terrainMode, lineWidth: px, range: visibleCellRange(camera, cols, rows, W)
+    });
   }
 
   // 3. Previews under the tokens.
