@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert';
-import { parseCharacter } from '../lib/ddb-parser.js';
+import { parseCharacter, parseSpellSlotTable, scrubRawCharacter, formatUsesWithUsed } from '../lib/ddb-parser.js';
+import { parsedDdbFixture, loadDdbFixture } from '../../src/tests/helpers/entities.js';
 
 // Minimum viable D&DB v5 raw character shape — fields the parser reads.
 // Real responses include hundreds more fields; we only exercise the ones
@@ -931,4 +932,179 @@ test('R6: weaponProficiencies collects weapon rows only', () => {
   }));
   assert.deepStrictEqual([...parsed.weaponProficiencies].sort(), ['longsword', 'shortbow', 'simple-weapons']);
   assert.deepStrictEqual(parseCharacter(rawFixture()).weaponProficiencies, []);
+});
+
+// ── R14: parser completeness (synthetic fixtures in the real DDB shape) ──
+
+test('R14: feat-granted Misty Step is kept with source, sourceName and uses', () => {
+  const p = parsedDdbFixture('cleric-l5');
+  const misty = p.spells.find(s => s.name === 'Misty Step');
+  assert.ok(misty, 'Fey Touched Misty Step parsed despite prepared:false');
+  assert.strictEqual(misty.level, 2);
+  assert.strictEqual(misty.source, 'feat');
+  assert.strictEqual(misty.sourceName, 'Fey Touched');
+  assert.deepStrictEqual(misty.uses, { max: 1, used: 0, reset: 'long rest' });
+  assert.strictEqual(misty.usesSpellSlot, false);
+  assert.strictEqual(misty.spellCastingAbility, 'WIS');
+  const flame = p.spells.find(s => s.name === 'Sacred Flame');
+  assert.strictEqual(flame.source, 'class');
+  assert.strictEqual(flame.uses, null);
+});
+
+test('R14: a granted leveled spell with no uses and not prepared stays filtered', () => {
+  const parsed = parseCharacter(rawFixture({
+    spells: { race: [], item: [], background: [], feat: [
+      { prepared: false, alwaysPrepared: false, limitedUse: null, definition: { name: 'Identify', level: 1 } },
+      { prepared: false, alwaysPrepared: false, limitedUse: { maxUses: 1, numberUsed: 1, resetType: 2 }, definition: { name: 'Hex', level: 1 } }
+    ] }
+  }));
+  assert.deepStrictEqual(parsed.spells.map(s => s.name), ['Hex']);
+  assert.deepStrictEqual(parsed.spells[0].uses, { max: 1, used: 1, reset: 'long rest' });
+});
+
+test('R14: bonus/hit-points modifiers with a die classify as heal; Aid stays utility', () => {
+  const p = parsedDdbFixture('cleric-l5');
+  const hw = p.spells.find(s => s.name === 'Healing Word');
+  assert.strictEqual(hw.kind, 'heal');
+  assert.strictEqual(hw.dice, '1d4');
+  const parsed = parseCharacter(rawFixture({
+    classSpells: [{ characterClassId: 1, spells: [
+      { prepared: true, definition: { name: 'Prayer of Healing', level: 2, modifiers: [{ type: 'bonus', subType: 'hit-points', die: { diceString: '2d8' } }] } },
+      { prepared: true, definition: { name: 'Aid', level: 2, modifiers: [{ type: 'bonus', subType: 'hit-points', die: null }] } }
+    ] }]
+  }));
+  const kinds = Object.fromEntries(parsed.spells.map(s => [s.name, s.kind]));
+  assert.deepStrictEqual(kinds, { Aid: 'utility', 'Prayer of Healing': 'heal' });
+});
+
+test('R14: real-shape damage modifiers ({type:"damage", subType:"radiant"}) give a damageType', () => {
+  const parsed = parseCharacter(rawFixture({
+    classSpells: [{ characterClassId: 1, spells: [
+      { prepared: false, definition: { name: 'Toll the Dead', level: 0, requiresSavingThrow: true, saveDcAbilityId: 5,
+        modifiers: [{ type: 'damage', subType: 'necrotic', die: { diceString: '1d8' } }] } }
+    ] }]
+  }));
+  assert.strictEqual(parsed.spells[0].damageType, 'Necrotic');
+  assert.strictEqual(parsed.spells[0].dice, '1d8');
+});
+
+test('R14: Channel Divinity keeps its uses when Turn Undead shares its componentId', () => {
+  const p = parsedDdbFixture('cleric-l5');
+  assert.deepStrictEqual(p.classFeatures.find(f => f.name === 'Channel Divinity').uses, { max: 1, reset: 'short rest' });
+  // Order does not matter: the sub-action listed first must not win either.
+  const raw = loadDdbFixture('cleric-l5');
+  raw.actions.class.reverse();
+  assert.deepStrictEqual(parseCharacter(raw).classFeatures.find(f => f.name === 'Channel Divinity').uses, { max: 1, reset: 'short rest' });
+});
+
+test('R14: hp.temp carries DDB temporaryHitPoints', () => {
+  const p = parsedDdbFixture('cleric-l5');
+  assert.strictEqual(p.hp.temp, 5);
+  assert.strictEqual(p.hp.current, p.hp.max, 'temp HP does not change current');
+});
+
+test('R14: DDB conditions map to engine ids with the exhaustion level; conditions stays empty', () => {
+  const p = parsedDdbFixture('fighter-l5');
+  assert.deepStrictEqual(p.ddbConditions, [
+    { id: 'exhaustion', name: 'Exhaustion', level: 2 },
+    { id: 'prone', name: 'Prone', level: null }
+  ]);
+  assert.deepStrictEqual(p.conditions, [], 'imports start clean; the DM toggle applies ddbConditions');
+  const odd = parseCharacter(rawFixture({ conditions: [{ id: 99 }, { id: 9, level: null }, { id: 4, level: null }] }));
+  assert.deepStrictEqual(odd.ddbConditions.map(c => [c.id, c.level]), [['paralyzed', null], ['exhaustion', 1]]);
+  assert.deepStrictEqual(parseCharacter(rawFixture()).ddbConditions, []);
+});
+
+test('R14: slotsUsed reads spellSlots[].used and pactMagic[].used by level', () => {
+  const p = parsedDdbFixture('wizard-l5');
+  assert.deepStrictEqual(p.slotsUsed.spell, { 1: 1, 2: 0, 3: 1, 4: 0, 5: 0, 6: 0, 7: 0, 8: 0, 9: 0 });
+  assert.deepStrictEqual(p.slotsUsed.pact, { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 });
+  assert.deepStrictEqual(parseCharacter(rawFixture()).slotsUsed, { spell: {}, pact: {} });
+});
+
+test('R14: currentXp is parsed (0 when absent)', () => {
+  assert.strictEqual(parsedDdbFixture('fighter-l5').currentXp, 6500);
+  assert.strictEqual(parseCharacter(rawFixture()).currentXp, 0);
+});
+
+test('R14: spellSlotTable takes slot maximums from DDB spellRules', () => {
+  const wiz = parsedDdbFixture('wizard-l5').spellSlotTable;
+  assert.deepStrictEqual(wiz.spell, { 1: 4, 2: 3, 3: 2 });
+  assert.strictEqual(wiz.pact, null);
+  assert.deepStrictEqual(wiz.classes.map(c => [c.name, c.level, c.divisor, c.pact]), [['Wizard', 5, 1, false]]);
+  const fighter = parsedDdbFixture('fighter-l5').spellSlotTable;
+  assert.deepStrictEqual(fighter, { classes: [], spell: {}, pact: null });
+});
+
+// Minimal DDB class rows for multiclass slot math.
+const FULL_TABLE = loadDdbFixture('wizard-l5').classes[0].definition.spellRules.levelSpellSlots;
+const HALF_TABLE = [[0,0,0,0,0,0,0,0,0], [0,0,0,0,0,0,0,0,0], [2,0,0,0,0,0,0,0,0], [3,0,0,0,0,0,0,0,0], [3,0,0,0,0,0,0,0,0], [4,2,0,0,0,0,0,0,0]];
+const PACT_TABLE = [[0,0,0,0,0,0,0,0,0], [1,0,0,0,0,0,0,0,0], [0,2,0,0,0,0,0,0,0], [0,2,0,0,0,0,0,0,0], [0,0,2,0,0,0,0,0,0], [0,0,2,0,0,0,0,0,0]];
+const ddbClass = (name, level, table, divisor = 1, rounding = 1) => ({
+  level, definition: { name, spellRules: { levelSpellSlots: table, multiClassSpellSlotDivisor: divisor, multiClassSpellSlotRounding: rounding } }
+});
+
+test('R14: spellSlotTable combines multiclass casters through the PHB table', () => {
+  // Wizard 3 / Cleric 3 → caster level 6 → 4/3/3
+  assert.deepStrictEqual(parseSpellSlotTable({ classes: [ddbClass('Wizard', 3, FULL_TABLE), ddbClass('Cleric', 3, FULL_TABLE)] }).spell, { 1: 4, 2: 3, 3: 3 });
+  // Paladin 4 (half, round down) / Sorcerer 4 → 2 + 4 = 6 → 4/3/3
+  assert.deepStrictEqual(parseSpellSlotTable({ classes: [ddbClass('Paladin', 4, HALF_TABLE, 2), ddbClass('Sorcerer', 4, FULL_TABLE)] }).spell, { 1: 4, 2: 3, 3: 3 });
+  // Artificer 3 (half, round up) / Wizard 1 → 2 + 1 = 3 → 4/2
+  assert.deepStrictEqual(parseSpellSlotTable({ classes: [ddbClass('Artificer', 3, HALF_TABLE, 2, 2), ddbClass('Wizard', 1, FULL_TABLE)] }).spell, { 1: 4, 2: 2 });
+  // A single half-caster uses its own row: Paladin 5 → 4/2
+  assert.deepStrictEqual(parseSpellSlotTable({ classes: [ddbClass('Paladin', 5, HALF_TABLE, 2)] }).spell, { 1: 4, 2: 2 });
+});
+
+test('R14: Warlock Pact Magic is kept apart from the spell slots', () => {
+  const t = parseSpellSlotTable({ classes: [ddbClass('Warlock', 5, PACT_TABLE), ddbClass('Sorcerer', 2, FULL_TABLE)] });
+  assert.deepStrictEqual(t.pact, { level: 3, max: 2 });
+  assert.deepStrictEqual(t.spell, { 1: 3 }, 'only the Sorcerer feeds the spell-slot table');
+});
+
+test('R14: inventory lists every item with quantity and charges; equipment is unchanged', () => {
+  const p = parsedDdbFixture('fighter-l5');
+  const potion = p.inventory.find(i => i.name === 'Potion of Healing');
+  assert.deepStrictEqual(potion, {
+    name: 'Potion of Healing', quantity: 2, equipped: false, attuned: false, magical: true, rarity: 'Common',
+    filterType: 'Potion', type: 'Potion', subType: null, consumable: true, uses: null
+  });
+  assert.ok(p.inventory.find(i => i.name === 'Longsword').equipped);
+  assert.strictEqual(p.carried.some(c => c.name === 'Potion of Healing'), false);
+  const charged = parseCharacter(rawFixture({
+    inventory: [{ equipped: true, isAttuned: true, quantity: 1, limitedUse: { maxUses: 1, numberUsed: 1, resetType: 'Dawn' },
+      definition: { id: 1, name: 'Amulet of the Devout, +1', filterType: 'Wondrous item', magic: true, rarity: 'Uncommon' } }]
+  }));
+  assert.deepStrictEqual(charged.inventory[0].uses, { max: 1, used: 1, reset: 'dawn' });
+});
+
+test('R14: racial traits by name, hidden ones skipped', () => {
+  assert.deepStrictEqual(parsedDdbFixture('fighter-l5').racialTraits, ['Ability Score Increase']);
+  const parsed = parseCharacter(rawFixture({
+    race: { fullName: 'Half-Orc', baseRaceName: 'Half-Orc', racialTraits: [
+      { definition: { name: 'Relentless Endurance', hideInSheet: false } },
+      { definition: { name: 'Savage Attacks', hideInSheet: false } },
+      { definition: { name: 'Speed', hideInSheet: true } }
+    ] }
+  }));
+  assert.deepStrictEqual(parsed.racialTraits, ['Relentless Endurance', 'Savage Attacks']);
+  assert.deepStrictEqual(parseCharacter(rawFixture()).racialTraits, []);
+});
+
+test('R14: formatUsesWithUsed clamps used into [0, max]', () => {
+  assert.deepStrictEqual(formatUsesWithUsed({ maxUses: 2, numberUsed: 5, resetType: 1 }), { max: 2, used: 2, reset: 'short rest' });
+  assert.strictEqual(formatUsesWithUsed({ maxUses: 0 }), null);
+  assert.strictEqual(formatUsesWithUsed(null), null);
+});
+
+test('R14: scrubRawCharacter drops campaign.characters without mutating the input', () => {
+  const raw = rawFixture({ campaign: { id: 1, name: 'Camp', dmUsername: 'dm', characters: [{ userId: 2, username: 'other', characterId: 3, characterName: 'Other' }] } });
+  const clean = scrubRawCharacter(raw);
+  assert.strictEqual('characters' in clean.campaign, false);
+  assert.strictEqual(clean.campaign.name, 'Camp');
+  assert.strictEqual(clean.name, raw.name);
+  assert.strictEqual(raw.campaign.characters.length, 1, 'input untouched');
+  const none = rawFixture();
+  assert.strictEqual(scrubRawCharacter(none), none);
+  assert.strictEqual(scrubRawCharacter(null), null);
+  assert.deepStrictEqual(parseCharacter(clean).name, parseCharacter(raw).name);
 });

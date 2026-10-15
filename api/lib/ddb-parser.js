@@ -76,6 +76,10 @@ export function parseCharacter(raw) {
   const weaponProficiencies = parseWeaponProficiencies(raw);
   const hp = parseHitPoints(raw, abilityScores, level);
   const deathSaves = parseDeathSaves(raw);
+  const ddbConditions = parseDdbConditions(raw);
+  const slotsUsed = parseSlotsUsed(raw);
+  const spellSlotTable = parseSpellSlotTable(raw);
+  const inventory = parseInventory(raw);
 
   return {
     id,
@@ -118,7 +122,19 @@ export function parseCharacter(raw) {
     faith:  raw.faith  ?? null,
     lifestyle: decodeLifestyle(raw),
     background: parseBackground(raw),  // Phase F2 — drives default props
-    inspiration: !!raw.inspiration
+    inspiration: !!raw.inspiration,
+    // R14 — DDB's current play state, imported only when the DM opts in
+    // (imports start fully rested; `conditions` above stays empty).
+    ddbConditions,
+    slotsUsed,
+    currentXp: Number.isFinite(Number(raw.currentXp)) ? Number(raw.currentXp) : 0,
+    // R14 — slot maximums from DDB's class spellRules, not a hard-coded table.
+    spellSlotTable,
+    // R14 — every inventory row (equipped or not) with quantity and charges;
+    // `equipment` / `carried` stay the sprite pipeline's slotted view.
+    inventory,
+    // R14 — racial trait names (Lucky, Relentless Endurance, ...).
+    racialTraits: parseRacialTraits(raw)
   };
 }
 
@@ -306,7 +322,7 @@ export function parseClassFeatures(raw) {
       const requiredLevel = Number(def.requiredLevel) || 1;
       if (requiredLevel > currentLevel) continue;
 
-      const action = actionsByComponent.get(def.id) || null;
+      const action = classActionFor(actionsByComponent, def.id, featureName);
       const description = pickDescription(def, action);
       const dice = action ? formatDDBDice(action.dice) : null;
       const uses = action ? formatUses(action.limitedUse) : null;
@@ -333,13 +349,34 @@ export function parseClassFeatures(raw) {
   return out;
 }
 
+/**
+ * componentId → class actions. Several actions can share one componentId
+ * (DDB lists "Channel Divinity" and "Channel Divinity: Turn Undead" both
+ * under the Channel Divinity feature id), so each id keeps a list and
+ * `classActionFor` picks by name.
+ */
 function indexClassActions(actions) {
   const map = new Map();
   if (!Array.isArray(actions)) return map;
   for (const a of actions) {
-    if (a?.componentId != null) map.set(a.componentId, a);
+    if (a?.componentId == null) continue;
+    if (!map.has(a.componentId)) map.set(a.componentId, []);
+    map.get(a.componentId).push(a);
   }
   return map;
+}
+
+/**
+ * The action for a feature: exact name match first, then the one that
+ * carries limited uses, then the first listed.
+ */
+function classActionFor(index, featureId, featureName) {
+  const list = index.get(featureId);
+  if (!list || list.length === 0) return null;
+  const name = String(featureName || '').trim().toLowerCase();
+  return list.find(a => String(a?.name || '').trim().toLowerCase() === name)
+    || list.find(a => Number(a?.limitedUse?.maxUses) > 0)
+    || list[0];
 }
 
 /**
@@ -593,29 +630,35 @@ export function parseSpells(raw) {
       ?? abilityByCharacterClassId.get(cs.characterClassId)
       ?? null;
     for (const entry of (cs.spells || [])) {
-      collected.push({ entry, classCastingAbility: classAbility });
+      collected.push({ entry, classCastingAbility: classAbility, source: 'class' });
     }
   }
   // Granted spells from race/feat/item/background (e.g. Magic Initiate,
-  // Mark of Sentinel races, Ring of Spell Storing).
+  // Fey Touched, Mark of Sentinel races, Ring of Spell Storing).
   const grantedBuckets = ['race', 'feat', 'item', 'background'];
   for (const b of grantedBuckets) {
     const list = raw.spells?.[b];
     if (!Array.isArray(list)) continue;
     for (const entry of list) {
-      collected.push({ entry, classCastingAbility: null });
+      collected.push({ entry, classCastingAbility: null, source: b });
     }
   }
+  const featNames = indexById(raw.feats, f => f?.definition?.id, f => f?.definition?.name);
+  const itemNames = indexById(raw.inventory, i => i?.definition?.id, i => i?.definition?.name);
 
   const out = [];
-  for (const { entry, classCastingAbility } of collected) {
+  for (const { entry, classCastingAbility, source } of collected) {
     const def = entry?.definition;
     if (!def) continue;
     // Only surface spells that are actually accessible right now.
     // Cantrips (level 0) are always accessible; leveled spells must be
     // `prepared` OR `alwaysPrepared` (Twilight Domain's domain spells).
+    // R14 — race/feat/item/background grants are `prepared: false` but
+    // castable through their own limited uses (Fey Touched's Misty Step,
+    // 1/long rest), so a granted spell with uses counts as accessible.
     const isCantrip = def.level === 0;
-    if (!isCantrip && !entry.prepared && !entry.alwaysPrepared) continue;
+    const uses = source === 'class' ? null : formatUsesWithUsed(entry.limitedUse);
+    if (!isCantrip && !entry.prepared && !entry.alwaysPrepared && !uses) continue;
 
     const spell = {
       name: def.name,
@@ -651,7 +694,14 @@ export function parseSpells(raw) {
       // Kind classification — drives the actions panel category.
       // attack-roll spells go in 'spell-attack', save-based in 'spell-save',
       // healing spells get 'heal', everything else 'utility'.
-      kind: classifySpellKind(def)
+      kind: classifySpellKind(def),
+      // R14 — where the spell comes from, and its own uses for non-class
+      // grants ({ max, used, reset }; null for class spells).
+      source,
+      sourceName: source === 'feat' ? (featNames.get(entry.componentId) || null)
+        : source === 'item' ? (itemNames.get(entry.componentId) || null)
+        : null,
+      uses
     };
     out.push(spell);
   }
@@ -679,6 +729,10 @@ function extractSpellDice(def) {
 
 function extractSpellDamageType(def) {
   const mods = Array.isArray(def.modifiers) ? def.modifiers : [];
+  // Real DDB exports encode spell damage as { type: 'damage', subType:
+  // 'radiant' }; older/synthetic shapes use subType 'radiant-damage'.
+  const typed = mods.find(m => m.type === 'damage' && m.subType && !/damage$/i.test(m.subType));
+  if (typed) return typed.subType.charAt(0).toUpperCase() + typed.subType.slice(1);
   const dmg = mods.find(m => /damage$/i.test(m.subType || ''));
   if (!dmg) return null;
   // SubType is like "fire-damage", "radiant-damage", etc.
@@ -692,6 +746,11 @@ function classifySpellKind(def) {
   if (def.requiresSavingThrow) return 'spell-save';
   if (Array.isArray(def.healingDice) && def.healingDice.length) return 'heal';
   if (def.healing) return 'heal';
+  // R14 — real DDB exports encode healing as a `bonus` / `hit-points`
+  // modifier with a die (Healing Word 1d4). A die-less hit-points bonus
+  // is a max-HP buff (Aid), not a heal.
+  const mods = Array.isArray(def.modifiers) ? def.modifiers : [];
+  if (mods.some(m => m?.type === 'bonus' && m?.subType === 'hit-points' && m?.die?.diceString)) return 'heal';
   return 'utility';
 }
 
@@ -741,6 +800,18 @@ export function formatUses(limitedUse) {
   if (!max) return null;
   const reset = RESET_TYPE_LABEL[String(limitedUse.resetType || '').toLowerCase()] || null;
   return { max, reset };
+}
+
+/**
+ * formatUses plus DDB's `numberUsed`: { max, used, reset } or null.
+ * @param {object} limitedUse
+ * @returns {{max: number, used: number, reset: string|null}|null}
+ */
+export function formatUsesWithUsed(limitedUse) {
+  const base = formatUses(limitedUse);
+  if (!base) return null;
+  const used = Math.max(0, Math.min(base.max, Number(limitedUse.numberUsed) || 0));
+  return { max: base.max, used, reset: base.reset };
 }
 
 // D&DB stores ability-score adjustments in two places:
@@ -849,6 +920,199 @@ function parseDeathSaves(raw) {
     successes: Math.min(3, Math.max(0, Number(ds.successCount ?? ds.successes) || 0)),
     failures:  Math.min(3, Math.max(0, Number(ds.failCount    ?? ds.failures)  || 0))
   };
+}
+
+// R14 — DDB condition ids (character `conditions[]` rows are
+// { id, level }; level is set only for Exhaustion). Names are the
+// engine's lowercase condition ids.
+const DDB_CONDITION_IDS = {
+  1: 'blinded', 2: 'charmed', 3: 'deafened', 4: 'exhaustion', 5: 'frightened',
+  6: 'grappled', 7: 'incapacitated', 8: 'invisible', 9: 'paralyzed',
+  10: 'petrified', 11: 'poisoned', 12: 'prone', 13: 'restrained',
+  14: 'stunned', 15: 'unconscious'
+};
+
+/**
+ * Current DDB conditions as [{ id, name, level }]. `id` is the engine's
+ * lowercase condition id, `name` the display name, `level` the
+ * exhaustion level (null for every other condition). Unknown ids are
+ * dropped.
+ * @param {object} raw
+ * @returns {{id: string, name: string, level: number|null}[]}
+ */
+export function parseDdbConditions(raw) {
+  const list = Array.isArray(raw.conditions) ? raw.conditions : [];
+  const out = [];
+  for (const c of list) {
+    const id = DDB_CONDITION_IDS[Number(c?.id)];
+    if (!id || out.some(o => o.id === id)) continue;
+    const lvl = Number(c?.level);
+    out.push({
+      id,
+      name: id.charAt(0).toUpperCase() + id.slice(1),
+      level: id === 'exhaustion' ? (lvl > 0 ? Math.min(6, lvl) : 1) : null
+    });
+  }
+  return out;
+}
+
+/**
+ * Used slot counts from DDB: { spell: {1..9: used}, pact: {1..5: used} }.
+ * (DDB's `available` is 0 in real exports, so maximums come from
+ * spellSlotTable instead.)
+ * @param {object} raw
+ * @returns {{spell: Object<string, number>, pact: Object<string, number>}}
+ */
+export function parseSlotsUsed(raw) {
+  const read = (rows) => {
+    const out = {};
+    for (const r of (Array.isArray(rows) ? rows : [])) {
+      const lvl = Number(r?.level);
+      if (!(lvl >= 1 && lvl <= 9)) continue;
+      out[lvl] = Math.max(0, Number(r?.used) || 0);
+    }
+    return out;
+  };
+  return { spell: read(raw.spellSlots), pact: read(raw.pactMagic) };
+}
+
+// PHB multiclass spellcaster table (combined caster level → slots 1..9).
+const MULTICLASS_SLOTS = [
+  [0, 0, 0, 0, 0, 0, 0, 0, 0],
+  [2, 0, 0, 0, 0, 0, 0, 0, 0], [3, 0, 0, 0, 0, 0, 0, 0, 0], [4, 2, 0, 0, 0, 0, 0, 0, 0],
+  [4, 3, 0, 0, 0, 0, 0, 0, 0], [4, 3, 2, 0, 0, 0, 0, 0, 0], [4, 3, 3, 0, 0, 0, 0, 0, 0],
+  [4, 3, 3, 1, 0, 0, 0, 0, 0], [4, 3, 3, 2, 0, 0, 0, 0, 0], [4, 3, 3, 3, 1, 0, 0, 0, 0],
+  [4, 3, 3, 3, 2, 0, 0, 0, 0], [4, 3, 3, 3, 2, 1, 0, 0, 0], [4, 3, 3, 3, 2, 1, 0, 0, 0],
+  [4, 3, 3, 3, 2, 1, 1, 0, 0], [4, 3, 3, 3, 2, 1, 1, 0, 0], [4, 3, 3, 3, 2, 1, 1, 1, 0],
+  [4, 3, 3, 3, 2, 1, 1, 1, 0], [4, 3, 3, 3, 2, 1, 1, 1, 1], [4, 3, 3, 3, 3, 1, 1, 1, 1],
+  [4, 3, 3, 3, 3, 2, 1, 1, 1], [4, 3, 3, 3, 3, 2, 2, 1, 1]
+];
+
+const slotRowToObject = (row) => {
+  const out = {};
+  for (let i = 0; i < 9; i++) {
+    const n = Number(Array.isArray(row) ? row[i] : 0) || 0;
+    if (n > 0) out[i + 1] = n;
+  }
+  return out;
+};
+
+/**
+ * Spell-slot maximums from each class's DDB `spellRules.levelSpellSlots`
+ * (indexed by class level, each row = slots of levels 1..9).
+ *
+ *   classes: [{ name, level, divisor, rounding, pact, slots }] — one per
+ *            class with a non-empty slot table (base class or subclass)
+ *   spell:   { [slotLevel]: max } — a single caster class uses its own
+ *            row; several combine through the PHB multiclass table at
+ *            sum(level / divisor) (rounded per DDB's rounding flag:
+ *            2 = up, otherwise down)
+ *   pact:    { level, max } | null — Warlock Pact Magic, kept apart
+ *
+ * NOTE: the Warlock row shape is unverified until a real Warlock export
+ * lands; it is read as "slot count at the pact slot level".
+ * @param {object} raw
+ * @returns {{classes: object[], spell: Object<string, number>, pact: {level: number, max: number}|null}}
+ */
+export function parseSpellSlotTable(raw) {
+  const classes = [];
+  for (const cls of (Array.isArray(raw.classes) ? raw.classes : [])) {
+    const level = Number(cls?.level) || 0;
+    const name = cls?.definition?.name || 'Unknown';
+    const rules = [cls?.definition?.spellRules, cls?.subclassDefinition?.spellRules]
+      .find(r => Array.isArray(r?.levelSpellSlots) && r.levelSpellSlots.some(row => Array.isArray(row) && row.some(n => Number(n) > 0)));
+    if (!rules) continue;
+    const row = rules.levelSpellSlots[Math.min(level, rules.levelSpellSlots.length - 1)] || [];
+    classes.push({
+      name,
+      level,
+      divisor: Number(rules.multiClassSpellSlotDivisor) || 1,
+      rounding: Number(rules.multiClassSpellSlotRounding) || 1,
+      pact: /warlock/i.test(name),
+      slots: slotRowToObject(row)
+    });
+  }
+  const casters = classes.filter(c => !c.pact);
+  let spell = {};
+  if (casters.length === 1) {
+    spell = { ...casters[0].slots };
+  } else if (casters.length > 1) {
+    let casterLevel = 0;
+    for (const c of casters) {
+      const share = c.level / c.divisor;
+      casterLevel += c.rounding === 2 ? Math.ceil(share) : Math.floor(share);
+    }
+    spell = slotRowToObject(MULTICLASS_SLOTS[Math.max(0, Math.min(20, casterLevel))]);
+  }
+  const lock = classes.find(c => c.pact);
+  let pact = null;
+  if (lock) {
+    const levels = Object.keys(lock.slots).map(Number);
+    if (levels.length) {
+      const top = Math.max(...levels);
+      pact = { level: top, max: lock.slots[top] };
+    }
+  }
+  return { classes, spell, pact };
+}
+
+/**
+ * Every inventory row, equipped or not (potions, ammunition, charged
+ * items). Charges are DDB's item `limitedUse`.
+ * @param {object} raw
+ * @returns {object[]}
+ */
+export function parseInventory(raw) {
+  const list = Array.isArray(raw.inventory) ? raw.inventory : [];
+  return list.filter(it => it?.definition).map(it => {
+    const d = it.definition;
+    return {
+      name: d.name || 'Unknown item',
+      quantity: Number.isFinite(Number(it.quantity)) ? Number(it.quantity) : 1,
+      equipped: !!it.equipped,
+      attuned: !!it.isAttuned,
+      magical: !!d.magic,
+      rarity: d.rarity || 'Common',
+      filterType: d.filterType || null,
+      type: d.type || null,
+      subType: d.subType || null,
+      consumable: !!d.isConsumable,
+      uses: formatUsesWithUsed(it.limitedUse)
+    };
+  });
+}
+
+/**
+ * Racial trait names (hidden bookkeeping traits like Speed and
+ * Languages are skipped).
+ * @param {object} raw
+ * @returns {string[]}
+ */
+export function parseRacialTraits(raw) {
+  const list = Array.isArray(raw.race?.racialTraits) ? raw.race.racialTraits : [];
+  const out = [];
+  for (const t of list) {
+    const def = t?.definition;
+    const name = String(def?.name || '').trim();
+    if (!name || def.hideInSheet || out.includes(name)) continue;
+    out.push(name);
+  }
+  return out;
+}
+
+/**
+ * Copy of a raw DDB character that is safe to store: drops
+ * `campaign.characters[]` (other players' names, user ids and character
+ * ids). Does not mutate the input. Call it on the raw JSON before
+ * persisting it (api/app.js upsertCharacter `rawJson`).
+ * @param {object} raw
+ * @returns {object}
+ */
+export function scrubRawCharacter(raw) {
+  if (!raw || typeof raw !== 'object') return raw;
+  if (!raw.campaign || typeof raw.campaign !== 'object' || !('characters' in raw.campaign)) return raw;
+  const { characters: _others, ...campaign } = raw.campaign;
+  return { ...raw, campaign };
 }
 
 function parseFeats(raw) {

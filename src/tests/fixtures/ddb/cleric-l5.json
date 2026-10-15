@@ -7,7 +7,36 @@
   "inspiration": false,
   "race": {
     "fullName": "Human",
-    "baseRaceName": "Human"
+    "baseRaceName": "Human",
+    "racialTraits": [
+      {
+        "definition": {
+          "id": 910001,
+          "name": "Ability Score Increase",
+          "hideInSheet": false,
+          "displayOrder": 1,
+          "snippet": ""
+        }
+      },
+      {
+        "definition": {
+          "id": 910002,
+          "name": "Speed",
+          "hideInSheet": true,
+          "displayOrder": 2,
+          "snippet": ""
+        }
+      },
+      {
+        "definition": {
+          "id": 910003,
+          "name": "Languages",
+          "hideInSheet": true,
+          "displayOrder": 3,
+          "snippet": ""
+        }
+      }
+    ]
   },
   "classes": [
     {
@@ -16,7 +45,245 @@
       "definition": {
         "id": 3,
         "name": "Cleric",
-        "spellCastingAbilityId": 5
+        "spellCastingAbilityId": 5,
+        "spellRules": {
+          "multiClassSpellSlotDivisor": 1,
+          "isRitualSpellCaster": true,
+          "levelSpellSlots": [
+            [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            [
+              2,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            [
+              3,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            [
+              4,
+              2,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            [
+              4,
+              3,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            [
+              4,
+              3,
+              2,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            [
+              4,
+              3,
+              3,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            [
+              4,
+              3,
+              3,
+              1,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            [
+              4,
+              3,
+              3,
+              2,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            [
+              4,
+              3,
+              3,
+              3,
+              1,
+              0,
+              0,
+              0,
+              0
+            ],
+            [
+              4,
+              3,
+              3,
+              3,
+              2,
+              0,
+              0,
+              0,
+              0
+            ],
+            [
+              4,
+              3,
+              3,
+              3,
+              2,
+              1,
+              0,
+              0,
+              0
+            ],
+            [
+              4,
+              3,
+              3,
+              3,
+              2,
+              1,
+              0,
+              0,
+              0
+            ],
+            [
+              4,
+              3,
+              3,
+              3,
+              2,
+              1,
+              1,
+              0,
+              0
+            ],
+            [
+              4,
+              3,
+              3,
+              3,
+              2,
+              1,
+              1,
+              0,
+              0
+            ],
+            [
+              4,
+              3,
+              3,
+              3,
+              2,
+              1,
+              1,
+              1,
+              0
+            ],
+            [
+              4,
+              3,
+              3,
+              3,
+              2,
+              1,
+              1,
+              1,
+              0
+            ],
+            [
+              4,
+              3,
+              3,
+              3,
+              2,
+              1,
+              1,
+              1,
+              1
+            ],
+            [
+              4,
+              3,
+              3,
+              3,
+              3,
+              1,
+              1,
+              1,
+              1
+            ],
+            [
+              4,
+              3,
+              3,
+              3,
+              3,
+              2,
+              1,
+              1,
+              1
+            ],
+            [
+              4,
+              3,
+              3,
+              3,
+              3,
+              2,
+              2,
+              1,
+              1
+            ]
+          ],
+          "multiClassSpellSlotRounding": 1
+        }
       },
       "subclassDefinition": {
         "id": 103,
@@ -137,11 +404,20 @@
       }
     }
   ],
-  "feats": [],
+  "feats": [
+    {
+      "componentId": 5299,
+      "componentTypeId": 12168134,
+      "definition": {
+        "id": 900451,
+        "name": "Fey Touched"
+      }
+    }
+  ],
   "baseHitPoints": 28,
   "bonusHitPoints": 0,
   "overrideHitPoints": null,
-  "temporaryHitPoints": 0,
+  "temporaryHitPoints": 5,
   "removedHitPoints": 0,
   "deathSaves": {
     "successCount": 0,
@@ -170,7 +446,19 @@
         "friendlySubtypeName": "Simple Weapons"
       }
     ],
-    "feat": [],
+    "feat": [
+      {
+        "type": "bonus",
+        "subType": "wisdom-score",
+        "value": 1,
+        "fixedValue": 1,
+        "entityId": 5,
+        "entityTypeId": 1472902489,
+        "componentId": 900451,
+        "componentTypeId": 1088085227,
+        "friendlySubtypeName": "Wisdom Score"
+      }
+    ],
     "background": [],
     "item": []
   },
@@ -183,6 +471,11 @@
           "maxUses": 1,
           "resetType": "1"
         }
+      },
+      {
+        "componentId": 5202,
+        "name": "Channel Divinity: Turn Undead",
+        "limitedUse": null
       }
     ]
   },
@@ -266,13 +559,16 @@
             "duration": {
               "durationType": "Instantaneous"
             },
-            "modifiers": [],
-            "description": "<p>Healing Word (synthetic text).</p>",
-            "healingDice": [
+            "modifiers": [
               {
-                "diceString": "1d4"
+                "type": "bonus",
+                "subType": "hit-points",
+                "die": {
+                  "diceString": "1d4"
+                }
               }
-            ]
+            ],
+            "description": "<p>Healing Word (synthetic text).</p>"
           },
           "prepared": true,
           "alwaysPrepared": false,
@@ -398,8 +694,122 @@
   ],
   "spells": {
     "race": [],
-    "feat": [],
+    "feat": [
+      {
+        "id": 930001,
+        "componentId": 900451,
+        "componentTypeId": 1088085227,
+        "prepared": false,
+        "alwaysPrepared": false,
+        "countsAsKnownSpell": null,
+        "usesSpellSlot": false,
+        "castAtLevel": null,
+        "spellCastingAbilityId": 5,
+        "limitedUse": {
+          "name": null,
+          "resetType": 2,
+          "numberUsed": 0,
+          "maxUses": 1,
+          "operator": 1,
+          "useProficiencyBonus": false
+        },
+        "definition": {
+          "id": 931001,
+          "name": "Misty Step",
+          "level": 2,
+          "school": "Conjuration",
+          "requiresAttackRoll": false,
+          "requiresSavingThrow": false,
+          "range": {
+            "origin": "Self",
+            "rangeValue": 0,
+            "aoeType": null,
+            "aoeValue": null
+          },
+          "duration": {
+            "durationType": "Instantaneous"
+          },
+          "modifiers": []
+        }
+      }
+    ],
     "item": [],
     "background": []
-  }
+  },
+  "currentXp": 6500,
+  "conditions": [],
+  "spellSlots": [
+    {
+      "level": 1,
+      "used": 2,
+      "available": 0
+    },
+    {
+      "level": 2,
+      "used": 0,
+      "available": 0
+    },
+    {
+      "level": 3,
+      "used": 0,
+      "available": 0
+    },
+    {
+      "level": 4,
+      "used": 0,
+      "available": 0
+    },
+    {
+      "level": 5,
+      "used": 0,
+      "available": 0
+    },
+    {
+      "level": 6,
+      "used": 0,
+      "available": 0
+    },
+    {
+      "level": 7,
+      "used": 0,
+      "available": 0
+    },
+    {
+      "level": 8,
+      "used": 0,
+      "available": 0
+    },
+    {
+      "level": 9,
+      "used": 0,
+      "available": 0
+    }
+  ],
+  "pactMagic": [
+    {
+      "level": 1,
+      "used": 0,
+      "available": 0
+    },
+    {
+      "level": 2,
+      "used": 0,
+      "available": 0
+    },
+    {
+      "level": 3,
+      "used": 0,
+      "available": 0
+    },
+    {
+      "level": 4,
+      "used": 0,
+      "available": 0
+    },
+    {
+      "level": 5,
+      "used": 0,
+      "available": 0
+    }
+  ]
 }

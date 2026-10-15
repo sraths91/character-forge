@@ -7,7 +7,36 @@
   "inspiration": false,
   "race": {
     "fullName": "Human",
-    "baseRaceName": "Human"
+    "baseRaceName": "Human",
+    "racialTraits": [
+      {
+        "definition": {
+          "id": 910001,
+          "name": "Ability Score Increase",
+          "hideInSheet": false,
+          "displayOrder": 1,
+          "snippet": ""
+        }
+      },
+      {
+        "definition": {
+          "id": 910002,
+          "name": "Speed",
+          "hideInSheet": true,
+          "displayOrder": 2,
+          "snippet": ""
+        }
+      },
+      {
+        "definition": {
+          "id": 910003,
+          "name": "Languages",
+          "hideInSheet": true,
+          "displayOrder": 3,
+          "snippet": ""
+        }
+      }
+    ]
   },
   "classes": [
     {
@@ -190,6 +219,23 @@
         "categoryId": 2,
         "isMonkWeapon": false
       }
+    },
+    {
+      "id": 8005,
+      "equipped": false,
+      "isAttuned": false,
+      "quantity": 2,
+      "limitedUse": null,
+      "definition": {
+        "id": 7005,
+        "name": "Potion of Healing",
+        "filterType": "Potion",
+        "type": "Potion",
+        "subType": null,
+        "rarity": "Common",
+        "magic": true,
+        "isConsumable": true
+      }
     }
   ],
   "feats": [],
@@ -264,5 +310,90 @@
     "feat": [],
     "item": [],
     "background": []
-  }
+  },
+  "currentXp": 6500,
+  "conditions": [
+    {
+      "id": 4,
+      "level": 2
+    },
+    {
+      "id": 12,
+      "level": null
+    }
+  ],
+  "spellSlots": [
+    {
+      "level": 1,
+      "used": 0,
+      "available": 0
+    },
+    {
+      "level": 2,
+      "used": 0,
+      "available": 0
+    },
+    {
+      "level": 3,
+      "used": 0,
+      "available": 0
+    },
+    {
+      "level": 4,
+      "used": 0,
+      "available": 0
+    },
+    {
+      "level": 5,
+      "used": 0,
+      "available": 0
+    },
+    {
+      "level": 6,
+      "used": 0,
+      "available": 0
+    },
+    {
+      "level": 7,
+      "used": 0,
+      "available": 0
+    },
+    {
+      "level": 8,
+      "used": 0,
+      "available": 0
+    },
+    {
+      "level": 9,
+      "used": 0,
+      "available": 0
+    }
+  ],
+  "pactMagic": [
+    {
+      "level": 1,
+      "used": 0,
+      "available": 0
+    },
+    {
+      "level": 2,
+      "used": 0,
+      "available": 0
+    },
+    {
+      "level": 3,
+      "used": 0,
+      "available": 0
+    },
+    {
+      "level": 4,
+      "used": 0,
+      "available": 0
+    },
+    {
+      "level": 5,
+      "used": 0,
+      "available": 0
+    }
+  ]
 }
