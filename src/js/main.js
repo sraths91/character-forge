@@ -37,9 +37,7 @@ import {
 } from './scene/fight-recorder.js';
 import { diffCharacters, describeDiff } from './character/diff-character.js';
 import { buildSceneSnapshot, restoreSceneFromSnapshot } from './scene/scene-snapshot.js';
-import {
-  buildPartyArenaScene, partyEndStateOf, rollPartyInitiative
-} from './scene/versus.js';
+import { partyEndStateOf } from './scene/versus.js';
 import { formatBreakdown } from './scene/ai/profile.js';
 import { inferProfile } from './scene/ai/infer.js';
 import {
@@ -47,13 +45,9 @@ import {
   applyArchetypeSwap, listArchetypes, listConsiderations
 } from './scene/ai/editor.js';
 import {
-  resetReactionsForAll, shouldCastShield, consumeShield,
-  lvl1SlotsForPc, lvl3SlotsForPc
+  resetReactionsForAll, shouldCastShield, consumeShield
 } from './scene/reactions.js';
-import {
-  spellbookFor,
-  innateBlockFor, freshInnateState, rollInnateRecharges
-} from './scene/monster-spells.js';
+import { rollInnateRecharges } from './scene/monster-spells.js';
 import { promptReaction } from './scene/reaction-prompt.js';
 import { createCinema, phaseAt } from './anim/cinema.js';
 import { buildMotion, motionForWeapon } from './anim/weapon-motions.js';
@@ -92,6 +86,7 @@ import {
   runTurn as bridgeRunTurn
 } from './scene/live-bridge.js';
 import { buildWeaponPlan, buildCastPlan } from './scene/manual-plan.js';
+import { createVersusEncounter } from './scene/encounter-setup.js';
 
 const $ = (id) => document.getElementById(id);
 const status = $('status');
@@ -520,54 +515,22 @@ async function startVersusFight() {
   versusPreviousScene = currentScene;
   versusPreviousParty = partyComposedCharacters;
 
-  // Build monster instances from the encounter list
-  const monsterInstances = versusEncounter.map((e, i) => {
-    const preset = MONSTER_PRESETS[e.slug];
-    return {
-      id: `versus_${Date.now()}_${i}`,
-      presetSlug: e.slug, name: e.name,
-      hp: { current: preset.defaultHp?.max || 1, max: preset.defaultHp?.max || 1, temp: 0 },
-      conditions: []
-    };
+  // M64 C4 — monster instances, arena, PC/monster resource seeding and
+  // initiative are built by scene/encounter-setup.js (pure; injected
+  // rng + id minting so the server can reproduce an encounter).
+  const encounterSetup = createVersusEncounter({
+    party: partyComposedCharacters, pcIds, encounter: versusEncounter,
+    flanking: !!currentScene?.flankingEnabled,
+    rng: Math.random,
+    mintId: (i) => `versus_${Date.now()}_${i}`
   });
-
-  // Build the arena: party PCs left, monsters right
-  const arena = buildPartyArenaScene({
-    pcIds, monsterInstances,
-    flankingEnabled: !!currentScene?.flankingEnabled
-  });
-  currentScene = arena;
+  const monsterInstances = encounterSetup.monsters;
+  currentScene = encounterSetup.scene;
   versusActive = true;
-
-  // Filter party to just selected members so the canvas only renders them
-  const selectedSet = new Set(pcIds.map(String));
-  partyComposedCharacters = partyComposedCharacters.filter(p => selectedSet.has(String(p.id)));
-
-  // M38 — Seed reaction resources on every PC so Shield/Counterspell
-  // can fire interactively. Reset once per fight; refreshed each round.
-  for (const pc of partyComposedCharacters) {
-    pc._reactionUsed = false;
-    pc._lvl1Slots = lvl1SlotsForPc(pc);
-    pc._lvl3Slots = lvl3SlotsForPc(pc);
-  }
-  // M39 — Seed spell resources on every spell-casting monster so the
-  // versus auto-fight can actually cast (mirrors what the simulator
-  // does at iteration start).
-  for (const m of monsterInstances) {
-    m._reactionUsed = false;
-    const book = spellbookFor(m.presetSlug);
-    if (book) m._slots = { ...(book.slots || {}) };
-    const innate = innateBlockFor(m.presetSlug);
-    if (innate) m._innate = freshInnateState(m.presetSlug);
-  }
-
-  // Roll initiative once at fight start
-  const pcsForInit = partyComposedCharacters;
-  versusInitiative = rollPartyInitiative({ pcs: pcsForInit, monsters: monsterInstances });
-  currentScene.initiative = versusInitiative.map((e, i) => ({
-    entityId: e.entityId, entityKind: e.entityKind,
-    name: e.name, score: e.score, active: i === 0
-  }));
+  // Party filtered to just the selected members so the canvas only
+  // renders them.
+  partyComposedCharacters = encounterSetup.party;
+  versusInitiative = encounterSetup.initiative;
 
   document.getElementById('versus-start')?.setAttribute('hidden', '');
   document.getElementById('versus-rematch')?.removeAttribute('hidden');
