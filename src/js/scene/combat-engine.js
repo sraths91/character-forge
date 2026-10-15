@@ -40,6 +40,7 @@ import {
 } from './pc-stats.js';
 import { factionLists, chebyshevFeet } from './grid-rules.js';
 import { planMovement, occupiedCellsOf } from './movement.js';
+import { loadFindPath, straightPath } from './pathing.js';
 import { chooseAction, fleeTargetCell } from './ai/profile.js';
 import { choosePcAction } from './ai/pc-action.js';
 import { PC_FEATURES, resetPerTurnFlags } from './ai/pc-features.js';
@@ -125,6 +126,26 @@ export async function runOneAttack(attacker, enemies, allies, scene, rng, prompt
       delete attacker._mctsTargetCtx;
     }
   }
+}
+
+/**
+ * M64 T11 — a terrain-aware route toward `to` within the budget, or null
+ * (no terrain pathfinder loaded, or no route) so the caller falls back.
+ * Occupancy marks each other creature's cell with its side so findPath
+ * can pass allies and stop at hostiles.
+ */
+async function terrainRoute(terrain, mover, from, to, budgetFt, allies, enemies) {
+  const findPath = await loadFindPath();
+  if (!findPath) return null;
+  const moverSide = mover.kind === 'pc' ? 'party' : 'hostile';
+  const otherSide = moverSide === 'party' ? 'hostile' : 'party';
+  const occupancy = new Map();
+  for (const w of allies) if (w !== mover && isAlive(w)) { const p = w._position || w.position; if (p) occupancy.set(`${p.col},${p.row}`, moverSide); }
+  for (const w of enemies) if (isAlive(w)) { const p = w._position || w.position; if (p) occupancy.set(`${p.col},${p.row}`, otherSide); }
+  const res = findPath(terrain, occupancy, from, to, { budgetFt, moverSide });
+  if (!res || !Array.isArray(res.path) || res.path.length === 0) return null;
+  const end = res.path[res.path.length - 1];
+  return { to: { col: end.col, row: end.row }, path: res.path };
 }
 
 /** Plan kinds that move (or not) but never reach the attack resolver. */
@@ -256,6 +277,7 @@ async function resolveTurn(attacker, enemies, allies, scene, rng, prompts, ctx) 
     const speedFt = plan?.kind === 'dash' ? baseSpeed * 2 : baseSpeed;
     attacker._disengaged = plan?.kind === 'disengage';
     let next;
+    let movePath = null;
     if (explicit && plan.moveTo) {
       // M64 T9 — a player-chosen destination is honoured as-is, within
       // the budget, on the grid and onto a free cell.
@@ -274,10 +296,19 @@ async function resolveTurn(attacker, enemies, allies, scene, rng, prompts, ctx) 
       const moveTarget = (plan && plan.kind === 'flee')
         ? fleeTargetCell(attacker, target, bounds, rng)
         : targetPos;
-      next = planMovement({
-        from: attackerPos, to: moveTarget, weapon,
-        speedFt, occupied, bounds
-      });
+      // M64 T11 — with a terrain layer, route through grid-legality.findPath.
+      const routed = scene?.terrain
+        ? await terrainRoute(scene.terrain, attacker, attackerPos, moveTarget, speedFt, allies, enemies)
+        : null;
+      if (routed) {
+        next = routed.to;
+        movePath = routed.path;
+      } else {
+        next = planMovement({
+          from: attackerPos, to: moveTarget, weapon,
+          speedFt, occupied, bounds
+        });
+      }
     }
     if (next && (next.col !== attackerPos.col || next.row !== attackerPos.row)) {
       // M33.0 — opportunity attacks fire BEFORE the move resolves.
@@ -309,9 +340,16 @@ async function resolveTurn(attacker, enemies, allies, scene, rng, prompts, ctx) 
       if (!isAlive(attacker)) return;
       if (attacker.kind === 'pc') attacker._position = next;
       else attacker.position = next;
+      // M64 T11 — the move event carries the path so clients can animate.
+      const path = movePath || straightPath(attackerPos, next);
       emitEvent(ctx, 'move', {
-        actorId, from: { col: attackerPos.col, row: attackerPos.row }, to: { col: next.col, row: next.row }
+        actorId, from: { col: attackerPos.col, row: attackerPos.row }, to: { col: next.col, row: next.row },
+        path: path.map(c => ({ col: c.col, row: c.row }))
       });
+      if (typeof prompts.onMove === 'function') {
+        await prompts.onMove({ mover: attacker, from: attackerPos, to: next, path });
+        if (!isAlive(attacker)) return;
+      }
     }
   }
 
