@@ -12,6 +12,7 @@ import { parseCharacter } from './lib/ddb-parser.js';
 import { searchOpen5eCreatures, fetchOpen5eCreature, toSummary } from './lib/open5e.js';
 import { createRoomService } from './rooms/service.js';
 import { mountRoomRoutes } from './rooms/http.js';
+import { mountMapRoutes } from './rooms/maps.js';
 import { bearerToken } from './rooms/tokens.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -92,12 +93,13 @@ export const CSP_REPORT_ONLY = [
  * @param {string} [opts.distPath]  Built SPA directory served in production.
  * @param {ReturnType<typeof createRoomService>} [opts.rooms]  Room service shared
  *   with the ws gateway (default: a new one over `db`).
+ * @param {object} [opts.mapsOpts]  quota / statfs overrides for map uploads (tests).
  * @returns {import('express').Express}
  */
 export function createApp({
   db, env = process.env, dataDir, log = defaultLog,
   fetchImpl = (...a) => fetch(...a), upstreamTimeoutMs = UPSTREAM_TIMEOUT_MS,
-  limits = {}, mount, distPath = join(__dirname, '..', 'dist'), rooms
+  limits = {}, mount, distPath = join(__dirname, '..', 'dist'), rooms, mapsOpts = {}
 } = {}) {
   if (!db) throw new Error('createApp: db handle (from openDb) is required');
   const healthDataDir = dataDir !== undefined
@@ -364,6 +366,7 @@ export function createApp({
   });
 
   mountRoomRoutes(app, { rooms: roomService, limiter });
+  mountMapRoutes(app, { rooms: roomService, conn: db.db, dataDir: healthDataDir, ...mapsOpts });
   if (mount) mount(app, { rooms: roomService, roomStore, limiter, memberOf, HttpError, PROD, MULTIPLAYER });
 
   // Unknown /api routes are a JSON 404, never the SPA's index.html (F7).
@@ -388,8 +391,8 @@ export function createApp({
       status = 400; code = 'BAD_JSON'; message = 'Malformed JSON body';
     } else if (err.type === 'entity.too.large') {
       status = 413; code = 'TOO_LARGE'; message = 'Request body too large';
-    } else if (status === 404 && code === 'INTERNAL') {
-      code = 'NOT_FOUND';
+    } else if (status === 404 && (code === 'INTERNAL' || code === 'ENOENT')) {
+      code = 'NOT_FOUND'; message = 'Not found';
     }
     if (status < 400 || status > 599) status = 500;
     if (status >= 500) {
