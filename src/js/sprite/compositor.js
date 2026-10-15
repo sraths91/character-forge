@@ -2,7 +2,9 @@ import { FRAME, SLOT_COLORS, SLOT_BOXES, buildRenderPlan, getFrame } from './lpc
 import { loadImage } from './image-cache.js';
 import { generateItemSprite, rarityToAuraTier } from './item-generator.js';
 import { paintGeneratedBackground, drawMapImage, drawGridLines } from '../scene/map-render.js';
-import { WORLD_CELL_PX, cameraTransform, sizeCanvasToViewport } from '../map/camera.js';
+import { WORLD_CELL_PX, MAX_CANVAS_PIXELS, createCamera, cameraTransform, sizeCanvasToViewport } from '../map/camera.js';
+import { legacySceneToView, characterForToken } from '../map/view.js';
+import { MONSTER_PRESETS, buildMonsterCharacter } from '../scene/monster-presets.js';
 
 // Tier ranks: higher beats lower. Used to pick the single character-level aura.
 const RARITY_RANK = {
@@ -39,285 +41,316 @@ export async function renderSprite(canvas, character, { scale = 6, direction = '
 }
 
 /**
- * M2 — Render a battle scene: background + grid + party positioned per
- * the scene's positions map. Canvas auto-resizes to the scene's grid
- * dimensions × cellSize × scale.
+ * M2 / M64 M5 — render the battle grid.
  *
- * The scene argument is the shape produced by scene-state.js. We use
- * scene.cellSize × scene.scale as the pixel-per-cell unit and place
- * each character into their saved (col, row) — or a default linear
- * position when unsaved.
+ * Two call shapes:
  *
- * `positionOf` is passed in so this module doesn't depend on scene-state
- * directly (cleaner separation; scene-state owns the position-resolution
- * logic, compositor owns the pixel-pushing).
+ *   renderBattleScene(canvas, view, local)            — M64
+ *     `view`  is the read-only RenderView (map/view.js, built by
+ *             projectBattleView). It is never mutated; a deep-frozen
+ *             view is fine.
+ *     `local` is per-viewer presentation state, also never mutated:
+ *       { camera,        // map/camera.js; absent ⇒ canvas sized to the world at zoom 1
+ *         ownEntityId,   // ring under the viewer's own token
+ *         hover,         // {col,row} cell highlight
+ *         pathPreview,   // {cells:[{col,row}], legal, costFt}
+ *         aoePreview,    // {cells:[{col,row}], color?, strokeColor?}
+ *         selectionId,   // cyan outline
+ *         animations,    // Map<entityId, {kind:'attack'|'hurt', startedAt, duration}>
+ *         popups,        // [{targetId, amount, startedAt, duration}]
+ *         effects,       // scene/effects.js descriptors
+ *         dm: {showTerrain, showHidden, showFogMask},
+ *         showTerrain,   // players: blocked/difficult overlay
+ *         grid: {visible, color},
+ *         direction, frameIdx,                 // sprite facing + animation frame
+ *         appearances,   // Map<appearanceKey, character record>
+ *         resolveAppearance(key, token),       // optional; default handles monster:<slug>
+ *         requestRedraw(),                     // called when an async asset becomes ready
+ *         now }          // timestamp for overlays (defaults to performance.now())
+ *
+ *   renderBattleScene(canvas, characters, scene, opts) — legacy (main.js
+ *     today); adapted through legacySceneToView, output unchanged.
+ *
+ * Draw order: background → grid → (terrain) → AoE / path previews →
+ * tokens → (fog) → selection / turn / hover / flashes / popups / effects.
+ * The renderer imports no scene-state mutator (asserted by a test).
+ *
+ * @returns {Promise<{canvas, generatedCount: number, cellCount: number, needsRedraw: boolean}>}
  */
-export async function renderBattleScene(canvas, characters, scene, opts = {}) {
-  const {
-    direction = 'south',
-    frameIdx = 0,
-    positionOf,
-    monsterCharacters = [],
-    // M4 — combat overlays
-    selectedAttackerId = null,   // glowing outline on this entity's cell
-    activeTurnId = null,         // turn-order indicator
-    animations = null,           // Map<entityId, { kind, startedAt, duration }>
-    popups = null,               // array of { targetId, amount, startedAt, duration }
-    // M8 — AoE template overlay: { cells: [{col,row}], color, label }
-    aoeTemplate = null,
-    // M27 — Effect queue (list of effect descriptors from scene/effects.js)
-    effects = null,
-    // M64 M4 — viewport camera ({x, y, zoom, viewW, viewH, dpr}, see
-    // map/camera.js). Absent ⇒ the legacy full-map canvas at scene.scale.
-    camera = null
-  } = opts;
-  const list = (characters || []).filter(Boolean);
-  const cellPx = scene.cellSize * scene.scale;
-  const totalW = scene.cols * cellPx;
-  const totalH = scene.rows * cellPx;
-  const ctx = canvas.getContext('2d');
-  applyBattleCamera(canvas, ctx, scene, camera, totalW, totalH);
-  ctx.imageSmoothingEnabled = false;
-
-  // 1. Background fill — color, generated terrain, or an image (M2.5;
-  //    calibrated source-rect draw since M64 M3).
-  const imageSrc = scene.map?.kind === 'image' ? (scene.map.url || scene.map.image) : null;
-  if (imageSrc) {
-    // Paint the fallback colour first so a slow image decode doesn't
-    // flash white before the bitmap appears.
-    ctx.fillStyle = scene.map.color || '#3d5a3d';
-    ctx.fillRect(0, 0, totalW, totalH);
-    try {
-      const img = await loadCachedImage(imageSrc);
-      // M64 M3 — calibrated maps draw a source rect aligned to the grid;
-      // uncalibrated legacy images keep the cover-fit.
-      drawMapImage(ctx, img, scene.map, scene.cols, scene.rows, cellPx);
-    } catch { /* fall back to the colour we already painted */ }
-  } else if (scene.map?.kind === 'generated') {
-    // Procedural terrain. Painted once to an offscreen canvas keyed by
-    // (biome, seed, dims) and blitted here — so the per-frame combat
-    // loop pays one drawImage, not a full repaint. Fallback colour
-    // first in case the offscreen build is unavailable (headless).
-    ctx.fillStyle = scene.map.color || '#3d5a3d';
-    ctx.fillRect(0, 0, totalW, totalH);
-    const off = getGeneratedMapCanvas(scene, totalW, totalH, cellPx);
-    if (off) ctx.drawImage(off, 0, 0);
-  } else if (scene.map?.kind === 'color') {
-    ctx.fillStyle = scene.map.color || '#3d5a3d';
-    ctx.fillRect(0, 0, totalW, totalH);
+export function renderBattleScene(canvas, viewOrCharacters, localOrScene, legacyOpts) {
+  if (Array.isArray(viewOrCharacters)) {
+    const { view, local } = legacySceneToView(viewOrCharacters, localOrScene, legacyOpts || {});
+    return renderBattleView(canvas, view, local);
   }
-
-  // 2. Grid overlay (drawn UNDER characters so cell lines show through gaps)
-  if (scene.grid?.visible) {
-    drawGridLines(ctx, scene.cols, scene.rows, cellPx, { color: scene.grid.color || 'rgba(255,255,255,0.18)' });
-  }
-
-  // 2.5 M8 — AoE template overlay (below sprites so creatures sit on top).
-  //         Translucent fill on every covered cell + a 2px outline that
-  //         traces only the OUTSIDE edges of the shape so adjacent
-  //         cells share a clean perimeter.
-  if (aoeTemplate?.cells?.length) {
-    const fill   = aoeTemplate.color || 'rgba(96,165,250,0.30)';
-    const stroke = aoeTemplate.strokeColor || 'rgba(96,165,250,0.90)';
-    const cellSet = new Set(aoeTemplate.cells.map(c => `${c.col},${c.row}`));
-    ctx.save();
-    ctx.fillStyle = fill;
-    for (const { col, row } of aoeTemplate.cells) {
-      ctx.fillRect(col * cellPx, row * cellPx, cellPx, cellPx);
-    }
-    ctx.strokeStyle = stroke;
-    ctx.lineWidth = 2;
-    for (const { col, row } of aoeTemplate.cells) {
-      const x = col * cellPx, y = row * cellPx;
-      // Top edge
-      if (!cellSet.has(`${col},${row - 1}`)) {
-        ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + cellPx, y); ctx.stroke();
-      }
-      // Bottom
-      if (!cellSet.has(`${col},${row + 1}`)) {
-        ctx.beginPath(); ctx.moveTo(x, y + cellPx); ctx.lineTo(x + cellPx, y + cellPx); ctx.stroke();
-      }
-      // Left
-      if (!cellSet.has(`${col - 1},${row}`)) {
-        ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x, y + cellPx); ctx.stroke();
-      }
-      // Right
-      if (!cellSet.has(`${col + 1},${row}`)) {
-        ctx.beginPath(); ctx.moveTo(x + cellPx, y); ctx.lineTo(x + cellPx, y + cellPx); ctx.stroke();
-      }
-    }
-    ctx.restore();
-  }
-
-  // M27 — Sprite displacement map (lunge / recoil). Pre-computed before
-  // drawing so sprites land in the displaced position naturally rather
-  // than redrawing later. Each lunge moves the attacker ~25% of a cell
-  // toward the target, peaking mid-animation; recoil does the same
-  // moving away. The render loop ticks every frame so the bob looks
-  // smooth even without re-allocation.
-  const displacementById = new Map();
-  if (Array.isArray(effects) && effects.length > 0) {
-    const now = performance.now();
-    for (const e of effects) {
-      if (e.kind !== 'lunge' && e.kind !== 'recoil') continue;
-      const elapsed = now - e.startedAt;
-      if (elapsed < 0 || elapsed > e.duration) continue;
-      const t = elapsed / e.duration;
-      // Easing: peak at mid then return to 0. sin(πt) gives a clean bell.
-      const magnitude = Math.sin(t * Math.PI) * cellPx * 0.28;
-      const dirVec = DIR_VEC[e.direction] || DIR_VEC.east;
-      const ox = dirVec.dc * magnitude;
-      const oy = dirVec.dr * magnitude;
-      const cur = displacementById.get(e.entityId) || { x: 0, y: 0 };
-      displacementById.set(e.entityId, { x: cur.x + ox, y: cur.y + oy });
-    }
-  }
-
-  // 3. Characters (PCs)
-  let totalGenerated = 0;
-  for (let i = 0; i < list.length; i++) {
-    const ch = list[i];
-    const pos = positionOf ? positionOf(scene, ch.id, i) : { col: i, row: 0 };
-    const disp = displacementById.get(ch.id) || { x: 0, y: 0 };
-    const x = pos.col * cellPx + disp.x;
-    const y = pos.row * cellPx + disp.y;
-    const r = await drawCharacterAt(ctx, ch, {
-      x, y, scale: scene.scale, direction, frameIdx
-    });
-    totalGenerated += r.generatedCount;
-  }
-
-  // 4. Monsters — same render pipeline, position comes from the
-  // monster instance's own (col,row). Each monsterCharacters entry is
-  // a buildMonsterCharacter() result with HP/conditions copied from
-  // the live instance, so on-screen state (e.g. wounded) reflects play.
-  for (const mc of monsterCharacters) {
-    const pos = mc._position;
-    if (!pos) continue;
-    const disp = displacementById.get(mc.id) || { x: 0, y: 0 };
-    const x = pos.col * cellPx + disp.x;
-    const y = pos.row * cellPx + disp.y;
-    const r = await drawCharacterAt(ctx, mc, {
-      x, y, scale: scene.scale, direction, frameIdx
-    });
-    totalGenerated += r.generatedCount;
-  }
-
-  // 5. M4 — Combat overlays drawn LAST so they sit above sprites.
-  //    Helpers below pull entity positions via locateEntity().
-  const locateEntity = (entityId) => {
-    for (let i = 0; i < list.length; i++) {
-      if (String(list[i].id) === String(entityId)) {
-        return { ...positionOf(scene, list[i].id, i) };
-      }
-    }
-    for (const mc of monsterCharacters) {
-      if (String(mc.id) === String(entityId)) return { ...mc._position };
-    }
-    return null;
-  };
-
-  // 5a. Selection outline for the chosen attacker
-  if (selectedAttackerId) {
-    const pos = locateEntity(selectedAttackerId);
-    if (pos) drawCellOutline(ctx, pos.col * cellPx, pos.row * cellPx, cellPx, '#22d3ee', 4);
-  }
-  // 5b. Current-turn outline
-  if (activeTurnId && activeTurnId !== selectedAttackerId) {
-    const pos = locateEntity(activeTurnId);
-    if (pos) drawCellOutline(ctx, pos.col * cellPx, pos.row * cellPx, cellPx, '#fbbf24', 3);
-  }
-
-  // 5c. Active animations (attack lunge glow / hurt flash)
-  if (animations) {
-    const now = performance.now();
-    for (const [id, anim] of animations) {
-      const elapsed = now - anim.startedAt;
-      if (elapsed < 0 || elapsed > anim.duration) continue;
-      const t = elapsed / anim.duration;
-      const pos = locateEntity(id);
-      if (!pos) continue;
-      const x = pos.col * cellPx;
-      const y = pos.row * cellPx;
-      if (anim.kind === 'attack') {
-        // Orange flash that pulses then fades
-        const alpha = Math.sin(t * Math.PI) * 0.55;
-        drawCellGlow(ctx, x, y, cellPx, '#fb923c', alpha);
-      } else if (anim.kind === 'hurt') {
-        // Red flash that decays linearly
-        const alpha = (1 - t) * 0.75;
-        drawCellGlow(ctx, x, y, cellPx, '#dc2626', alpha);
-      }
-    }
-  }
-
-  // 5d. Floating damage popups
-  if (popups && popups.length > 0) {
-    const now = performance.now();
-    for (const p of popups) {
-      const elapsed = now - p.startedAt;
-      if (elapsed < 0 || elapsed > p.duration) continue;
-      const t = elapsed / p.duration;
-      const pos = locateEntity(p.targetId);
-      if (!pos) continue;
-      const x = pos.col * cellPx + cellPx / 2;
-      // Float upward over the cell, fade out
-      const y = pos.row * cellPx + cellPx * 0.2 - t * cellPx * 0.55;
-      const alpha = 1 - t * 0.85;
-      drawDamageNumber(ctx, x, y, p.amount, alpha, Math.max(18, cellPx * 0.22));
-    }
-  }
-
-  // 5e. M27 — Effect primitives (slash arcs, projectiles, beams,
-  //     bursts, AoE fills, divine glows, shadow strikes, glyph rises).
-  //     Lunge / recoil already applied as sprite displacement above.
-  if (Array.isArray(effects) && effects.length > 0) {
-    const now = performance.now();
-    for (const e of effects) {
-      const elapsed = now - e.startedAt;
-      if (elapsed < 0 || elapsed > e.duration) continue;
-      const t = elapsed / e.duration;
-      renderEffect(ctx, e, t, cellPx);
-    }
-  }
-
-  return { canvas, generatedCount: totalGenerated, cellCount: list.length + monsterCharacters.length };
+  return renderBattleView(canvas, viewOrCharacters, localOrScene || {});
 }
 
-/**
- * M64 M4 — size the canvas and install the world→device transform.
- *
- * Without a camera the canvas is the whole map at scene.scale (legacy,
- * CSS-zoomed by main.js). With a camera that has a viewport (viewW/viewH)
- * the backing store is viewport × min(dpr, 2) — never the whole map — and
- * zoom/pan are a ctx transform. Drawing code keeps using legacy units
- * (cellSize·scale per cell); the transform folds that factor in.
- * Width/height are written only when they change (each write reallocates).
- */
-function applyBattleCamera(canvas, ctx, scene, camera, totalW, totalH) {
-  const legacyCell = scene.cellSize * scene.scale;
-  if (!camera) {
-    if (canvas.width !== totalW) canvas.width = totalW;
-    if (canvas.height !== totalH) canvas.height = totalH;
-    ctx.setTransform?.(1, 0, 0, 1, 0, 0);
-    ctx.clearRect(0, 0, totalW, totalH);
-    return;
-  }
-  let pixelRatio = 1;
+const W = WORLD_CELL_PX;
+
+/** Size the canvas for the camera; returns the backing-store pixel ratio. */
+function sizeBattleCanvas(canvas, camera, worldW, worldH) {
   if (camera.viewW > 0 && camera.viewH > 0) {
-    pixelRatio = sizeCanvasToViewport(canvas, camera.viewW, camera.viewH, camera.dpr || 1).pixelRatio;
-  } else {
-    const w = Math.max(1, Math.round(scene.cols * WORLD_CELL_PX * camera.zoom));
-    const h = Math.max(1, Math.round(scene.rows * WORLD_CELL_PX * camera.zoom));
-    if (canvas.width !== w) canvas.width = w;
-    if (canvas.height !== h) canvas.height = h;
+    return sizeCanvasToViewport(canvas, camera.viewW, camera.viewH, camera.dpr || 1).pixelRatio;
   }
+  const w = Math.max(1, Math.round(worldW * camera.zoom));
+  const h = Math.max(1, Math.round(worldH * camera.zoom));
+  if (canvas.width !== w) canvas.width = w;
+  if (canvas.height !== h) canvas.height = h;
+  return 1;
+}
+
+/** Resolve a token's character record (look) for drawing. */
+function resolveTokenCharacter(token, local) {
+  const key = token.appearanceKey;
+  const fromLocal = local.resolveAppearance?.(key, token);
+  if (fromLocal !== undefined) return fromLocal;
+  const known = local.appearances?.get?.(key);
+  if (known) return known;
+  if (typeof key === 'string' && key.startsWith('monster:')) {
+    const preset = MONSTER_PRESETS[key.slice(8)];
+    if (preset) return buildMonsterCharacter(preset, token.id);
+  }
+  return null;
+}
+
+async function renderBattleView(canvas, view, local) {
+  const cols = view.grid.cols;
+  const rows = view.grid.rows;
+  const worldW = cols * W;
+  const worldH = rows * W;
+  const camera = local.camera || createCamera({ zoom: local.legacyZoom || 1, minZoom: 0.01, maxZoom: 100 });
+  const ctx = canvas.getContext('2d');
+  const pixelRatio = sizeBattleCanvas(canvas, camera, worldW, worldH);
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-  const [a, , , d, e, f] = cameraTransform(camera, pixelRatio);
-  const unit = WORLD_CELL_PX / legacyCell;   // legacy px → world units
-  ctx.setTransform(a * unit, 0, 0, d * unit, e, f);
+  const world = cameraTransform(camera, pixelRatio);
+  // Re-applied after every await: main.js fires renders without awaiting
+  // them, so another render may have touched this context meanwhile.
+  const applyWorld = () => { ctx.setTransform(...world); ctx.imageSmoothingEnabled = false; };
+  applyWorld();
+  const px = 1 / camera.zoom;                 // one CSS pixel in world units
+  _shadowScale = camera.zoom * pixelRatio;    // shadowBlur ignores the transform
+  const now = Number.isFinite(local.now) ? local.now : performance.now();
+
+  // 1. Background.
+  await drawBattleBackground(ctx, view.map, cols, rows, camera.zoom * pixelRatio, applyWorld);
+  applyWorld();
+
+  // 2. Grid lines, one CSS pixel wide at any zoom.
+  if (local.grid?.visible !== false) {
+    drawGridLines(ctx, cols, rows, W, { color: local.grid?.color || 'rgba(255,255,255,0.18)', lineWidth: px });
+  }
+
+  // 3. Previews under the tokens.
+  if (local.aoePreview?.cells?.length) drawCellSetOutline(ctx, local.aoePreview, px);
+  if (local.pathPreview?.cells?.length) drawPathPreview(ctx, local.pathPreview, px);
+
+  // 4. Tokens. Lunge / recoil displacement first.
+  const displacementById = effectDisplacements(local.effects, now);
+  const showHidden = !!local.dm?.showHidden;
+  const drawnPos = new Map();
+  let totalGenerated = 0;
+  let drawn = 0;
+  for (const token of view.tokens) {
+    if (token.hidden && !showHidden) continue;
+    const disp = displacementById.get(token.id) || { x: 0, y: 0 };
+    const x = token.col * W + disp.x;
+    const y = token.row * W + disp.y;
+    drawnPos.set(token.id, { col: token.col, row: token.row });
+    if (local.ownEntityId != null && String(local.ownEntityId) === token.id) drawOwnMarker(ctx, x, y, px);
+    applyWorld();
+    ctx.save();
+    if (token.hidden) ctx.globalAlpha = 0.5;
+    const base = resolveTokenCharacter(token, local);
+    if (base) {
+      const r = await drawCharacterAt(ctx, characterForToken(base, token), {
+        x, y, scale: 1, direction: local.direction || 'south', frameIdx: local.frameIdx || 0
+      });
+      totalGenerated += r.generatedCount;
+    } else {
+      drawTokenPlaceholder(ctx, token, x, y, px);
+    }
+    ctx.restore();
+    drawn++;
+  }
+
+  // 5. Overlays above the tokens.
+  applyWorld();
+  const at = (id) => drawnPos.get(String(id)) || null;
+  if (local.selectionId != null) {
+    const pos = at(local.selectionId);
+    if (pos) drawCellOutline(ctx, pos.col * W, pos.row * W, W, '#22d3ee', 4 * px);
+  }
+  if (view.activeId != null && view.activeId !== local.selectionId) {
+    const pos = at(view.activeId);
+    if (pos) drawCellOutline(ctx, pos.col * W, pos.row * W, W, '#fbbf24', 3 * px);
+  }
+  if (local.hover && Number.isFinite(local.hover.col)) {
+    drawCellOutline(ctx, local.hover.col * W, local.hover.row * W, W, 'rgba(255,255,255,0.6)', 2 * px);
+  }
+  let live = false;
+  if (local.animations) {
+    for (const [id, anim] of local.animations) {
+      const elapsed = now - anim.startedAt;
+      if (elapsed < 0 || elapsed > anim.duration) continue;
+      live = true;
+      const t = elapsed / anim.duration;
+      const pos = at(id);
+      if (!pos) continue;
+      if (anim.kind === 'attack') drawCellGlow(ctx, pos.col * W, pos.row * W, W, '#fb923c', Math.sin(t * Math.PI) * 0.55);
+      else if (anim.kind === 'hurt') drawCellGlow(ctx, pos.col * W, pos.row * W, W, '#dc2626', (1 - t) * 0.75);
+    }
+  }
+  if (local.popups && local.popups.length > 0) {
+    for (const p of local.popups) {
+      const elapsed = now - p.startedAt;
+      if (elapsed < 0 || elapsed > p.duration) continue;
+      live = true;
+      const t = elapsed / p.duration;
+      const pos = at(p.targetId);
+      if (!pos) continue;
+      const fontSize = Math.max(18 * px, W * 0.22);
+      drawDamageNumber(ctx, pos.col * W + W / 2, pos.row * W + W * 0.2 - t * W * 0.55, p.amount, 1 - t * 0.85, fontSize, px);
+    }
+  }
+  if (Array.isArray(local.effects) && local.effects.length > 0) {
+    for (const e of local.effects) {
+      const elapsed = now - e.startedAt;
+      if (elapsed < 0 || elapsed > e.duration) continue;
+      live = true;
+      renderEffect(ctx, e, elapsed / e.duration, W);
+    }
+  }
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  return { canvas, generatedCount: totalGenerated, cellCount: drawn, needsRedraw: live };
 }
+
+/** Background for every map kind, in world units. */
+async function drawBattleBackground(ctx, map, cols, rows, deviceScale, applyWorld) {
+  const worldW = cols * W;
+  const worldH = rows * W;
+  ctx.fillStyle = map?.color || '#3d5a3d';
+  ctx.fillRect(0, 0, worldW, worldH);
+  if (map?.kind === 'image') {
+    const src = map.url || map.image;
+    if (!src) return;
+    try {
+      const img = await loadCachedImage(src);
+      applyWorld();
+      drawMapImage(ctx, img, map, cols, rows, W);
+    } catch { /* keep the colour fill */ }
+  } else if (map?.kind === 'generated') {
+    // Painted once per (biome, seed, dims, cell size) and blitted. The
+    // paint resolution follows the device cell size, capped so the
+    // offscreen canvas stays under the iOS area limit.
+    const areaCap = Math.floor(Math.sqrt(MAX_CANVAS_PIXELS / Math.max(1, cols * rows)));
+    const cellPx = Math.max(16, Math.min(192, areaCap, Math.ceil((W * deviceScale) / 32) * 32));
+    const off = getGeneratedMapCanvas({ cols, rows, map }, cols * cellPx, rows * cellPx, cellPx);
+    if (off) ctx.drawImage(off, 0, 0, worldW, worldH);
+  }
+}
+
+/** Lunge / recoil sprite offsets (world units) keyed by entity id. */
+function effectDisplacements(effects, now) {
+  const out = new Map();
+  if (!Array.isArray(effects)) return out;
+  for (const e of effects) {
+    if (e.kind !== 'lunge' && e.kind !== 'recoil') continue;
+    const elapsed = now - e.startedAt;
+    if (elapsed < 0 || elapsed > e.duration) continue;
+    const magnitude = Math.sin((elapsed / e.duration) * Math.PI) * W * 0.28;
+    const dir = DIR_VEC[e.direction] || DIR_VEC.east;
+    const id = String(e.entityId);
+    const cur = out.get(id) || { x: 0, y: 0 };
+    out.set(id, { x: cur.x + dir.dc * magnitude, y: cur.y + dir.dr * magnitude });
+  }
+  return out;
+}
+
+/** Translucent fill + outside-edge outline for a set of cells (AoE). */
+function drawCellSetOutline(ctx, shape, px) {
+  const cellSet = new Set(shape.cells.map(c => `${c.col},${c.row}`));
+  ctx.save();
+  ctx.fillStyle = shape.color || 'rgba(96,165,250,0.30)';
+  for (const { col, row } of shape.cells) ctx.fillRect(col * W, row * W, W, W);
+  ctx.strokeStyle = shape.strokeColor || 'rgba(96,165,250,0.90)';
+  ctx.lineWidth = 2 * px;
+  ctx.beginPath();
+  for (const { col, row } of shape.cells) {
+    const x = col * W, y = row * W;
+    if (!cellSet.has(`${col},${row - 1}`)) { ctx.moveTo(x, y); ctx.lineTo(x + W, y); }
+    if (!cellSet.has(`${col},${row + 1}`)) { ctx.moveTo(x, y + W); ctx.lineTo(x + W, y + W); }
+    if (!cellSet.has(`${col - 1},${row}`)) { ctx.moveTo(x, y); ctx.lineTo(x, y + W); }
+    if (!cellSet.has(`${col + 1},${row}`)) { ctx.moveTo(x + W, y); ctx.lineTo(x + W, y + W); }
+  }
+  ctx.stroke();
+  ctx.restore();
+}
+
+/** Planned move: tinted cells, a polyline through the centres, the cost. */
+function drawPathPreview(ctx, preview, px) {
+  const ok = preview.legal !== false;
+  const fill = ok ? 'rgba(74,222,128,0.22)' : 'rgba(248,113,113,0.25)';
+  const stroke = ok ? 'rgba(74,222,128,0.95)' : 'rgba(248,113,113,0.95)';
+  ctx.save();
+  ctx.fillStyle = fill;
+  for (const c of preview.cells) ctx.fillRect(c.col * W, c.row * W, W, W);
+  ctx.strokeStyle = stroke;
+  ctx.lineWidth = 3 * px;
+  ctx.beginPath();
+  preview.cells.forEach((c, i) => {
+    const x = c.col * W + W / 2, y = c.row * W + W / 2;
+    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+  });
+  ctx.stroke();
+  if (Number.isFinite(preview.costFt)) {
+    const last = preview.cells[preview.cells.length - 1];
+    const fontSize = Math.max(12 * px, W * 0.2);
+    ctx.font = `bold ${fontSize}px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.lineWidth = Math.max(2 * px, fontSize / 6);
+    ctx.strokeStyle = '#000';
+    const label = `${preview.costFt} ft`;
+    ctx.strokeText(label, last.col * W + W / 2, last.row * W + W * 0.15);
+    ctx.fillStyle = stroke;
+    ctx.fillText(label, last.col * W + W / 2, last.row * W + W * 0.15);
+  }
+  ctx.restore();
+}
+
+/** Soft ring under the viewer's own token. */
+function drawOwnMarker(ctx, x, y, px) {
+  ctx.save();
+  ctx.strokeStyle = 'rgba(250,204,21,0.85)';
+  ctx.lineWidth = 2 * px;
+  ctx.beginPath();
+  ctx.ellipse(x + W / 2, y + W * 0.86, W * 0.32, W * 0.1, 0, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.restore();
+}
+
+/** Coloured disc + initial for a token whose look is not available yet. */
+function drawTokenPlaceholder(ctx, token, x, y, px) {
+  ctx.save();
+  ctx.fillStyle = token.side === 'hostile' ? '#b91c1c' : '#2563eb';
+  ctx.strokeStyle = '#0f172a';
+  ctx.lineWidth = 2 * px;
+  ctx.beginPath();
+  ctx.arc(x + W / 2, y + W / 2, W * 0.34, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+  ctx.fillStyle = '#fff';
+  ctx.font = `bold ${Math.round(W * 0.34)}px sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText((token.name || '?').slice(0, 1).toUpperCase(), x + W / 2, y + W / 2);
+  ctx.restore();
+}
+
+// Multiplier for shadowBlur, which (unlike every other size) is in device
+// pixels and ignores the camera transform.
+let _shadowScale = 1;
 
 // M27 — Direction unit vectors for sprite displacement.
 const DIR_VEC = {
@@ -366,7 +399,7 @@ function renderSlashArc(ctx, e, t, cellPx) {
   ctx.globalAlpha = alpha;
   ctx.lineWidth = Math.max(3, cellPx * 0.08);
   ctx.shadowColor = e.color;
-  ctx.shadowBlur = cellPx * 0.25;
+  ctx.shadowBlur = cellPx * 0.25 * _shadowScale;
   ctx.beginPath();
   if (e.swing === 'spin') {
     // a whirling loop centred on the target cell
@@ -401,7 +434,7 @@ function renderThrust(ctx, e, t, cellPx) {
   ctx.globalAlpha = alpha;
   ctx.lineWidth = Math.max(4, cellPx * 0.1);
   ctx.shadowColor = e.color;
-  ctx.shadowBlur = cellPx * 0.3;
+  ctx.shadowBlur = cellPx * 0.3 * _shadowScale;
   ctx.lineCap = 'round';
   ctx.beginPath();
   ctx.moveTo(a.x, a.y);
@@ -420,7 +453,7 @@ function renderBash(ctx, e, t, cellPx) {
   ctx.globalAlpha = alpha;
   ctx.lineWidth = Math.max(2, cellPx * 0.06) * (1 - t * 0.5);
   ctx.shadowColor = e.color;
-  ctx.shadowBlur = cellPx * 0.2;
+  ctx.shadowBlur = cellPx * 0.2 * _shadowScale;
   ctx.beginPath();
   ctx.arc(c.x, c.y, radius, 0, Math.PI * 2);
   ctx.stroke();
@@ -440,7 +473,7 @@ function renderProjectile(ctx, e, t, cellPx) {
   ctx.lineWidth = Math.max(3, cellPx * 0.07);
   ctx.lineCap = 'round';
   ctx.shadowColor = e.color;
-  ctx.shadowBlur = cellPx * 0.2;
+  ctx.shadowBlur = cellPx * 0.2 * _shadowScale;
   ctx.beginPath();
   // Trail tail at slightly behind position (15% of full trip)
   const tx = a.x + (b.x - a.x) * Math.max(0, t - 0.18);
@@ -469,7 +502,7 @@ function renderBeam(ctx, e, t, cellPx) {
   ctx.lineWidth = thickness;
   ctx.lineCap = 'round';
   ctx.shadowColor = e.color;
-  ctx.shadowBlur = cellPx * 0.4;
+  ctx.shadowBlur = cellPx * 0.4 * _shadowScale;
   ctx.beginPath();
   ctx.moveTo(a.x, a.y);
   ctx.lineTo(b.x, b.y);
@@ -482,7 +515,7 @@ function renderBurst(ctx, e, t, cellPx) {
   const c = cellCenter(e.to, cellPx);
   ctx.save();
   ctx.shadowColor = e.color;
-  ctx.shadowBlur = cellPx * 0.3;
+  ctx.shadowBlur = cellPx * 0.3 * _shadowScale;
   // Outer ring
   ctx.strokeStyle = e.color;
   ctx.globalAlpha = (1 - t) * 0.7;
@@ -517,7 +550,7 @@ function renderDivineGlow(ctx, e, t, cellPx) {
   const c = cellCenter(e.to, cellPx);
   ctx.save();
   ctx.shadowColor = e.color;
-  ctx.shadowBlur = cellPx * 0.5;
+  ctx.shadowBlur = cellPx * 0.5 * _shadowScale;
   ctx.strokeStyle = e.color;
   ctx.globalAlpha = Math.sin(t * Math.PI) * 0.9;
   ctx.lineWidth = Math.max(2, cellPx * 0.06);
@@ -560,7 +593,7 @@ function renderGlyphRise(ctx, e, t, cellPx) {
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.shadowColor = e.color;
-  ctx.shadowBlur = cellPx * 0.3;
+  ctx.shadowBlur = cellPx * 0.3 * _shadowScale;
   ctx.globalAlpha = 1 - t * 0.85;
   ctx.fillStyle = e.color;
   ctx.fillText(e.glyph || '✨', c.x, y);
@@ -651,14 +684,14 @@ function drawCellGlow(ctx, x, y, sz, color, alpha) {
 }
 
 /** Floating "-N" damage popup centred at (cx, cy). */
-function drawDamageNumber(ctx, cx, cy, amount, alpha, fontSize) {
+function drawDamageNumber(ctx, cx, cy, amount, alpha, fontSize, px = 1) {
   ctx.save();
   ctx.globalAlpha = Math.max(0, Math.min(1, alpha));
   ctx.font = `bold ${fontSize}px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   const text = amount > 0 ? `-${amount}` : `+${-amount}`;
-  ctx.lineWidth = Math.max(2, fontSize / 8);
+  ctx.lineWidth = Math.max(2 * px, fontSize / 8);
   ctx.strokeStyle = '#000';
   ctx.strokeText(text, cx, cy);
   ctx.fillStyle = amount > 0 ? '#fca5a5' : '#86efac';   // red for damage, green for heal

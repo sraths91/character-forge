@@ -117,8 +117,9 @@ export function drawMapImage(ctx, img, map, cols, rows, cellPx) {
 }
 
 /**
- * Stroke the cell grid in world units. Lines sit on half-pixel centres at
- * zoom 1 so a 1 px stroke stays crisp.
+ * Stroke the cell grid in world units. Lines are offset by half their
+ * width so a one-device-pixel stroke lands on a pixel centre and stays
+ * crisp (callers pass lineWidth = 1 / zoom under a camera transform).
  * @param {CanvasRenderingContext2D} ctx
  * @param {number} cols
  * @param {number} rows
@@ -133,13 +134,14 @@ export function drawGridLines(ctx, cols, rows, cellPx, { color = 'rgba(255,255,2
   ctx.strokeStyle = color;
   ctx.lineWidth = lineWidth;
   ctx.beginPath();
+  const half = lineWidth / 2;
   for (let c = 0; c <= cols; c++) {
-    const x = c * cellPx + 0.5;
+    const x = c * cellPx + half;
     ctx.moveTo(x, 0);
     ctx.lineTo(x, totalH);
   }
   for (let r = 0; r <= rows; r++) {
-    const y = r * cellPx + 0.5;
+    const y = r * cellPx + half;
     ctx.moveTo(0, y);
     ctx.lineTo(totalW, y);
   }

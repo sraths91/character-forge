@@ -118,14 +118,12 @@ test('renderer: applies the camera as a world→device transform', async () => {
   const camera = createCamera({ x: 32, y: -16, zoom: 1.5, viewW: 600, viewH: 400, dpr: 2 });
   const scene = { cols: 8, rows: 6, cellSize: 64, scale: 3, map: { kind: 'color', color: '#333' }, grid: { visible: false } };
   await renderBattleScene(canvas, [], scene, { camera });
-  const [a, b, c, d, e, f] = cameraTransform(camera, 2);
-  const last = ctx.transforms.at(-1);
-  // Legacy drawing units (64*3 per cell) are folded into the scale.
-  assert.ok(near(last[0], a / 3) && near(last[3], d / 3) && last[1] === b && last[2] === c);
-  assert.ok(near(last[4], e) && near(last[5], f));
-  // The background fill covers the world rect in legacy units.
+  const expected = cameraTransform(camera, 2);
+  const drawTransform = ctx.transforms.find(t => t[0] !== 1 || t[4] !== 0);
+  assert.ok(drawTransform.every((v, i) => near(v, expected[i])), `${drawTransform} vs ${expected}`);
+  // The background fill covers the world rect (64 world units per cell).
   const fill = ctx.calls.find(k => k[0] === 'fillRect');
-  assert.deepEqual(fill.slice(1), [0, 0, 8 * 192, 6 * 192]);
+  assert.deepEqual(fill.slice(1), [0, 0, 8 * 64, 6 * 64]);
 });
 
 test('attachCameraControls: wheel zooms about the cursor, drag pans, detach unhooks', () => {
@@ -186,7 +184,7 @@ function fakeCanvas() {
     fillRect(...a) { calls.push(['fillRect', ...a]); },
     save() {}, restore() {}, beginPath() {}, moveTo() {}, lineTo() {}, stroke() {},
     drawImage(...a) { calls.push(['drawImage', ...a]); },
-    set fillStyle(v) {}, set strokeStyle(v) {}, set lineWidth(v) {}, set imageSmoothingEnabled(v) {}
+    set fillStyle(v) {}, set strokeStyle(v) {}, set lineWidth(v) {}, set imageSmoothingEnabled(v) {}, set globalAlpha(v) {}
   };
   const canvas = new EventTarget();
   canvas.width = 0;
