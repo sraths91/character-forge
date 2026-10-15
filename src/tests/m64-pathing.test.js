@@ -18,8 +18,8 @@ test('T11: straightPath steps diagonally first and includes both ends', () => {
   assert.deepEqual(straightPath({ col: 2, row: 2 }, { col: 2, row: 2 }), [{ col: 2, row: 2 }]);
 });
 
-test('T11: without grid-legality on this branch the loader reports null', async () => {
-  assert.equal(await loadFindPath(), null);
+test('T11: with grid-legality merged (M1) the loader resolves findPath', async () => {
+  assert.equal(typeof await loadFindPath(), 'function');
 });
 
 async function moveTurn(scene, prompts = {}) {
