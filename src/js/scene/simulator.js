@@ -73,8 +73,12 @@ export function seedRng(seed) {
  *   maxRounds — round cap per run (default 12)
  *   seed      — base seed; each iteration gets seed+i so results are
  *               deterministic when caller passes a fixed seed.
+ *   onIterationEnd — optional sync observer ({ index, rounds, pcs, mons })
+ *               called with the live per-iteration wrappers in the same
+ *               tick the iteration is scored. Test seam (M64 T1): lets a
+ *               test assert positions / reactions / slots at return.
  *
- * Returns:
+ * Returns (a Promise of — M64 T1: async because runOneAttack is):
  *   {
  *     iterations,
  *     partyVictories, monsterVictories, draws,    // counts
@@ -88,12 +92,12 @@ export function seedRng(seed) {
  *     }]
  *   }
  */
-export function simulateEncounter({ party = [], monsters = [], scene = {}, iterations = 200, maxRounds = 12, seed = 1 } = {}) {
+export async function simulateEncounter({ party = [], monsters = [], scene = {}, iterations = 200, maxRounds = 12, seed = 1, onIterationEnd = null } = {}) {
   const stats = newStats(party, monsters, iterations);
 
   for (let i = 0; i < iterations; i++) {
     const rng = seedRng(seed + i);
-    const result = runOneIteration({ party, monsters, scene, maxRounds, rng });
+    const result = await runOneIteration({ party, monsters, scene, maxRounds, rng, index: i, onIterationEnd });
 
     if (result.partyAlive && !result.monstersAlive) stats.partyVictories++;
     else if (!result.partyAlive && result.monstersAlive) stats.monsterVictories++;
@@ -114,7 +118,7 @@ export function simulateEncounter({ party = [], monsters = [], scene = {}, itera
 
 // ---------- One iteration ----------
 
-function runOneIteration({ party, monsters, scene, maxRounds, rng }) {
+async function runOneIteration({ party, monsters, scene, maxRounds, rng, index = 0, onIterationEnd = null }) {
   // Per-iteration ENTITY STATE — shallow copies so we don't mutate inputs.
   // hp is the live counter; the resolver reads conditions for adv/disadv
   // but doesn't read hp, so we track damage separately.
@@ -185,7 +189,10 @@ function runOneIteration({ party, monsters, scene, maxRounds, rng }) {
     for (const a of pcs) {
       if (!isAlive(a)) continue;
       if (isIncapacitated(a)) continue;
-      runOneAttack(a, mons, pcs, scene, rng);
+      // M64 T1 — runOneAttack is async: un-awaited, any turn that
+      // provoked an opportunity attack deferred its move, its reaction
+      // spend and its attack until after the iteration returned.
+      await runOneAttack(a, mons, pcs, scene, rng);
       // M41 — After this PC's turn ends, any legendary monster spends
       // available legendary budget (greedy: highest-cost first).
       for (const lm of mons) {
@@ -198,10 +205,13 @@ function runOneIteration({ party, monsters, scene, maxRounds, rng }) {
     for (const a of mons) {
       if (!isAlive(a)) continue;
       if (isIncapacitated(a)) continue;
-      runOneAttack(a, pcs, mons, scene, rng);
+      await runOneAttack(a, pcs, mons, scene, rng);
       if (sideAlive(pcs) === 0) break;
     }
   }
+
+  // Observe the exact state that is about to be scored (same tick).
+  if (onIterationEnd) onIterationEnd({ index, rounds: round, pcs, mons });
 
   // Build a flat snapshot of every entity's end state for aggregation
   const endState = [

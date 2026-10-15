@@ -129,7 +129,7 @@ test('M42.1: PC cleric does NOT heal when all allies are at full HP', () => {
 
 // ---------- Simulator integration ----------
 
-test('M42.1: simulator — paladin deals MORE damage when slots are available (smite)', () => {
+test('M42.1: simulator — paladin deals MORE damage when slots are available (smite)', async () => {
   // Lvl-3 paladin (has Divine Smite) vs a tanky goblin. Compare vs the
   // same paladin with no slots — the difference is smite damage.
   const paladin = (slots) => ({
@@ -150,15 +150,15 @@ test('M42.1: simulator — paladin deals MORE damage when slots are available (s
     hp: { current: 150, max: 150 }, position: { col: 2, row: 1 }, conditions: []
   }];
   const opts = { scene: { cols: 5, rows: 3 }, iterations: 80, maxRounds: 5, seed: 51 };
-  const withSlots = simulateEncounter({ party: [paladin(true)], monsters: tankyGoblin(), ...opts });
-  const noSlots   = simulateEncounter({ party: [paladin(false)], monsters: tankyGoblin(), ...opts });
+  const withSlots = await simulateEncounter({ party: [paladin(true)], monsters: tankyGoblin(), ...opts });
+  const noSlots   = await simulateEncounter({ party: [paladin(false)], monsters: tankyGoblin(), ...opts });
   const withDmg = withSlots.entities.find(e => e.id === 'p1').avgDamageDealt;
   const noDmg   = noSlots.entities.find(e => e.id === 'p1').avgDamageDealt;
   assert.ok(withDmg > noDmg,
     `paladin with smite slots should out-damage no-slot variant: ${withDmg.toFixed(1)} vs ${noDmg.toFixed(1)}`);
 });
 
-test('M42.1: simulator — barbarian Reckless Attack lands more hits on tanky target', () => {
+test('M42.1: simulator — barbarian Reckless Attack lands more hits on tanky target', async () => {
   // Barbarian lvl 1 (has Reckless) vs same-level fighter (no Reckless).
   // The barb's hit rate should be higher due to advantage on its swings.
   const make = (cls) => ({
@@ -174,8 +174,8 @@ test('M42.1: simulator — barbarian Reckless Attack lands more hits on tanky ta
     hp: { current: 50, max: 50 }, position: { col: 2, row: 1 }, conditions: []
   }];
   const opts = { scene: { cols: 4, rows: 3 }, iterations: 80, maxRounds: 5, seed: 61 };
-  const barb     = simulateEncounter({ party: [make('Barbarian')], monsters: tank(), ...opts });
-  const fighter  = simulateEncounter({ party: [make('Fighter')],   monsters: tank(), ...opts });
+  const barb     = await simulateEncounter({ party: [make('Barbarian')], monsters: tank(), ...opts });
+  const fighter  = await simulateEncounter({ party: [make('Fighter')],   monsters: tank(), ...opts });
   const barbDmg     = barb.entities.find(e => e.id === 'pc1').avgDamageDealt;
   const fighterDmg  = fighter.entities.find(e => e.id === 'pc1').avgDamageDealt;
   // Barbarian should statistically out-damage the same-level fighter
@@ -185,7 +185,7 @@ test('M42.1: simulator — barbarian Reckless Attack lands more hits on tanky ta
     `reckless barb should be competitive with fighter: ${barbDmg.toFixed(1)} vs ${fighterDmg.toFixed(1)}`);
 });
 
-test('M42.1: simulator — cleric keeps party fighter alive longer via Healing Word', () => {
+test('M42.1: simulator — cleric keeps party fighter alive longer via Healing Word', async () => {
   // Two scenarios: party with a Cleric who knows Healing Word vs same
   // party without the spell. The fighter should die less often with
   // heal support.
@@ -213,8 +213,8 @@ test('M42.1: simulator — cleric keeps party fighter alive longer via Healing W
       hp: { current: 15, max: 15 }, position: { col: 5, row: 2 }, conditions: [] }
   ];
   const opts = { scene: { cols: 7, rows: 3 }, iterations: 80, maxRounds: 8, seed: 71 };
-  const withHeal = simulateEncounter({ party: [fighter(), cleric(true)],  monsters: monsters(), ...opts });
-  const noHeal   = simulateEncounter({ party: [fighter(), cleric(false)], monsters: monsters(), ...opts });
+  const withHeal = await simulateEncounter({ party: [fighter(), cleric(true)],  monsters: monsters(), ...opts });
+  const noHeal   = await simulateEncounter({ party: [fighter(), cleric(false)], monsters: monsters(), ...opts });
   const fWith = withHeal.entities.find(e => e.id === 'f1').deathRate;
   const fNo   = noHeal.entities.find(e => e.id === 'f1').deathRate;
   // Heal helps statistically — fewer fighter deaths

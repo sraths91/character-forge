@@ -123,7 +123,7 @@ test('M41: spendLegendaryAction decrements budget by the action cost', () => {
 
 // ---------- Simulator integration ----------
 
-test('M41: simulator — young dragon deals extra damage on PC turns via legendary actions', () => {
+test('M41: simulator — young dragon deals extra damage on PC turns via legendary actions', async () => {
   // Same dragon vs same party fought twice. Compare to a "no LA" run
   // by swapping the dragon to a non-legendary preset of similar power
   // (troll). Differential MUST exist because legendary tail/wing
@@ -144,8 +144,8 @@ test('M41: simulator — young dragon deals extra damage on PC turns via legenda
     hp: { current: 80, max: 80 }, position: { col: 1, row: 2 }, conditions: [] }];
 
   const opts = { scene: { cols: 6, rows: 5 }, iterations: 80, maxRounds: 8, seed: 17 };
-  const withLA   = simulateEncounter({ party, monsters: dragon, ...opts });
-  const noLA     = simulateEncounter({ party, monsters: troll,  ...opts });
+  const withLA   = await simulateEncounter({ party, monsters: dragon, ...opts });
+  const noLA     = await simulateEncounter({ party, monsters: troll,  ...opts });
 
   // Dragon's avg damage dealt should exceed the troll's — legendary
   // actions are the difference (innate breath weapon also helps, but
@@ -156,7 +156,7 @@ test('M41: simulator — young dragon deals extra damage on PC turns via legenda
     `expected dragon > troll dmg; dragon=${dragonDmg.toFixed(1)} troll=${trollDmg.toFixed(1)}`);
 });
 
-test('M41: simulator — legendary budget exhausts within a round (greedy spending)', () => {
+test('M41: simulator — legendary budget exhausts within a round (greedy spending)', async () => {
   // Solo PC vs dragon, single round, large iteration count. Each PC turn
   // the dragon's budget should fully spend, so total LA damage per round
   // should be substantial.
@@ -173,7 +173,7 @@ test('M41: simulator — legendary budget exhausts within a round (greedy spendi
     id: 'd1', presetSlug: 'young-dragon', name: 'Dragon',
     hp: { current: 80, max: 80 }, position: { col: 1, row: 1 }, conditions: []
   }];
-  const stats = simulateEncounter({
+  const stats = await simulateEncounter({
     party, monsters, scene: { cols: 4, rows: 3 },
     iterations: 80, maxRounds: 3, seed: 21
   });

@@ -222,7 +222,7 @@ test('M33.1: lvl1SlotsForPc — fighter 5 → 0 (non-caster)', () => {
 
 import { simulateEncounter } from '../js/scene/simulator.js';
 
-test('M33.1: simulator — wizard with Shield takes less damage than the same wizard without it', () => {
+test('M33.1: simulator — wizard with Shield takes less damage than the same wizard without it', async () => {
   function wizard({ withShield }) {
     return {
       id: 'wiz', name: 'Tactical Wizard', _position: { col: 1, row: 1 },
@@ -240,15 +240,15 @@ test('M33.1: simulator — wizard with Shield takes less damage than the same wi
     { id: 'b2', presetSlug: 'bandit', name: 'B2', hp: { current: 11, max: 11 }, position: { col: 1, row: 2 }, conditions: [] }
   ];
   const opts = { scene: { cols: 8, rows: 5 }, iterations: 200, maxRounds: 10, seed: 7 };
-  const without = simulateEncounter({ party: [wizard({ withShield: false })], monsters: monsters(), ...opts });
-  const with_   = simulateEncounter({ party: [wizard({ withShield: true  })], monsters: monsters(), ...opts });
+  const without = await simulateEncounter({ party: [wizard({ withShield: false })], monsters: monsters(), ...opts });
+  const with_   = await simulateEncounter({ party: [wizard({ withShield: true  })], monsters: monsters(), ...opts });
   const dmgWithout = 20 - (without.entities.find(e => e.id === 'wiz').avgFinalHp);
   const dmgWith    = 20 - (with_.entities.find(e => e.id === 'wiz').avgFinalHp);
   assert.ok(dmgWith < dmgWithout,
     `Shield should reduce avg damage taken (without=${dmgWithout.toFixed(2)}, with=${dmgWith.toFixed(2)})`);
 });
 
-test('M33.0: simulator integration — encounter still resolves with OAs active', () => {
+test('M33.0: simulator integration — encounter still resolves with OAs active', async () => {
   // 2 PCs adjacent to 2 monsters; over many runs the OAs should fire
   // at least sometimes (when fleeing kobolds break away from the
   // surrounding melee). The contract under test is just "the simulator
@@ -280,7 +280,7 @@ test('M33.0: simulator integration — encounter still resolves with OAs active'
     { id: 'k2', presetSlug: 'kobold', name: 'K2', hp: { current: 5, max: 5 }, position: { col: 1, row: 2 }, conditions: [] },
     { id: 'k3', presetSlug: 'kobold', name: 'K3', hp: { current: 5, max: 5 }, position: { col: 3, row: 2 }, conditions: [] }
   ];
-  const stats = simulateEncounter({
+  const stats = await simulateEncounter({
     party, monsters,
     scene: { cols: 8, rows: 5 },
     iterations: 50, maxRounds: 12, seed: 1
@@ -502,7 +502,7 @@ test('M34.1: lvl3SlotsForPc — fighter (non-caster) returns 0', () => {
 });
 
 // Simulator-level integration: a Counterspell wizard cancels Hold Person
-test('M34.1: simulator — Counterspell wizard prevents the fanatic\'s Hold Person', () => {
+test('M34.1: simulator — Counterspell wizard prevents the fanatic\'s Hold Person', async () => {
   function wizard(withCs) {
     return {
       id: 'wiz', name: 'Wizard', _position: { col: 1, row: 1 },
@@ -522,8 +522,8 @@ test('M34.1: simulator — Counterspell wizard prevents the fanatic\'s Hold Pers
   // Run both sides for many iterations; the counterspell wizard should
   // be paralyzed/held strictly less often, so they deal MORE damage.
   const opts = { scene: { cols: 10, rows: 5 }, iterations: 100, maxRounds: 8, seed: 3 };
-  const without = simulateEncounter({ party: [wizard(false)], monsters: monsters(), ...opts });
-  const with_   = simulateEncounter({ party: [wizard(true)],  monsters: monsters(), ...opts });
+  const without = await simulateEncounter({ party: [wizard(false)], monsters: monsters(), ...opts });
+  const with_   = await simulateEncounter({ party: [wizard(true)],  monsters: monsters(), ...opts });
   const withoutDmg = without.entities.find(e => e.id === 'wiz').avgDamageDealt;
   const withDmg    = with_.entities.find(e => e.id === 'wiz').avgDamageDealt;
   assert.ok(withDmg > withoutDmg,

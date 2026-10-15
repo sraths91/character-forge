@@ -195,7 +195,7 @@ test('M34: chooseAction — cult fanatic skips Hold Person on an already-paralyz
 
 // ---------- Simulator-level integration ----------
 
-test('M34: simulator integration — cult fanatic deals damage to a fighter', () => {
+test('M34: simulator integration — cult fanatic deals damage to a fighter', async () => {
   const party = [{
     id: 'pc1', name: 'Fighter', _position: { col: 1, row: 1 },
     hp: { current: 30, max: 30 },
@@ -209,7 +209,7 @@ test('M34: simulator integration — cult fanatic deals damage to a fighter', ()
     { id: 'cf1', presetSlug: 'cult-fanatic', name: 'Fanatic',
       hp: { current: 33, max: 33 }, position: { col: 5, row: 1 }, conditions: [] }
   ];
-  const stats = simulateEncounter({
+  const stats = await simulateEncounter({
     party, monsters, scene: { cols: 8, rows: 5 },
     iterations: 100, maxRounds: 10, seed: 7
   });
@@ -288,7 +288,7 @@ test('M34.2: chooseAction — picks the MOST-wounded ally as the heal target', (
   assert.strictEqual(plan.targetId, 'a2');
 });
 
-test('M34.2: simulator — cure-wounds actually restores HP across many runs', () => {
+test('M34.2: simulator — cure-wounds actually restores HP across many runs', async () => {
   // We use a LOW-level fighter (lvl 1, no Action Surge) so the M42 AI
   // doesn't nuke the wounded fanatic in turn 2 — the test contract is
   // "healing keeps cf1 alive longer", and Action Surge defeats that on
@@ -309,8 +309,8 @@ test('M34.2: simulator — cure-wounds actually restores HP across many runs', (
       hp: { current: 33, max: 33 }, position: { col: 11, row: 2 }, conditions: [] }
   ];
   const opts = { scene: { cols: 14, rows: 5 }, iterations: 80, maxRounds: 5, seed: 11 };
-  const withHeal = simulateEncounter({ party, monsters, ...opts });
-  const noHeal = simulateEncounter({
+  const withHeal = await simulateEncounter({ party, monsters, ...opts });
+  const noHeal = await simulateEncounter({
     party, monsters: monsters.map(m =>
       m.id === 'cf2' ? { ...m, presetSlug: 'cultist', hp: { current: 9, max: 9 } } : m),
     ...opts
@@ -327,7 +327,7 @@ test('M34.2: simulator — cure-wounds actually restores HP across many runs', (
     `cure-wounds integration smoke (with=${hurtWith.toFixed(2)}, without=${hurtNo.toFixed(2)})`);
 });
 
-test('M34: simulator — wizard PC with Shield blocks a kobold-sorcerer Fire Bolt', () => {
+test('M34: simulator — wizard PC with Shield blocks a kobold-sorcerer Fire Bolt', async () => {
   // Setup is contrived: wizard at melee-vulnerable AC with Shield.
   // We run two scenarios — wizard with vs without Shield — and the
   // Shield wizard should take strictly less damage on average.
@@ -345,11 +345,11 @@ test('M34: simulator — wizard PC with Shield blocks a kobold-sorcerer Fire Bol
     { id: 'ks1', presetSlug: 'kobold-sorcerer', name: 'Sorc',
       hp: { current: 16, max: 16 }, position: { col: 4, row: 1 }, conditions: [] }
   ];
-  const without = simulateEncounter({
+  const without = await simulateEncounter({
     party: [wizard(false)], monsters: monsters(),
     scene: { cols: 8, rows: 5 }, iterations: 100, maxRounds: 6, seed: 1
   });
-  const with_   = simulateEncounter({
+  const with_   = await simulateEncounter({
     party: [wizard(true)],  monsters: monsters(),
     scene: { cols: 8, rows: 5 }, iterations: 100, maxRounds: 6, seed: 1
   });

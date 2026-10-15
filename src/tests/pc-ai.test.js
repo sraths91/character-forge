@@ -255,7 +255,7 @@ test('M42.1: reckless-attack — only boosts melee, not ranged', () => {
   assert.strictEqual(rangedBoost, 0);
 });
 
-test('M42.1: simulator — paladin lvl 5 with smite out-damages lvl 1 paladin baseline', () => {
+test('M42.1: simulator — paladin lvl 5 with smite out-damages lvl 1 paladin baseline', async () => {
   const paladin = (level) => ({
     id: 'pc1', name: 'P', _position: { col: 1, row: 1 },
     hp: { current: 30, max: 30 },
@@ -270,15 +270,15 @@ test('M42.1: simulator — paladin lvl 5 with smite out-damages lvl 1 paladin ba
     hp: { current: 60, max: 60 }, position: { col: 2, row: 1 }, conditions: []
   }];
   const opts = { scene: { cols: 5, rows: 3 }, iterations: 60, maxRounds: 5, seed: 71 };
-  const withSmite = simulateEncounter({ party: [paladin(5)], monsters: tankyTarget(), ...opts });
-  const noSmite   = simulateEncounter({ party: [paladin(1)], monsters: tankyTarget(), ...opts });
+  const withSmite = await simulateEncounter({ party: [paladin(5)], monsters: tankyTarget(), ...opts });
+  const noSmite   = await simulateEncounter({ party: [paladin(1)], monsters: tankyTarget(), ...opts });
   const sDmg = withSmite.entities.find(e => e.id === 'pc1').avgDamageDealt;
   const nDmg = noSmite.entities.find(e => e.id === 'pc1').avgDamageDealt;
   assert.ok(sDmg > nDmg,
     `expected smiting paladin > baseline; ${sDmg.toFixed(1)} vs ${nDmg.toFixed(1)}`);
 });
 
-test('M42: simulator — fighter PC uses Action Surge to out-damage a non-surging baseline', () => {
+test('M42: simulator — fighter PC uses Action Surge to out-damage a non-surging baseline', async () => {
   // Same character vs same goblin; "with surge" runs a lvl-5 fighter
   // (has Action Surge); "without" runs lvl-1 (no surge). Expected:
   // surging fighter deals strictly more average damage.
@@ -297,8 +297,8 @@ test('M42: simulator — fighter PC uses Action Surge to out-damage a non-surgin
     position: { col: 2, row: 1 }, conditions: []
   }];
   const opts = { scene: { cols: 5, rows: 3 }, iterations: 80, maxRounds: 4, seed: 41 };
-  const surger = simulateEncounter({ party: [fighter(5)], monsters: tankyGoblin(), ...opts });
-  const rookie = simulateEncounter({ party: [fighter(1)], monsters: tankyGoblin(), ...opts });
+  const surger = await simulateEncounter({ party: [fighter(5)], monsters: tankyGoblin(), ...opts });
+  const rookie = await simulateEncounter({ party: [fighter(1)], monsters: tankyGoblin(), ...opts });
   const surgerDmg = surger.entities.find(e => e.id === 'pc1').avgDamageDealt;
   const rookieDmg = rookie.entities.find(e => e.id === 'pc1').avgDamageDealt;
   assert.ok(surgerDmg > rookieDmg,

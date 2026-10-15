@@ -45,8 +45,8 @@ test('M20: seedRng — values are in [0, 1)', () => {
 
 // ---------- Simulator: solo scenarios ----------
 
-test('M20: simulateEncounter — 1 PC vs 1 weak goblin → PC wins almost all the time', () => {
-  const stats = simulateEncounter({
+test('M20: simulateEncounter — 1 PC vs 1 weak goblin → PC wins almost all the time', async () => {
+  const stats = await simulateEncounter({
     party: [pc()],
     monsters: [monster()],
     scene: { positions: {}, flankingEnabled: false, cols: 10, rows: 7 },
@@ -58,11 +58,11 @@ test('M20: simulateEncounter — 1 PC vs 1 weak goblin → PC wins almost all th
   assert.ok(stats.avgRounds < 6, `should resolve fast; avg ${stats.avgRounds}`);
 });
 
-test('M20: simulateEncounter — overwhelming odds (1 PC vs 6 trolls) → PC loses', () => {
+test('M20: simulateEncounter — overwhelming odds (1 PC vs 6 trolls) → PC loses', async () => {
   const trolls = Array.from({ length: 6 }, (_, i) =>
     monster({ id: `t${i}`, name: `Troll ${i}`, slug: 'troll', hpCurrent: 84, hpMax: 84, pos: { col: 6 + i, row: 5 } })
   );
-  const stats = simulateEncounter({
+  const stats = await simulateEncounter({
     party: [pc()],
     monsters: trolls,
     scene: { positions: {}, flankingEnabled: false, cols: 10, rows: 7 },
@@ -72,7 +72,7 @@ test('M20: simulateEncounter — overwhelming odds (1 PC vs 6 trolls) → PC los
   assert.ok(stats.victoryRate < 0.10, `expected <10% wins vs 6 trolls; got ${stats.victoryRate}`);
 });
 
-test('M20: simulateEncounter — deterministic with fixed seed', () => {
+test('M20: simulateEncounter — deterministic with fixed seed', async () => {
   const ctx = {
     party: [pc()],
     monsters: [monster()],
@@ -80,16 +80,16 @@ test('M20: simulateEncounter — deterministic with fixed seed', () => {
     iterations: 50,
     seed: 99
   };
-  const a = simulateEncounter(ctx);
-  const b = simulateEncounter(ctx);
+  const a = await simulateEncounter(ctx);
+  const b = await simulateEncounter(ctx);
   assert.strictEqual(a.partyVictories, b.partyVictories);
   assert.strictEqual(a.monsterVictories, b.monsterVictories);
   assert.strictEqual(a.totalRounds, undefined);   // not in returned shape
   assert.strictEqual(a.avgRounds, b.avgRounds);
 });
 
-test('M20: simulateEncounter — entities array reports per-entity stats', () => {
-  const stats = simulateEncounter({
+test('M20: simulateEncounter — entities array reports per-entity stats', async () => {
+  const stats = await simulateEncounter({
     party: [pc(), pc({ id: 'p2', name: 'Adrin', pos: { col: 5, row: 6 } })],
     monsters: [monster(), monster({ id: 'g2', name: 'Goblin 2', pos: { col: 7, row: 5 } })],
     scene: { positions: {}, flankingEnabled: false, cols: 10, rows: 7 },
@@ -104,8 +104,8 @@ test('M20: simulateEncounter — entities array reports per-entity stats', () =>
   assert.ok(saris.hpMax === 27);
 });
 
-test('M20: simulateEncounter — empty party → monster victory', () => {
-  const stats = simulateEncounter({
+test('M20: simulateEncounter — empty party → monster victory', async () => {
+  const stats = await simulateEncounter({
     party: [],
     monsters: [monster()],
     scene: { positions: {}, cols: 10, rows: 7 },
@@ -115,8 +115,8 @@ test('M20: simulateEncounter — empty party → monster victory', () => {
   assert.strictEqual(stats.partyVictories, 0);
 });
 
-test('M20: simulateEncounter — empty monsters → party victory at round 0', () => {
-  const stats = simulateEncounter({
+test('M20: simulateEncounter — empty monsters → party victory at round 0', async () => {
+  const stats = await simulateEncounter({
     party: [pc()],
     monsters: [],
     scene: { positions: {}, cols: 10, rows: 7 },
@@ -127,10 +127,10 @@ test('M20: simulateEncounter — empty monsters → party victory at round 0', (
   assert.strictEqual(stats.avgRounds, 1);   // loop ticks one round but bails immediately
 });
 
-test('M20: simulateEncounter — round cap enforces a maximum', () => {
+test('M20: simulateEncounter — round cap enforces a maximum', async () => {
   // Two equally matched (both troll-sized) sides at far range — neither
   // can hit reliably; should hit the round cap.
-  const stats = simulateEncounter({
+  const stats = await simulateEncounter({
     party: [pc({ hpCurrent: 200, hpMax: 200 })],
     monsters: [monster({ slug: 'troll', hpCurrent: 200, hpMax: 200, pos: { col: 9, row: 9 } })],
     scene: { positions: {}, cols: 10, rows: 10 },

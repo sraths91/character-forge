@@ -822,12 +822,12 @@ function exitVersusFight() {
 }
 
 // M29 — Quick stats for the full N-vs-M encounter via the M20 simulator.
-function runVersusQuickStats() {
+async function runVersusQuickStats() {
   const pcsWithPositions = partyComposedCharacters.map((pc, i) => ({
     ...pc, _position: positionOf(currentScene, pc.id, i)
   }));
   const monsters = currentScene.monsters || [];
-  const stats = simulateEncounter({
+  const stats = await simulateEncounter({
     party: pcsWithPositions,
     monsters,
     scene: currentScene,
@@ -846,7 +846,7 @@ function runVersusQuickStats() {
 // M35 — Encounter difficulty calibrator. Runs the calibrator over the
 // current versus encounter, renders a structured DM-facing report into
 // #versus-calibrator with win rate, lethality, MVP, DMG difficulty.
-function runVersusCalibrator() {
+async function runVersusCalibrator() {
   const pcsWithPositions = partyComposedCharacters.map((pc, i) => ({
     ...pc, _position: positionOf(currentScene, pc.id, i)
   }));
@@ -858,7 +858,7 @@ function runVersusCalibrator() {
   // Use a fixed seed so the report is reproducible inside one session;
   // re-roll the seed when the user changes the encounter list.
   const seed = (typeof versusCalibratorSeed === 'number') ? versusCalibratorSeed : (versusCalibratorSeed = Math.floor(Math.random() * 1e9));
-  const report = calibrateEncounter({
+  const report = await calibrateEncounter({
     party: pcsWithPositions,
     monsters,
     scene: currentScene,
@@ -2269,12 +2269,12 @@ document.addEventListener('click', (e) => {
   btn.disabled = true;
   btn.textContent = `Running ${iters}…`;
   // Defer to next frame so the UI can repaint the button state
-  requestAnimationFrame(() => {
+  requestAnimationFrame(async () => {
     const party = partyComposedCharacters.map((pc, i) => ({
       ...pc, _position: positionOf(currentScene, pc.id, i)
     }));
     const monsters = (currentScene.monsters || []);
-    const stats = simulateEncounter({
+    const stats = await simulateEncounter({
       party, monsters, scene: currentScene,
       iterations: iters,
       seed: Math.floor(Math.random() * 1e9)

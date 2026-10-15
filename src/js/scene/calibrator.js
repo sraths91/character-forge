@@ -31,13 +31,13 @@ import { simulateEncounter } from './simulator.js';
  * @param {number}   [args.iterations] — default 200
  * @param {number}   [args.maxRounds]  — default 15
  * @param {number}   [args.seed]       — default 1
- * @returns {object} calibration report
+ * @returns {Promise<object>} calibration report
  */
-export function calibrateEncounter({
+export async function calibrateEncounter({
   party = [], monsters = [], scene = {},
   iterations = 200, maxRounds = 15, seed = 1
 } = {}) {
-  const stats = simulateEncounter({ party, monsters, scene, iterations, maxRounds, seed });
+  const stats = await simulateEncounter({ party, monsters, scene, iterations, maxRounds, seed });
 
   // Compose the DM-facing aggregates from the simulator's per-entity output.
   const partyEntities    = stats.entities.filter(e => e.kind === 'pc');

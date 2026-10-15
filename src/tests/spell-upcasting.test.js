@@ -161,7 +161,7 @@ test('M40: chooseAction breakdown — surfaces the upcast contribution', () => {
 
 // ---------- Simulator integration ----------
 
-test('M40: simulator — upcasting Magic Missile burns the higher slot', () => {
+test('M40: simulator — upcasting Magic Missile burns the higher slot', async () => {
   const party = [{
     id: 'pc1', name: 'Fighter', _position: { col: 1, row: 1 },
     hp: { current: 30, max: 30 },
@@ -178,7 +178,7 @@ test('M40: simulator — upcasting Magic Missile burns the higher slot', () => {
     { id: 'k1', presetSlug: 'kobold-sorcerer', name: 'Sorc',
       hp: { current: 16, max: 16 }, position: { col: 4, row: 1 }, conditions: [] }
   ];
-  const stats = simulateEncounter({
+  const stats = await simulateEncounter({
     party, monsters, scene: { cols: 6, rows: 3 },
     iterations: 1, maxRounds: 1, seed: 5
   });

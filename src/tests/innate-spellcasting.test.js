@@ -169,7 +169,7 @@ test('M37: chooseAction — vampire-spawn casts Charm Gaze when in range', () =>
 
 // ---------- Simulator integration ----------
 
-test('M37: simulator — young dragon\'s breath weapon hits multiple PCs', () => {
+test('M37: simulator — young dragon\'s breath weapon hits multiple PCs', async () => {
   const party = Array.from({ length: 3 }, (_, i) => ({
     id: `pc${i}`, name: `pc${i}`,
     _position: { col: 2, row: 1 + i },
@@ -184,7 +184,7 @@ test('M37: simulator — young dragon\'s breath weapon hits multiple PCs', () =>
     { id: 'd1', presetSlug: 'young-dragon', name: 'Dragon',
       hp: { current: 80, max: 80 }, position: { col: 1, row: 2 }, conditions: [] }
   ];
-  const stats = simulateEncounter({
+  const stats = await simulateEncounter({
     party, monsters, scene: { cols: 6, rows: 5 },
     iterations: 30, maxRounds: 4, seed: 11
   });
@@ -196,7 +196,7 @@ test('M37: simulator — young dragon\'s breath weapon hits multiple PCs', () =>
   }
 });
 
-test('M37: simulator — vampire-spawn\'s Charm Gaze sometimes applies the condition', () => {
+test('M37: simulator — vampire-spawn\'s Charm Gaze sometimes applies the condition', async () => {
   // Hard to assert deterministically since the save is probabilistic;
   // we just verify the fight resolves and the vampire deals some damage.
   const party = [{
@@ -212,7 +212,7 @@ test('M37: simulator — vampire-spawn\'s Charm Gaze sometimes applies the condi
     { id: 'v1', presetSlug: 'vampire-spawn', name: 'Vamp',
       hp: { current: 82, max: 82 }, position: { col: 3, row: 1 }, conditions: [] }
   ];
-  const stats = simulateEncounter({
+  const stats = await simulateEncounter({
     party, monsters, scene: { cols: 6, rows: 3 },
     iterations: 20, maxRounds: 6, seed: 13
   });

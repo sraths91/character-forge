@@ -73,8 +73,8 @@ test('M35.1: encounter multiplier scales with monster count', () => {
 
 // ---------- calibrateEncounter (composes simulator) ----------
 
-test('M35.0: calibrateEncounter — runs the simulator and aggregates a report', () => {
-  const report = calibrateEncounter({
+test('M35.0: calibrateEncounter — runs the simulator and aggregates a report', async () => {
+  const report = await calibrateEncounter({
     party: [pc(5, 'fighter')],
     monsters: [monster('goblin', 'g1')],
     scene: { cols: 10, rows: 7 },
@@ -89,8 +89,8 @@ test('M35.0: calibrateEncounter — runs the simulator and aggregates a report',
   assert.strictEqual(report.monsterCount, 1);
 });
 
-test('M35.0: calibrateEncounter — exposes MVP based on avg damage dealt', () => {
-  const report = calibrateEncounter({
+test('M35.0: calibrateEncounter — exposes MVP based on avg damage dealt', async () => {
+  const report = await calibrateEncounter({
     party: [pc(5, 'fighter')],
     monsters: [monster('goblin', 'g1')],
     iterations: 30, seed: 2
@@ -99,8 +99,8 @@ test('M35.0: calibrateEncounter — exposes MVP based on avg damage dealt', () =
   assert.ok(report.mvp.avgDamageDealt >= 0);
 });
 
-test('M35.0: calibrateEncounter — bestKilled flags the most-downed PC', () => {
-  const report = calibrateEncounter({
+test('M35.0: calibrateEncounter — bestKilled flags the most-downed PC', async () => {
+  const report = await calibrateEncounter({
     party: [pc(1, 'squishy')],
     monsters: [
       monster('troll', 't1'),
@@ -115,8 +115,8 @@ test('M35.0: calibrateEncounter — bestKilled flags the most-downed PC', () => 
     `expected lvl-1 vs 3 trolls to die often, got ${report.bestKilled.deathRate}`);
 });
 
-test('M35.0: calibrateEncounter — empty monsters list gives 100% win rate', () => {
-  const report = calibrateEncounter({
+test('M35.0: calibrateEncounter — empty monsters list gives 100% win rate', async () => {
+  const report = await calibrateEncounter({
     party: [pc(3, 'p1')], monsters: [],
     iterations: 10, seed: 4
   });
@@ -124,16 +124,16 @@ test('M35.0: calibrateEncounter — empty monsters list gives 100% win rate', ()
   assert.strictEqual(report.deathToll, 0);
 });
 
-test('M35.0: calibrateEncounter — empty party gives 0% win rate', () => {
-  const report = calibrateEncounter({
+test('M35.0: calibrateEncounter — empty party gives 0% win rate', async () => {
+  const report = await calibrateEncounter({
     party: [], monsters: [monster('goblin', 'g1')],
     iterations: 10, seed: 5
   });
   assert.strictEqual(report.winRate, 0);
 });
 
-test('M35.0: calibrateEncounter — report includes the DMG difficulty label', () => {
-  const report = calibrateEncounter({
+test('M35.0: calibrateEncounter — report includes the DMG difficulty label', async () => {
+  const report = await calibrateEncounter({
     party: [pc(3, 'p1'), pc(3, 'p2')],
     monsters: [monster('vampire-spawn', 'v1')],
     iterations: 20, seed: 6
@@ -142,9 +142,9 @@ test('M35.0: calibrateEncounter — report includes the DMG difficulty label', (
   assert.ok(report.difficulty.encounterXp > 0);
 });
 
-test('M35.0: calibrateEncounter — lethality is 0 for a one-sided win', () => {
+test('M35.0: calibrateEncounter — lethality is 0 for a one-sided win', async () => {
   // Lvl-10 fighter vs single goblin: should rarely take meaningful dmg.
-  const report = calibrateEncounter({
+  const report = await calibrateEncounter({
     party: [pc(10, 'tank')],
     monsters: [monster('goblin', 'g1')],
     iterations: 30, seed: 7
