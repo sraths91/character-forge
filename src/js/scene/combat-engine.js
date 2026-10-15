@@ -59,6 +59,7 @@ import {
 } from './concentration.js';
 import { rollSave } from './save-rolls.js';
 import { MONSTER_DEFAULT_SAVES } from './monster-presets.js';
+import { chooseLegendaryAction, spendLegendaryAction } from './monster-legendary.js';
 import {
   NO_CTX, canEmit, emitEvent, nextCinemaGroup, fxSeedOf, idOf, normalizeAnswer
 } from './engine-events.js';
@@ -780,6 +781,81 @@ export async function runReactionAttack(attacker, target, targetBeforePos, scene
     attacker, defender: target, plan: null, atk,
     dmg: dmg.total, crit: !!atk.crit, miss: false, reaction: true
   }, { reaction: true, cast: false, targetHpBefore, damageType: verdict.damage.damageType ?? null });
+}
+
+// =====================================================================
+// Legendary actions (M41; M64 T7 — moved here from the simulator so the
+// turn manager runs them in every caller: simulator, browser, server)
+// =====================================================================
+
+/**
+ * Spend a legendary creature's remaining budget after an opposing turn
+ * (PHB/MM: at the end of another creature's turn). Greedy: keeps picking
+ * the best action the budget allows until it is spent or nothing has a
+ * valid target. Shield windows go through the same gated prompt as every
+ * other attack.
+ *
+ * @param {object} monster — legendary monster wrapper
+ * @param {object[]} enemies — its opponents' wrappers
+ * @param {object} scene
+ * @param {function} rng
+ * @param {EnginePrompts} [prompts] — reaction prompts only (no forcePlan)
+ * @param {object} [ctx] — engine ctx ({ emit, turnId })
+ * @returns {Promise<number>} actions spent
+ */
+export async function runLegendaryActions(monster, enemies, scene, rng, prompts = {}, ctx = NO_CTX) {
+  let spent = 0;
+  for (let safety = 0; safety < 4; safety++) {
+    if (!isAlive(monster) || (monster._legendaryBudget ?? 0) <= 0) break;
+    const pick = chooseLegendaryAction({ self: monster, enemies });
+    if (!pick) break;
+    const group = nextCinemaGroup(ctx);
+    emitEvent(ctx, 'feature.used', { entityId: idOf(monster), featureId: `legendary:${pick.action.id}` }, group);
+    await applyLegendaryAction(monster, pick, scene, rng, prompts || {}, ctx, group);
+    spendLegendaryAction(monster, pick.action);
+    emitEvent(ctx, 'resource.spent', { entityId: idOf(monster), resource: 'legendary', level: null, cost: pick.action.cost }, group);
+    spent++;
+  }
+  return spent;
+}
+
+async function applyLegendaryAction(monster, pick, scene, rng, prompts, ctx, group) {
+  const { action } = pick;
+  if (action.kind === 'melee-attack') {
+    const target = pick.target;
+    if (!target || !isAlive(target)) return;
+    const atk = rollAttack({ bonus: action.attackBonus, advantage: 'normal', targetAC: target.ac }, rng);
+    // M33.1: Shield can still block a legendary melee attack.
+    if (await askShield(target, atk, { weapon: { name: action.name } }, prompts, ctx, group)) {
+      spendShield(target, ctx, group);
+      atk.hit = false;
+      atk.shielded = true;
+    }
+    emitAttackRolled(ctx, group, monster, target, atk, { weapon: action.name, isReaction: false, mode: 'normal', bonus: action.attackBonus });
+    if (!atk.hit || !isAlive(monster) || !isAlive(target)) return;
+    const dmg = rollDamage(action.dice, { crit: atk.crit }, rng);
+    applyDamageToEntity(target, dmg.total, rng, ctx, { source: monster, type: action.damageType ?? null, group });
+    monster.damageDealt += dmg.total;
+    return;
+  }
+  if (action.kind === 'aoe-save') {
+    const center = monster._position || monster.position;
+    if (!center) return;
+    for (const e of (pick.targets || [])) {
+      if (!isAlive(e)) continue;
+      const ep = e._position || e.position;
+      if (!ep) continue;
+      if (chebyshevFeet(center, ep) > action.range) continue;
+      const eBonus = saveBonusFor(e, action.saveStat);
+      const save = rollSave({ bonus: eBonus, dc: action.dc }, rng);
+      emitSave(ctx, group, e, action.saveStat, save, 'legendary');
+      const dmgRoll = rollDamage(action.dice, { crit: false }, rng);
+      let dmg = dmgRoll.total;
+      if (save.success) dmg = Math.floor(dmg / 2);
+      applyDamageToEntity(e, dmg, rng, ctx, { source: monster, type: action.damageType ?? null, group });
+      monster.damageDealt += dmg;
+    }
+  }
 }
 
 // =====================================================================

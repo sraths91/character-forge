@@ -23,31 +23,21 @@
  * Pure module. RNG injectable for tests.
  */
 
-import { rollAttack, rollDamage } from './combat-roll.js';
 import { deriveAC } from './pc-stats.js';
 import { MONSTER_PRESETS } from './monster-presets.js';
-import {
-  resetReactionsForAll, shouldCastShield, consumeShield,
-  slotsForPc, pactForPc
-} from './reactions.js';
+import { slotsForPc, pactForPc } from './reactions.js';
 import {
   freshSlots, isSpellcaster, isInnateCaster, freshInnateState
 } from './monster-spells.js';
-import {
-  isLegendary, freshLegendaryBudget, resetLegendaryBudget,
-  chooseLegendaryAction, spendLegendaryAction
-} from './monster-legendary.js';
-import { rollSave } from './save-rolls.js';
+import { isLegendary, freshLegendaryBudget } from './monster-legendary.js';
 import { createRng } from './rng.js';
+import { createTurnState, startEncounter, runEncounter } from './turn-manager.js';
 // M45 Phase 4 — Combat resolution moved to a shared engine module so
 // the live runner can dispatch through the same spine without
 // re-implementing rules. Per-attack logic, spell casting, reactions,
 // and the helper cluster (saveBonusFor / isAlive / sideAlive / etc.)
 // all live in combat-engine.js now.
-import {
-  runOneAttack, applyDamageToEntity, saveBonusFor,
-  isAlive, isIncapacitated, sideAlive
-} from './combat-engine.js';
+import { sideAlive } from './combat-engine.js';
 
 /**
  * Small mulberry32 PRNG. Pure JS, deterministic, fast. Seed in (0, 2^32).
@@ -167,49 +157,20 @@ async function runOneIteration({ party, monsters, scene, maxRounds, rng, index =
     };
   });
 
-  // Simple initiative: PCs first, then monsters, both in input order.
-  // 5e RAW would roll DEX-mod initiative per side — out of v1 scope.
-  let round = 0;
-  while (round < maxRounds) {
-    round++;
-    if (sideAlive(pcs) === 0 || sideAlive(mons) === 0) break;
-    // M33 — refresh every entity's reaction at the top of each round.
-    // 5e refreshes at start of *each* creature's turn, but since our
-    // simulator runs everyone once per round, top-of-round is equivalent.
-    resetReactionsForAll(pcs);
-    resetReactionsForAll(mons);
-    // M42.1 — Reckless Attack expires at start of barb's next turn.
-    // Top-of-round is the conservative approximation in our flat
-    // initiative model; the downside lingers a full round.
-    for (const p of pcs) { p._recklessUsedThisTurn = false; p._recklessUntilNextTurn = false; }
-    // M41 — Refresh each legendary monster's budget at the top of every
-    // round (RAW: start of its own turn). Since the simulator runs all
-    // monsters once per round, top-of-round is equivalent here.
-    for (const m of mons) if (isAlive(m) && isLegendary(m.presetSlug)) resetLegendaryBudget(m);
-    // PCs swing first
-    for (const a of pcs) {
-      if (!isAlive(a)) continue;
-      if (isIncapacitated(a)) continue;
-      // M64 T1 — runOneAttack is async: un-awaited, any turn that
-      // provoked an opportunity attack deferred its move, its reaction
-      // spend and its attack until after the iteration returned.
-      await runOneAttack(a, mons, pcs, scene, rng);
-      // M41 — After this PC's turn ends, any legendary monster spends
-      // available legendary budget (greedy: highest-cost first).
-      for (const lm of mons) {
-        if (!isLegendary(lm.presetSlug) || !isAlive(lm)) continue;
-        runLegendaryActions(lm, pcs, scene, rng);
-      }
-      if (sideAlive(mons) === 0) break;
-    }
-    if (sideAlive(mons) === 0) break;
-    for (const a of mons) {
-      if (!isAlive(a)) continue;
-      if (isIncapacitated(a)) continue;
-      await runOneAttack(a, pcs, mons, scene, rng);
-      if (sideAlive(pcs) === 0) break;
-    }
-  }
+  // M64 T7 — the round loop is the engine turn manager (one loop for the
+  // simulator, the browser and the server). The simulator keeps its
+  // fixed order — PCs first, then monsters, both in input order — so
+  // calibrations stay comparable, and counts an incapacitated side as out
+  // ('standing'). Start-of-turn resets (reaction, Reckless, legendary
+  // budget) are per creature; legendary actions follow every opposing turn.
+  const ts = createTurnState({
+    wrappers: [...pcs, ...mons],
+    sides: w => (w.kind === 'pc' ? 'party' : 'hostile'),
+    scene
+  });
+  startEncounter(ts, { initiative: 'given', maxRounds });
+  await runEncounter(ts, { rng, victoryRule: 'standing' });
+  const round = ts.round;
 
   // Observe the exact state that is about to be scored (same tick).
   if (onIterationEnd) onIterationEnd({ index, rounds: round, pcs, mons });
@@ -250,68 +211,6 @@ async function runOneIteration({ party, monsters, scene, maxRounds, rng, index =
  *  + abilityMod) so runMonsterSpell can apply spell math uniformly. */
 
 
-
-// ---------- Legendary actions (M41) ----------
-
-/**
- * Spend legendary actions at the end of an opponent's turn. Walks the
- * monster's remaining budget; each iteration picks the highest-cost
- * action whose budget fits. Stops when the budget is empty or no
- * action has a valid target.
- */
-function runLegendaryActions(monster, enemies, scene, rng) {
-  // Loop until budget exhausted or no usable action this round.
-  for (let safety = 0; safety < 4; safety++) {
-    if ((monster._legendaryBudget ?? 0) <= 0) return;
-    const pick = chooseLegendaryAction({ self: monster, enemies });
-    if (!pick) return;
-    applyLegendaryAction(monster, pick, scene, rng);
-    spendLegendaryAction(monster, pick.action);
-  }
-}
-
-function applyLegendaryAction(monster, pick, scene, rng) {
-  const { action } = pick;
-  if (action.kind === 'melee-attack') {
-    const target = pick.target;
-    if (!target || !isAlive(target)) return;
-    const atk = rollAttack({
-      bonus: action.attackBonus,
-      advantage: 'normal',
-      targetAC: target.ac
-    }, rng);
-    // M33.1: Shield can still block a legendary melee attack.
-    if (atk.hit && !atk.crit && target.kind === 'pc' &&
-        shouldCastShield({ target, attackerTotal: atk.total, targetAc: target.ac })) {
-      consumeShield(target);
-      return;
-    }
-    if (!atk.hit) return;
-    const dmg = rollDamage(action.dice, { crit: atk.crit }, rng);
-    applyDamageToEntity(target, dmg.total, rng);
-    monster.damageDealt += dmg.total;
-    return;
-  }
-  if (action.kind === 'aoe-save') {
-    const center = monster._position || monster.position;
-    if (!center) return;
-    for (const e of (pick.targets || [])) {
-      if (!isAlive(e)) continue;
-      const ep = e._position || e.position;
-      if (!ep) continue;
-      const dist = (Math.abs(ep.col - center.col) >= Math.abs(ep.row - center.row)
-        ? Math.abs(ep.col - center.col) : Math.abs(ep.row - center.row)) * 5;
-      if (dist > action.range) continue;
-      const eBonus = saveBonusFor(e, action.saveStat);
-      const save = rollSave({ bonus: eBonus, dc: action.dc }, rng);
-      const dmgRoll = rollDamage(action.dice, { crit: false }, rng);
-      let dmg = dmgRoll.total;
-      if (save.success) dmg = Math.floor(dmg / 2);
-      applyDamageToEntity(e, dmg, rng);
-      monster.damageDealt += dmg;
-    }
-  }
-}
 
 // ---------- Reaction attack (M33.0) ----------
 

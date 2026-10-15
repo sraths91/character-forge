@@ -14,7 +14,7 @@
  *   { t: 'turn.act', actorId, plan }                  forcePlan; plan uses the protocol.js turn.act
  *                                                     shape (+ harness-only `innate: true`)
  *   { t: 'dm.entity.patch', p: { entityId, hp?, addConditions?, removeConditions? } }
- *   { t: 'legendary', entityId }                      blocked on E1 T7 (throws)
+ *   { t: 'legendary', entityId }                      the monster spends its legendary budget
  *   { t: 'dm.roll.arm', p }                           blocked on E1 T8 (throws)
  *
  * Since M64 T4 the engine emits its own catalogue-v1 events through
@@ -33,7 +33,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { validateEncounterState } from '../../js/shared/encounter-state.js';
 import { validateEvent, validateEventLog } from '../../js/shared/events.js';
-import { runOneAttack } from '../../js/scene/combat-engine.js';
+import { runOneAttack, runLegendaryActions } from '../../js/scene/combat-engine.js';
 import { seedRng } from '../../js/scene/simulator.js';
 import { resetReactionsForAll } from '../../js/scene/reactions.js';
 import { spellById } from '../../js/scene/monster-spells.js';
@@ -255,7 +255,13 @@ export async function runScenario({ name, state, intents }) {
         if (type !== 'damage' && type !== 'heal') emit(type, payload, null);
       }
     } else if (step.t === 'legendary') {
-      throw new Error(`${where}: blocked on E1 T7 (M64 plan) — legendary actions run only inside simulator.js`);
+      // M64 T7 — legendary actions are an engine entry point now.
+      const monster = byId.get(step.entityId);
+      if (!monster) throw new Error(`${where}: unknown entity ${step.entityId}`);
+      const turnId = `l${++turnNo}`;
+      const foes = wrappers.filter(w => sideOf(w.id) !== sideOf(monster.id));
+      const ctx = { turnId, emit: (ev) => emit(ev.type, ev.payload, turnId, ev.cinemaGroup) };
+      await runLegendaryActions(monster, foes, scene, rng, {}, ctx);
     } else if (step.t === 'dm.roll.arm') {
       throw new Error(`${where}: blocked on E1 T8 (M64 plan) — the engine has no onRoll hook`);
     } else {

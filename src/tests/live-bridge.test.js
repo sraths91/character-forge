@@ -5,6 +5,7 @@ import {
   wrapPcForEngine, wrapMonsterForEngine, writeBackPc, writeBackMonster,
   buildEngineSides, runTurn
 } from '../js/scene/live-bridge.js';
+const runTurn_ = runTurn;
 import { seedRng } from '../js/scene/simulator.js';
 
 /** Live-shaped PC record (hp object, no _position — that lives in scene.positions). */
@@ -236,4 +237,31 @@ test('live-bridge: runTurn requires an rng and returns null for an entity not in
   const stranger = livePc({ id: 'x' });
   const res = await runTurn({ party: [pc], scene: sc, entity: stranger, kind: 'pc', rng: seedRng(1) });
   assert.equal(res, null);
+});
+
+test('live-bridge: the browser loop on the turn manager fires legendary actions in live play (T7)', async () => {
+  const { liveTurnState, syncLiveFromTurnState, refreshTurnStateFromLive } = await import('../js/scene/live-bridge.js');
+  const { startEncounter, runTurn } = await import('../js/scene/turn-manager.js');
+  const pc = livePc({ hp: 60, max: 60 });
+  const dragon = { id: 'd1', name: 'Dragon', presetSlug: 'young-dragon', hp: { current: 120, max: 120 }, conditions: [], position: { col: 3, row: 2 }, _legendaryBudget: 3 };
+  const sc = scene({ monsters: [dragon] });
+  const party = [pc];
+  const ts = liveTurnState({ party, scene: sc, initiative: [{ entityId: 'p1', score: 20 }, { entityId: 'd1', score: 5 }] });
+  startEncounter(ts, { initiative: 'given', maxRounds: 3 });
+  const rng = seedRng(21);
+  let ran = 0;
+  const res = await runTurn(ts, {
+    rng,
+    runActorTurn: async (actor) => {
+      syncLiveFromTurnState(ts, { scene: sc });
+      await runTurn_({ party, scene: sc, entity: pc, kind: actor.kind, rng });
+      refreshTurnStateFromLive(ts, { party, scene: sc });
+      ran++;
+    }
+  });
+  syncLiveFromTurnState(ts, { scene: sc });
+  assert.equal(ran, 1);
+  assert.equal(res.actorId, 'p1');
+  assert.ok(dragon._legendaryBudget < 3, 'the dragon spent legendary actions after the PC turn');
+  assert.equal(ts.turnIndex, 1);
 });

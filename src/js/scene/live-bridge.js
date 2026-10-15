@@ -36,6 +36,7 @@ import { freshSlots } from './monster-spells.js';
 import { choosePcAction } from './ai/pc-action.js';
 import { resetPerTurnFlags } from './ai/pc-features.js';
 import { runOneAttack } from './combat-engine.js';
+import { createTurnState } from './turn-manager.js';
 import {
   toEngineSides, applyEngineSides, wrapperFromEntity, applyWrapperToEntity, ledgerFromPool
 } from './encounter-adapters.js';
@@ -243,24 +244,25 @@ function copyEntityToLive(live, entity, scene, { position = true } = {}) {
 
 /**
  * Project the live versus roster into an EncounterState: every living
- * PC and monster, plus the active entity even at 0 HP.
- * @param {{party: object[], scene: object, active?: object|null}} args
+ * PC and monster, plus the active entity even at 0 HP (or everyone with
+ * `includeDown`).
+ * @param {{party: object[], scene: object, active?: object|null, includeDown?: boolean}} args
  * @returns {{state: object, sheets: Record<string, object>,
  *            live: Map<string, {record: object, kind: 'pc'|'monster'}>}}
  *   `sheets` maps each id to its live record (PC sheet / monster ref).
  */
-export function liveEncounterState({ party, scene, active = null }) {
+export function liveEncounterState({ party, scene, active = null, includeDown = false }) {
   const pcs = party || [];
   const entities = {};
   const sheets = {};
   const live = new Map();
   pcs.forEach((p, i) => {
-    if (!p || ((p.hp?.current ?? 0) <= 0 && p !== active)) return;
+    if (!p || (!includeDown && (p.hp?.current ?? 0) <= 0 && p !== active)) return;
     const e = entityFromLivePc(p, i, scene);
     entities[e.id] = e; sheets[e.id] = p; live.set(e.id, { record: p, kind: 'pc' });
   });
   for (const m of scene?.monsters || []) {
-    if (!m || ((m.hp?.current ?? 0) <= 0 && m !== active)) continue;
+    if (!m || (!includeDown && (m.hp?.current ?? 0) <= 0 && m !== active)) continue;
     const e = entityFromLiveMonster(m);
     entities[e.id] = e; sheets[e.id] = m; live.set(e.id, { record: m, kind: 'monster' });
   }
@@ -410,4 +412,70 @@ export async function runTurn({ party, scene, entity, kind, rng, prompts = {} })
   entity._lastPlan = sides.active._lastPlan || null;
   if (kind === 'pc') entity._chosenWeapon = sides.active._chosenWeapon || null;
   return sides.active;
+}
+
+// ---------------------------------------------------------------------
+// M64 T7 — the browser auto-fight runs on the engine turn manager
+// ---------------------------------------------------------------------
+
+const LIVE_TURN_STATES = new WeakMap();
+
+/**
+ * A turn-manager TurnState over the live versus roster (every PC and
+ * monster, downed ones included so the initiative stays intact).
+ * @param {{party: object[], scene: object,
+ *          initiative: {entityId: string|number, score?: number}[]}} args
+ * @returns {object} TurnState (phase 'setup'; call startEncounter)
+ */
+export function liveTurnState({ party, scene, initiative = [] }) {
+  const { state, sheets, live } = liveEncounterState({ party, scene, includeDown: true });
+  const sides = toEngineSides(state, sheets);
+  for (const w of sides.wrappers) applyLiveTransient(w, live.get(w.id)?.record);
+  const ts = createTurnState({
+    wrappers: sides.wrappers,
+    sides: Object.fromEntries(Object.values(state.entities).map(e => [e.id, e.side])),
+    scene: sides.scene,
+    initiative: (initiative || [])
+      .filter(r => state.entities[String(r.entityId)])
+      .map(r => ({ entityId: String(r.entityId), score: r.score ?? 0 }))
+  });
+  LIVE_TURN_STATES.set(ts, { state, live });
+  return ts;
+}
+
+/**
+ * Copy every TurnState wrapper onto its live record (start-of-turn resets,
+ * legendary actions — whatever the turn manager changed).
+ * @param {object} ts — from liveTurnState
+ * @param {{scene: object}} ctx — the live scene (PC positions)
+ */
+export function syncLiveFromTurnState(ts, { scene }) {
+  const held = LIVE_TURN_STATES.get(ts);
+  if (!held) throw new Error('live-bridge.syncLiveFromTurnState: not a liveTurnState');
+  const next = applyEngineSides(held.state, Object.values(ts.entities));
+  for (const [id, e] of Object.entries(next.entities)) {
+    const rec = held.live.get(id);
+    if (rec) copyEntityToLive(rec.record, e, scene);
+  }
+  held.state = next;
+}
+
+/**
+ * Rebuild the TurnState's wrappers from the live records (after a turn
+ * the browser ran through its own UI path), keeping ids, sides and the
+ * initiative.
+ * @param {object} ts — from liveTurnState
+ * @param {{party: object[], scene: object}} ctx
+ */
+export function refreshTurnStateFromLive(ts, { party, scene }) {
+  const held = LIVE_TURN_STATES.get(ts);
+  if (!held) throw new Error('live-bridge.refreshTurnStateFromLive: not a liveTurnState');
+  const { state, sheets, live } = liveEncounterState({ party, scene, includeDown: true });
+  const sides = toEngineSides(state, sheets);
+  for (const w of sides.wrappers) {
+    if (!ts.entities[w.id]) continue;
+    applyLiveTransient(w, live.get(w.id)?.record);
+    ts.entities[w.id] = w;
+  }
+  LIVE_TURN_STATES.set(ts, { state, live });
 }

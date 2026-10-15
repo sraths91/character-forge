@@ -927,6 +927,16 @@ async function runVersusPartyAuto() {
   const status = document.getElementById('versus-status');
   const order = versusInitiative.slice();   // captured at fight start
   const stepDelay = 950;                    // ms between turns
+  // M64 T7 — the round loop is the engine turn manager, the same one the
+  // simulator and the server run: per-creature start-of-turn resets
+  // (reaction, Reckless, legendary budget), downed/incapacitated skips,
+  // legendary actions after every opposing turn, the victory check and
+  // the 30-round cap. Each actor's turn still goes through runEngineTurn
+  // (cinema, cast log, Shield dialog). Loaded lazily so this function is
+  // the only main.js edit.
+  const { startEncounter, runTurn } = await import('./scene/turn-manager.js');
+  const { liveTurnState, syncLiveFromTurnState, refreshTurnStateFromLive } =
+    await import('./scene/live-bridge.js');
 
   // M36 — Spin up a recorder for this fight so the user can replay it.
   currentFightRecorder = createFightRecorder({
@@ -937,99 +947,102 @@ async function runVersusPartyAuto() {
   });
   currentFightRecorder.start();
 
-  for (let round = 1; round <= 30; round++) {
-    currentFightRecorder.setRound(round);
-    // M33.0 — refresh every combatant's reaction at the top of the round.
-    resetReactionsForAll(partyComposedCharacters);
-    resetReactionsForAll(currentScene.monsters || []);
-    // M39 — innate recharge is rolled by the engine at the start of each
-    // monster's turn (combat-engine runOneAttack); no per-round roll here.
-    for (const entry of order) {
-      if (!versusActive) return;
-      const entity = resolveEntityById(entry.entityId, entry.entityKind);
-      if (!entity || versusHpOf(entity, entry.entityKind) <= 0) continue;
+  const live = () => ({ party: partyComposedCharacters, scene: currentScene });
+  // A fresh fight: nobody starts with a spent reaction. From here on the
+  // turn manager refreshes each creature's reaction at its own turn.
+  resetReactionsForAll(partyComposedCharacters);
+  resetReactionsForAll(currentScene.monsters || []);
+  const ts = liveTurnState({
+    ...live(),
+    initiative: order.map(e => ({ entityId: e.entityId, score: e.score ?? 0 }))
+  });
+  startEncounter(ts, { initiative: 'given', maxRounds: 30 });
 
-      // M45 Phase 4b.2 — Dispatch through the unified combat engine.
-      // The engine handles planning, movement, OAs, attack/cast
-      // resolution, feature triggers, and (via the onCinemaRound
-      // prompt) cinema playback. We snapshot the opposing side's HP
-      // before the turn so we can detect kills + damage deltas for
-      // logging + replay AFTER the engine writes back.
-      const opposing = entry.entityKind === 'pc'
-        ? (currentScene.monsters || [])
-        : partyComposedCharacters;
-      const hpBefore = new Map(opposing.map(o => [o.id, o.hp?.current ?? 0]));
+  let shownRound = 0;
+  while (ts.phase === 'running') {
+    if (!versusActive) return;
+    const round = ts.round;
+    if (round !== shownRound) { shownRound = round; currentFightRecorder.setRound(round); }
+    let ranTurn = false;
+    const res = await runTurn(ts, {
+      rng: Math.random,
+      isPaused: () => !versusActive,
+      runActorTurn: async (actor) => {
+        const kind = actor.kind;
+        const entity = resolveEntityById(actor.id, kind);
+        if (!entity || versusHpOf(entity, kind) <= 0) return;
+        // Start-of-turn resets made by the turn manager reach the live records.
+        syncLiveFromTurnState(ts, live());
 
-      const wrapper = await runEngineTurn(entity, entry.entityKind);
-      if (!versusActive) return;
+        // M45 Phase 4b.2 — Dispatch through the unified combat engine.
+        // We snapshot the opposing side's HP before the turn so we can
+        // detect kills + damage deltas for logging + replay.
+        const opposing = kind === 'pc' ? (currentScene.monsters || []) : partyComposedCharacters;
+        const hpBefore = new Map(opposing.map(o => [o.id, o.hp?.current ?? 0]));
 
-      // No active wrapper means there were no live targets — one side
-      // has been wiped. Verdict-check immediately so we don't stall
-      // the loop until round 30.
-      if (!wrapper) {
-        const verdictWipe = currentPartyEndState();
-        if (verdictWipe) return endVersusFight(verdictWipe, round);
-        break;
-      }
-      const plan = wrapper._lastPlan;
-      if (plan) logVersusAiPlan(entity, plan);
+        const wrapper = await runEngineTurn(entity, kind);
+        refreshTurnStateFromLive(ts, live());
+        ranTurn = true;
+        if (!versusActive || !wrapper) return;
+        const plan = wrapper._lastPlan;
+        if (plan) logVersusAiPlan(entity, plan);
 
-      if (plan?.kind === 'flee') {
-        currentFightRecorder.record({
-          type: 'note',
-          actorId: entity.id, actorName: entity.name || 'Monster',
-          summary: `${entity.name} flees (${plan.archetype})`,
-          detail: { plan }
-        });
-      } else if (plan) {
-        // Damage / death recording from the HP delta. Walks the
-        // opposing side; any entity whose HP dropped is a hit, and
-        // any whose HP hit zero is a death.
-        for (const o of opposing) {
-          const before = hpBefore.get(o.id) ?? 0;
-          const after = o.hp?.current ?? 0;
-          if (before > after) {
-            currentFightRecorder.record({
-              type: 'attack',
-              actorId: entity.id, actorName: entity.name || '?',
-              targetId: o.id, targetName: o.name || '?',
-              summary: `${entity.name} hits ${o.name} for ${before - after} dmg`,
-              detail: { dmg: before - after, plan }
-            });
-            if (after <= 0) {
+        if (plan?.kind === 'flee') {
+          currentFightRecorder.record({
+            type: 'note',
+            actorId: entity.id, actorName: entity.name || 'Monster',
+            summary: `${entity.name} flees (${plan.archetype})`,
+            detail: { plan }
+          });
+        } else if (plan) {
+          // Damage / death recording from the HP delta.
+          for (const o of opposing) {
+            const before = hpBefore.get(o.id) ?? 0;
+            const after = o.hp?.current ?? 0;
+            if (before > after) {
               currentFightRecorder.record({
-                type: 'death',
-                actorId: o.id, actorName: o.name || '?',
-                summary: `${o.name} falls`, detail: {}
+                type: 'attack',
+                actorId: entity.id, actorName: entity.name || '?',
+                targetId: o.id, targetName: o.name || '?',
+                summary: `${entity.name} hits ${o.name} for ${before - after} dmg`,
+                detail: { dmg: before - after, plan }
               });
+              if (after <= 0) {
+                currentFightRecorder.record({
+                  type: 'death',
+                  actorId: o.id, actorName: o.name || '?',
+                  summary: `${o.name} falls`, detail: {}
+                });
+              }
             }
           }
         }
+        // M45 Phase 2 — Clear the AI-chosen weapon so the next turn
+        // re-evaluates from scratch.
+        if (kind === 'pc') entity._chosenWeapon = null;
       }
+    });
+    // Legendary actions and resets made after the actor's turn.
+    syncLiveFromTurnState(ts, live());
+    if (!versusActive || res.paused) return;
 
-      // M45 Phase 2 — Clear the AI-chosen weapon so the next turn
-      // re-evaluates from scratch.
-      if (entry.entityKind === 'pc') entity._chosenWeapon = null;
+    if (ranTurn) {
       await new Promise(f => setTimeout(f, stepDelay));
       // M64 C10 / F1 — the fight may have been exited during the pause;
       // don't judge the restored (non-arena) scene.
       if (!versusActive) return;
-
-      const verdict = currentPartyEndState();
-      if (verdict) return endVersusFight(verdict, round);
     }
-    if (status) {
+    const verdict = currentPartyEndState();
+    if (verdict) return endVersusFight(verdict, round);
+    if (res.roundEnded && status) {
       const pcHp = partyComposedCharacters.map(p => p.hp?.current ?? 0).reduce((a, b) => a + b, 0);
       const monHp = (currentScene.monsters || []).map(m => m.hp?.current ?? 0).reduce((a, b) => a + b, 0);
       status.textContent = `Round ${round}: party HP ${pcHp}, enemy HP ${monHp}.`;
     }
-    // M45 Phase 1 — Belt-and-braces: even if every mid-round verdict
-    // check missed (e.g. an entity died from a reaction OA off the
-    // dispatch path), end-of-round is a clean place to detect a wipe.
-    const verdictEndOfRound = currentPartyEndState();
-    if (verdictEndOfRound) return endVersusFight(verdictEndOfRound, round);
   }
-  endVersusFight('draw', 30);
+  // Ended by the turn manager (a wipe the HP verdict also sees, or the
+  // round cap): report it like the old loop did.
+  endVersusFight(currentPartyEndState() || 'draw', ts.round);
 }
 
 // M64 C1 — the live-runner ↔ engine bridge lives in

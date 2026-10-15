@@ -36,6 +36,8 @@ globalThis.localStorage = tripwire('localStorage');
     await import(dir + 'encounter-adapters.js');
     await import(dir + 'live-bridge.js');
     await import(dir + 'scene-model.js');
+    await import(dir + 'turn-manager.js');
+    await import(dir + 'prompt-adapter.js');
     const stats = await sim.simulateEncounter(workerData.encounter);
     const report = await cal.calibrateEncounter({ ...workerData.encounter, iterations: 5 });
     parentPort.postMessage({
