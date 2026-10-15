@@ -29,7 +29,7 @@
  * every exported name and signature below.
  */
 
-import { positionOf } from './scene-state.js';
+import { positionOf } from './scene-model.js';
 import { MONSTER_PRESETS } from './monster-presets.js';
 import { deriveAC } from './pc-stats.js';
 import { lvl1SlotsForPc, lvl3SlotsForPc, slotsForPc } from './reactions.js';
