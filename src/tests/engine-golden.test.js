@@ -42,8 +42,7 @@ const SCENARIOS = [
   ['legendary-actions', 'legendary tail attack after a PC turn', null],
   ['action-surge', 'Action Surge grants a second attack in the same turn', null],
   ['downed-dm-sethp', 'goblins drop the fighter to 0, DM sets HP mid-round, fighter swings', null],
-  ['dm-force-roll', 'DM arms a natural 20 on a monster attack mid-round',
-    'blocked on E1 T8 (M64 plan): the engine has no onRoll hook'],
+  ['dm-force-roll', 'DM arms a natural 20 on a monster attack mid-round', null],
   ['pc-ai-turn', 'an AI-planned PC turn keeps the wrapper state pure JSON', null]
 ];
 const RUNNABLE = SCENARIOS.filter(([, , skip]) => !skip).map(([name]) => name);

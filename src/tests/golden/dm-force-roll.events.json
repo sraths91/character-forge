@@ -1,0 +1,218 @@
+{
+  "scenario": "dm-force-roll",
+  "seed": 1,
+  "events": [
+    {
+      "seq": 1,
+      "type": "turn.started",
+      "round": 1,
+      "turnId": "t1",
+      "cinemaGroup": null,
+      "payload": {
+        "actorId": "m-gob"
+      }
+    },
+    {
+      "seq": 2,
+      "type": "plan.chosen",
+      "round": 1,
+      "turnId": "t1",
+      "cinemaGroup": null,
+      "payload": {
+        "actorId": "m-gob",
+        "kind": "attack",
+        "targetId": "pc-fighter",
+        "source": "dm",
+        "weapon": null,
+        "spellId": null,
+        "castAtLevel": null,
+        "featuresFired": [],
+        "archetype": "manual"
+      }
+    },
+    {
+      "seq": 3,
+      "type": "dm.override",
+      "round": 1,
+      "turnId": "t1",
+      "cinemaGroup": "t1.x1",
+      "payload": {
+        "kind": "roll.attack",
+        "entityId": "m-gob",
+        "before": {
+          "kept": 13,
+          "total": 17,
+          "hit": false,
+          "crit": false
+        },
+        "after": {
+          "kept": 20,
+          "total": 24,
+          "hit": true,
+          "crit": true
+        }
+      }
+    },
+    {
+      "seq": 4,
+      "type": "attack.rolled",
+      "round": 1,
+      "turnId": "t1",
+      "cinemaGroup": "t1.x1",
+      "payload": {
+        "attackerId": "m-gob",
+        "targetId": "pc-fighter",
+        "weapon": "Scimitar",
+        "isReaction": false,
+        "advantage": "normal",
+        "d20": [
+          20
+        ],
+        "kept": 20,
+        "bonus": 4,
+        "total": 24,
+        "ac": 18,
+        "hit": true,
+        "crit": true,
+        "shielded": false
+      }
+    },
+    {
+      "seq": 5,
+      "type": "damage",
+      "round": 1,
+      "turnId": "t1",
+      "cinemaGroup": "t1.x1",
+      "payload": {
+        "sourceId": "m-gob",
+        "targetId": "pc-fighter",
+        "amount": 7,
+        "type": null,
+        "hpBefore": 44,
+        "hpAfter": 37,
+        "rolled": 7,
+        "parts": {
+          "weapon": 7
+        }
+      }
+    },
+    {
+      "seq": 6,
+      "type": "exchange",
+      "round": 1,
+      "turnId": "t1",
+      "cinemaGroup": "t1.x1",
+      "payload": {
+        "exchangeId": "t1.x1",
+        "attackerId": "m-gob",
+        "defenderId": "pc-fighter",
+        "reaction": false,
+        "cast": false,
+        "roll": {
+          "d20": {
+            "dice": [
+              20
+            ],
+            "kept": 20,
+            "mode": "normal"
+          },
+          "bonus": 4,
+          "total": 24,
+          "ac": 18,
+          "hit": true,
+          "crit": true,
+          "shielded": false
+        },
+        "damage": {
+          "total": 7,
+          "smite": 0,
+          "heal": 0,
+          "type": null,
+          "crit": true
+        },
+        "effects": [
+          {
+            "entityId": "pc-fighter",
+            "hp": {
+              "before": 44,
+              "after": 37,
+              "max": 44
+            }
+          }
+        ],
+        "miss": false,
+        "cinema": {
+          "weapon": {
+            "name": "Scimitar",
+            "damageType": null,
+            "magical": false
+          },
+          "style": null,
+          "swing": null,
+          "modifiers": [],
+          "smiteSlot": null,
+          "attackerLevel": 0,
+          "killing": false,
+          "spell": null,
+          "outcome": null,
+          "fxSeed": 1423472275,
+          "durationMs": 0
+        }
+      }
+    },
+    {
+      "seq": 7,
+      "type": "turn.ended",
+      "round": 1,
+      "turnId": "t1",
+      "cinemaGroup": null,
+      "payload": {
+        "actorId": "m-gob",
+        "stateHash": "0e3b6cfaf74314",
+        "rngDraws": 3
+      }
+    }
+  ],
+  "final": {
+    "m-gob": {
+      "hp": 7,
+      "pos": {
+        "col": 3,
+        "row": 2
+      },
+      "conditions": [],
+      "reactionUsed": false,
+      "slots": null,
+      "innate": null,
+      "legendaryBudget": 0,
+      "concentration": null,
+      "actionSurgeUsed": 0,
+      "secondWindUsed": false,
+      "shieldActive": false,
+      "damageDealt": 7
+    },
+    "pc-fighter": {
+      "hp": 37,
+      "pos": {
+        "col": 2,
+        "row": 2
+      },
+      "conditions": [],
+      "reactionUsed": false,
+      "slots": {
+        "1": 0,
+        "2": 0,
+        "3": 0,
+        "4": 0,
+        "5": 0
+      },
+      "innate": null,
+      "legendaryBudget": 0,
+      "concentration": null,
+      "actionSurgeUsed": 0,
+      "secondWindUsed": false,
+      "shieldActive": false,
+      "damageDealt": 0
+    }
+  }
+}

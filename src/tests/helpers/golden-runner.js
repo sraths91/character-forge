@@ -15,7 +15,7 @@
  *                                                     shape (+ harness-only `innate: true`)
  *   { t: 'dm.entity.patch', p: { entityId, hp?, addConditions?, removeConditions? } }
  *   { t: 'legendary', entityId }                      the monster spends its legendary budget
- *   { t: 'dm.roll.arm', p }                           blocked on E1 T8 (throws)
+ *   { t: 'dm.roll.arm', p: {entityId, rollKind, value} } DM override applied by onRoll
  *
  * Since M64 T4 the engine emits its own catalogue-v1 events through
  * `ctx.emit`; the runner stamps seq/round/turnId and checks every event
@@ -34,6 +34,7 @@ import { readFileSync } from 'node:fs';
 import { validateEncounterState } from '../../js/shared/encounter-state.js';
 import { validateEvent, validateEventLog } from '../../js/shared/events.js';
 import { runOneAttack, runLegendaryActions } from '../../js/scene/combat-engine.js';
+import { withD20, withSaveD20 } from '../../js/scene/combat-roll.js';
 import { seedRng } from '../../js/scene/simulator.js';
 import { resetReactionsForAll } from '../../js/scene/reactions.js';
 import { spellById } from '../../js/scene/monster-spells.js';
@@ -218,6 +219,15 @@ export async function runScenario({ name, state, intents }) {
   const stateNow = () => applyEngineSides(state, wrappers);
   const stateHash = () => sharedStateHash(stateNow());
 
+  const armed = [];
+  const armedOnRoll = async ({ kind, actorId, result }) => {
+    const i = armed.findIndex(a => a.entityId === actorId && a.rollKind === kind);
+    if (i < 0) return result;
+    const [a] = armed.splice(i, 1);
+    if (kind === 'attack') return withD20(result, a.value);
+    if (kind === 'save') return withSaveD20(result, a.value);
+    return { ...result, total: a.value };
+  };
   for (const [i, step] of intents.entries()) {
     const where = `${name} step ${i} (${step.t})`;
     const before = projectAll(wrappers);
@@ -233,6 +243,7 @@ export async function runScenario({ name, state, intents }) {
       const allies = wrappers.filter(w => sideOf(w.id) === sideOf(actor.id));
       const enemies = wrappers.filter(w => sideOf(w.id) !== sideOf(actor.id));
       const prompts = step.t === 'turn.act' ? { forcePlan: toForcePlan(actor, step.plan) } : {};
+      if (armed.length) prompts.onRoll = armedOnRoll;
       // M64 T4 — the engine's own events, captured through ctx.emit.
       const ctx = {
         turnId,
@@ -263,7 +274,9 @@ export async function runScenario({ name, state, intents }) {
       const ctx = { turnId, emit: (ev) => emit(ev.type, ev.payload, turnId, ev.cinemaGroup) };
       await runLegendaryActions(monster, foes, scene, rng, {}, ctx);
     } else if (step.t === 'dm.roll.arm') {
-      throw new Error(`${where}: blocked on E1 T8 (M64 plan) — the engine has no onRoll hook`);
+      // M64 T8 — the DM arms an override; the engine's onRoll hook applies
+      // it after the rng draw (and emits dm.override).
+      armed.push({ ...step.p });
     } else {
       throw new Error(`${where}: unknown step type`);
     }

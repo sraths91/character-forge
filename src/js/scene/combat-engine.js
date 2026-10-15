@@ -34,7 +34,7 @@
  */
 
 import { resolveAttack } from './combat-resolver.js';
-import { rollAttack, rollDamage } from './combat-roll.js';
+import { rollAttack, rollDamage, withD20, withSaveD20 } from './combat-roll.js';
 import {
   deriveWeaponAttack, saveBonus as pcSaveBonus, proficiencyBonus, totalLevel
 } from './pc-stats.js';
@@ -141,24 +141,12 @@ async function resolveTurn(attacker, enemies, allies, scene, rng, prompts, ctx) 
   // M45 Phase 4b.3 — Manual play bypasses AI planning via
   // `prompts.forcePlan` — the caller hands in a pre-built plan
   // (kind + targetId + weapon/spell) and the engine resolves it as-is.
+  // ---- 1. plan --------------------------------------------------------
   let plan = null;
-  let target;
   let planSource = 'ai';
   if (prompts.forcePlan) {
     plan = prompts.forcePlan;
     planSource = ctx.planSource || (attacker.kind === 'pc' ? 'player' : 'dm');
-    attacker._lastPlan = plan;
-    // M51.1 — Set BOTH the resolution weapon (_chosenWeapon) AND the
-    // display/movement weapon (attacker.weapon) so a player-chosen weapon
-    // drives reach, the to-hit/damage in the log, and the cinema.
-    if (plan.weapon) { attacker._chosenWeapon = plan.weapon; attacker.weapon = plan.weapon; }
-    if (plan.targetSide === 'ally') {
-      target = allies.find(a => sameId(a.id, plan.targetId));
-    } else if (plan.targetId) {
-      target = enemies.find(e => sameId(e.id, plan.targetId));
-    } else {
-      target = pickTarget(enemies);
-    }
   } else if (attacker.kind === 'monster') {
     plan = chooseAction({
       self: attacker,
@@ -166,12 +154,6 @@ async function resolveTurn(attacker, enemies, allies, scene, rng, prompts, ctx) 
       allies: allies.filter(isAlive),
       rng
     });
-    attacker._lastPlan = plan;
-    if (plan.targetId) {
-      target = enemies.find(e => sameId(e.id, plan.targetId));
-    } else {
-      target = pickTarget(enemies);
-    }
   } else {
     // M42 — Per-turn AI for PCs. Resets sneak-attack/cunning-action
     // flags first, then picks the best (weapon/spell/feature) action.
@@ -182,11 +164,44 @@ async function resolveTurn(attacker, enemies, allies, scene, rng, prompts, ctx) 
       allies: allies.filter(isAlive),
       rng
     });
-    attacker._lastPlan = plan;
-    // M51.1 — keep the display/movement weapon in sync with the AI's pick.
-    if (plan?.weapon) { attacker._chosenWeapon = plan.weapon; attacker.weapon = plan.weapon; }
-    if (plan?.targetId) target = enemies.find(e => sameId(e.id, plan.targetId));
+  }
+
+  // ---- 2. gate: M64 T8 DM review (approve / replace / skip) ------------
+  let explicit = !!prompts.forcePlan;
+  if (plan && typeof prompts.onPlanReady === 'function') {
+    const reviewed = await prompts.onPlanReady({ attacker, plan, source: planSource });
+    if (reviewed === null) {
+      attacker._lastPlan = plan;
+      emitEvent(ctx, 'dm.override', { kind: 'plan.skip', entityId: actorId, before: planSummary(plan), after: null });
+      emitEvent(ctx, 'turn.skipped', { actorId, reason: 'dm' });
+      return;
+    }
+    if (reviewed && reviewed !== plan) {
+      emitEvent(ctx, 'dm.override', { kind: 'plan', entityId: actorId, before: planSummary(plan), after: planSummary(reviewed) });
+      plan = reviewed;
+      planSource = 'dm';
+      explicit = true;
+    }
+    // M64 T6 — re-check after the await.
+    if (!isAlive(attacker)) return;
+  }
+
+  // ---- 3. bind the plan --------------------------------------------------
+  attacker._lastPlan = plan;
+  // M51.1 — Set BOTH the resolution weapon (_chosenWeapon) AND the
+  // display/movement weapon (attacker.weapon) so a chosen weapon drives
+  // reach, the to-hit/damage in the log, and the cinema.
+  if (plan?.weapon) { attacker._chosenWeapon = plan.weapon; attacker.weapon = plan.weapon; }
+  let target;
+  if (explicit) {
+    // A player / DM plan names its side explicitly.
+    if (plan.targetSide === 'ally') target = allies.find(a => sameId(a.id, plan.targetId));
+    else if (plan.targetId != null) target = enemies.find(e => sameId(e.id, plan.targetId));
     else target = pickTarget(enemies);
+  } else if (plan?.targetId) {
+    target = enemies.find(e => sameId(e.id, plan.targetId));
+  } else {
+    target = pickTarget(enemies);
   }
   if (plan && canEmit(ctx)) {
     emitEvent(ctx, 'plan.chosen', {
@@ -200,7 +215,7 @@ async function resolveTurn(attacker, enemies, allies, scene, rng, prompts, ctx) 
     });
   }
   if (!target) {
-    if (prompts.forcePlan) {
+    if (explicit) {
       emitEvent(ctx, 'turn.rejected', {
         actorId, code: 'target-not-found',
         reason: `target ${plan?.targetId ?? '(none)'} is not a valid ${plan?.targetSide === 'ally' ? 'ally' : 'enemy'}`
@@ -211,7 +226,7 @@ async function resolveTurn(attacker, enemies, allies, scene, rng, prompts, ctx) 
     return;
   }
   const healsAlly = plan?.kind === 'cast' && plan?.targetSide === 'ally';
-  if (prompts.forcePlan && !isAlive(target) && !healsAlly) {
+  if (explicit && !isAlive(target) && !healsAlly) {
     emitEvent(ctx, 'turn.rejected', { actorId, code: 'target-down', reason: `${target.name || idOf(target)} is down` });
     return;
   }
@@ -383,7 +398,7 @@ async function resolveTurn(attacker, enemies, allies, scene, rng, prompts, ctx) 
   });
 
   if (verdict.autoMiss) {
-    if (prompts.forcePlan) {
+    if (explicit) {
       emitEvent(ctx, 'turn.rejected', {
         actorId, code: 'blocked', reason: (verdict.blockers || []).join('; ') || 'attack not possible'
       });
@@ -402,6 +417,7 @@ async function resolveTurn(attacker, enemies, allies, scene, rng, prompts, ctx) 
     atk = { hit: true, crit: true, total: 20 + finalBonus };
   } else {
     atk = rollAttack({ bonus: finalBonus, advantage: verdict.d20.mode, targetAC: target.ac }, rng);
+    if (prompts.onRoll) atk = await reviewRoll(prompts, ctx, group, 'attack', attacker, target, atk);
   }
   // M33.1 — Shield reaction (target casts AFTER the roll lands).
   // M64 N1 — offered only when Shield could block it; answer gated.
@@ -427,7 +443,11 @@ async function resolveTurn(attacker, enemies, allies, scene, rng, prompts, ctx) 
     }, { reaction: false, cast: false, targetHpBefore, modifiers });
     return;
   }
-  const dmg = rollDamage(finalDmgDice, { crit: atk.crit }, rng);
+  let dmg = rollDamage(finalDmgDice, { crit: atk.crit }, rng);
+  if (prompts.onRoll) {
+    dmg = await reviewRoll(prompts, ctx, group, 'damage', attacker, target, dmg);
+    if (!isAlive(attacker) || !isAlive(target)) return;
+  }
   const hpBeforeHit = target.hp;
   target.hp = Math.max(0, target.hp - dmg.total);
   attacker.damageDealt += dmg.total;
@@ -447,7 +467,8 @@ async function resolveTurn(attacker, enemies, allies, scene, rng, prompts, ctx) 
     let smiteDice = Math.min(5, 2 + (slotLevel - 1));
     const tType = String(target?.ref?.race?.name || target?.presetSlug || '').toLowerCase();
     if (/fiend|devil|demon|undead|zombie|skeleton|vampire|ghoul/.test(tType)) smiteDice += 1;
-    const smiteRoll = rollDamage(`${smiteDice}d8`, { crit: atk.crit }, rng);
+    let smiteRoll = rollDamage(`${smiteDice}d8`, { crit: atk.crit }, rng);
+    if (prompts.onRoll) smiteRoll = await reviewRoll(prompts, ctx, group, 'damage', attacker, target, smiteRoll);
     const hpBeforeSmite = target.hp;
     target.hp = Math.max(0, target.hp - smiteRoll.total);
     attacker.damageDealt += smiteRoll.total;
@@ -597,6 +618,10 @@ export async function runMonsterSpell({ attacker, target, plan, scene: _scene, r
       const r = rollDamage(spell.perDart, { crit: false }, rng);
       totalDmg += r.total;
     }
+    if (prompts.onRoll) {
+      totalDmg = (await reviewRoll(prompts, ctx, group, 'damage', attacker, target, { total: totalDmg, spec: `${darts}x${spell.perDart}`, crit: false })).total;
+      if (!isAlive(attacker) || !isAlive(target)) return;
+    }
     const before = target.hp;
     applyDamageToEntity(target, totalDmg, rng, ctx, { source: attacker, type: spell.damageType ?? null, parts: { darts }, group });
     attacker.damageDealt += totalDmg;
@@ -605,11 +630,12 @@ export async function runMonsterSpell({ attacker, target, plan, scene: _scene, r
   }
 
   if (spell.kind === 'spell-attack') {
-    const atk = rollAttack({
+    let atk = rollAttack({
       bonus: effectiveBook.attackBonus,
       advantage: 'normal',
       targetAC: target.ac
     }, rng);
+    if (prompts.onRoll) atk = await reviewRoll(prompts, ctx, group, 'attack', attacker, target, atk);
     if (await askShield(target, atk, { weapon: null, spell }, prompts, ctx, group)) {
       spendShield(target, ctx, group);
       atk.hit = false;
@@ -624,7 +650,11 @@ export async function runMonsterSpell({ attacker, target, plan, scene: _scene, r
       await castCinema(target, { dmg: 0, miss: true });
       return;
     }
-    const dmg = rollDamage(spell.dice, { crit: atk.crit }, rng);
+    let dmg = rollDamage(spell.dice, { crit: atk.crit }, rng);
+    if (prompts.onRoll) {
+      dmg = await reviewRoll(prompts, ctx, group, 'damage', attacker, target, dmg);
+      if (!isAlive(attacker) || !isAlive(target)) return;
+    }
     const before = target.hp;
     applyDamageToEntity(target, dmg.total, rng, ctx, { source: attacker, type: spell.damageType ?? null, group });
     attacker.damageDealt += dmg.total;
@@ -673,12 +703,14 @@ export async function runMonsterSpell({ attacker, target, plan, scene: _scene, r
   // Save-based, single target
   const saveStat = spell.saveStat;
   const targetSaveBonus = saveBonusFor(target, saveStat);
-  const save = rollSave({ bonus: targetSaveBonus, dc: effectiveBook.dc }, rng);
+  let save = rollSave({ bonus: targetSaveBonus, dc: effectiveBook.dc }, rng);
+  if (prompts.onRoll) save = await reviewRoll(prompts, ctx, group, 'save', target, attacker, save);
   emitSave(ctx, group, target, saveStat, save, 'spell');
   const before = target.hp;
   let saveDmg = 0;
   if (spell.dice) {
-    const dmgRoll = rollDamage(spell.dice, { crit: false }, rng);
+    let dmgRoll = rollDamage(spell.dice, { crit: false }, rng);
+    if (prompts.onRoll) dmgRoll = await reviewRoll(prompts, ctx, group, 'damage', attacker, target, dmgRoll);
     let dmg = dmgRoll.total;
     if (save.success) dmg = spell.saveOnHalf ? Math.floor(dmg / 2) : 0;
     applyDamageToEntity(target, dmg, rng, ctx, { source: attacker, type: spell.damageType ?? null, group });
@@ -749,9 +781,10 @@ export async function runReactionAttack(attacker, target, targetBeforePos, scene
   if (verdict.autoMiss) return;
   const group = nextCinemaGroup(ctx);
   const targetHpBefore = target.hp;
-  const atk = verdict.autoCrit
+  let atk = verdict.autoCrit
     ? { hit: true, crit: true, total: 20 + verdict.attackBonus.total }
     : rollAttack({ bonus: verdict.attackBonus.total, advantage: verdict.d20.mode, targetAC: target.ac }, rng);
+  if (prompts.onRoll && atk.d20) atk = await reviewRoll(prompts, ctx, group, 'attack', attacker, target, atk);
   if (await askShield(target, atk, { weapon: attacker.weapon }, prompts, ctx, group)) {
     spendShield(target, ctx, group);
     atk.hit = false;
@@ -772,7 +805,11 @@ export async function runReactionAttack(attacker, target, targetBeforePos, scene
     }, { reaction: true, cast: false, targetHpBefore });
     return;
   }
-  const dmg = rollDamage(verdict.damage.dice, { crit: atk.crit }, rng);
+  let dmg = rollDamage(verdict.damage.dice, { crit: atk.crit }, rng);
+  if (prompts.onRoll) {
+    dmg = await reviewRoll(prompts, ctx, group, 'damage', attacker, target, dmg);
+    if (!isAlive(attacker) || !isAlive(target)) return;
+  }
   const before = target.hp;
   target.hp = Math.max(0, target.hp - dmg.total);
   attacker.damageDealt += dmg.total;
@@ -824,7 +861,8 @@ async function applyLegendaryAction(monster, pick, scene, rng, prompts, ctx, gro
   if (action.kind === 'melee-attack') {
     const target = pick.target;
     if (!target || !isAlive(target)) return;
-    const atk = rollAttack({ bonus: action.attackBonus, advantage: 'normal', targetAC: target.ac }, rng);
+    let atk = rollAttack({ bonus: action.attackBonus, advantage: 'normal', targetAC: target.ac }, rng);
+    if (prompts.onRoll) atk = await reviewRoll(prompts, ctx, group, 'attack', monster, target, atk);
     // M33.1: Shield can still block a legendary melee attack.
     if (await askShield(target, atk, { weapon: { name: action.name } }, prompts, ctx, group)) {
       spendShield(target, ctx, group);
@@ -833,7 +871,11 @@ async function applyLegendaryAction(monster, pick, scene, rng, prompts, ctx, gro
     }
     emitAttackRolled(ctx, group, monster, target, atk, { weapon: action.name, isReaction: false, mode: 'normal', bonus: action.attackBonus });
     if (!atk.hit || !isAlive(monster) || !isAlive(target)) return;
-    const dmg = rollDamage(action.dice, { crit: atk.crit }, rng);
+    let dmg = rollDamage(action.dice, { crit: atk.crit }, rng);
+    if (prompts.onRoll) {
+      dmg = await reviewRoll(prompts, ctx, group, 'damage', monster, target, dmg);
+      if (!isAlive(monster) || !isAlive(target)) return;
+    }
     applyDamageToEntity(target, dmg.total, rng, ctx, { source: monster, type: action.damageType ?? null, group });
     monster.damageDealt += dmg.total;
     return;
@@ -861,6 +903,64 @@ async function applyLegendaryAction(monster, pick, scene, rng, prompts, ctx, gro
 // =====================================================================
 // Event helpers (M64 T4)
 // =====================================================================
+
+/**
+ * M64 T8 — offer a resolved roll to `prompts.onRoll` (the DM hook). It
+ * runs AFTER the rng draw, so an override never shifts the stream. An
+ * attack override re-resolves through withD20 (hit/crit recomputed); a
+ * save through withSaveD20; a damage override replaces the total. Any
+ * change emits dm.override {kind: 'roll.<kind>'}.
+ *
+ * @param {EnginePrompts} prompts
+ * @param {object} ctx
+ * @param {string|null} group
+ * @param {'attack'|'damage'|'save'} kind
+ * @param {object} actor — attacker (for a save: the creature saving)
+ * @param {object} other — target (for a save: the caster)
+ * @param {object} result — rollAttack / rollDamage / rollSave result
+ * @returns {Promise<object>} the result to use
+ */
+async function reviewRoll(prompts, ctx, group, kind, actor, other, result) {
+  const out = await prompts.onRoll({ kind, actorId: idOf(actor), targetId: idOf(other), result });
+  if (!out || out === result) return result;
+  let next = result;
+  if (kind === 'attack') {
+    if (out.d20 && result.d20 && Number.isInteger(out.d20.kept) && out.d20.kept !== result.d20.kept) next = withD20(result, out.d20.kept);
+    else if (typeof out.hit === 'boolean' && (out.hit !== result.hit || !!out.crit !== !!result.crit)) next = { ...result, hit: out.hit, crit: !!out.crit && out.hit };
+  } else if (kind === 'save') {
+    if (Number.isInteger(out.kept) && out.kept !== result.kept) next = withSaveD20(result, out.kept);
+    else if (typeof out.success === 'boolean' && out.success !== result.success) next = { ...result, success: out.success, forced: true };
+  } else if (Number.isFinite(out.total) && Math.trunc(out.total) !== result.total) {
+    next = { ...result, total: Math.max(0, Math.trunc(out.total)), forced: true };
+  }
+  if (next !== result) {
+    emitEvent(ctx, 'dm.override', {
+      kind: `roll.${kind}`, entityId: idOf(actor),
+      before: rollSummary(kind, result), after: rollSummary(kind, next)
+    }, group);
+  }
+  return next;
+}
+
+function rollSummary(kind, r) {
+  if (kind === 'attack') return { kept: r.d20?.kept ?? null, total: r.total ?? null, hit: !!r.hit, crit: !!r.crit };
+  if (kind === 'save') return { kept: r.kept ?? null, total: r.total ?? null, success: !!r.success };
+  return { total: r.total ?? 0 };
+}
+
+/** JSON summary of a plan for dm.override before/after (ids only). */
+function planSummary(plan) {
+  if (!plan) return null;
+  return {
+    kind: String(plan.kind),
+    targetId: plan.targetId != null ? String(plan.targetId) : null,
+    targetSide: plan.targetSide ?? null,
+    weapon: plan.weapon?.name ?? null,
+    spellId: plan.spellId ?? null,
+    castAtLevel: Number.isInteger(plan.castAtLevel) ? plan.castAtLevel : null,
+    featuresFired: [...(plan.featuresFired || [])]
+  };
+}
 
 function offeredPayload(ctx, reactorId, kind, autoAnswer, extra = {}) {
   return {

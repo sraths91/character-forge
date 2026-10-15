@@ -164,3 +164,41 @@ export function describeAttack({ attackerName, targetName, weaponName, atk, dmg 
   const r = dmg.rolls.join(',');
   return `${attackerName} attacks ${targetName}: ${d20Str}${atk.bonus >= 0 ? '+' : ''}${atk.bonus}=${atk.total} vs AC ${atk.ac} → HIT, ${weaponName} ${dmg.spec} (rolls ${r}) = ${dmg.total}`;
 }
+
+/**
+ * M64 T8 — Re-resolve an attack roll with a different kept d20 (a DM
+ * override applied AFTER the rng draw, so the stream stays aligned).
+ * Recomputes total, hit (nat 20 always hits, nat 1 always misses) and
+ * crit from the roll's own bonus and AC. Returns a new object.
+ *
+ * @param {{d20?: object, bonus: number, ac: number}} atk — rollAttack result
+ * @param {number} kept — the d20 face to use (1-20)
+ * @returns {object}
+ */
+export function withD20(atk, kept) {
+  const k = Math.max(1, Math.min(20, Math.trunc(Number(kept) || 1)));
+  const bonus = Number(atk?.bonus) || 0;
+  const ac = Number(atk?.ac) || 0;
+  const total = k + bonus;
+  return {
+    ...atk,
+    d20: { kept: k, dice: [k], advantage: atk?.d20?.advantage || 'normal', forced: true },
+    total,
+    hit: k === 20 ? true : (k === 1 ? false : total >= ac),
+    crit: k === 20
+  };
+}
+
+/**
+ * M64 T8 — Re-resolve a saving throw with a different kept d20. Returns a
+ * new object with total and success recomputed from its bonus and DC.
+ *
+ * @param {{bonus: number, dc: number}} save — rollSave result
+ * @param {number} kept — the d20 face (1-20)
+ * @returns {object}
+ */
+export function withSaveD20(save, kept) {
+  const k = Math.max(1, Math.min(20, Math.trunc(Number(kept) || 1)));
+  const total = k + (Number(save?.bonus) || 0);
+  return { ...save, kept: k, dice: [k], total, success: total >= (Number(save?.dc) || 0), forced: true };
+}

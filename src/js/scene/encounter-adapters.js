@@ -441,3 +441,52 @@ export function entityFromPreset(slug, opts) {
     statBlock: { ...sb, slug }
   };
 }
+
+// ---------------------------------------------------------------------
+// M64 T8 — DM edits on an EncounterState (pure)
+// ---------------------------------------------------------------------
+
+/**
+ * Set an entity's HP (clamped to [0, hpMax]). Returns a NEW state plus the
+ * before/after values for the dm.override event; an unknown id returns
+ * the input state unchanged with `entity: null`.
+ * @param {object} state — EncounterState
+ * @param {string} entityId
+ * @param {number} hp
+ * @returns {{state: object, entity: object|null, before: number|null, after: number|null}}
+ */
+export function setEntityHp(state, entityId, hp) {
+  const e = state?.entities?.[String(entityId)];
+  if (!e) return { state, entity: null, before: null, after: null };
+  const after = Math.max(0, Math.min(e.hpMax, Math.trunc(Number(hp) || 0)));
+  const entity = { ...clone(e), hp: after };
+  return { state: { ...state, entities: { ...state.entities, [e.id]: entity } }, entity, before: e.hp, after };
+}
+
+/**
+ * Replace an entity's conditions (strings or R7 objects; duplicates by id
+ * dropped). Returns a NEW state plus before/after condition ids.
+ * @param {object} state — EncounterState
+ * @param {string} entityId
+ * @param {Array<string|{id: string}>} conditions
+ * @returns {{state: object, entity: object|null, before: string[]|null, after: string[]|null}}
+ */
+export function setEntityConditions(state, entityId, conditions) {
+  const e = state?.entities?.[String(entityId)];
+  if (!e) return { state, entity: null, before: null, after: null };
+  const seen = new Set();
+  const next = [];
+  for (const c of conditions || []) {
+    const id = conditionId(c);
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    next.push(clone(c));
+  }
+  const entity = { ...clone(e), conditions: next };
+  return {
+    state: { ...state, entities: { ...state.entities, [e.id]: entity } },
+    entity,
+    before: (e.conditions || []).map(conditionId),
+    after: next.map(conditionId)
+  };
+}

@@ -293,6 +293,8 @@ export async function runTurn(ts, ctx = {}) {
   const rng = requireRng(ctx.rng, 'turn-manager.runTurn');
   const turnId = turnIdOf(ts);
   const emit = makeEmitter(ts, ctx, turnId);
+  // Safe point: DM edits queued since the last turn land before it starts.
+  if (ts.dmQueue?.length) applyDmCommands(ts, ctx);
   const actor = currentActor(ts);
   const actorId = actor ? String(actor.id) : (ts.initiative[ts.turnIndex]?.entityId ?? null);
   const result = { actorId, round: ts.round, turnIndex: ts.turnIndex, ran: false };
@@ -326,6 +328,8 @@ export async function runTurn(ts, ctx = {}) {
     }
   }
 
+  // Safe point: edits queued during the turn (outside a prompt) land now.
+  if (ts.dmQueue?.length) applyDmCommands(ts, ctx);
   const outcome = victoryCheck(ts, ctx.victoryRule || 'hp');
   if (outcome) finish(ts, outcome, null);
   else result.roundEnded = advance(ts, null);
@@ -417,4 +421,113 @@ export function setPaused(ts, paused) {
  */
 export function initiativeIndexOf(ts, entityId) {
   return ts.initiative.findIndex(r => sameId(r.entityId, entityId));
+}
+
+// ---------------------------------------------------------------------
+// M64 T8 — DM commands: checkpointed HP / condition edits and initiative
+// ---------------------------------------------------------------------
+
+/**
+ * Queue a DM edit. It is applied only at a safe point — the start and end
+ * of every runTurn, or whenever the server calls applyDmCommands while the
+ * engine is suspended on a prompt (the engine re-checks HP after every
+ * await) — never in the middle of a resolution step.
+ * @param {object} ts
+ * @param {{kind: 'hp'|'conditions', entityId: string, value: number|Array}} cmd
+ */
+export function queueDmCommand(ts, cmd) {
+  if (!cmd || (cmd.kind !== 'hp' && cmd.kind !== 'conditions')) {
+    throw new Error('turn-manager: DM command kind must be hp or conditions');
+  }
+  (ts.dmQueue || (ts.dmQueue = [])).push({ ...cmd, entityId: String(cmd.entityId) });
+}
+
+/**
+ * Apply every queued DM edit to the live wrappers, emitting one
+ * dm.override {kind, entityId, before, after} per edit.
+ * @param {object} ts
+ * @param {{emit?: function}} [ctx]
+ * @returns {object[]} the applied overrides
+ */
+export function applyDmCommands(ts, ctx = {}) {
+  const queue = ts.dmQueue || [];
+  ts.dmQueue = [];
+  const emit = makeEmitter(ts, ctx, turnIdOf(ts));
+  const applied = [];
+  for (const cmd of queue) {
+    const w = ts.entities[cmd.entityId];
+    if (!w) continue;
+    let before;
+    let after;
+    if (cmd.kind === 'hp') {
+      before = w.hp;
+      after = Math.max(0, Math.min(w.hpMax ?? Infinity, Math.trunc(Number(cmd.value) || 0)));
+      w.hp = after;
+    } else {
+      before = [...(w.conditions || [])];
+      const seen = new Set();
+      after = [];
+      for (const c of cmd.value || []) {
+        const id = typeof c === 'string' ? c : c?.id;
+        if (id && !seen.has(id)) { seen.add(id); after.push(id); }
+      }
+      w.conditions = after;
+    }
+    const ov = { kind: cmd.kind, entityId: cmd.entityId, before, after };
+    applied.push(ov);
+    if (emit) emit({ type: 'dm.override', payload: ov, cinemaGroup: null });
+  }
+  return applied;
+}
+
+/**
+ * Add a creature to the encounter mid-fight and slot it into the
+ * initiative by score (ties go after existing rows). The current actor
+ * keeps its turn.
+ * @param {object} ts
+ * @param {{wrapper: object, side: 'party'|'hostile', score: number}} entry
+ * @param {{emit?: function}} [ctx]
+ * @returns {number} the new row's index
+ */
+export function insertInitiative(ts, { wrapper, side, score = 0 }, ctx = {}) {
+  const id = String(wrapper.id);
+  if (ts.entities[id]) throw new Error(`turn-manager: entity "${id}" is already in the encounter`);
+  if (side !== 'party' && side !== 'hostile') throw new Error('turn-manager: side must be party or hostile');
+  ts.entities[id] = wrapper;
+  ts.sides[id] = side;
+  let index = ts.initiative.findIndex(r => r.score < score);
+  if (index < 0) index = ts.initiative.length;
+  const row = { entityId: id, score };
+  ts.initiative.splice(index, 0, row);
+  if (ts.phase === 'running' && index <= ts.turnIndex && ts.initiative.length > 1) ts.turnIndex++;
+  const emit = makeEmitter(ts, ctx, turnIdOf(ts));
+  if (emit) emit({ type: 'dm.override', payload: { kind: 'initiative.insert', entityId: id, before: null, after: { ...row, index } }, cinemaGroup: null });
+  return index;
+}
+
+/**
+ * Remove a creature from the initiative (and, by default, the encounter).
+ * Removing the current actor moves the turn to the next row.
+ * @param {object} ts
+ * @param {string} entityId
+ * @param {{emit?: function}} [ctx]
+ * @param {{removeEntity?: boolean}} [opts]
+ * @returns {boolean} whether a row was removed
+ */
+export function removeInitiative(ts, entityId, ctx = {}, { removeEntity = true } = {}) {
+  const index = initiativeIndexOf(ts, entityId);
+  if (index < 0) return false;
+  const [row] = ts.initiative.splice(index, 1);
+  if (index < ts.turnIndex) ts.turnIndex--;
+  if (ts.turnIndex >= ts.initiative.length) {
+    ts.turnIndex = 0;
+    if (ts.phase === 'running') ts.round++;
+  }
+  if (removeEntity) {
+    delete ts.entities[row.entityId];
+    delete ts.sides[row.entityId];
+  }
+  const emit = makeEmitter(ts, ctx, turnIdOf(ts));
+  if (emit) emit({ type: 'dm.override', payload: { kind: 'initiative.remove', entityId: row.entityId, before: { ...row, index }, after: null }, cinemaGroup: null });
+  return true;
 }
