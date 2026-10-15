@@ -96,6 +96,7 @@ export function createQueries(conn) {
         parsed_json = excluded.parsed_json,
         source = excluded.source,
         updated_at = excluded.updated_at
+      WHERE characters.source <> 'url' OR excluded.source = 'url'
       RETURNING id`,
     getCharacter: 'SELECT * FROM characters WHERE ddb_id = ?',
     listRecent: `
@@ -113,7 +114,9 @@ export function createQueries(conn) {
         item_name = excluded.item_name,
         base_asset = excluded.base_asset,
         generator_version = excluded.generator_version,
-        created_at = excluded.created_at`,
+        created_at = excluded.created_at,
+        hits = 0
+      WHERE item_sprites.generator_version < excluded.generator_version`,
     getMonster: 'SELECT * FROM monsters WHERE slug = ?',
     searchMonsters: `
       SELECT slug, name, cr, type, size, hp_average
@@ -134,6 +137,11 @@ export function createQueries(conn) {
         fetched_at = excluded.fetched_at`
   };
 
+  /**
+   * Insert or update a character by ddb_id. P0-10: a row imported from a
+   * D&D Beyond URL (`source='url'`) is never overwritten by a paste.
+   * @returns {{id: number}|undefined} undefined when the guard refused the write
+   */
   function upsertCharacter({ ddbId, name, rawJson, parsedJson, source }) {
     const now = Date.now();
     return stmt(SQL.upsertCharacter).get(
@@ -181,8 +189,13 @@ export function createQueries(conn) {
     };
   }
 
+  /**
+   * First write wins (P0-10): a sprite already cached at the current
+   * generator version is never overwritten; only stale versions are.
+   * @returns {boolean} true when this call stored the sprite
+   */
   function putItemSprite({ hash, pngBase64, itemName, baseAsset }) {
-    stmt(SQL.putItemSprite).run(hash, pngBase64, itemName, baseAsset, ITEM_GENERATOR_VERSION, Date.now());
+    return stmt(SQL.putItemSprite).run(hash, pngBase64, itemName, baseAsset, ITEM_GENERATOR_VERSION, Date.now()).changes > 0;
   }
 
   // M3 — Open5e monster cache. Read-through: callers look up by slug, and

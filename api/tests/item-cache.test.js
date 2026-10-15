@@ -24,13 +24,22 @@ test('returns null for unknown hash', () => {
   assert.strictEqual(getItemSprite('b'.repeat(40)), null);
 });
 
-test('upsert replaces an existing row', () => {
+test('first write wins: a current-version sprite is never overwritten (P0-10)', () => {
   const hash = 'd'.repeat(40);
-  putItemSprite({ hash, pngBase64: PNG, itemName: 'first', baseAsset: '/a' });
-  putItemSprite({ hash, pngBase64: PNG, itemName: 'second', baseAsset: '/b' });
+  assert.strictEqual(putItemSprite({ hash, pngBase64: PNG, itemName: 'first', baseAsset: '/a' }), true);
+  assert.strictEqual(putItemSprite({ hash, pngBase64: PNG, itemName: 'second', baseAsset: '/b' }), false);
   const got = getItemSprite(hash);
-  assert.strictEqual(got.name, 'second');
-  assert.strictEqual(got.baseAsset, '/b');
+  assert.strictEqual(got.name, 'first');
+  assert.strictEqual(got.baseAsset, '/a');
+});
+
+test('a stale-generator-version sprite is replaced', () => {
+  const hash = 'e'.repeat(40);
+  handle.db.prepare(`INSERT INTO item_sprites (hash, png_base64, item_name, base_asset, generator_version, created_at)
+    VALUES (?, ?, 'old', '/old', ?, 1)`).run(hash, PNG, ITEM_GENERATOR_VERSION - 1);
+  assert.strictEqual(getItemSprite(hash), null);
+  assert.strictEqual(putItemSprite({ hash, pngBase64: PNG, itemName: 'new', baseAsset: '/new' }), true);
+  assert.strictEqual(getItemSprite(hash).name, 'new');
 });
 
 test('getItemSprite increments hits without throwing', () => {

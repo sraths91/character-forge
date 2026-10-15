@@ -53,7 +53,7 @@ test('existing routes behave the same through the factory', async () => {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ png: PNG, itemName: 'Longsword', baseAsset: '/x' })
     });
-    assert.deepEqual(await res.json(), { ok: true });
+    assert.deepEqual(await res.json(), { ok: true, stored: true });
 
     res = await fetch(`${srv.url}/api/items/${hash}`);
     assert.deepEqual(await res.json(), { png: PNG, version: ITEM_GENERATOR_VERSION });
