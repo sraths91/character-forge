@@ -15,7 +15,7 @@ function fighterPc(over = {}) {
     id: 'pc1', name: 'Fighter', kind: 'pc', hp: 999, hpMax: 999, ac: 15, conditions: [],
     ref: { id: 'pc1', name: 'Fighter', classes: [{ name: 'Fighter', level: 3 }], spells: [], abilityModifiers: {} },
     weapon: { name: 'Longsword' }, _position: { col: 2, row: 0 }, damageDealt: 0,
-    _lvl1Slots: 0, _lvl3Slots: 0, _reactionUsed: false, ...over
+    _slots: { 1: 0, 3: 0 }, _reactionUsed: false, ...over
   };
 }
 function wizardPc(over = {}) {
@@ -26,7 +26,7 @@ function wizardPc(over = {}) {
       spells: ['Shield', 'Counterspell'], abilityModifiers: { INT: 4, DEX: 2, CON: 1 }
     },
     weapon: { name: 'Quarterstaff' }, _position: { col: 3, row: 1 }, damageDealt: 0,
-    _lvl1Slots: 2, _lvl3Slots: 1, _reactionUsed: false, ...over
+    _slots: { 1: 2, 3: 1 }, _reactionUsed: false, ...over
   };
 }
 function orc(over = {}) {
@@ -73,12 +73,12 @@ test('M64 N1: shield-gate probe — a PC without Shield or slots never gets a sh
 
 test('M64 N1: Shield answer is re-checked after the await (slot gone mid-prompt → no Shield)', async () => {
   // d20 = 11 → total 16 vs AC 15: a hit that +5 AC would turn into a miss.
-  const pc = fighterPc({ ref: { ...fighterPc().ref, spells: ['Shield'] }, _lvl1Slots: 1 });
+  const pc = fighterPc({ ref: { ...fighterPc().ref, spells: ['Shield'] }, _slots: { 1: 1 } });
   let prompted = 0;
   const cinema = [];
   await runOneAttack(orc(), [pc], [], { cols: 10, rows: 5 }, () => 0.5, {
     forcePlan: { kind: 'melee', targetId: 'pc1', targetSide: 'enemy', featuresFired: [] },
-    onShieldReaction: async () => { prompted++; pc._lvl1Slots = 0; return true; },
+    onShieldReaction: async () => { prompted++; pc._slots[1] = 0; return true; },
     onCinemaRound: async (ev) => { cinema.push(ev); }
   });
   assert.strictEqual(prompted, 1);
@@ -90,14 +90,14 @@ test('M64 N1: Shield answer is re-checked after the await (slot gone mid-prompt 
 
 test('M64 N1: a yes answer cannot Shield a hit that +5 AC would not stop', async () => {
   // d20 = 19 → total 24 vs AC 15: Shield (20) cannot help, so no prompt and no Shield.
-  const pc = fighterPc({ ref: { ...fighterPc().ref, spells: ['Shield'] }, _lvl1Slots: 1 });
+  const pc = fighterPc({ ref: { ...fighterPc().ref, spells: ['Shield'] }, _slots: { 1: 1 } });
   let prompted = 0;
   await runOneAttack(orc(), [pc], [], { cols: 10, rows: 5 }, () => 0.9, {
     forcePlan: { kind: 'melee', targetId: 'pc1', targetSide: 'enemy', featuresFired: [] },
     onShieldReaction: async () => { prompted++; return true; }
   });
   assert.strictEqual(prompted, 0);
-  assert.strictEqual(pc._lvl1Slots, 1);
+  assert.strictEqual(pc._slots[1], 1);
   assert.ok(pc.hp < 999);
 });
 
@@ -113,7 +113,7 @@ test('M64 N1: Magic Missile on a Shield-capable PC calls the Shield prompt exact
   assert.strictEqual(calls[0].autoAnswer, true);
   assert.strictEqual(calls[0].atk.autoHit, true);
   assert.strictEqual(wiz.hp, 40, 'Shield blocks every dart');
-  assert.strictEqual(wiz._lvl1Slots, 1);
+  assert.strictEqual(wiz._slots[1], 1);
   assert.strictEqual(wiz._reactionUsed, true);
 });
 
@@ -125,7 +125,7 @@ test('M64 N1: Magic Missile — declining Shield takes the darts and keeps the s
   });
   assert.strictEqual(calls.length, 1);
   assert.ok(wiz.hp < 40);
-  assert.strictEqual(wiz._lvl1Slots, 2);
+  assert.strictEqual(wiz._slots[1], 2);
   assert.strictEqual(wiz._reactionUsed, false);
 });
 
@@ -152,17 +152,17 @@ test('M64 N1: a spell attack (Fire Bolt) routes Shield through the prompt', asyn
     assert.strictEqual(calls[0].autoAnswer, true);
     if (answer) {
       assert.strictEqual(wiz.hp, 40);
-      assert.strictEqual(wiz._lvl1Slots, 1);
+      assert.strictEqual(wiz._slots[1], 1);
     } else {
       assert.ok(wiz.hp < 40);
-      assert.strictEqual(wiz._lvl1Slots, 2);
+      assert.strictEqual(wiz._slots[1], 2);
     }
   }
 });
 
 test('M64 N1: Counterspell — ineligible witnesses are not asked and cannot counter', async () => {
   const calls = [];
-  const wiz = wizardPc({ _lvl3Slots: 0 });
+  const wiz = wizardPc({ _slots: { 3: 0 } });
   await castAt(fanatic(), wiz, 'hold-person', () => 0.01, {
     onCounterspell: async (ev) => { calls.push(ev); return true; }
   }, [wiz]);
@@ -178,7 +178,7 @@ test('M64 N1: Counterspell answer is re-checked after the await', async () => {
     onCounterspell: async (ev) => { calls.push(ev); wiz._reactionUsed = true; return true; }
   }, [wiz]);
   assert.strictEqual(calls.length, 1);
-  assert.strictEqual(wiz._lvl3Slots, 1, 'no slot spent');
+  assert.strictEqual(wiz._slots[3], 1, 'no slot spent');
   assert.ok(wiz.conditions.includes('paralyzed'), 'spell was not countered');
 });
 
@@ -187,7 +187,7 @@ test('M64 N1: Counterspell — eligible yes still counters', async () => {
   await castAt(fanatic(), wiz, 'hold-person', () => 0.01, {
     onCounterspell: async () => true
   }, [wiz]);
-  assert.strictEqual(wiz._lvl3Slots, 0);
+  assert.strictEqual(wiz._slots[3], 0);
   assert.ok(!wiz.conditions.includes('paralyzed'));
 });
 
@@ -248,9 +248,9 @@ test('M64 N1: shieldCanBlock — eligibility rules', () => {
   assert.strictEqual(shieldCanBlock(wiz, { hit: true, crit: true, total: 14 }), false, 'crits ignore Shield');
   assert.strictEqual(shieldCanBlock(wiz, { hit: false, crit: false, total: 5 }), false);
   assert.strictEqual(shieldCanBlock(wiz, { hit: true, crit: false, total: null, autoHit: true }), true);
-  assert.strictEqual(shieldCanBlock(wizardPc({ _lvl1Slots: 0 }), { hit: true, crit: false, total: 14 }), false);
+  assert.strictEqual(shieldCanBlock(wizardPc({ _slots: { 1: 0 } }), { hit: true, crit: false, total: 14 }), false);
   assert.strictEqual(shieldCanBlock(wizardPc({ _reactionUsed: true }), { hit: true, crit: false, total: 14 }), false);
-  assert.strictEqual(shieldCanBlock(fighterPc({ _lvl1Slots: 3 }), { hit: true, crit: false, total: 16 }), false, 'no Shield spell');
+  assert.strictEqual(shieldCanBlock(fighterPc({ _slots: { 1: 3 } }), { hit: true, crit: false, total: 16 }), false, 'no Shield spell');
   assert.strictEqual(shieldCanBlock(orc(), { hit: true, crit: false, total: 14 }), false, 'monsters do not Shield');
 });
 
@@ -260,8 +260,8 @@ test('M64 N1: shieldCanBlock — eligibility rules', () => {
 // With prompts:{} the heuristic answers already check eligibility, so the
 // gate must not move a single number.
 
-const GOLDEN_CASTERS = {"iterations": 100, "partyVictories": 100, "monsterVictories": 0, "draws": 0, "victoryRate": 1, "avgRounds": 6.64, "entities": [{"id": "fighter", "name": "fighter", "kind": "pc", "hpMax": 40, "deathRate": 0.17, "avgFinalHp": 25.85, "avgDamageDealt": 43.26}, {"id": "wizard", "name": "wizard", "kind": "pc", "hpMax": 40, "deathRate": 0.05, "avgFinalHp": 30.63, "avgDamageDealt": 79.55}, {"id": "cleric", "name": "cleric", "kind": "pc", "hpMax": 40, "deathRate": 0.98, "avgFinalHp": 0.1, "avgDamageDealt": 6.47}, {"id": "paladin", "name": "paladin", "kind": "pc", "hpMax": 40, "deathRate": 0.12, "avgFinalHp": 26.41, "avgDamageDealt": 56.28}, {"id": "fan", "name": "cult-fanatic", "kind": "monster", "hpMax": 40, "deathRate": 1, "avgFinalHp": 0, "avgDamageDealt": 4.41}, {"id": "kob", "name": "kobold-sorcerer", "kind": "monster", "hpMax": 40, "deathRate": 1, "avgFinalHp": 0, "avgDamageDealt": 46.86}, {"id": "kob2", "name": "kobold-sorcerer", "kind": "monster", "hpMax": 40, "deathRate": 1, "avgFinalHp": 0, "avgDamageDealt": 29.67}, {"id": "gob", "name": "goblin", "kind": "monster", "hpMax": 40, "deathRate": 1, "avgFinalHp": 0, "avgDamageDealt": 2.45}]};
-const GOLDEN_4V4 = {"iterations": 200, "partyVictories": 200, "monsterVictories": 0, "draws": 0, "victoryRate": 1, "avgRounds": 3.54, "entities": [{"id": "f", "name": "f", "kind": "pc", "hpMax": 30, "deathRate": 0.065, "avgFinalHp": 21.27, "avgDamageDealt": 22.03}, {"id": "w", "name": "w", "kind": "pc", "hpMax": 30, "deathRate": 0.005, "avgFinalHp": 24.695, "avgDamageDealt": 54.98}, {"id": "c", "name": "c", "kind": "pc", "hpMax": 30, "deathRate": 0.01, "avgFinalHp": 27.455, "avgDamageDealt": 11.205}, {"id": "r", "name": "r", "kind": "pc", "hpMax": 30, "deathRate": 0.045, "avgFinalHp": 20.07, "avgDamageDealt": 13.565}, {"id": "m0", "name": "goblin", "kind": "monster", "hpMax": 20, "deathRate": 1, "avgFinalHp": 0, "avgDamageDealt": 7.145}, {"id": "m1", "name": "bandit", "kind": "monster", "hpMax": 20, "deathRate": 1, "avgFinalHp": 0, "avgDamageDealt": 4.65}, {"id": "m2", "name": "kobold", "kind": "monster", "hpMax": 20, "deathRate": 1, "avgFinalHp": 0, "avgDamageDealt": 4.715}, {"id": "m3", "name": "orc", "kind": "monster", "hpMax": 20, "deathRate": 1, "avgFinalHp": 0, "avgDamageDealt": 10.285}]};
+const GOLDEN_CASTERS = {"iterations": 100, "partyVictories": 97, "monsterVictories": 0, "draws": 3, "victoryRate": 0.97, "avgRounds": 7.38, "entities": [{"id": "fighter", "name": "fighter", "kind": "pc", "hpMax": 40, "deathRate": 0.18, "avgFinalHp": 24.94, "avgDamageDealt": 46.3},{"id": "wizard", "name": "wizard", "kind": "pc", "hpMax": 40, "deathRate": 0.12, "avgFinalHp": 27.83, "avgDamageDealt": 65.97},{"id": "cleric", "name": "cleric", "kind": "pc", "hpMax": 40, "deathRate": 0.99, "avgFinalHp": 0.08, "avgDamageDealt": 7.37},{"id": "paladin", "name": "paladin", "kind": "pc", "hpMax": 40, "deathRate": 0.13, "avgFinalHp": 25.74, "avgDamageDealt": 64.81},{"id": "fan", "name": "cult-fanatic", "kind": "monster", "hpMax": 40, "deathRate": 0.98, "avgFinalHp": 0.39, "avgDamageDealt": 7.43},{"id": "kob", "name": "kobold-sorcerer", "kind": "monster", "hpMax": 40, "deathRate": 1, "avgFinalHp": 0, "avgDamageDealt": 49.05},{"id": "kob2", "name": "kobold-sorcerer", "kind": "monster", "hpMax": 40, "deathRate": 0.99, "avgFinalHp": 0.04, "avgDamageDealt": 29.74},{"id": "gob", "name": "goblin", "kind": "monster", "hpMax": 40, "deathRate": 1, "avgFinalHp": 0, "avgDamageDealt": 2.38}]};
+const GOLDEN_4V4 = {"iterations": 200, "partyVictories": 200, "monsterVictories": 0, "draws": 0, "victoryRate": 1, "avgRounds": 3.54, "entities": [{"id": "f", "name": "f", "kind": "pc", "hpMax": 30, "deathRate": 0.065, "avgFinalHp": 21.37, "avgDamageDealt": 22.055},{"id": "w", "name": "w", "kind": "pc", "hpMax": 30, "deathRate": 0.005, "avgFinalHp": 24.695, "avgDamageDealt": 54.89},{"id": "c", "name": "c", "kind": "pc", "hpMax": 30, "deathRate": 0.01, "avgFinalHp": 27.455, "avgDamageDealt": 11.3},{"id": "r", "name": "r", "kind": "pc", "hpMax": 30, "deathRate": 0.045, "avgFinalHp": 20.07, "avgDamageDealt": 13.565},{"id": "m0", "name": "goblin", "kind": "monster", "hpMax": 20, "deathRate": 1, "avgFinalHp": 0, "avgDamageDealt": 7.145},{"id": "m1", "name": "bandit", "kind": "monster", "hpMax": 20, "deathRate": 1, "avgFinalHp": 0, "avgDamageDealt": 4.62},{"id": "m2", "name": "kobold", "kind": "monster", "hpMax": 20, "deathRate": 1, "avgFinalHp": 0, "avgDamageDealt": 4.715},{"id": "m3", "name": "orc", "kind": "monster", "hpMax": 20, "deathRate": 1, "avgFinalHp": 0, "avgDamageDealt": 10.215}]};
 
 function casterPc(id, col, cls, level, spells, hp = 40) {
   return {

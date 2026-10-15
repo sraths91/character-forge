@@ -10,7 +10,7 @@ import { test } from 'node:test';
 import assert from 'node:assert';
 import { simulateEncounter, seedRng } from '../js/scene/simulator.js';
 import { runMonsterSpell, runOneAttack, applyDamageToEntity } from '../js/scene/combat-engine.js';
-import { lvl1SlotsForPc, lvl3SlotsForPc, slotsForPc } from '../js/scene/reactions.js';
+import { slotsForPc } from '../js/scene/reactions.js';
 import { freshInnateState } from '../js/scene/monster-spells.js';
 import { startConcentration, isConcentrating } from '../js/scene/concentration.js';
 import { spellById } from '../js/scene/monster-spells.js';
@@ -94,7 +94,7 @@ function pcTarget(over = {}) {
     ref, id: 'pc1', name: 'Eldra', kind: 'pc', hp: 30, hpMax: 40, ac: 12,
     weapon: { name: 'Quarterstaff' }, conditions: [], damageDealt: 0,
     _position: { col: 3, row: 1 }, _reactionUsed: false,
-    _lvl1Slots: lvl1SlotsForPc(ref), _lvl3Slots: lvl3SlotsForPc(ref), _slots: slotsForPc(ref),
+    _slots: slotsForPc(ref),
     ...over
   };
 }
@@ -102,11 +102,11 @@ function pcTarget(over = {}) {
 const SPELL_KINDS = [
   // [label, spellId, castAtLevel, target-builder, attacker-builder]
   ['heal (cure-wounds)', 'cure-wounds', 1, () => casterMonster({ id: 'm2', hp: 5 })],
-  ['auto-hit (magic-missile, upcast)', 'magic-missile', 2, () => pcTarget({ _lvl1Slots: 0 })],
+  ['auto-hit (magic-missile, upcast)', 'magic-missile', 2, () => pcTarget({ _slots: {} })],
   ['spell-attack (inflict-wounds)', 'inflict-wounds', 1, () => pcTarget()],
   ['spell-attack (fire-bolt cantrip)', 'fire-bolt', 0, () => pcTarget()],
   ['cantrip save (sacred-flame)', 'sacred-flame', 0, () => pcTarget()],
-  ['leveled save + concentration (hold-person)', 'hold-person', 2, () => pcTarget({ _lvl3Slots: 0 })],
+  ['leveled save + concentration (hold-person)', 'hold-person', 2, () => pcTarget({ _slots: { 1: 4, 2: 3, 3: 0, 4: 0, 5: 0 } })],
   ['counterspelled (hold-person vs Counterspell witness)', 'hold-person', 2, () => pcTarget()],
   ['AoE save (fire-breath)', 'fire-breath', 0, () => pcTarget()]
 ];
@@ -128,7 +128,7 @@ for (const [label, spellId, castAtLevel, makeTarget] of SPELL_KINDS) {
     }));
     if (label.startsWith('counterspelled')) {
       // Level-2 spell vs Counterspell is an automatic counter: no dice.
-      assert.strictEqual(target._lvl3Slots, lvl3SlotsForPc(target.ref) - 1, 'counterspell slot spent');
+      assert.strictEqual(target._slots[3], slotsForPc(target.ref)[3] - 1, 'counterspell slot spent (one ledger)');
     } else {
       assert.ok(rng.draws > 0, `${label}: expected the seeded rng to be used`);
     }
@@ -150,7 +150,7 @@ test('M64 T2 tripwire: a full PC turn (AI plan, MCTS upcast, OA, smite) never to
     ref: paladinRef, id: 'pal', name: 'pal', kind: 'pc', hp: 40, hpMax: 40, ac: 16,
     weapon: paladinRef.equipment.mainhand, _chosenWeapon: paladinRef.equipment.mainhand,
     conditions: [], damageDealt: 0, combatMods: [], _position: { col: 1, row: 1 },
-    _reactionUsed: false, _lvl1Slots: 0, _lvl3Slots: 0, _slots: { 1: 4, 2: 2, 3: 0, 4: 0, 5: 0 }
+    _reactionUsed: false, _slots: { 1: 4, 2: 2, 3: 0, 4: 0, 5: 0 }
   };
   const gob = casterMonster({ id: 'g', presetSlug: 'goblin', hp: 60, hpMax: 60, _slots: null, position: { col: 0, row: 1 } });
   const far = casterMonster({ id: 'f', presetSlug: 'goblin', hp: 60, hpMax: 60, _slots: null, position: { col: 4, row: 1 } });

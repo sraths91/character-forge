@@ -193,20 +193,79 @@ export function shouldCastShield({ target, attackerTotal, targetAc } = {}) {
  * Lower-level predicate: does `target` have the *resources* to cast
  * Shield right now? Used by the Magic Missile path, where the PHB text
  * states Shield negates the spell entirely — no AC math involved.
+ * M64 T5 — the slot comes from the one slot ledger (`_slots`, then
+ * `_pact`): any slot of 1st level or higher.
  */
 export function canCastShield(target) {
   if (!hasReactionAvailable(target)) return false;
   if (!hasShieldSpell(target)) return false;
-  if ((target._lvl1Slots ?? 0) <= 0) return false;
-  return true;
+  return availableSlotLevel(target, 1) !== null;
 }
 
-/** Spend a 1st-level slot + the reaction. */
+/**
+ * Spend the lowest available 1st+-level slot + the reaction.
+ * @returns {number|null} the slot level spent (null when none was left)
+ */
 export function consumeShield(target) {
-  if (!target) return;
+  if (!target) return null;
   consumeReaction(target);
-  target._lvl1Slots = Math.max(0, (target._lvl1Slots ?? 0) - 1);
+  const level = spendSlotAtLeast(target, 1);
   target._shieldActive = true;
+  return level;
+}
+
+// =====================================================================
+// M64 T5 — the one slot ledger
+//
+// Every PC/monster spell slot lives in ONE runtime pool on the wrapper:
+//   _slots: { [level]: remaining }       — regular slots
+//   _pact:  { level, max, spent } | null — Warlock Pact Magic (separate)
+// Leveled spells (consumeSlot), Divine Smite, Shield and Counterspell
+// all draw from it, and the encounter adapters persist it as
+// EncounterState `resources.slots{lvl:{max,spent}}` + `resources.pact`.
+// (The old `_lvl1Slots` / `_lvl3Slots` estimates were separate pools,
+// so a live PC had unlimited Shields — P0-6.)
+// =====================================================================
+
+/**
+ * Lowest slot level >= minLevel the entity can spend right now: regular
+ * slots first, then the pact slot when its level qualifies.
+ * @param {object} entity — wrapper with `_slots` / `_pact`
+ * @param {number} [minLevel=1]
+ * @returns {number|null}
+ */
+export function availableSlotLevel(entity, minLevel = 1) {
+  const pool = entity?._slots;
+  if (pool && typeof pool === 'object') {
+    for (let lvl = Math.max(1, minLevel); lvl <= 9; lvl++) {
+      if ((pool[lvl] ?? 0) > 0) return lvl;
+    }
+  }
+  const pact = entity?._pact;
+  if (pact && pact.level >= minLevel && (pact.max ?? 0) - (pact.spent ?? 0) > 0) return pact.level;
+  return null;
+}
+
+/**
+ * Spend the lowest available slot of at least `minLevel` from the one
+ * ledger. Returns the level spent, or null when nothing was available.
+ * @param {object} entity
+ * @param {number} [minLevel=1]
+ * @returns {number|null}
+ */
+export function spendSlotAtLeast(entity, minLevel = 1) {
+  const pool = entity?._slots;
+  if (pool && typeof pool === 'object') {
+    for (let lvl = Math.max(1, minLevel); lvl <= 9; lvl++) {
+      if ((pool[lvl] ?? 0) > 0) { pool[lvl] -= 1; return lvl; }
+    }
+  }
+  const pact = entity?._pact;
+  if (pact && pact.level >= minLevel && (pact.max ?? 0) - (pact.spent ?? 0) > 0) {
+    pact.spent = (pact.spent ?? 0) + 1;
+    return pact.level;
+  }
+  return null;
 }
 
 /** Does this PC know Shield? Reads the DDB-parsed spell list. */
@@ -229,9 +288,10 @@ function matchShield(s) {
   return /^shield$/i.test(String(name).trim());
 }
 
-// 5e PHB spell-slot table by spell-level + class level. Used by the
-// simulator to seed `_lvl1Slots` (Shield) and `_lvl3Slots` (Counterspell)
-// on each PC wrapper. Doesn't account for multiclass slot stacking.
+// 5e PHB spell-slot table by spell-level + class level. Kept for the
+// lvl1SlotsForPc / lvl3SlotsForPc estimators (UI labels and tests); the
+// engine itself draws every slot from the one ledger (`_slots`, M64 T5).
+// Doesn't account for multiclass slot stacking.
 const FULL_CASTER_LVL1 = [0, 2, 3, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4];
 const FULL_CASTER_LVL3 = [0, 0, 0, 0, 0, 2, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3];
 const HALF_CASTER_LVL1 = [0, 0, 2, 3, 3, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4];
@@ -346,19 +406,21 @@ export function hasCounterspell(entity) {
   return false;
 }
 
-/** Resources only: reaction + spell known + a 3rd-level slot available. */
+/** Resources only: reaction + spell known + a 3rd+-level slot in the ledger. */
 export function canCastCounterspell(entity) {
   if (!hasReactionAvailable(entity)) return false;
   if (!hasCounterspell(entity)) return false;
-  if ((entity._lvl3Slots ?? 0) <= 0) return false;
-  return true;
+  return availableSlotLevel(entity, 3) !== null;
 }
 
-/** Burn the slot + reaction. */
+/**
+ * Burn the lowest available 3rd+-level slot + the reaction.
+ * @returns {number|null} the slot level spent
+ */
 export function consumeCounterspell(entity) {
-  if (!entity) return;
+  if (!entity) return null;
   consumeReaction(entity);
-  entity._lvl3Slots = Math.max(0, (entity._lvl3Slots ?? 0) - 1);
+  return spendSlotAtLeast(entity, 3);
 }
 
 /**

@@ -32,7 +32,7 @@
 import { positionOf } from './scene-model.js';
 import { MONSTER_PRESETS } from './monster-presets.js';
 import { deriveAC } from './pc-stats.js';
-import { lvl1SlotsForPc, lvl3SlotsForPc, slotsForPc } from './reactions.js';
+import { slotsForPc } from './reactions.js';
 import { choosePcAction } from './ai/pc-action.js';
 import { resetPerTurnFlags } from './ai/pc-features.js';
 import { runOneAttack } from './combat-engine.js';
@@ -134,8 +134,6 @@ export function wrapPcForEngine(pc, idx, scene) {
     damageDealt: 0,
     combatMods: pc.combatMods || [],
     _reactionUsed: !!pc._reactionUsed,
-    _lvl1Slots: pc._lvl1Slots ?? lvl1SlotsForPc(pc),
-    _lvl3Slots: pc._lvl3Slots ?? lvl3SlotsForPc(pc),
     // SHARED — slot decrements persist directly.
     _slots: pc._slots,
     _shieldActive: !!pc._shieldActive,

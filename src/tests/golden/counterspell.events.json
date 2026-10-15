@@ -80,7 +80,7 @@
       "cinemaGroup": null,
       "payload": {
         "entityId": "pc-wizard",
-        "resource": "counterspell-pool",
+        "resource": "spell-slot",
         "level": 3
       }
     },
@@ -92,7 +92,7 @@
       "cinemaGroup": null,
       "payload": {
         "actorId": "m-fanatic-a",
-        "stateHash": "da33d88b",
+        "stateHash": "54c43177",
         "rngDraws": 0
       }
     },
@@ -185,7 +185,7 @@
       "cinemaGroup": null,
       "payload": {
         "actorId": "m-fanatic-b",
-        "stateHash": "7e7d7c05",
+        "stateHash": "64e78689",
         "rngDraws": 1
       }
     }
@@ -203,8 +203,6 @@
         "1": 4,
         "2": 2
       },
-      "lvl1Pool": null,
-      "lvl3Pool": null,
       "innate": null,
       "legendaryBudget": 0,
       "concentration": null,
@@ -225,8 +223,6 @@
         "1": 4,
         "2": 2
       },
-      "lvl1Pool": null,
-      "lvl3Pool": null,
       "innate": null,
       "legendaryBudget": 0,
       "concentration": "hold-person",
@@ -252,8 +248,6 @@
         "4": 0,
         "5": 0
       },
-      "lvl1Pool": 0,
-      "lvl3Pool": 0,
       "innate": null,
       "legendaryBudget": 0,
       "concentration": null,
@@ -273,12 +267,10 @@
       "slots": {
         "1": 4,
         "2": 3,
-        "3": 2,
+        "3": 1,
         "4": 0,
         "5": 0
       },
-      "lvl1Pool": 4,
-      "lvl3Pool": 1,
       "innate": null,
       "legendaryBudget": 0,
       "concentration": null,

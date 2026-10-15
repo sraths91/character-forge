@@ -11,15 +11,15 @@
 
 import { MONSTER_PRESETS } from './monster-presets.js';
 import { buildPartyArenaScene, rollPartyInitiative } from './versus.js';
-import { lvl1SlotsForPc, lvl3SlotsForPc } from './reactions.js';
+import { slotsForPc } from './reactions.js';
 import { spellbookFor, innateBlockFor, freshInnateState } from './monster-spells.js';
 
 /**
  * Build a versus encounter.
  *
  * Side effects: the selected live PC records get their per-fight
- * reaction resources reset (`_reactionUsed`, `_lvl1Slots`,
- * `_lvl3Slots`), exactly as the browser always has.
+ * reaction and slot resources reset (`_reactionUsed`, and the one slot
+ * ledger `_slots` refilled — M64 T5).
  *
  * @param {object} args
  * @param {object[]} args.party     every composed PC (filtered by pcIds)
@@ -80,8 +80,9 @@ export function createVersusEncounter({ party = [], pcIds = [], encounter = [], 
   // can fire. Reset once per fight; refreshed each round.
   for (const pc of selected) {
     pc._reactionUsed = false;
-    pc._lvl1Slots = lvl1SlotsForPc(pc);
-    pc._lvl3Slots = lvl3SlotsForPc(pc);
+    // M64 T5 — one slot ledger, fully rested at fight start (owner
+    // decision: imported characters start rested).
+    pc._slots = slotsForPc(pc);
   }
 
   const initiative = rollPartyInitiative({ pcs: selected, monsters: monsterInstances }, rng);

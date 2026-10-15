@@ -55,8 +55,9 @@ test('encounter-setup: selected PCs get reaction resources seeded', () => {
   const { party: selected } = build(5);
   const wiz = selected.find(p => p.id === 'p1');
   assert.equal(wiz._reactionUsed, false);
-  assert.ok(wiz._lvl1Slots > 0, 'a level-5 wizard has 1st-level slots');
-  assert.ok(Number.isFinite(wiz._lvl3Slots));
+  assert.ok(wiz._slots[1] > 0, 'a level-5 wizard has 1st-level slots (one ledger, M64 T5)');
+  assert.ok(wiz._slots[3] > 0);
+  assert.equal(wiz._lvl1Slots, undefined, 'the old separate Shield pool is gone');
 });
 
 test('encounter-setup: mintId receives the index and the encounter entry', () => {

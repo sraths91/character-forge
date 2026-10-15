@@ -76,7 +76,7 @@ test('M45 Phase 4b: runOneAttack honours onShieldReaction = false (player declin
     },
     weapon: { name: 'Dagger' },
     ac: 14, hp: 20, hpMax: 20,
-    _lvl1Slots: 2,
+    _slots: { 1: 2 },
     _position: { col: 3, row: 1 }
   });
   const calls = [];
@@ -119,7 +119,7 @@ test('M45 Phase 4b: runMonsterSpell — onCounterspell prompt fires for witnesse
     weapon: { name: 'Quarterstaff' },
     conditions: [], damageDealt: 0,
     _position: { col: 1, row: 1 },
-    _lvl3Slots: 1
+    _slots: { 3: 1 }
   };
   const calls = [];
   await runMonsterSpell({

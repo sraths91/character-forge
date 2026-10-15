@@ -226,7 +226,7 @@ test('M56.2: Shield-negated magic missile dispatches nothing', async () => {
     id: 'pc9', name: 'Shieldy',
     ref: { name: 'Shieldy', classes: [{ name: 'Wizard', level: 3 }],
            abilityModifiers: { INT: 2 }, spells: ['Shield'] },
-    _lvl1Slots: 1
+    _slots: { 1: 1 }
   });
   const { calls, prompts } = castSpy();
   await castSpell({ attacker: wiz, target: shielded, spellId: 'magic-missile', prompts });
@@ -260,7 +260,7 @@ test('M56.2: Shield-negated spell attack dispatches nothing', async () => {
     id: 'pc9', name: 'Shieldy', ac: 14,
     ref: { name: 'Shieldy', classes: [{ name: 'Wizard', level: 3 }],
            abilityModifiers: { INT: 2 }, spells: ['Shield'] },
-    _lvl1Slots: 1
+    _slots: { 1: 1 }
   });
   const { calls, prompts } = castSpy();
   await castSpell({ attacker: wiz, target: shielded, spellId: 'fire-bolt',

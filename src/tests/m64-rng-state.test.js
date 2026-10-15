@@ -7,7 +7,7 @@ import { seedRng } from '../js/scene/simulator.js';
 import { runOneAttack, sideAlive, isAlive, isIncapacitated } from '../js/scene/combat-engine.js';
 import { deriveAC } from '../js/scene/pc-stats.js';
 import { MONSTER_PRESETS } from '../js/scene/monster-presets.js';
-import { resetReactionsForAll, lvl1SlotsForPc, lvl3SlotsForPc, slotsForPc } from '../js/scene/reactions.js';
+import { resetReactionsForAll, slotsForPc } from '../js/scene/reactions.js';
 import { freshSlots, isSpellcaster, isInnateCaster, freshInnateState } from '../js/scene/monster-spells.js';
 
 const take = (rng, n) => Array.from({ length: n }, () => rng());
@@ -88,7 +88,7 @@ function buildSides() {
     ref: p, id: p.id, name: p.name, kind: 'pc', hp: p.hp.current, hpMax: p.hp.max, ac: deriveAC(p),
     weapon: p.equipment.mainhand, _chosenWeapon: p.equipment.mainhand, conditions: [],
     _position: p._position, damageDealt: 0, combatMods: [], _reactionUsed: false,
-    _lvl1Slots: lvl1SlotsForPc(p), _lvl3Slots: lvl3SlotsForPc(p), _slots: slotsForPc(p),
+    _slots: slotsForPc(p),
     _shieldActive: false, _actionSurgeUsed: 0, _secondWindUsed: false,
     _sneakAttackUsedThisTurn: false, _cunningActionUsedThisTurn: false
   }));

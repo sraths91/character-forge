@@ -64,7 +64,7 @@
       "cinemaGroup": null,
       "payload": {
         "actorId": "pc-cleric",
-        "stateHash": "c36ca886",
+        "stateHash": "e30f675c",
         "rngDraws": 2
       }
     },
@@ -130,7 +130,7 @@
       "cinemaGroup": null,
       "payload": {
         "actorId": "pc-cleric",
-        "stateHash": "c0fd3f38",
+        "stateHash": "5924e35e",
         "rngDraws": 3
       }
     }
@@ -145,8 +145,6 @@
       "conditions": [],
       "reactionUsed": false,
       "slots": null,
-      "lvl1Pool": null,
-      "lvl3Pool": null,
       "innate": null,
       "legendaryBudget": 0,
       "concentration": null,
@@ -170,8 +168,6 @@
         "4": 0,
         "5": 0
       },
-      "lvl1Pool": 4,
-      "lvl3Pool": 2,
       "innate": null,
       "legendaryBudget": 0,
       "concentration": null,
@@ -195,8 +191,6 @@
         "4": 0,
         "5": 0
       },
-      "lvl1Pool": 0,
-      "lvl3Pool": 0,
       "innate": null,
       "legendaryBudget": 0,
       "concentration": null,

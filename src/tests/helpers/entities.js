@@ -21,7 +21,7 @@ import { readFileSync } from 'node:fs';
 import { parseCharacter } from '../../../api/lib/ddb-parser.js';
 import { deriveAC } from '../../js/scene/pc-stats.js';
 import { MONSTER_PRESETS } from '../../js/scene/monster-presets.js';
-import { slotsForPc, lvl1SlotsForPc, lvl3SlotsForPc } from '../../js/scene/reactions.js';
+import { slotsForPc } from '../../js/scene/reactions.js';
 import { isSpellcaster, freshSlots, isInnateCaster, freshInnateState } from '../../js/scene/monster-spells.js';
 import { isLegendary, freshLegendaryBudget } from '../../js/scene/monster-legendary.js';
 
@@ -99,8 +99,6 @@ export function pcFromSheet(sheet, overrides = {}) {
     damageDealt: 0,
     combatMods: sheet.combatMods || [],
     _reactionUsed: false,
-    _lvl1Slots: lvl1SlotsForPc(sheet),
-    _lvl3Slots: lvl3SlotsForPc(sheet),
     _slots: slotsForPc(sheet),
     _shieldActive: false,
     _actionSurgeUsed: 0,

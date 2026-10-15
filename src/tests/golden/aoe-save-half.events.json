@@ -95,7 +95,7 @@
       "cinemaGroup": null,
       "payload": {
         "actorId": "m-dragon",
-        "stateHash": "064f3b69",
+        "stateHash": "eb996be9",
         "rngDraws": 18
       }
     },
@@ -150,7 +150,7 @@
       "cinemaGroup": null,
       "payload": {
         "actorId": "m-dragon",
-        "stateHash": "dc49c616",
+        "stateHash": "da391686",
         "rngDraws": 4
       }
     }
@@ -165,8 +165,6 @@
       "conditions": [],
       "reactionUsed": false,
       "slots": null,
-      "lvl1Pool": null,
-      "lvl3Pool": null,
       "innate": {
         "fire-breath": false
       },
@@ -192,8 +190,6 @@
         "4": 0,
         "5": 0
       },
-      "lvl1Pool": 4,
-      "lvl3Pool": 2,
       "innate": null,
       "legendaryBudget": 0,
       "concentration": null,
@@ -217,8 +213,6 @@
         "4": 0,
         "5": 0
       },
-      "lvl1Pool": 0,
-      "lvl3Pool": 0,
       "innate": null,
       "legendaryBudget": 0,
       "concentration": null,
@@ -242,8 +236,6 @@
         "4": 0,
         "5": 0
       },
-      "lvl1Pool": 4,
-      "lvl3Pool": 2,
       "innate": null,
       "legendaryBudget": 0,
       "concentration": null,

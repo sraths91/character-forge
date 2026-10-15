@@ -109,8 +109,6 @@ export function wrappersFromState(state) {
         ...shared,
         _position: { ...e.pos },
         _slots: { 1: remaining(slots['1']), 2: remaining(slots['2']), 3: remaining(slots['3']), 4: remaining(slots['4']), 5: remaining(slots['5']) },
-        _lvl1Slots: remaining(slots['1']),
-        _lvl3Slots: remaining(slots['3']),
         _actionSurgeUsed: f['action-surge']?.spent ?? 0,
         _secondWindUsed: (f['second-wind']?.spent ?? 0) > 0,
         _shieldActive: !!e.turnFlags.shieldActive,
@@ -146,8 +144,6 @@ export function projectWrapper(w) {
     conditions: [...(w.conditions || [])],
     reactionUsed: !!w._reactionUsed,
     slots: w._slots ? { ...w._slots } : null,
-    lvl1Pool: w._lvl1Slots ?? null,
-    lvl3Pool: w._lvl3Slots ?? null,
     innate: w._innate ? { ...(w._innate.recharges || {}) } : null,
     legendaryBudget: w._legendaryBudget ?? 0,
     concentration: w._concentrating ? w._concentrating.spellId : null,
@@ -188,8 +184,6 @@ function diffEvents(before, after, actorId) {
       const d = (b.slots?.[lvl] ?? 0) - (n.slots[lvl] ?? 0);
       for (let i = 0; i < d; i++) evs.push(['resource.spent', { entityId: id, resource: 'spell-slot', level: Number(lvl) }]);
     }
-    if ((b.lvl1Pool ?? 0) > (n.lvl1Pool ?? 0)) evs.push(['resource.spent', { entityId: id, resource: 'shield-pool', level: 1 }]);
-    if ((b.lvl3Pool ?? 0) > (n.lvl3Pool ?? 0)) evs.push(['resource.spent', { entityId: id, resource: 'counterspell-pool', level: 3 }]);
     for (const sp of Object.keys(n.innate || {}).sort()) {
       if (b.innate?.[sp] === true && n.innate[sp] === false) evs.push(['resource.spent', { entityId: id, resource: `innate:${sp}`, level: null }]);
     }

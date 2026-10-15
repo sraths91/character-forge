@@ -148,7 +148,7 @@ test('M33.0: monster attack object is treated as a melee weapon for reach', () =
 // ---------- M33.1: Shield reaction ----------
 
 function shieldTarget({ slots = 1, used = false, ac = 15, ref = { spells: [{ name: 'Shield' }] } } = {}) {
-  return { id: 't1', kind: 'pc', ac, ref, _lvl1Slots: slots, _reactionUsed: used };
+  return { id: 't1', kind: 'pc', ac, ref, _slots: { 1: slots }, _reactionUsed: used };
 }
 
 test('M33.1: hasShieldSpell — array form', () => {
@@ -197,7 +197,7 @@ test('M33.1: shouldCastShield does NOT fire when target lacks Shield in spell li
 test('M33.1: consumeShield burns one slot AND the reaction', () => {
   const t = shieldTarget({ slots: 3 });
   consumeShield(t);
-  assert.strictEqual(t._lvl1Slots, 2);
+  assert.strictEqual(t._slots[1], 2);
   assert.strictEqual(t._reactionUsed, true);
   assert.strictEqual(t._shieldActive, true);
 });
@@ -439,7 +439,7 @@ test('M33.2: Polearm Master — no trigger when hostile already used its reactio
 const counterspellWiz = (overrides = {}) => ({
   ref: { spells: [{ name: 'Counterspell' }, { name: 'Fireball' }] },
   _reactionUsed: false,
-  _lvl3Slots: 1,
+  _slots: { 3: 1 },
   kind: 'pc',
   ...overrides
 });
@@ -454,14 +454,14 @@ test('M34.1: hasCounterspell — recognises spell in array & object form', () =>
 test('M34.1: canCastCounterspell — requires reaction + spell + 3rd-level slot', () => {
   assert.strictEqual(canCastCounterspell(counterspellWiz()), true);
   assert.strictEqual(canCastCounterspell(counterspellWiz({ _reactionUsed: true })), false);
-  assert.strictEqual(canCastCounterspell(counterspellWiz({ _lvl3Slots: 0 })), false);
-  assert.strictEqual(canCastCounterspell({ ref: { spells: [] }, _lvl3Slots: 1 }), false);
+  assert.strictEqual(canCastCounterspell(counterspellWiz({ _slots: { 3: 0 } })), false);
+  assert.strictEqual(canCastCounterspell({ ref: { spells: [] }, _slots: { 3: 1 } }), false);
 });
 
 test('M34.1: consumeCounterspell burns slot + reaction', () => {
-  const w = counterspellWiz({ _lvl3Slots: 2 });
+  const w = counterspellWiz({ _slots: { 3: 2 } });
   consumeCounterspell(w);
-  assert.strictEqual(w._lvl3Slots, 1);
+  assert.strictEqual(w._slots[3], 1);
   assert.strictEqual(w._reactionUsed, true);
 });
 

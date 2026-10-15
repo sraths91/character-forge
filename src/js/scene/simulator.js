@@ -28,7 +28,7 @@ import { deriveAC } from './pc-stats.js';
 import { MONSTER_PRESETS } from './monster-presets.js';
 import {
   resetReactionsForAll, shouldCastShield, consumeShield,
-  lvl1SlotsForPc, lvl3SlotsForPc, slotsForPc
+  slotsForPc
 } from './reactions.js';
 import {
   freshSlots, isSpellcaster, isInnateCaster, freshInnateState
@@ -134,9 +134,9 @@ async function runOneIteration({ party, monsters, scene, maxRounds, rng, index =
     damageDealt: 0,
     combatMods: p.combatMods || [],
     _reactionUsed: false,        // M33.0
-    _lvl1Slots: lvl1SlotsForPc(p), // M33.1 — Shield + other lvl-1 reactions
-    _lvl3Slots: lvl3SlotsForPc(p), // M34.1 — Counterspell
-    _slots: slotsForPc(p),         // M42.1 — Smite + Healing Word + future
+    // M64 T5 — the one slot ledger: leveled spells, Smite, Shield and
+    // Counterspell all draw from _slots.
+    _slots: slotsForPc(p),
     _shieldActive: false,
     // M42 — Per-encounter feature usage flags (Action Surge, Second Wind)
     _actionSurgeUsed: 0,

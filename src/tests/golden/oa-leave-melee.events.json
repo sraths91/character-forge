@@ -98,7 +98,7 @@
       "cinemaGroup": null,
       "payload": {
         "actorId": "pc-fighter",
-        "stateHash": "843d34dd",
+        "stateHash": "dd4da93d",
         "rngDraws": 4
       }
     },
@@ -171,7 +171,7 @@
       "cinemaGroup": null,
       "payload": {
         "actorId": "m-gob-a",
-        "stateHash": "05ca2675",
+        "stateHash": "88a5c129",
         "rngDraws": 2
       }
     }
@@ -186,8 +186,6 @@
       "conditions": [],
       "reactionUsed": true,
       "slots": null,
-      "lvl1Pool": null,
-      "lvl3Pool": null,
       "innate": null,
       "legendaryBudget": 0,
       "concentration": null,
@@ -205,8 +203,6 @@
       "conditions": [],
       "reactionUsed": false,
       "slots": null,
-      "lvl1Pool": null,
-      "lvl3Pool": null,
       "innate": null,
       "legendaryBudget": 0,
       "concentration": null,
@@ -230,8 +226,6 @@
         "4": 0,
         "5": 0
       },
-      "lvl1Pool": 0,
-      "lvl3Pool": 0,
       "innate": null,
       "legendaryBudget": 0,
       "concentration": null,

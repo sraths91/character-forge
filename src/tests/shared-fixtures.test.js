@@ -87,11 +87,9 @@ test('pcFromSheet: simulator-shaped wrappers with derived AC and slot pools', ()
   assert.equal(fighter.id, 'pc-fighter');
   assert.equal(fighter.ac, 18);
   assert.equal(fighter.hp, 44);
-  assert.equal(fighter._lvl1Slots, 0);
+  assert.equal(fighter._slots[1], 0);
   assert.equal(fighter.weapon.name, 'Longsword');
   const wizard = pcFromSheet(parsedDdbFixture('wizard-l5'));
-  assert.equal(wizard._lvl1Slots, 4);
-  assert.equal(wizard._lvl3Slots, 2);
   assert.deepEqual(wizard._slots, { 1: 4, 2: 3, 3: 2, 4: 0, 5: 0 });
   assert.ok(hasShieldSpell(wizard));
   assert.ok(hasCounterspell(wizard));
