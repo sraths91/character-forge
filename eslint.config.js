@@ -47,5 +47,21 @@ export default [
       'no-control-regex': 'off',
       'no-prototype-builtins': 'off'
     }
+  },
+  // M64 T10 — portability guard. The combat engine closure must stay
+  // importable by the Node server (and a worker) unchanged: no DOM-bound
+  // modules, no animation layer, no main.js, no browser storage.
+  {
+    files: ['src/js/scene/**/*.js', 'src/js/scene/ai/**/*.js'],
+    rules: {
+      'no-restricted-imports': ['error', {
+        patterns: [
+          { regex: '(^|/)anim/', message: 'M64 T10: the engine closure (src/js/scene/**) must not import the animation layer (src/js/anim/).' },
+          { regex: '(^|/)main\\.js$', message: 'M64 T10: the engine closure must not import main.js (browser UI).' },
+          { regex: '(^|/)scene-state\\.js$', message: 'M64 T10: the engine closure must not import scene-state.js (localStorage persistence).' },
+          { regex: '(^|/)reaction-prompt\\.js$', message: 'M64 T10: the engine closure must not import reaction-prompt.js (DOM dialog).' }
+        ]
+      }]
+    }
   }
 ];
