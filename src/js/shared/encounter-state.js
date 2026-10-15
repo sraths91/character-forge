@@ -171,6 +171,7 @@ export const WRAPPER_FIELD_MAP = Object.freeze({
  * @property {{cols: number, rows: number, cellFt: number, flankingEnabled: boolean, terrain?: {v: number, cols: number, rows: number, flags: string}|null}} grid
  * @property {{kind?: 'color'|'generated'|'image', url?: string|null, color?: string, biome?: string|null, seed?: number, preset?: string|null, imageId?: string|null, imgW?: number, imgH?: number, calib?: {cellPx: number, offsetX: number, offsetY: number}, cinemaBiome?: string|null}|null} map
  * @property {{entityId: string, score: number}[]} initiative
+ * @property {{revealed: string}|null} [fog] — revealed-cell bitset (map/fog.js); absent = no fog
  * @property {Record<string, EncounterEntity>} entities
  * @property {number} lastEventSeq
  */
@@ -283,6 +284,9 @@ function topSpec(projected) {
     }),
     map: nullable(MAP),
     initiative: arrayOf(shape({ entityId: ID, score: num() })),
+    // v1 additive (E5, M64 M10): fog-of-war revealed bitset, base64, bit
+    // row*cols+col LSB-first (src/js/map/fog.js). Absent/null = no fog.
+    fog: optional(nullable(shape({ revealed: str({ allowEmpty: true, pattern: /^[A-Za-z0-9+/]*={0,2}$/ }) }))),
     entities: mapOf(ENTITY),
     lastEventSeq: int(0)
   });

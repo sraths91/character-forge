@@ -7,6 +7,7 @@ import { WORLD_CELL_PX, MAX_CANVAS_PIXELS, createCamera, cameraTransform, sizeCa
 import { legacySceneToView, characterForToken } from '../map/view.js';
 import { MONSTER_PRESETS, buildMonsterCharacter } from '../scene/monster-presets.js';
 import { createTokenCache } from '../map/token-cache.js';
+import { isRevealed } from '../map/fog.js';
 import { applyFilterMatrix, parseCssFilter } from './filter-matrix.js';
 
 // Tier ranks: higher beats lower. Used to pick the single character-level aura.
@@ -75,7 +76,7 @@ export async function renderSprite(canvas, character, { scale = 6, direction = '
  *     today); adapted through legacySceneToView, output unchanged.
  *
  * Draw order: background → grid → terrain overlay → AoE / path previews →
- * tokens → (fog) → selection / turn / hover / flashes / popups / effects.
+ * tokens → fog mask → selection / turn / hover / flashes / popups / effects.
  * The renderer imports no scene-state mutator (asserted by a test).
  *
  * @returns {Promise<{canvas, generatedCount: number, cellCount: number, needsRedraw: boolean}>}
@@ -229,6 +230,13 @@ function renderBattleView(canvas, view, local) {
     else drawTokenPlaceholder(ctx, token, x, y, px);
     if (token.hidden) ctx.restore();
     drawn++;
+  }
+
+  // 4.5 M64 M10 — fog mask between tokens and local overlays. Players
+  //     get an opaque mask (the server has already dropped hidden
+  //     tokens); the DM sees a 40% dim when dm.showFogMask is on.
+  if (view.fog && (local.dm ? local.dm.showFogMask : true)) {
+    drawFogMask(ctx, view.fog, cols, rows, local.dm ? 0.4 : 1);
   }
 
   // 5. Overlays above the tokens.
@@ -399,6 +407,42 @@ function drawTokenPlaceholder(ctx, token, x, y, px) {
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillText((token.name || '?').slice(0, 1).toUpperCase(), x + W / 2, y + W / 2);
+  ctx.restore();
+}
+
+// Fog masks: one cols×rows canvas (1 px per cell) per (bitset, dims),
+// stretched over the map with smoothing off — one drawImage per frame.
+const _fogMaskCache = new Map();
+const _FOG_MASK_MAX = 8;
+function drawFogMask(ctx, fog, cols, rows, alpha) {
+  const key = `${fog.revealed}|${cols}x${rows}`;
+  let mask = _fogMaskCache.get(key);
+  if (mask === undefined) {
+    mask = makeCanvas(cols, rows);
+    const mctx = mask?.getContext('2d');
+    if (mctx) {
+      mctx.fillStyle = '#0b0f17';
+      for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
+        if (!isRevealed(fog, cols, c, r)) mctx.fillRect(c, r, 1, 1);
+      }
+    } else {
+      mask = null;
+    }
+    _fogMaskCache.set(key, mask);
+    if (_fogMaskCache.size > _FOG_MASK_MAX) _fogMaskCache.delete(_fogMaskCache.keys().next().value);
+  }
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  if (mask) {
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(mask, 0, 0, cols * W, rows * W);
+  } else {
+    // No offscreen canvas (headless): paint the hidden cells directly.
+    ctx.fillStyle = '#0b0f17';
+    for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
+      if (!isRevealed(fog, cols, c, r)) ctx.fillRect(c * W, r * W, W, W);
+    }
+  }
   ctx.restore();
 }
 
