@@ -35,7 +35,7 @@
 
 import { resolveAttack } from './combat-resolver.js';
 import { rollAttack, rollDamage } from './combat-roll.js';
-import { deriveWeaponAttack } from './pc-stats.js';
+import { deriveWeaponAttack, saveBonus as pcSaveBonus } from './pc-stats.js';
 import { factionLists, chebyshevFeet } from './grid-rules.js';
 import { planMovement, occupiedCellsOf } from './movement.js';
 import { chooseAction, fleeTargetCell } from './ai/profile.js';
@@ -444,7 +444,7 @@ export async function runMonsterSpell({ attacker, target, plan, scene: _scene, r
       ? await prompts.onCounterspell({ witness, caster: attacker, spell, autoAnswer: auto })
       : auto;
     if (!fire || !canCastCounterspell(witness)) continue;
-    const ability = saveBonusFor(witness, abilityForCounterer(witness));
+    const ability = abilityModFor(witness, abilityForCounterer(witness));
     const result = resolveCounterspell({ spellLevel: spell.level, counterMod: ability }, rng);
     consumeCounterspell(witness);
     if (result.countered) return;
@@ -758,14 +758,58 @@ export function abilityForCounterer(pc) {
   return 'INT';
 }
 
+/**
+ * Saving-throw bonus for an entity wrapper.
+ *
+ * PCs (M64 R2): ability mod + proficiency when proficient
+ * (`savingThrowProficiencies`, via pc-stats.saveBonus) + every active
+ * `combatMods` entry of kind 'save' whose scope is 'all' or this stat
+ * (Cloak of Protection, Paladin aura bonuses parsed from DDB). The
+ * concentration save goes through this same function.
+ * Monsters: the preset save table.
+ *
+ * @param {object} entity — wrapper ({ kind, ref, combatMods?, presetSlug })
+ * @param {string} stat — 'STR' | 'DEX' | 'CON' | 'INT' | 'WIS' | 'CHA'
+ * @returns {number}
+ */
 export function saveBonusFor(entity, stat) {
+  if (!entity || !stat) return 0;
+  if (entity.kind === 'pc') {
+    const ref = entity.ref || entity;
+    const scope = String(stat).toLowerCase();
+    let bonus = pcSaveBonus(ref, stat);
+    for (const mod of combatModsOf(entity)) {
+      if (mod?.inactive || mod?.kind !== 'save') continue;
+      if (mod.scope === 'all' || mod.scope === scope) bonus += Number(mod.value) || 0;
+    }
+    return bonus;
+  }
+  const table = MONSTER_DEFAULT_SAVES[entity.presetSlug];
+  return table ? (table[stat] || 0) : 0;
+}
+
+/**
+ * Raw ability modifier (ability checks such as the Counterspell check
+ * add no proficiency). PCs read `abilityModifiers`; monsters fall back
+ * to their save table, as before.
+ *
+ * @param {object} entity
+ * @param {string} stat
+ * @returns {number}
+ */
+export function abilityModFor(entity, stat) {
   if (!entity || !stat) return 0;
   if (entity.kind === 'pc') {
     const ref = entity.ref || entity;
     return ref.abilityModifiers?.[stat] ?? 0;
   }
-  const table = MONSTER_DEFAULT_SAVES[entity.presetSlug];
-  return table ? (table[stat] || 0) : 0;
+  return saveBonusFor(entity, stat);
+}
+
+function combatModsOf(entity) {
+  if (Array.isArray(entity?.combatMods)) return entity.combatMods;
+  const ref = entity?.ref || entity;
+  return Array.isArray(ref?.combatMods) ? ref.combatMods : [];
 }
 
 export function pickTarget(enemies) {
