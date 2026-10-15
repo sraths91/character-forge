@@ -1,10 +1,12 @@
-import { test } from 'node:test';
+import { test, after } from 'node:test';
 import assert from 'node:assert';
 
-// Force in-memory DB before importing database.js
-process.env.CF_DB_PATH = ':memory:';
+import { openDb, ITEM_GENERATOR_VERSION } from '../db/database.js';
 
-const { putItemSprite, getItemSprite, ITEM_GENERATOR_VERSION } = await import('../db/database.js');
+// In-memory DB from the factory; database.js has no import-time side effects.
+const handle = await openDb(':memory:', { log: () => {} });
+const { putItemSprite, getItemSprite } = handle;
+after(() => handle.close());
 
 const PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=';
 

@@ -1,17 +1,12 @@
 import Database from 'better-sqlite3';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
-import { runMigrations } from './migrate.js';
+import { runMigrations, getMigrationVersion } from './migrate.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
-const DB_PATH = process.env.CF_DB_PATH || join(__dirname, '..', '..', 'character-forge.db');
-
-const db = new Database(DB_PATH);
-db.pragma('journal_mode = WAL');
-db.pragma('foreign_keys = ON');
-
-await runMigrations(db);
+/** Local-dev fallback when neither CF_DB_PATH nor a data dir is configured. */
+export const DEFAULT_DB_PATH = join(__dirname, '..', '..', 'character-forge.db');
 
 // v2: aura no longer baked into per-item PNGs — drawn once by compositor as
 // a single backdrop. Old v1 PNGs have stale auras and must not be served.
@@ -168,23 +163,67 @@ function tryParseJson(s) {
 }
 
 /**
- * Close the SQLite connection cleanly. Called from the server's SIGTERM
- * handler so WAL checkpoints flush and the WAL/SHM sidecars are released
- * before the container exits. Safe to call multiple times.
+ * @typedef {ReturnType<typeof createQueries> & {
+ *   db: import('better-sqlite3').Database,
+ *   path: string,
+ *   migrationVersion: () => number,
+ *   close: () => void
+ * }} DbHandle
  */
-export function closeDb() {
-  if (db.open) {
+
+/**
+ * Open (and by default migrate) a SQLite database. Nothing happens at
+ * import time; every connection comes from here.
+ *
+ * WAL and foreign keys are switched on for every connection. When
+ * `migrate` is true the migration runner brings the schema up to date
+ * first (taking a pre-migration backup for file-backed DBs) and the
+ * returned promise rejects if it refuses — the connection is closed in
+ * that case.
+ *
+ * @param {string} path  File path, or ':memory:' for tests.
+ * @param {object} [opts]
+ * @param {boolean} [opts.migrate=true]     Run pending migrations.
+ * @param {string} [opts.migrationsDir]     Override the migrations directory (tests).
+ * @param {boolean} [opts.backup=true]      Pre-migration backup for file DBs.
+ * @param {(level: string, msg: string, extra?: object) => void} [opts.log]
+ * @returns {Promise<DbHandle>} `{ db, path, ...queries, migrationVersion, close }`
+ */
+export async function openDb(path, { migrate = true, migrationsDir, backup = true, log } = {}) {
+  const db = new Database(path);
+  try {
+    db.pragma('journal_mode = WAL');
+    db.pragma('foreign_keys = ON');
+    if (migrate) {
+      await runMigrations(db, {
+        ...(migrationsDir ? { dir: migrationsDir } : {}),
+        ...(log ? { log } : {}),
+        backup
+      });
+    }
+  } catch (err) {
+    db.close();
+    throw err;
+  }
+
+  /**
+   * Checkpoint the WAL and close. Called on graceful shutdown so the
+   * WAL/SHM sidecars are folded back before the container exits.
+   * Safe to call more than once.
+   */
+  function close() {
+    if (!db.open) return;
     try {
       db.pragma('wal_checkpoint(TRUNCATE)');
     } catch { /* DB already partially closed; ignore */ }
     db.close();
   }
+
+  return {
+    db,
+    path,
+    ...createQueries(db),
+    migrationVersion: () => getMigrationVersion(db),
+    close
+  };
 }
-
-export const {
-  upsertCharacter, getCharacterByDdbId, listRecent,
-  getItemSprite, putItemSprite,
-  getMonsterBySlug, searchMonsters, upsertMonster
-} = createQueries(db);
-
-export default db;

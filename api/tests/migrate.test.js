@@ -12,11 +12,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { runMigrations, loadMigrations, getMigrationVersion, MIGRATIONS_DIR } from '../db/migrate.js';
-
-// database.js still opens its singleton at import time in this commit; keep
-// it off disk. (B3 replaces this with openDb and no import side effects.)
-process.env.CF_DB_PATH = ':memory:';
-const { createQueries } = await import('../db/database.js');
+import { createQueries, openDb } from '../db/database.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const V0_SCHEMA = readFileSync(join(HERE, 'fixtures', 'db', 'v0-schema.sql'), 'utf8');
@@ -214,4 +210,25 @@ test('loadMigrations rejects bad names, duplicates and transaction control', () 
   assert.throws(() => loadMigrations(bad({ '0002_fk.sql': 'PRAGMA foreign_keys = OFF;\n' })), /transaction control/);
   const ok = loadMigrations(bad({ '0002_b.sql': 'SELECT 2;', '0001_a.sql': 'SELECT 1;', 'README.md': 'x' }));
   assert.deepEqual(ok.map(m => m.version), [1, 2]);
+});
+
+test('openDb migrates, exposes the version, and refuses a newer DB', async () => {
+  const dir = tempDir();
+  const path = join(dir, 'open.db');
+  const h = await openDb(path, { log: quiet });
+  assert.equal(h.path, path);
+  assert.equal(h.migrationVersion(), 1);
+  assert.equal(h.db.pragma('journal_mode', { simple: true }), 'wal');
+  assert.equal(h.db.pragma('foreign_keys', { simple: true }), 1);
+  h.db.prepare("INSERT INTO schema_migrations (version, name, checksum, applied_at) VALUES (42, '0042_x.sql', 'x', 1)").run();
+  h.close();
+  h.close(); // idempotent
+  await assert.rejects(openDb(path, { log: quiet }), /version 42/);
+});
+
+test('openDb({ migrate: false }) leaves the schema untouched', async () => {
+  const h = await openDb(':memory:', { migrate: false });
+  assert.deepEqual(tableNames(h.db), []);
+  assert.equal(h.migrationVersion(), 0);
+  h.close();
 });
