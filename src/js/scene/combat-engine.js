@@ -127,6 +127,9 @@ export async function runOneAttack(attacker, enemies, allies, scene, rng, prompt
   }
 }
 
+/** Plan kinds that move (or not) but never reach the attack resolver. */
+const NON_ATTACK_KINDS = new Set(['dash', 'dodge', 'disengage', 'move']);
+
 async function resolveTurn(attacker, enemies, allies, scene, rng, prompts, ctx) {
   const actorId = idOf(attacker);
   // M37 — At the start of each monster's turn, roll d6 for any innate
@@ -226,7 +229,7 @@ async function resolveTurn(attacker, enemies, allies, scene, rng, prompts, ctx) 
     return;
   }
   const healsAlly = plan?.kind === 'cast' && plan?.targetSide === 'ally';
-  if (explicit && !isAlive(target) && !healsAlly) {
+  if (explicit && !isAlive(target) && !healsAlly && !NON_ATTACK_KINDS.has(plan.kind)) {
     emitEvent(ctx, 'turn.rejected', { actorId, code: 'target-down', reason: `${target.name || idOf(target)} is down` });
     return;
   }
@@ -243,13 +246,32 @@ async function resolveTurn(attacker, enemies, allies, scene, rng, prompts, ctx) 
       excludeId: attacker.id
     });
     const bounds = { cols: scene?.cols || 99, rows: scene?.rows || 99 };
-    const moveTarget = (plan && plan.kind === 'flee')
-      ? fleeTargetCell(attacker, target, bounds, rng)
-      : targetPos;
-    const next = planMovement({
-      from: attackerPos, to: moveTarget, weapon,
-      speedFt: 30, occupied, bounds
-    });
+    // M64 T9 — movement budget from the entity (sheet / preset), 30 ft default.
+    const speedFt = Number.isFinite(attacker.speedFt) ? attacker.speedFt : 30;
+    let next;
+    if (explicit && plan.moveTo) {
+      // M64 T9 — a player-chosen destination is honoured as-is, within
+      // the budget, on the grid and onto a free cell.
+      const mv = plan.moveTo;
+      const free = !occupied.has(`${mv.col},${mv.row}`) || (mv.col === attackerPos.col && mv.row === attackerPos.row);
+      const inGrid = mv.col >= 0 && mv.row >= 0 && mv.col < bounds.cols && mv.row < bounds.rows;
+      if (!inGrid || !free || chebyshevFeet(attackerPos, mv) > speedFt) {
+        emitEvent(ctx, 'turn.rejected', {
+          actorId, code: 'bad-move',
+          reason: !inGrid ? 'destination is off the grid' : !free ? 'destination is occupied' : `destination is beyond ${speedFt} ft`
+        });
+        return;
+      }
+      next = { col: mv.col, row: mv.row };
+    } else {
+      const moveTarget = (plan && plan.kind === 'flee')
+        ? fleeTargetCell(attacker, target, bounds, rng)
+        : targetPos;
+      next = planMovement({
+        from: attackerPos, to: moveTarget, weapon,
+        speedFt, occupied, bounds
+      });
+    }
     if (next && (next.col !== attackerPos.col || next.row !== attackerPos.row)) {
       // M33.0 — opportunity attacks fire BEFORE the move resolves.
       const leaveTriggers = detectOpportunityAttacks({
@@ -289,12 +311,13 @@ async function resolveTurn(attacker, enemies, allies, scene, rng, prompts, ctx) 
   // Fleeing creatures Dash instead of attacking
   if (plan && plan.kind === 'flee') return;
   // M64 T6 — the target may have dropped while we awaited reactions.
-  if (!isAlive(target) && !healsAlly && !(plan && (plan.kind === 'dash' || plan.kind === 'dodge' || plan.kind === 'disengage'))) {
+  if (!isAlive(target) && !healsAlly && !(plan && NON_ATTACK_KINDS.has(plan.kind))) {
     emitEvent(ctx, 'turn.skipped', { actorId, reason: 'target-down' });
     return;
   }
   // M42 — Non-attack PC actions skip the resolver entirely.
-  if (plan && (plan.kind === 'dash' || plan.kind === 'dodge' || plan.kind === 'disengage')) {
+  // M64 T9 — so does a plain move.
+  if (plan && NON_ATTACK_KINDS.has(plan.kind)) {
     return;
   }
 
