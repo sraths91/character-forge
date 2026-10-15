@@ -54,6 +54,12 @@ test('T4: a Shielded monster attack emits the exact event sequence', async () =>
   assert.equal(byType['attack.rolled'].shielded, true);
   assert.equal(byType['attack.rolled'].hit, false);
   assert.equal(byType.exchange.cinema.fxSeed, fxSeedOf(byType.exchange.exchangeId));
+  // events v1.1 — the pinned cinema inputs.
+  assert.deepEqual(byType.exchange.cinema.weapon, { name: 'Scimitar', damageType: null, magical: false });
+  assert.equal(byType.exchange.cinema.spell, null);
+  assert.deepEqual(byType.exchange.cinema.modifiers, []);
+  assert.equal(byType.exchange.cinema.durationMs, 0);
+  assert.equal(byType.exchange.cinema.style, null);
   assert.equal(cinema.length, 1, 'onCinemaRound still fires');
   assert.equal(cinema[0].miss, true);
   // One exchange = one cinema group.
@@ -136,4 +142,26 @@ test('T4: engine-events helpers', () => {
   assert.deepEqual(normalizeAnswer({ answer: true, by: 'timeout' }, true), { answer: true, by: 'timeout' });
   assert.equal(idOf({ id: 7 }), '7');
   assert.equal(idOf(null), null);
+});
+
+test('T4: cast exchanges carry the spell; cinemaInputs supplies seat style/swing', async () => {
+  const { ctx, events } = collector();
+  ctx.cinemaInputs = ({ attackerId }) => ({ style: attackerId === 'pc1' ? 'power' : null, swing: 'overhead' });
+  const pc = buildPc({ id: 'pc1' });
+  const m = buildMonster({ hp: 50, hpMax: 50, ac: 1 });
+  await runOneAttack(pc, [m], [pc], buildScene(), () => 0.5, {
+    forcePlan: { kind: 'melee', targetId: m.id, targetSide: 'enemy', weapon: { name: 'Longsword' }, featuresFired: [] }
+  }, ctx);
+  const ex = events.find(e => e.type === 'exchange').payload.cinema;
+  assert.equal(ex.style, 'power');
+  assert.equal(ex.swing, 'overhead');
+  assert.equal(ex.attackerLevel, 5);
+  const c2 = collector();
+  const fan = buildMonster({ id: 'fan', presetSlug: 'cult-fanatic', _slots: { 1: 4, 2: 3 } });
+  await runMonsterSpell({ attacker: fan, target: buildPc({ id: 'p9', hp: 30 }), plan: { spellId: 'sacred-flame', castAtLevel: 0 }, rng: () => 0.1, ctx: c2.ctx });
+  const cast = c2.events.find(e => e.type === 'exchange').payload;
+  assert.equal(cast.cast, true);
+  assert.deepEqual(cast.cinema.spell, { id: 'sacred-flame', kind: 'cantrip-save', aoe: false, damageType: 'Radiant' });
+  assert.equal(cast.cinema.weapon, null);
+  assert.ok(cast.cinema.outcome);
 });

@@ -110,8 +110,9 @@
         "cast": true,
         "roll": null,
         "damage": {
-          "amount": 10,
-          "heal": null
+          "total": 10,
+          "heal": 0,
+          "smite": 0
         },
         "effects": [
           {
@@ -124,15 +125,26 @@
           }
         ],
         "miss": false,
-        "weapon": null,
-        "spellId": "magic-missile",
-        "outcome": {
-          "dmg": 10,
-          "darts": 3
-        },
         "cinema": {
+          "weapon": null,
+          "style": null,
+          "swing": null,
+          "modifiers": [],
+          "smiteSlot": null,
+          "attackerLevel": 5,
+          "killing": false,
+          "spell": {
+            "id": "magic-missile",
+            "kind": "auto-hit",
+            "aoe": false,
+            "damageType": "Force"
+          },
+          "outcome": {
+            "dmg": 10,
+            "darts": 3
+          },
           "fxSeed": 1423472275,
-          "killing": false
+          "durationMs": 0
         }
       }
     },
@@ -144,7 +156,7 @@
       "cinemaGroup": null,
       "payload": {
         "actorId": "pc-wizard",
-        "stateHash": "0364db48",
+        "stateHash": "1388969c6691db",
         "rngDraws": 4
       }
     }

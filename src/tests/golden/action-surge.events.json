@@ -88,13 +88,24 @@
         "reaction": false,
         "cast": false,
         "roll": {
+          "d20": {
+            "dice": [
+              13
+            ],
+            "kept": 13,
+            "mode": "normal"
+          },
+          "bonus": 6,
           "total": 19,
+          "ac": 16,
           "hit": true,
           "crit": false,
           "shielded": false
         },
         "damage": {
-          "amount": 4,
+          "total": 4,
+          "smite": 0,
+          "heal": 0,
           "type": "Slashing",
           "crit": false
         },
@@ -109,16 +120,24 @@
           }
         ],
         "miss": false,
-        "weapon": "Longsword",
-        "modifiers": {
-          "sneak": false,
-          "reckless": false,
-          "surge": true,
-          "smiteSlot": null
-        },
         "cinema": {
+          "weapon": {
+            "name": "Longsword",
+            "damageType": "Slashing",
+            "magical": false
+          },
+          "style": null,
+          "swing": null,
+          "modifiers": [
+            "action-surge"
+          ],
+          "smiteSlot": null,
+          "attackerLevel": 5,
+          "killing": false,
+          "spell": null,
+          "outcome": null,
           "fxSeed": 1423472275,
-          "killing": false
+          "durationMs": 0
         }
       }
     },
@@ -209,13 +228,24 @@
         "reaction": false,
         "cast": false,
         "roll": {
+          "d20": {
+            "dice": [
+              11
+            ],
+            "kept": 11,
+            "mode": "normal"
+          },
+          "bonus": 6,
           "total": 17,
+          "ac": 16,
           "hit": true,
           "crit": false,
           "shielded": false
         },
         "damage": {
-          "amount": 11,
+          "total": 11,
+          "smite": 0,
+          "heal": 0,
           "type": "Slashing",
           "crit": false
         },
@@ -230,16 +260,24 @@
           }
         ],
         "miss": false,
-        "weapon": "Longsword",
-        "modifiers": {
-          "sneak": false,
-          "reckless": false,
-          "surge": true,
-          "smiteSlot": null
-        },
         "cinema": {
+          "weapon": {
+            "name": "Longsword",
+            "damageType": "Slashing",
+            "magical": false
+          },
+          "style": null,
+          "swing": null,
+          "modifiers": [
+            "action-surge"
+          ],
+          "smiteSlot": null,
+          "attackerLevel": 5,
+          "killing": false,
+          "spell": null,
+          "outcome": null,
           "fxSeed": 1440249894,
-          "killing": false
+          "durationMs": 0
         }
       }
     },
@@ -251,7 +289,7 @@
       "cinemaGroup": null,
       "payload": {
         "actorId": "pc-fighter",
-        "stateHash": "934fd04d",
+        "stateHash": "1717139a3efefb",
         "rngDraws": 4
       }
     }

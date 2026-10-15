@@ -86,13 +86,24 @@
         "reaction": false,
         "cast": false,
         "roll": {
+          "d20": {
+            "dice": [
+              13
+            ],
+            "kept": 13,
+            "mode": "normal"
+          },
+          "bonus": 6,
           "total": 19,
+          "ac": 15,
           "hit": true,
           "crit": false,
           "shielded": false
         },
         "damage": {
-          "amount": 4,
+          "total": 4,
+          "smite": 0,
+          "heal": 0,
           "type": "Slashing",
           "crit": false
         },
@@ -107,16 +118,22 @@
           }
         ],
         "miss": false,
-        "weapon": "Longsword",
-        "modifiers": {
-          "sneak": false,
-          "reckless": false,
-          "surge": false,
-          "smiteSlot": null
-        },
         "cinema": {
+          "weapon": {
+            "name": "Longsword",
+            "damageType": "Slashing",
+            "magical": false
+          },
+          "style": null,
+          "swing": null,
+          "modifiers": [],
+          "smiteSlot": null,
+          "attackerLevel": 5,
+          "killing": false,
+          "spell": null,
+          "outcome": null,
           "fxSeed": 1423472275,
-          "killing": false
+          "durationMs": 0
         }
       }
     },
@@ -128,7 +145,7 @@
       "cinemaGroup": null,
       "payload": {
         "actorId": "pc-fighter",
-        "stateHash": "4260f55a",
+        "stateHash": "17648cde715c91",
         "rngDraws": 2
       }
     }

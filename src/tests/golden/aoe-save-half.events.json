@@ -203,8 +203,9 @@
         "cast": true,
         "roll": null,
         "damage": {
-          "amount": 10,
-          "heal": null
+          "total": 10,
+          "heal": 0,
+          "smite": 0
         },
         "effects": [
           {
@@ -233,17 +234,28 @@
           }
         ],
         "miss": false,
-        "weapon": null,
-        "spellId": "fire-breath",
-        "outcome": {
-          "dmg": 10,
-          "saved": true,
-          "total": 29,
-          "targets": 3
-        },
         "cinema": {
+          "weapon": null,
+          "style": null,
+          "swing": null,
+          "modifiers": [],
+          "smiteSlot": null,
+          "attackerLevel": 0,
+          "killing": false,
+          "spell": {
+            "id": "fire-breath",
+            "kind": "leveled-save",
+            "aoe": true,
+            "damageType": "Fire"
+          },
+          "outcome": {
+            "dmg": 10,
+            "saved": true,
+            "total": 29,
+            "targets": 3
+          },
           "fxSeed": 1423472275,
-          "killing": false
+          "durationMs": 0
         }
       }
     },
@@ -255,7 +267,7 @@
       "cinemaGroup": null,
       "payload": {
         "actorId": "m-dragon",
-        "stateHash": "4ecf6ebd",
+        "stateHash": "159faa04c107d5",
         "rngDraws": 18
       }
     },
@@ -343,13 +355,24 @@
         "reaction": false,
         "cast": false,
         "roll": {
+          "d20": {
+            "dice": [
+              16
+            ],
+            "kept": 16,
+            "mode": "normal"
+          },
+          "bonus": 7,
           "total": 23,
+          "ac": 18,
           "hit": true,
           "crit": false,
           "shielded": false
         },
         "damage": {
-          "amount": 8,
+          "total": 8,
+          "smite": 0,
+          "heal": 0,
           "type": null,
           "crit": false
         },
@@ -364,16 +387,22 @@
           }
         ],
         "miss": false,
-        "weapon": "Claws",
-        "modifiers": {
-          "sneak": false,
-          "reckless": false,
-          "surge": false,
-          "smiteSlot": null
-        },
         "cinema": {
+          "weapon": {
+            "name": "Claws",
+            "damageType": null,
+            "magical": false
+          },
+          "style": null,
+          "swing": null,
+          "modifiers": [],
+          "smiteSlot": null,
+          "attackerLevel": 0,
+          "killing": false,
+          "spell": null,
+          "outcome": null,
           "fxSeed": 462812900,
-          "killing": false
+          "durationMs": 0
         }
       }
     },
@@ -385,7 +414,7 @@
       "cinemaGroup": null,
       "payload": {
         "actorId": "m-dragon",
-        "stateHash": "c5688f15",
+        "stateHash": "009079681a2bd3",
         "rngDraws": 4
       }
     }

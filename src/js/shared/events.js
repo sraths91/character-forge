@@ -25,8 +25,17 @@ import {
 } from './check.js';
 import { ABILITIES } from './encounter-state.js';
 
-/** Catalogue version. Bump on any breaking payload or type change. */
+/**
+ * Catalogue version. Bump on any breaking payload or type change.
+ * v1.1 (additive, 2026-10-15, E1): `exchange.payload.cinema` pins the
+ * animation inputs (weapon, style, swing, modifiers[], smiteSlot,
+ * attackerLevel, killing, spell, outcome, fxSeed, durationMs). The
+ * engine emits `durationMs: 0` (it cannot import the anim builders);
+ * the server falls back to its fixed pacing cap when it is 0.
+ */
 export const EVENT_CATALOGUE_VERSION = 1;
+/** Additive minor revision of catalogue v1. */
+export const EVENT_CATALOGUE_MINOR = 1;
 
 /** Every event type, in catalogue order. */
 export const EVENT_TYPES = Object.freeze([
@@ -158,7 +167,21 @@ export const EVENT_PAYLOAD_SPECS = Object.freeze({
       entityId: ID,
       hp: shape({ before: int(0), after: int(0), max: int(0) }, LOOSE)
     }, LOOSE)),
-    cinema: shape({ fxSeed: int(0, 0xFFFFFFFF), killing: bool() }, LOOSE)
+    // v1.1 (additive, M64 E1 for E2's cinema-plan): every animation
+    // input the client's pure Sequence builder needs, pinned.
+    cinema: shape({
+      weapon: nullable(shape({ name: str(), damageType: nullable(str()), magical: bool() }, LOOSE)),
+      style: nullable(str()),
+      swing: nullable(str()),
+      modifiers: arrayOf(str()),
+      smiteSlot: nullable(int(1, 9)),
+      attackerLevel: int(0, 30),
+      killing: bool(),
+      spell: nullable(shape({ id: str(), kind: str(), aoe: bool(), damageType: nullable(str()) }, LOOSE)),
+      outcome: nullable(shape({}, LOOSE)),
+      fxSeed: int(0, 0xFFFFFFFF),
+      durationMs: int(0)
+    }, LOOSE)
   }, LOOSE),
   'dm.override': shape({
     kind: str(), entityId: nullable(ID), before: anyJson(), after: anyJson()

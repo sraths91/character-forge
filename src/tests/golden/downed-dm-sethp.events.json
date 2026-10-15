@@ -97,13 +97,24 @@
         "reaction": false,
         "cast": false,
         "roll": {
+          "d20": {
+            "dice": [
+              15
+            ],
+            "kept": 15,
+            "mode": "normal"
+          },
+          "bonus": 4,
           "total": 19,
+          "ac": 18,
           "hit": true,
           "crit": false,
           "shielded": false
         },
         "damage": {
-          "amount": 3,
+          "total": 3,
+          "smite": 0,
+          "heal": 0,
           "type": null,
           "crit": false
         },
@@ -118,16 +129,22 @@
           }
         ],
         "miss": false,
-        "weapon": "Scimitar",
-        "modifiers": {
-          "sneak": false,
-          "reckless": false,
-          "surge": false,
-          "smiteSlot": null
-        },
         "cinema": {
+          "weapon": {
+            "name": "Scimitar",
+            "damageType": null,
+            "magical": false
+          },
+          "style": null,
+          "swing": null,
+          "modifiers": [],
+          "smiteSlot": null,
+          "attackerLevel": 0,
+          "killing": true,
+          "spell": null,
+          "outcome": null,
           "fxSeed": 1423472275,
-          "killing": true
+          "durationMs": 0
         }
       }
     },
@@ -139,7 +156,7 @@
       "cinemaGroup": null,
       "payload": {
         "actorId": "m-gob-a",
-        "stateHash": "c45f3e22",
+        "stateHash": "1355a5d9b16194",
         "rngDraws": 2
       }
     },
@@ -190,7 +207,7 @@
       "cinemaGroup": null,
       "payload": {
         "actorId": "m-gob-b",
-        "stateHash": "c45f3e22",
+        "stateHash": "1355a5d9b16194",
         "rngDraws": 0
       }
     },
@@ -291,13 +308,24 @@
         "reaction": false,
         "cast": false,
         "roll": {
+          "d20": {
+            "dice": [
+              10
+            ],
+            "kept": 10,
+            "mode": "normal"
+          },
+          "bonus": 6,
           "total": 16,
+          "ac": 15,
           "hit": true,
           "crit": false,
           "shielded": false
         },
         "damage": {
-          "amount": 4,
+          "total": 4,
+          "smite": 0,
+          "heal": 0,
           "type": "Slashing",
           "crit": false
         },
@@ -312,16 +340,22 @@
           }
         ],
         "miss": false,
-        "weapon": "Longsword",
-        "modifiers": {
-          "sneak": false,
-          "reckless": false,
-          "surge": false,
-          "smiteSlot": null
-        },
         "cinema": {
+          "weapon": {
+            "name": "Longsword",
+            "damageType": "Slashing",
+            "magical": false
+          },
+          "style": null,
+          "swing": null,
+          "modifiers": [],
+          "smiteSlot": null,
+          "attackerLevel": 5,
+          "killing": false,
+          "spell": null,
+          "outcome": null,
           "fxSeed": 1318168309,
-          "killing": false
+          "durationMs": 0
         }
       }
     },
@@ -333,7 +367,7 @@
       "cinemaGroup": null,
       "payload": {
         "actorId": "pc-fighter",
-        "stateHash": "40fc7a6b",
+        "stateHash": "0afff19f80cf0d",
         "rngDraws": 2
       }
     }

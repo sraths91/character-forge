@@ -458,7 +458,7 @@ async function resolveTurn(attacker, enemies, allies, scene, rng, prompts, ctx) 
   await dispatchCinema(prompts, ctx, group, {
     attacker, defender: target, plan, atk,
     dmg: dmg.total + smiteTotal, crit: !!atk.crit, miss: false
-  }, { reaction: false, cast: false, targetHpBefore, modifiers, damageType: verdict.damage.damageType ?? null });
+  }, { reaction: false, cast: false, targetHpBefore, modifiers, smiteTotal, damageType: verdict.damage.damageType ?? null });
 
   // M42 — Action Surge: a second action right now.
   if (plan?.featuresFired?.includes('action-surge') && !attacker._surgeFiredThisTurn) {
@@ -565,7 +565,7 @@ export async function runMonsterSpell({ attacker, target, plan, scene: _scene, r
   // (M64 T4: they emit spell.fizzled instead).
   const castCinema = (defender, outcome, extra = {}) => dispatchCinema(prompts, ctx, group, {
     attacker, defender, plan, spell, cast: true, outcome
-  }, { reaction: false, cast: true, targetHpBefore: extra.hpBefore ?? defender?.hp, spellId: String(plan.spellId), outcome, effects: extra.effects });
+  }, { reaction: false, cast: true, targetHpBefore: extra.hpBefore ?? defender?.hp, spell, outcome, effects: extra.effects });
 
   if (spell.kind === 'heal') {
     const dmgRoll = rollDamage(spell.dice, { crit: false }, rng);
@@ -845,9 +845,13 @@ function spendShield(target, ctx, group) {
 }
 
 /**
- * Emit the `exchange` event (the cinema spec) and await onCinemaRound.
- * The exchange carries ids and resolved numbers only; `fxSeed` is a hash
- * of the exchange id, never an rng draw.
+ * Emit the `exchange` event (the cinema spec, events v1.1) and await
+ * onCinemaRound. The exchange carries ids and resolved numbers only;
+ * `fxSeed` is a hash of the exchange id, never an rng draw. Style and
+ * swing are seat state the engine does not own: `ctx.cinemaInputs({
+ * attackerId, weapon })` may supply them (else null). `durationMs` is 0:
+ * the engine cannot import the anim builders, so the server falls back
+ * to its fixed pacing cap.
  */
 async function dispatchCinema(prompts, ctx, group, roundPayload, info) {
   if (canEmit(ctx)) {
@@ -856,29 +860,74 @@ async function dispatchCinema(prompts, ctx, group, roundPayload, info) {
       entityId: idOf(defender),
       hp: { before: info.targetHpBefore ?? defender.hp, after: defender.hp, max: defender.hpMax ?? defender.hp }
     }] : []);
+    const weapon = info.cast ? null : cinemaWeapon(attacker, info.damageType);
+    const seat = typeof ctx.cinemaInputs === 'function'
+      ? (ctx.cinemaInputs({ attackerId: idOf(attacker), weapon }) || {})
+      : {};
+    const mods = info.modifiers || {};
+    const modifiers = [];
+    if (mods.sneak) modifiers.push('sneak-attack');
+    if (mods.reckless) modifiers.push('reckless-attack');
+    if (mods.smiteSlot) modifiers.push('divine-smite');
+    if (mods.surge) modifiers.push('action-surge');
+    const spell = info.spell
+      ? { id: String(info.spell.id), kind: String(info.spell.kind), aoe: !!info.spell.aoe, damageType: info.spell.damageType ?? null }
+      : null;
     emitEvent(ctx, 'exchange', {
       exchangeId: group,
       attackerId: idOf(attacker),
       defenderId: idOf(defender),
       reaction: !!info.reaction,
       cast: !!info.cast,
-      roll: atk && atk.total != null ? { total: atk.total, hit: !!atk.hit, crit: !!atk.crit, shielded: !!atk.shielded } : null,
+      roll: atk && atk.total != null
+        ? {
+            ...(atk.d20 ? { d20: { dice: [...atk.d20.dice], kept: atk.d20.kept, mode: atk.d20.advantage } } : {}),
+            bonus: atk.bonus ?? null, total: atk.total, ac: atk.ac ?? defender?.ac ?? null,
+            hit: !!atk.hit, crit: !!atk.crit, shielded: !!atk.shielded
+          }
+        : null,
       damage: info.cast
-        ? { amount: info.outcome?.dmg ?? 0, heal: info.outcome?.heal ?? null }
-        : { amount: roundPayload.dmg | 0, type: info.damageType ?? null, crit: !!roundPayload.crit },
+        ? { total: info.outcome?.dmg ?? 0, heal: info.outcome?.heal ?? 0, smite: 0 }
+        : { total: roundPayload.dmg | 0, smite: info.smiteTotal ?? 0, heal: 0, type: info.damageType ?? null, crit: !!roundPayload.crit },
       effects,
       miss: !!roundPayload.miss,
-      weapon: info.cast ? null : (roundPayload.plan?.weapon?.name ?? attacker?.weapon?.name ?? attacker?.attack?.name ?? null),
-      ...(info.spellId ? { spellId: info.spellId } : {}),
-      ...(info.outcome ? { outcome: { ...info.outcome } } : {}),
-      ...(info.modifiers ? { modifiers: { ...info.modifiers } } : {}),
       cinema: {
+        weapon,
+        style: seat.style ?? null,
+        swing: seat.swing ?? null,
+        modifiers,
+        smiteSlot: Number.isInteger(mods.smiteSlot) ? mods.smiteSlot : null,
+        attackerLevel: attackerLevelOf(attacker),
+        killing: !!defender && (info.targetHpBefore ?? 0) > 0 && defender.hp <= 0,
+        spell,
+        outcome: info.outcome ? { ...info.outcome } : null,
         fxSeed: fxSeedOf(group),
-        killing: !!defender && (info.targetHpBefore ?? 0) > 0 && defender.hp <= 0
+        durationMs: 0
       }
     }, group);
   }
   if (prompts.onCinemaRound) await prompts.onCinemaRound(roundPayload);
+}
+
+function cinemaWeapon(attacker, damageType) {
+  if (attacker?.kind === 'pc') {
+    const w = attacker._chosenWeapon || attacker.weapon || null;
+    const name = w?.name || 'Unarmed Strike';
+    const bonus = Number(w?.magicBonus ?? w?.bonus ?? 0);
+    return {
+      name,
+      damageType: w?.damageType ?? damageType ?? null,
+      magical: bonus > 0 || !!w?.magic || /\+\d/.test(name)
+    };
+  }
+  const a = attacker?.attack || {};
+  return { name: a.name || 'Strike', damageType: a.damageType ?? damageType ?? null, magical: false };
+}
+
+function attackerLevelOf(attacker) {
+  if (attacker?.kind === 'pc') return Math.max(0, Math.min(30, totalLevel(attacker.ref || attacker)));
+  const cr = Number(attacker?.cr ?? attacker?.ref?.cr ?? 0);
+  return Number.isFinite(cr) ? Math.max(0, Math.min(30, Math.round(cr))) : 0;
 }
 
 async function askReactionAttack(triggerer, mover, trigger, prompts, ctx) {

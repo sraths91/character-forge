@@ -38,7 +38,8 @@ import { seedRng } from '../../js/scene/simulator.js';
 import { resetReactionsForAll } from '../../js/scene/reactions.js';
 import { spellById } from '../../js/scene/monster-spells.js';
 import { parsedDdbFixture } from './entities.js';
-import { toEngineSides, applyEngineSides, dynamicStateOf } from '../../js/scene/encounter-adapters.js';
+import { toEngineSides, applyEngineSides } from '../../js/scene/encounter-adapters.js';
+import { stateHash as sharedStateHash } from '../../js/shared/state-hash.js';
 
 const FIXTURE_DIR = new URL('../fixtures/encounters/', import.meta.url);
 
@@ -212,11 +213,10 @@ export async function runScenario({ name, state, intents }) {
     if (!v.ok) throw new Error(`${name}: derived ${type} event is invalid: ${JSON.stringify(v.errors)}`);
     events.push(ev);
   };
-  // The hash covers the DYNAMIC EncounterState only (never the static
-  // sheetRef / statBlock contents), so additive sheet-parser fields do
-  // not flip every golden.
+  // THE state hash (shared/state-hash.js): dynamic EncounterState only,
+  // never sheetRef / statBlock contents, rng or lastEventSeq.
   const stateNow = () => applyEngineSides(state, wrappers);
-  const stateHash = () => fnv1a(canonicalJson(dynamicStateOf(stateNow())));
+  const stateHash = () => sharedStateHash(stateNow());
 
   for (const [i, step] of intents.entries()) {
     const where = `${name} step ${i} (${step.t})`;

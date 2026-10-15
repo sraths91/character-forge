@@ -161,7 +161,7 @@
       "cinemaGroup": null,
       "payload": {
         "actorId": "m-fanatic-a",
-        "stateHash": "95d9bd6f",
+        "stateHash": "0ba699b555818f",
         "rngDraws": 0
       }
     },
@@ -298,8 +298,9 @@
         "cast": true,
         "roll": null,
         "damage": {
-          "amount": 0,
-          "heal": null
+          "total": 0,
+          "heal": 0,
+          "smite": 0
         },
         "effects": [
           {
@@ -312,15 +313,26 @@
           }
         ],
         "miss": false,
-        "weapon": null,
-        "spellId": "hold-person",
-        "outcome": {
-          "dmg": 0,
-          "saved": false
-        },
         "cinema": {
+          "weapon": null,
+          "style": null,
+          "swing": null,
+          "modifiers": [],
+          "smiteSlot": null,
+          "attackerLevel": 0,
+          "killing": false,
+          "spell": {
+            "id": "hold-person",
+            "kind": "leveled-save",
+            "aoe": false,
+            "damageType": null
+          },
+          "outcome": {
+            "dmg": 0,
+            "saved": false
+          },
           "fxSeed": 462812900,
-          "killing": false
+          "durationMs": 0
         }
       }
     },
@@ -332,7 +344,7 @@
       "cinemaGroup": null,
       "payload": {
         "actorId": "m-fanatic-b",
-        "stateHash": "18a06723",
+        "stateHash": "1bcfc1729ce941",
         "rngDraws": 1
       }
     }

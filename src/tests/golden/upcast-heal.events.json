@@ -88,8 +88,9 @@
         "cast": true,
         "roll": null,
         "damage": {
-          "amount": 0,
-          "heal": 10
+          "total": 0,
+          "heal": 10,
+          "smite": 0
         },
         "effects": [
           {
@@ -102,14 +103,25 @@
           }
         ],
         "miss": false,
-        "weapon": null,
-        "spellId": "cure-wounds",
-        "outcome": {
-          "heal": 10
-        },
         "cinema": {
+          "weapon": null,
+          "style": null,
+          "swing": null,
+          "modifiers": [],
+          "smiteSlot": null,
+          "attackerLevel": 5,
+          "killing": false,
+          "spell": {
+            "id": "cure-wounds",
+            "kind": "heal",
+            "aoe": false,
+            "damageType": null
+          },
+          "outcome": {
+            "heal": 10
+          },
           "fxSeed": 1423472275,
-          "killing": false
+          "durationMs": 0
         }
       }
     },
@@ -121,7 +133,7 @@
       "cinemaGroup": null,
       "payload": {
         "actorId": "pc-cleric",
-        "stateHash": "2c34f5f0",
+        "stateHash": "065258eac55763",
         "rngDraws": 2
       }
     },
@@ -211,8 +223,9 @@
         "cast": true,
         "roll": null,
         "damage": {
-          "amount": 0,
-          "heal": 14
+          "total": 0,
+          "heal": 14,
+          "smite": 0
         },
         "effects": [
           {
@@ -225,14 +238,25 @@
           }
         ],
         "miss": false,
-        "weapon": null,
-        "spellId": "healing-word",
-        "outcome": {
-          "heal": 14
-        },
         "cinema": {
+          "weapon": null,
+          "style": null,
+          "swing": null,
+          "modifiers": [],
+          "smiteSlot": null,
+          "attackerLevel": 5,
+          "killing": false,
+          "spell": {
+            "id": "healing-word",
+            "kind": "heal",
+            "aoe": false,
+            "damageType": null
+          },
+          "outcome": {
+            "heal": 14
+          },
           "fxSeed": 462812900,
-          "killing": false
+          "durationMs": 0
         }
       }
     },
@@ -244,7 +268,7 @@
       "cinemaGroup": null,
       "payload": {
         "actorId": "pc-cleric",
-        "stateHash": "b288c260",
+        "stateHash": "043295e1de266b",
         "rngDraws": 3
       }
     }

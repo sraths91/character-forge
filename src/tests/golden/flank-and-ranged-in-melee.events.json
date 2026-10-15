@@ -87,13 +87,25 @@
         "reaction": false,
         "cast": false,
         "roll": {
+          "d20": {
+            "dice": [
+              13,
+              1
+            ],
+            "kept": 13,
+            "mode": "advantage"
+          },
+          "bonus": 6,
           "total": 19,
+          "ac": 16,
           "hit": true,
           "crit": false,
           "shielded": false
         },
         "damage": {
-          "amount": 8,
+          "total": 8,
+          "smite": 0,
+          "heal": 0,
           "type": "Slashing",
           "crit": false
         },
@@ -108,16 +120,22 @@
           }
         ],
         "miss": false,
-        "weapon": "Longsword",
-        "modifiers": {
-          "sneak": false,
-          "reckless": false,
-          "surge": false,
-          "smiteSlot": null
-        },
         "cinema": {
+          "weapon": {
+            "name": "Longsword",
+            "damageType": "Slashing",
+            "magical": false
+          },
+          "style": null,
+          "swing": null,
+          "modifiers": [],
+          "smiteSlot": null,
+          "attackerLevel": 5,
+          "killing": false,
+          "spell": null,
+          "outcome": null,
           "fxSeed": 1423472275,
-          "killing": false
+          "durationMs": 0
         }
       }
     },
@@ -129,7 +147,7 @@
       "cinemaGroup": null,
       "payload": {
         "actorId": "pc-fighter",
-        "stateHash": "e8be7ee6",
+        "stateHash": "108af7508e86f4",
         "rngDraws": 3
       }
     },
@@ -218,13 +236,25 @@
         "reaction": false,
         "cast": false,
         "roll": {
+          "d20": {
+            "dice": [
+              20,
+              20
+            ],
+            "kept": 20,
+            "mode": "disadvantage"
+          },
+          "bonus": 5,
           "total": 25,
+          "ac": 16,
           "hit": true,
           "crit": true,
           "shielded": false
         },
         "damage": {
-          "amount": 10,
+          "total": 10,
+          "smite": 0,
+          "heal": 0,
           "type": "Piercing",
           "crit": true
         },
@@ -239,16 +269,22 @@
           }
         ],
         "miss": false,
-        "weapon": "Light Crossbow",
-        "modifiers": {
-          "sneak": false,
-          "reckless": false,
-          "surge": false,
-          "smiteSlot": null
-        },
         "cinema": {
+          "weapon": {
+            "name": "Light Crossbow",
+            "damageType": "Piercing",
+            "magical": false
+          },
+          "style": null,
+          "swing": null,
+          "modifiers": [],
+          "smiteSlot": null,
+          "attackerLevel": 5,
+          "killing": false,
+          "spell": null,
+          "outcome": null,
           "fxSeed": 462812900,
-          "killing": false
+          "durationMs": 0
         }
       }
     },
@@ -260,7 +296,7 @@
       "cinemaGroup": null,
       "payload": {
         "actorId": "pc-wizard",
-        "stateHash": "82b793df",
+        "stateHash": "17a0b6d7367c48",
         "rngDraws": 4
       }
     },
@@ -349,13 +385,25 @@
         "reaction": false,
         "cast": false,
         "roll": {
+          "d20": {
+            "dice": [
+              15,
+              9
+            ],
+            "kept": 15,
+            "mode": "advantage"
+          },
+          "bonus": 5,
           "total": 20,
+          "ac": 16,
           "hit": true,
           "crit": false,
           "shielded": false
         },
         "damage": {
-          "amount": 8,
+          "total": 8,
+          "smite": 0,
+          "heal": 0,
           "type": "Bludgeoning",
           "crit": false
         },
@@ -370,16 +418,22 @@
           }
         ],
         "miss": false,
-        "weapon": "Mace",
-        "modifiers": {
-          "sneak": false,
-          "reckless": false,
-          "surge": false,
-          "smiteSlot": null
-        },
         "cinema": {
+          "weapon": {
+            "name": "Mace",
+            "damageType": "Bludgeoning",
+            "magical": false
+          },
+          "style": null,
+          "swing": null,
+          "modifiers": [],
+          "smiteSlot": null,
+          "attackerLevel": 5,
+          "killing": false,
+          "spell": null,
+          "outcome": null,
           "fxSeed": 1318168309,
-          "killing": false
+          "durationMs": 0
         }
       }
     },
@@ -391,7 +445,7 @@
       "cinemaGroup": null,
       "payload": {
         "actorId": "pc-cleric",
-        "stateHash": "817d0267",
+        "stateHash": "0b5334c66dc14b",
         "rngDraws": 3
       }
     }

@@ -118,13 +118,24 @@
         "reaction": false,
         "cast": false,
         "roll": {
+          "d20": {
+            "dice": [
+              11
+            ],
+            "kept": 11,
+            "mode": "normal"
+          },
+          "bonus": 4,
           "total": 15,
+          "ac": 12,
           "hit": false,
           "crit": false,
           "shielded": true
         },
         "damage": {
-          "amount": 0,
+          "total": 0,
+          "smite": 0,
+          "heal": 0,
           "type": null,
           "crit": false
         },
@@ -139,16 +150,22 @@
           }
         ],
         "miss": true,
-        "weapon": "Morningstar",
-        "modifiers": {
-          "sneak": false,
-          "reckless": false,
-          "surge": false,
-          "smiteSlot": null
-        },
         "cinema": {
+          "weapon": {
+            "name": "Morningstar",
+            "damageType": null,
+            "magical": false
+          },
+          "style": null,
+          "swing": null,
+          "modifiers": [],
+          "smiteSlot": null,
+          "attackerLevel": 0,
+          "killing": false,
+          "spell": null,
+          "outcome": null,
           "fxSeed": 1423472275,
-          "killing": false
+          "durationMs": 0
         }
       }
     },
@@ -160,7 +177,7 @@
       "cinemaGroup": null,
       "payload": {
         "actorId": "m-bugbear",
-        "stateHash": "54072dbd",
+        "stateHash": "16fb1bb60fb360",
         "rngDraws": 1
       }
     },
@@ -248,13 +265,24 @@
         "reaction": false,
         "cast": false,
         "roll": {
+          "d20": {
+            "dice": [
+              19
+            ],
+            "kept": 19,
+            "mode": "normal"
+          },
+          "bonus": 4,
           "total": 23,
+          "ac": 12,
           "hit": true,
           "crit": false,
           "shielded": false
         },
         "damage": {
-          "amount": 7,
+          "total": 7,
+          "smite": 0,
+          "heal": 0,
           "type": null,
           "crit": false
         },
@@ -269,16 +297,22 @@
           }
         ],
         "miss": false,
-        "weapon": "Scimitar",
-        "modifiers": {
-          "sneak": false,
-          "reckless": false,
-          "surge": false,
-          "smiteSlot": null
-        },
         "cinema": {
+          "weapon": {
+            "name": "Scimitar",
+            "damageType": null,
+            "magical": false
+          },
+          "style": null,
+          "swing": null,
+          "modifiers": [],
+          "smiteSlot": null,
+          "attackerLevel": 0,
+          "killing": false,
+          "spell": null,
+          "outcome": null,
           "fxSeed": 462812900,
-          "killing": false
+          "durationMs": 0
         }
       }
     },
@@ -290,7 +324,7 @@
       "cinemaGroup": null,
       "payload": {
         "actorId": "m-gob",
-        "stateHash": "9f059ca9",
+        "stateHash": "1a2eb85261f997",
         "rngDraws": 2
       }
     }
