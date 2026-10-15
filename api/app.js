@@ -10,7 +10,8 @@ import { ITEM_GENERATOR_VERSION } from './db/database.js';
 import { extractCharacterId, fetchDdbCharacter, UPSTREAM_TIMEOUT_MS } from './lib/ddb-fetch.js';
 import { parseCharacter } from './lib/ddb-parser.js';
 import { searchOpen5eCreatures, fetchOpen5eCreature, toSummary } from './lib/open5e.js';
-import { createRoomStore } from './rooms/store.js';
+import { createRoomService } from './rooms/service.js';
+import { mountRoomRoutes } from './rooms/http.js';
 import { bearerToken } from './rooms/tokens.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -89,12 +90,14 @@ export const CSP_REPORT_ONLY = [
  * @param {(app: import('express').Express, ctx: object) => void} [opts.mount]
  *   Mounts extra `/api` routers (rooms, maps) before the JSON 404.
  * @param {string} [opts.distPath]  Built SPA directory served in production.
+ * @param {ReturnType<typeof createRoomService>} [opts.rooms]  Room service shared
+ *   with the ws gateway (default: a new one over `db`).
  * @returns {import('express').Express}
  */
 export function createApp({
   db, env = process.env, dataDir, log = defaultLog,
   fetchImpl = (...a) => fetch(...a), upstreamTimeoutMs = UPSTREAM_TIMEOUT_MS,
-  limits = {}, mount, distPath = join(__dirname, '..', 'dist')
+  limits = {}, mount, distPath = join(__dirname, '..', 'dist'), rooms
 } = {}) {
   if (!db) throw new Error('createApp: db handle (from openDb) is required');
   const healthDataDir = dataDir !== undefined
@@ -107,7 +110,8 @@ export function createApp({
   } = db;
   const PROD = env.NODE_ENV === 'production';
   const MULTIPLAYER = env.CF_MULTIPLAYER === '1';
-  const roomStore = createRoomStore(db.db);
+  const roomService = rooms || createRoomService({ db });
+  const roomStore = roomService.store;
   const lim = { ...DEFAULT_LIMITS, ...limits };
   const limiter = (name, extra = {}) => rateLimit({
     ...lim[name], standardHeaders: true, legacyHeaders: false,
@@ -117,6 +121,7 @@ export function createApp({
 
   const app = express();
   app.disable('x-powered-by');
+  app.locals.rooms = roomService;
   // Railway (and most PaaS hosts) put one HTTPS-terminating proxy in front of
   // the app, so req.ip would be the proxy's loopback address without this.
   // '1' = trust one hop (the Railway edge); avoid 'true' which trusts
@@ -358,7 +363,8 @@ export function createApp({
     }
   });
 
-  if (mount) mount(app, { roomStore, limiter, memberOf, HttpError, PROD, MULTIPLAYER });
+  mountRoomRoutes(app, { rooms: roomService, limiter });
+  if (mount) mount(app, { rooms: roomService, roomStore, limiter, memberOf, HttpError, PROD, MULTIPLAYER });
 
   // Unknown /api routes are a JSON 404, never the SPA's index.html (F7).
   app.use('/api', (_req, res) => res.status(404).json({ error: 'Not found', code: 'NOT_FOUND' }));
