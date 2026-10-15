@@ -2,7 +2,7 @@ import { renderSprite, renderPartyCanvas, renderBattleScene } from './sprite/com
 import { loadOverrides, saveOverrides, assignCarriedSlots } from './sprite/slot-overrides.js';
 import { loadAppearance, saveAppearance, applyAppearanceOverrides } from './sprite/appearance-overrides.js';
 import {
-  loadScene, saveScene, positionOf, setPosition, clearPositions, clampPosition,
+  loadScene, saveScene as saveSceneToStorage, positionOf, setPosition, clearPositions, clampPosition,
   addMonsterInstance, removeMonsterInstance, updateMonsterPosition, entityAt,
   setMonsterCondition,
   SCENE_PRESETS,
@@ -159,10 +159,12 @@ document.addEventListener('click', (e) => {
   rerender();
 });
 
-// Phase E3 — Condition checkboxes
+// Phase E3 — Condition checkboxes. M64 C10 / F7: scoped to the forge's
+// appearance picker — monster cards also render [data-condition]
+// checkboxes, which must not leak into the character's appearance.
 document.addEventListener('change', (e) => {
-  if (!e.target.matches('[data-condition]')) return;
-  const conditions = [...document.querySelectorAll('[data-condition]:checked')].map(el => el.dataset.condition);
+  if (!e.target.matches('#appearance-picker [data-condition]')) return;
+  const conditions = [...document.querySelectorAll('#appearance-picker [data-condition]:checked')].map(el => el.dataset.condition);
   currentAppearance = { ...currentAppearance, conditions };
   if (originalCharacter?.id) saveAppearance(originalCharacter.id, currentAppearance);
   rerender();
@@ -350,8 +352,10 @@ async function setView(name) {
   if (animating) stopAnimation();
   stopSwingPreview();   // M55
   if (name === 'character') {
+    // M64 C10 / F1 — leave any versus fight first (restores the party
+    // before exitPartyView clears it).
+    leaveVersusForNavigation();
     if (viewMode === 'party') exitPartyView();
-    versusActive = false;
     document.getElementById('versus-panel')?.setAttribute('hidden', '');
     syncTopnav();
     return;
@@ -375,7 +379,7 @@ async function setView(name) {
   }
   // Hide versus panel when navigating elsewhere
   document.getElementById('versus-panel')?.setAttribute('hidden', '');
-  versusActive = false;
+  leaveVersusForNavigation();   // M64 C10 / F1
 
   // Both 'party' and 'combat' require the party canvas
   if (viewMode !== 'party') {
@@ -746,6 +750,9 @@ async function playCinemaRoundForAttack(attackerHit, targetHit, dmg, opts = {}) 
     // animation (slash/thrust) when one exists; else the walk fallback.
     setActorWeapon(attackerHit.entity, { swing: resolvedSwing, animation: bodyAnim })
   ]);
+  // M64 C10 / F1 — the stage may have been torn down (fight exited)
+  // while the sprites were loading.
+  if (!versusCinema) return;
   versusCinema.resetHp({
     attHp: attackerHit.entity.hp?.current ?? attackerHit.entity.hp ?? 1,
     defHp: targetHit.entity.hp?.current   ?? targetHit.entity.hp   ?? 1
@@ -768,7 +775,43 @@ let versusInitiative = [];
 let versusPreviousScene = null;
 let versusPreviousParty = null;
 
+/** M64 C10 / F1 — top-nav navigation out of versus. A started fight
+ *  (running or finished but not yet exited) goes through the same
+ *  restore path as the Exit button; otherwise just clear the flag. */
+function leaveVersusForNavigation() {
+  if (versusActive || versusPreviousScene) exitVersusFight();
+  else versusActive = false;
+}
+
+/** M64 C10 / F2 — the versus arena is ephemeral. While it is the
+ *  current scene nothing may be persisted, or the arena would
+ *  overwrite the user's saved scene in cf_scenes. */
+function canPersistScene() {
+  return !versusActive && versusPreviousScene === null;
+}
+
+/** M64 C10 / F2 — the single persistence gate. Shadows the imported
+ *  scene-state saveScene so every existing call site is guarded. */
+function saveScene(scene) {
+  if (!canPersistScene()) return;
+  saveSceneToStorage(scene);
+}
+
 function exitVersusFight() {
+  // M64 C10 / F1 — a fight left mid-way (exit button or top nav) is
+  // finalised and archived like a finished one, and the cinema stage
+  // is torn down, before the pre-fight scene and party are restored.
+  // A fight that already ended has no recorder and no cinema here.
+  if (currentFightRecorder) {
+    currentFightRecorder.finalize('abandoned');
+    archiveReplay(currentFightRecorder.getReplay());
+    currentFightRecorder = null;
+    renderReplayPanel();
+  }
+  if (versusCinemaActive) {
+    setupVersusCinema(false);
+    versusCinemaActive = false;
+  }
   if (versusPreviousScene) currentScene = versusPreviousScene;
   if (versusPreviousParty) partyComposedCharacters = versusPreviousParty;
   versusActive = false;
@@ -968,6 +1011,9 @@ async function runVersusPartyAuto() {
       // re-evaluates from scratch.
       if (entry.entityKind === 'pc') entity._chosenWeapon = null;
       await new Promise(f => setTimeout(f, stepDelay));
+      // M64 C10 / F1 — the fight may have been exited during the pause;
+      // don't judge the restored (non-arena) scene.
+      if (!versusActive) return;
 
       const verdict = currentPartyEndState();
       if (verdict) return endVersusFight(verdict, round);
