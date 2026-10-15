@@ -53,7 +53,7 @@
       "cinemaGroup": null,
       "payload": {
         "actorId": "pc-fighter",
-        "stateHash": "7dadd7b4",
+        "stateHash": "e8be7ee6",
         "rngDraws": 3
       }
     },
@@ -108,7 +108,7 @@
       "cinemaGroup": null,
       "payload": {
         "actorId": "pc-wizard",
-        "stateHash": "573fd7be",
+        "stateHash": "82b793df",
         "rngDraws": 4
       }
     },
@@ -163,7 +163,7 @@
       "cinemaGroup": null,
       "payload": {
         "actorId": "pc-cleric",
-        "stateHash": "655bef48",
+        "stateHash": "817d0267",
         "rngDraws": 3
       }
     }

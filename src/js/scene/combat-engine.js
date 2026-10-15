@@ -108,6 +108,19 @@ import { MONSTER_DEFAULT_SAVES } from './monster-presets.js';
  */
 
 export async function runOneAttack(attacker, enemies, allies, scene, rng, prompts = {}) {
+  try {
+    return await resolveTurn(attacker, enemies, allies, scene, rng, prompts);
+  } finally {
+    // M64 T5 — the planner's MCTS context (`_mctsTargetCtx`, a copy of the
+    // target entity) is transient: it never outlives the turn, so wrappers
+    // stay pure JSON for snapshots.
+    if (attacker && Object.prototype.hasOwnProperty.call(attacker, '_mctsTargetCtx')) {
+      delete attacker._mctsTargetCtx;
+    }
+  }
+}
+
+async function resolveTurn(attacker, enemies, allies, scene, rng, prompts) {
   // M37 — At the start of each monster's turn, roll d6 for any innate
   // spells that are cooling down. The recharged-list isn't surfaced in
   // the simulator path (we have no log here); main.js can read it for
@@ -149,7 +162,7 @@ export async function runOneAttack(attacker, enemies, allies, scene, rng, prompt
     });
     attacker._lastPlan = plan;
     if (plan.targetId) {
-      target = enemies.find(e => e.id === plan.targetId);
+      target = enemies.find(e => sameId(e.id, plan.targetId));
     } else {
       target = pickTarget(enemies);
     }
@@ -167,7 +180,7 @@ export async function runOneAttack(attacker, enemies, allies, scene, rng, prompt
     // M51.1 — keep the display/movement weapon in sync with the AI's pick
     // so weapon switches show correctly in the live cinema + attack log.
     if (plan?.weapon) { attacker._chosenWeapon = plan.weapon; attacker.weapon = plan.weapon; }
-    if (plan?.targetId) target = enemies.find(e => e.id === plan.targetId);
+    if (plan?.targetId) target = enemies.find(e => sameId(e.id, plan.targetId));
     else target = pickTarget(enemies);
   }
   if (!target) return;
@@ -239,7 +252,7 @@ export async function runOneAttack(attacker, enemies, allies, scene, rng, prompt
   if (plan && plan.kind === 'cast') {
     let castTarget = target;
     if (plan.targetSide === 'ally') {
-      castTarget = allies.find(a => a.id === plan.targetId) || null;
+      castTarget = allies.find(a => sameId(a.id, plan.targetId)) || null;
     }
     if (!castTarget) return;
     if (attacker.kind === 'pc' && !attacker._slots) {
@@ -820,6 +833,9 @@ export function saveBonusFor(entity, stat) {
     }
     return bonus;
   }
+  // M64 T5 — an imported stat block's saves (EncounterState statBlock.saves)
+  // win over the visual preset's table.
+  if (entity.saves && typeof entity.saves === 'object') return Number(entity.saves[stat]) || 0;
   const table = MONSTER_DEFAULT_SAVES[entity.presetSlug];
   return table ? (table[stat] || 0) : 0;
 }
@@ -846,6 +862,11 @@ function combatModsOf(entity) {
   if (Array.isArray(entity?.combatMods)) return entity.combatMods;
   const ref = entity?.ref || entity;
   return Array.isArray(ref?.combatMods) ? ref.combatMods : [];
+}
+
+/** Ids compare as strings (DDB ids are numbers, EncounterState ids strings). */
+export function sameId(a, b) {
+  return a != null && b != null && String(a) === String(b);
 }
 
 export function pickTarget(enemies) {

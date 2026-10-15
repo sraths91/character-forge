@@ -21,8 +21,9 @@
  * DERIVES catalogue-v1 events by diffing a projection of every wrapper
  * before and after each step; every derived event is checked with
  * validateEvent. When T4 lands, capture `ctx.emit` instead and re-bless
- * the goldens once. When T5 lands, replace wrappersFromState with the real
- * encounter-adapters — the goldens must not change (adapter parity).
+ * the goldens once. Since T5 the wrappers come from the real
+ * encounter-adapters (toEngineSides) and every step's state is projected
+ * back through applyEngineSides, validated and hashed.
  *
  * Every step is checked for: JSON round-trip of the full wrapper state,
  * and nothing changing on the next setImmediate after the step resolves
@@ -37,7 +38,8 @@ import { runOneAttack } from '../../js/scene/combat-engine.js';
 import { seedRng } from '../../js/scene/simulator.js';
 import { resetReactionsForAll } from '../../js/scene/reactions.js';
 import { spellById } from '../../js/scene/monster-spells.js';
-import { pcFromSheet, monsterFromPreset, parsedDdbFixture } from './entities.js';
+import { parsedDdbFixture } from './entities.js';
+import { toEngineSides, applyEngineSides, dynamicStateOf } from '../../js/scene/encounter-adapters.js';
 
 const FIXTURE_DIR = new URL('../fixtures/encounters/', import.meta.url);
 
@@ -83,52 +85,20 @@ export function loadScenario(name) {
   return { name, state, intents };
 }
 
-const remaining = (ledger) => (ledger ? ledger.max - ledger.spent : 0);
-
 /**
- * Test-only bridge: EncounterState v1 → today's engine wrappers.
- * Stand-in for M64 T5's encounter-adapters (toEngineSides).
+ * EncounterState v1 → engine wrappers through the real M64 T5 adapters
+ * (encounter-adapters.toEngineSides). PC sheets come from the synthetic
+ * DDB fixtures named by `sheetRef.characterId`.
  * @param {object} state — a valid EncounterState
  * @returns {{wrappers: object[], scene: object}}
  */
 export function wrappersFromState(state) {
-  const wrappers = Object.values(state.entities).map(e => {
-    const slots = e.resources.slots;
-    const shared = {
-      id: e.id, name: e.name, hp: e.hp, hpMax: e.hpMax, ac: e.ac,
-      conditions: e.conditions.map(c => (typeof c === 'string' ? c : c.id)),
-      _reactionUsed: e.resources.reactionUsed,
-      _concentrating: e.concentration
-        ? { spellId: e.concentration.spellId, spellName: spellById(e.concentration.spellId)?.name || e.concentration.spellId, targetIds: [...e.concentration.targetIds] }
-        : null
-    };
-    if (e.kind === 'pc') {
-      const sheet = parsedDdbFixture(e.sheetRef.characterId);
-      const f = e.resources.features;
-      return pcFromSheet(sheet, {
-        ...shared,
-        _position: { ...e.pos },
-        _slots: { 1: remaining(slots['1']), 2: remaining(slots['2']), 3: remaining(slots['3']), 4: remaining(slots['4']), 5: remaining(slots['5']) },
-        _actionSurgeUsed: f['action-surge']?.spent ?? 0,
-        _secondWindUsed: (f['second-wind']?.spent ?? 0) > 0,
-        _shieldActive: !!e.turnFlags.shieldActive,
-        _sneakAttackUsedThisTurn: !!e.turnFlags.sneakUsed,
-        _cunningActionUsedThisTurn: !!e.turnFlags.cunningUsed
-      });
-    }
-    const hasSlots = Object.keys(slots).length > 0;
-    return monsterFromPreset(e.statBlock.slug, {
-      ...shared,
-      position: { ...e.pos },
-      ...(hasSlots ? { _slots: Object.fromEntries(Object.entries(slots).map(([k, l]) => [k, remaining(l)])) } : {}),
-      ...(e.resources.innate ? { _innate: JSON.parse(JSON.stringify(e.resources.innate)) } : {}),
-      _legendaryBudget: e.resources.legendaryBudget
-    });
-  });
-  return {
-    wrappers,
-    scene: { cols: state.grid.cols, rows: state.grid.rows, flankingEnabled: state.grid.flankingEnabled }
-  };
+  const sheets = {};
+  for (const e of Object.values(state.entities)) {
+    if (e.kind === 'pc') sheets[e.sheetRef.characterId] = parsedDdbFixture(e.sheetRef.characterId);
+  }
+  const { wrappers, scene } = toEngineSides(state, sheets);
+  return { wrappers, scene };
 }
 
 /**
@@ -243,7 +213,11 @@ export async function runScenario({ name, state, intents }) {
     if (!v.ok) throw new Error(`${name}: derived ${type} event is invalid: ${JSON.stringify(v.errors)}`);
     events.push(ev);
   };
-  const stateHash = () => fnv1a(canonicalJson([...wrappers].sort((a, b) => (a.id < b.id ? -1 : 1))));
+  // The hash covers the DYNAMIC EncounterState only (never the static
+  // sheetRef / statBlock contents), so additive sheet-parser fields do
+  // not flip every golden.
+  const stateNow = () => applyEngineSides(state, wrappers);
+  const stateHash = () => fnv1a(canonicalJson(dynamicStateOf(stateNow())));
 
   for (const [i, step] of intents.entries()) {
     const where = `${name} step ${i} (${step.t})`;
@@ -295,9 +269,14 @@ export async function runScenario({ name, state, intents }) {
       throw new Error(`${where}: unknown step type`);
     }
 
-    // Tripwire: the whole live state is pure JSON after every step.
+    // Tripwire: the whole live state is pure JSON after every step, and
+    // the adapters project it to a valid EncounterState that round-trips.
     const snapshot = JSON.parse(JSON.stringify(wrappers));
     assert.deepStrictEqual(snapshot, wrappers, `${where}: wrapper state does not survive a JSON round-trip`);
+    const applied = stateNow();
+    const sv = validateEncounterState(applied);
+    assert.ok(sv.ok, `${where}: applyEngineSides produced an invalid EncounterState: ${JSON.stringify(sv.errors)}`);
+    assert.deepStrictEqual(JSON.parse(JSON.stringify(applied)), applied, `${where}: EncounterState does not survive a JSON round-trip`);
     // Tripwire: nothing resolves after the step returns (P0-1).
     const atReturn = canonicalJson(wrappers);
     await new Promise(resolve => setImmediate(resolve));

@@ -92,7 +92,7 @@
       "cinemaGroup": null,
       "payload": {
         "actorId": "m-fanatic-a",
-        "stateHash": "54c43177",
+        "stateHash": "95d9bd6f",
         "rngDraws": 0
       }
     },
@@ -185,7 +185,7 @@
       "cinemaGroup": null,
       "payload": {
         "actorId": "m-fanatic-b",
-        "stateHash": "64e78689",
+        "stateHash": "18a06723",
         "rngDraws": 1
       }
     }

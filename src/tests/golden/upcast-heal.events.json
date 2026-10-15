@@ -64,7 +64,7 @@
       "cinemaGroup": null,
       "payload": {
         "actorId": "pc-cleric",
-        "stateHash": "e30f675c",
+        "stateHash": "2c34f5f0",
         "rngDraws": 2
       }
     },
@@ -130,7 +130,7 @@
       "cinemaGroup": null,
       "payload": {
         "actorId": "pc-cleric",
-        "stateHash": "5924e35e",
+        "stateHash": "b288c260",
         "rngDraws": 3
       }
     }

@@ -62,7 +62,7 @@
       "cinemaGroup": null,
       "payload": {
         "actorId": "m-bugbear",
-        "stateHash": "c998a9cd",
+        "stateHash": "54072dbd",
         "rngDraws": 1
       }
     },
@@ -117,7 +117,7 @@
       "cinemaGroup": null,
       "payload": {
         "actorId": "m-gob",
-        "stateHash": "6bd6f114",
+        "stateHash": "9f059ca9",
         "rngDraws": 2
       }
     }

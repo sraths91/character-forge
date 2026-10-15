@@ -95,7 +95,7 @@
       "cinemaGroup": null,
       "payload": {
         "actorId": "m-dragon",
-        "stateHash": "eb996be9",
+        "stateHash": "4ecf6ebd",
         "rngDraws": 18
       }
     },
@@ -150,7 +150,7 @@
       "cinemaGroup": null,
       "payload": {
         "actorId": "m-dragon",
-        "stateHash": "da391686",
+        "stateHash": "c5688f15",
         "rngDraws": 4
       }
     }

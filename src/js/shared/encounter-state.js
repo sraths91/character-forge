@@ -92,6 +92,14 @@ export const WRAPPER_FIELD_MAP = Object.freeze({
   _surgeFiredThisTurn: 'turnFlags.surgeFired',
   _extraActionThisTurn: 'turnFlags.extraAction',
   _smiteSlotUsed: 'turnFlags.smiteSlotUsed',
+  // v1 additive (M64 T5, E1): fields the T5 adapters carry. `_lvl1Slots`
+  // and `_lvl3Slots` above are retired by T5 (Shield/Counterspell spend
+  // from `_slots`); the entries stay so v1 readers keep resolving them.
+  _pact: 'resources.pact',
+  hpTemp: 'hpTemp',
+  speedFt: 'speedFt',
+  saves: 'statBlock.saves',
+  secondary: 'statBlock.attacks[1]',
   // Transient — never persisted.
   weapon: null,
   _chosenWeapon: null,
