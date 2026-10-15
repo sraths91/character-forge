@@ -1,0 +1,18 @@
+[
+  {
+    "t": "round.start"
+  },
+  {
+    "t": "turn.act",
+    "actorId": "pc-fighter",
+    "plan": {
+      "kind": "melee",
+      "targetId": "m-gob-b",
+      "weaponName": "Longsword"
+    }
+  },
+  {
+    "t": "turn.delegate",
+    "actorId": "m-gob-a"
+  }
+]

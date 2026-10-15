@@ -1,0 +1,174 @@
+{
+  "v": 1,
+  "encounterId": "golden-concentration-broken",
+  "round": 0,
+  "turnIndex": 0,
+  "phase": "running",
+  "rng": {
+    "algo": "mulberry32",
+    "s": 1
+  },
+  "grid": {
+    "cols": 10,
+    "rows": 6,
+    "cellFt": 5,
+    "flankingEnabled": false
+  },
+  "map": null,
+  "initiative": [
+    {
+      "entityId": "pc-fighter",
+      "score": 20
+    },
+    {
+      "entityId": "pc-wizard",
+      "score": 19
+    },
+    {
+      "entityId": "m-fanatic",
+      "score": 18
+    }
+  ],
+  "entities": {
+    "pc-fighter": {
+      "id": "pc-fighter",
+      "kind": "pc",
+      "side": "party",
+      "name": "Fixture Fighter",
+      "controller": {
+        "type": "ai",
+        "seatId": null
+      },
+      "pos": {
+        "col": 2,
+        "row": 2
+      },
+      "hp": 44,
+      "hpMax": 44,
+      "hpTemp": 0,
+      "ac": 18,
+      "speedFt": 30,
+      "conditions": [
+        "paralyzed"
+      ],
+      "concentration": null,
+      "resources": {
+        "reactionUsed": false,
+        "slots": {},
+        "pact": {},
+        "innate": null,
+        "legendaryBudget": 0,
+        "features": {
+          "action-surge": {
+            "max": 1,
+            "spent": 0
+          },
+          "second-wind": {
+            "max": 1,
+            "spent": 0
+          }
+        }
+      },
+      "turnFlags": {},
+      "sheetRef": {
+        "characterId": "fighter-l5",
+        "rev": 1
+      }
+    },
+    "pc-wizard": {
+      "id": "pc-wizard",
+      "kind": "pc",
+      "side": "party",
+      "name": "Fixture Wizard",
+      "controller": {
+        "type": "ai",
+        "seatId": null
+      },
+      "pos": {
+        "col": 1,
+        "row": 4
+      },
+      "hp": 32,
+      "hpMax": 32,
+      "hpTemp": 0,
+      "ac": 12,
+      "speedFt": 30,
+      "conditions": [],
+      "concentration": null,
+      "resources": {
+        "reactionUsed": false,
+        "slots": {
+          "1": {
+            "max": 4,
+            "spent": 0
+          },
+          "2": {
+            "max": 3,
+            "spent": 0
+          },
+          "3": {
+            "max": 2,
+            "spent": 0
+          }
+        },
+        "pact": {},
+        "innate": null,
+        "legendaryBudget": 0,
+        "features": {}
+      },
+      "turnFlags": {},
+      "sheetRef": {
+        "characterId": "wizard-l5",
+        "rev": 1
+      }
+    },
+    "m-fanatic": {
+      "id": "m-fanatic",
+      "kind": "monster",
+      "side": "hostile",
+      "name": "Cult Fanatic",
+      "controller": {
+        "type": "ai",
+        "seatId": null
+      },
+      "pos": {
+        "col": 7,
+        "row": 2
+      },
+      "hp": 33,
+      "hpMax": 33,
+      "hpTemp": 0,
+      "ac": 13,
+      "speedFt": 30,
+      "conditions": [],
+      "concentration": {
+        "spellId": "hold-person",
+        "targetIds": [
+          "pc-fighter"
+        ]
+      },
+      "resources": {
+        "reactionUsed": false,
+        "slots": {
+          "1": {
+            "max": 4,
+            "spent": 0
+          },
+          "2": {
+            "max": 3,
+            "spent": 0
+          }
+        },
+        "pact": {},
+        "innate": null,
+        "legendaryBudget": 0,
+        "features": {}
+      },
+      "turnFlags": {},
+      "statBlock": {
+        "slug": "cult-fanatic"
+      }
+    }
+  },
+  "lastEventSeq": 0
+}

@@ -1,0 +1,30 @@
+[
+  {
+    "t": "round.start"
+  },
+  {
+    "t": "turn.act",
+    "actorId": "pc-cleric",
+    "plan": {
+      "kind": "cast",
+      "spellId": "cure-wounds",
+      "castAtLevel": 2,
+      "targetSide": "ally",
+      "targetId": "pc-fighter"
+    }
+  },
+  {
+    "t": "round.start"
+  },
+  {
+    "t": "turn.act",
+    "actorId": "pc-cleric",
+    "plan": {
+      "kind": "cast",
+      "spellId": "healing-word",
+      "castAtLevel": 3,
+      "targetSide": "ally",
+      "targetId": "pc-fighter"
+    }
+  }
+]

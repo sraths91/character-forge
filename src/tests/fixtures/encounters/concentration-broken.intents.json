@@ -1,0 +1,15 @@
+[
+  {
+    "t": "round.start"
+  },
+  {
+    "t": "turn.act",
+    "actorId": "pc-wizard",
+    "plan": {
+      "kind": "cast",
+      "spellId": "magic-missile",
+      "castAtLevel": 1,
+      "targetId": "m-fanatic"
+    }
+  }
+]

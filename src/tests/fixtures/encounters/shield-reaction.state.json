@@ -1,0 +1,148 @@
+{
+  "v": 1,
+  "encounterId": "golden-shield-reaction",
+  "round": 0,
+  "turnIndex": 0,
+  "phase": "running",
+  "rng": {
+    "algo": "mulberry32",
+    "s": 10
+  },
+  "grid": {
+    "cols": 10,
+    "rows": 6,
+    "cellFt": 5,
+    "flankingEnabled": false
+  },
+  "map": null,
+  "initiative": [
+    {
+      "entityId": "pc-wizard",
+      "score": 20
+    },
+    {
+      "entityId": "m-bugbear",
+      "score": 19
+    },
+    {
+      "entityId": "m-gob",
+      "score": 18
+    }
+  ],
+  "entities": {
+    "pc-wizard": {
+      "id": "pc-wizard",
+      "kind": "pc",
+      "side": "party",
+      "name": "Fixture Wizard",
+      "controller": {
+        "type": "ai",
+        "seatId": null
+      },
+      "pos": {
+        "col": 2,
+        "row": 2
+      },
+      "hp": 32,
+      "hpMax": 32,
+      "hpTemp": 0,
+      "ac": 12,
+      "speedFt": 30,
+      "conditions": [],
+      "concentration": null,
+      "resources": {
+        "reactionUsed": false,
+        "slots": {
+          "1": {
+            "max": 4,
+            "spent": 0
+          },
+          "2": {
+            "max": 3,
+            "spent": 0
+          },
+          "3": {
+            "max": 2,
+            "spent": 0
+          }
+        },
+        "pact": {},
+        "innate": null,
+        "legendaryBudget": 0,
+        "features": {}
+      },
+      "turnFlags": {},
+      "sheetRef": {
+        "characterId": "wizard-l5",
+        "rev": 1
+      }
+    },
+    "m-bugbear": {
+      "id": "m-bugbear",
+      "kind": "monster",
+      "side": "hostile",
+      "name": "Bugbear",
+      "controller": {
+        "type": "ai",
+        "seatId": null
+      },
+      "pos": {
+        "col": 3,
+        "row": 2
+      },
+      "hp": 27,
+      "hpMax": 27,
+      "hpTemp": 0,
+      "ac": 16,
+      "speedFt": 30,
+      "conditions": [],
+      "concentration": null,
+      "resources": {
+        "reactionUsed": false,
+        "slots": {},
+        "pact": {},
+        "innate": null,
+        "legendaryBudget": 0,
+        "features": {}
+      },
+      "turnFlags": {},
+      "statBlock": {
+        "slug": "bugbear"
+      }
+    },
+    "m-gob": {
+      "id": "m-gob",
+      "kind": "monster",
+      "side": "hostile",
+      "name": "Goblin",
+      "controller": {
+        "type": "ai",
+        "seatId": null
+      },
+      "pos": {
+        "col": 2,
+        "row": 3
+      },
+      "hp": 7,
+      "hpMax": 7,
+      "hpTemp": 0,
+      "ac": 15,
+      "speedFt": 30,
+      "conditions": [],
+      "concentration": null,
+      "resources": {
+        "reactionUsed": false,
+        "slots": {},
+        "pact": {},
+        "innate": null,
+        "legendaryBudget": 0,
+        "features": {}
+      },
+      "turnFlags": {},
+      "statBlock": {
+        "slug": "goblin"
+      }
+    }
+  },
+  "lastEventSeq": 0
+}

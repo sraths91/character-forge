@@ -1,0 +1,18 @@
+[
+  {
+    "t": "round.start"
+  },
+  {
+    "t": "turn.act",
+    "actorId": "pc-fighter",
+    "plan": {
+      "kind": "melee",
+      "targetId": "m-dragon",
+      "weaponName": "Longsword"
+    }
+  },
+  {
+    "t": "legendary",
+    "entityId": "m-dragon"
+  }
+]

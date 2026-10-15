@@ -1,0 +1,107 @@
+{
+  "v": 1,
+  "encounterId": "golden-pc-ai-turn",
+  "round": 0,
+  "turnIndex": 0,
+  "phase": "running",
+  "rng": {
+    "algo": "mulberry32",
+    "s": 1
+  },
+  "grid": {
+    "cols": 10,
+    "rows": 6,
+    "cellFt": 5,
+    "flankingEnabled": false
+  },
+  "map": null,
+  "initiative": [
+    {
+      "entityId": "pc-fighter",
+      "score": 20
+    },
+    {
+      "entityId": "m-gob",
+      "score": 19
+    }
+  ],
+  "entities": {
+    "pc-fighter": {
+      "id": "pc-fighter",
+      "kind": "pc",
+      "side": "party",
+      "name": "Fixture Fighter",
+      "controller": {
+        "type": "ai",
+        "seatId": null
+      },
+      "pos": {
+        "col": 2,
+        "row": 2
+      },
+      "hp": 44,
+      "hpMax": 44,
+      "hpTemp": 0,
+      "ac": 18,
+      "speedFt": 30,
+      "conditions": [],
+      "concentration": null,
+      "resources": {
+        "reactionUsed": false,
+        "slots": {},
+        "pact": {},
+        "innate": null,
+        "legendaryBudget": 0,
+        "features": {
+          "action-surge": {
+            "max": 1,
+            "spent": 0
+          },
+          "second-wind": {
+            "max": 1,
+            "spent": 0
+          }
+        }
+      },
+      "turnFlags": {},
+      "sheetRef": {
+        "characterId": "fighter-l5",
+        "rev": 1
+      }
+    },
+    "m-gob": {
+      "id": "m-gob",
+      "kind": "monster",
+      "side": "hostile",
+      "name": "Goblin",
+      "controller": {
+        "type": "ai",
+        "seatId": null
+      },
+      "pos": {
+        "col": 3,
+        "row": 2
+      },
+      "hp": 7,
+      "hpMax": 7,
+      "hpTemp": 0,
+      "ac": 15,
+      "speedFt": 30,
+      "conditions": [],
+      "concentration": null,
+      "resources": {
+        "reactionUsed": false,
+        "slots": {},
+        "pact": {},
+        "innate": null,
+        "legendaryBudget": 0,
+        "features": {}
+      },
+      "turnFlags": {},
+      "statBlock": {
+        "slug": "goblin"
+      }
+    }
+  },
+  "lastEventSeq": 0
+}

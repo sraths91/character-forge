@@ -1,0 +1,144 @@
+{
+  "v": 1,
+  "encounterId": "golden-downed-dm-sethp",
+  "round": 0,
+  "turnIndex": 0,
+  "phase": "running",
+  "rng": {
+    "algo": "mulberry32",
+    "s": 3
+  },
+  "grid": {
+    "cols": 10,
+    "rows": 6,
+    "cellFt": 5,
+    "flankingEnabled": false
+  },
+  "map": null,
+  "initiative": [
+    {
+      "entityId": "pc-fighter",
+      "score": 20
+    },
+    {
+      "entityId": "m-gob-a",
+      "score": 19
+    },
+    {
+      "entityId": "m-gob-b",
+      "score": 18
+    }
+  ],
+  "entities": {
+    "pc-fighter": {
+      "id": "pc-fighter",
+      "kind": "pc",
+      "side": "party",
+      "name": "Fixture Fighter",
+      "controller": {
+        "type": "ai",
+        "seatId": null
+      },
+      "pos": {
+        "col": 2,
+        "row": 2
+      },
+      "hp": 2,
+      "hpMax": 44,
+      "hpTemp": 0,
+      "ac": 18,
+      "speedFt": 30,
+      "conditions": [],
+      "concentration": null,
+      "resources": {
+        "reactionUsed": false,
+        "slots": {},
+        "pact": {},
+        "innate": null,
+        "legendaryBudget": 0,
+        "features": {
+          "action-surge": {
+            "max": 1,
+            "spent": 0
+          },
+          "second-wind": {
+            "max": 1,
+            "spent": 0
+          }
+        }
+      },
+      "turnFlags": {},
+      "sheetRef": {
+        "characterId": "fighter-l5",
+        "rev": 1
+      }
+    },
+    "m-gob-a": {
+      "id": "m-gob-a",
+      "kind": "monster",
+      "side": "hostile",
+      "name": "Goblin",
+      "controller": {
+        "type": "ai",
+        "seatId": null
+      },
+      "pos": {
+        "col": 3,
+        "row": 2
+      },
+      "hp": 7,
+      "hpMax": 7,
+      "hpTemp": 0,
+      "ac": 15,
+      "speedFt": 30,
+      "conditions": [],
+      "concentration": null,
+      "resources": {
+        "reactionUsed": false,
+        "slots": {},
+        "pact": {},
+        "innate": null,
+        "legendaryBudget": 0,
+        "features": {}
+      },
+      "turnFlags": {},
+      "statBlock": {
+        "slug": "goblin"
+      }
+    },
+    "m-gob-b": {
+      "id": "m-gob-b",
+      "kind": "monster",
+      "side": "hostile",
+      "name": "Goblin",
+      "controller": {
+        "type": "ai",
+        "seatId": null
+      },
+      "pos": {
+        "col": 2,
+        "row": 3
+      },
+      "hp": 7,
+      "hpMax": 7,
+      "hpTemp": 0,
+      "ac": 15,
+      "speedFt": 30,
+      "conditions": [],
+      "concentration": null,
+      "resources": {
+        "reactionUsed": false,
+        "slots": {},
+        "pact": {},
+        "innate": null,
+        "legendaryBudget": 0,
+        "features": {}
+      },
+      "turnFlags": {},
+      "statBlock": {
+        "slug": "goblin"
+      }
+    }
+  },
+  "lastEventSeq": 0
+}

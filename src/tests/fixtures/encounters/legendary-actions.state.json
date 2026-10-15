@@ -1,0 +1,113 @@
+{
+  "v": 1,
+  "encounterId": "golden-legendary-actions",
+  "round": 0,
+  "turnIndex": 0,
+  "phase": "running",
+  "rng": {
+    "algo": "mulberry32",
+    "s": 1
+  },
+  "grid": {
+    "cols": 10,
+    "rows": 6,
+    "cellFt": 5,
+    "flankingEnabled": false
+  },
+  "map": null,
+  "initiative": [
+    {
+      "entityId": "pc-fighter",
+      "score": 20
+    },
+    {
+      "entityId": "m-dragon",
+      "score": 19
+    }
+  ],
+  "entities": {
+    "pc-fighter": {
+      "id": "pc-fighter",
+      "kind": "pc",
+      "side": "party",
+      "name": "Fixture Fighter",
+      "controller": {
+        "type": "ai",
+        "seatId": null
+      },
+      "pos": {
+        "col": 3,
+        "row": 3
+      },
+      "hp": 44,
+      "hpMax": 44,
+      "hpTemp": 0,
+      "ac": 18,
+      "speedFt": 30,
+      "conditions": [],
+      "concentration": null,
+      "resources": {
+        "reactionUsed": false,
+        "slots": {},
+        "pact": {},
+        "innate": null,
+        "legendaryBudget": 0,
+        "features": {
+          "action-surge": {
+            "max": 1,
+            "spent": 0
+          },
+          "second-wind": {
+            "max": 1,
+            "spent": 0
+          }
+        }
+      },
+      "turnFlags": {},
+      "sheetRef": {
+        "characterId": "fighter-l5",
+        "rev": 1
+      }
+    },
+    "m-dragon": {
+      "id": "m-dragon",
+      "kind": "monster",
+      "side": "hostile",
+      "name": "Young Dragon",
+      "controller": {
+        "type": "ai",
+        "seatId": null
+      },
+      "pos": {
+        "col": 4,
+        "row": 3
+      },
+      "hp": 80,
+      "hpMax": 80,
+      "hpTemp": 0,
+      "ac": 17,
+      "speedFt": 30,
+      "conditions": [],
+      "concentration": null,
+      "resources": {
+        "reactionUsed": false,
+        "slots": {},
+        "pact": {},
+        "innate": {
+          "atWill": [],
+          "recharges": {
+            "fire-breath": true
+          },
+          "perDay": {}
+        },
+        "legendaryBudget": 3,
+        "features": {}
+      },
+      "turnFlags": {},
+      "statBlock": {
+        "slug": "young-dragon"
+      }
+    }
+  },
+  "lastEventSeq": 0
+}

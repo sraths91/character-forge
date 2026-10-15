@@ -1,0 +1,23 @@
+[
+  {
+    "t": "round.start"
+  },
+  {
+    "t": "turn.act",
+    "actorId": "m-dragon",
+    "plan": {
+      "kind": "cast",
+      "spellId": "fire-breath",
+      "castAtLevel": 0,
+      "innate": true,
+      "targetId": "pc-fighter"
+    }
+  },
+  {
+    "t": "round.start"
+  },
+  {
+    "t": "turn.delegate",
+    "actorId": "m-dragon"
+  }
+]

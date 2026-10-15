@@ -1,0 +1,21 @@
+[
+  {
+    "t": "round.start"
+  },
+  {
+    "t": "dm.roll.arm",
+    "p": {
+      "entityId": "m-gob",
+      "rollKind": "attack",
+      "value": 20
+    }
+  },
+  {
+    "t": "turn.act",
+    "actorId": "m-gob",
+    "plan": {
+      "kind": "attack",
+      "targetId": "pc-fighter"
+    }
+  }
+]

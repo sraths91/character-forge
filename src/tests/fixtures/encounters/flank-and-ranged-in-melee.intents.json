@@ -1,0 +1,32 @@
+[
+  {
+    "t": "round.start"
+  },
+  {
+    "t": "turn.act",
+    "actorId": "pc-fighter",
+    "plan": {
+      "kind": "melee",
+      "targetId": "m-bugbear",
+      "weaponName": "Longsword"
+    }
+  },
+  {
+    "t": "turn.act",
+    "actorId": "pc-wizard",
+    "plan": {
+      "kind": "ranged",
+      "targetId": "m-bugbear",
+      "weaponName": "Light Crossbow"
+    }
+  },
+  {
+    "t": "turn.act",
+    "actorId": "pc-cleric",
+    "plan": {
+      "kind": "melee",
+      "targetId": "m-bugbear",
+      "weaponName": "Mace"
+    }
+  }
+]

@@ -1,0 +1,17 @@
+[
+  {
+    "t": "round.start"
+  },
+  {
+    "t": "turn.act",
+    "actorId": "pc-fighter",
+    "plan": {
+      "kind": "melee",
+      "targetId": "m-bugbear",
+      "weaponName": "Longsword",
+      "features": [
+        "action-surge"
+      ]
+    }
+  }
+]

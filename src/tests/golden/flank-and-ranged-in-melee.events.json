@@ -1,0 +1,286 @@
+{
+  "scenario": "flank-and-ranged-in-melee",
+  "seed": 1,
+  "events": [
+    {
+      "seq": 1,
+      "type": "turn.started",
+      "round": 1,
+      "turnId": "t1",
+      "cinemaGroup": null,
+      "payload": {
+        "actorId": "pc-fighter"
+      }
+    },
+    {
+      "seq": 2,
+      "type": "plan.chosen",
+      "round": 1,
+      "turnId": "t1",
+      "cinemaGroup": null,
+      "payload": {
+        "actorId": "pc-fighter",
+        "kind": "melee",
+        "targetId": "m-bugbear",
+        "source": "player",
+        "weapon": "Longsword",
+        "spellId": null,
+        "castAtLevel": null,
+        "featuresFired": [],
+        "archetype": "manual"
+      }
+    },
+    {
+      "seq": 3,
+      "type": "damage",
+      "round": 1,
+      "turnId": "t1",
+      "cinemaGroup": null,
+      "payload": {
+        "sourceId": "pc-fighter",
+        "targetId": "m-bugbear",
+        "amount": 8,
+        "type": null,
+        "hpBefore": 27,
+        "hpAfter": 19
+      }
+    },
+    {
+      "seq": 4,
+      "type": "turn.ended",
+      "round": 1,
+      "turnId": "t1",
+      "cinemaGroup": null,
+      "payload": {
+        "actorId": "pc-fighter",
+        "stateHash": "198f2858",
+        "rngDraws": 3
+      }
+    },
+    {
+      "seq": 5,
+      "type": "turn.started",
+      "round": 1,
+      "turnId": "t2",
+      "cinemaGroup": null,
+      "payload": {
+        "actorId": "pc-wizard"
+      }
+    },
+    {
+      "seq": 6,
+      "type": "plan.chosen",
+      "round": 1,
+      "turnId": "t2",
+      "cinemaGroup": null,
+      "payload": {
+        "actorId": "pc-wizard",
+        "kind": "ranged",
+        "targetId": "m-bugbear",
+        "source": "player",
+        "weapon": "Light Crossbow",
+        "spellId": null,
+        "castAtLevel": null,
+        "featuresFired": [],
+        "archetype": "manual"
+      }
+    },
+    {
+      "seq": 7,
+      "type": "damage",
+      "round": 1,
+      "turnId": "t2",
+      "cinemaGroup": null,
+      "payload": {
+        "sourceId": "pc-wizard",
+        "targetId": "m-bugbear",
+        "amount": 10,
+        "type": null,
+        "hpBefore": 19,
+        "hpAfter": 9
+      }
+    },
+    {
+      "seq": 8,
+      "type": "turn.ended",
+      "round": 1,
+      "turnId": "t2",
+      "cinemaGroup": null,
+      "payload": {
+        "actorId": "pc-wizard",
+        "stateHash": "72a29642",
+        "rngDraws": 4
+      }
+    },
+    {
+      "seq": 9,
+      "type": "turn.started",
+      "round": 1,
+      "turnId": "t3",
+      "cinemaGroup": null,
+      "payload": {
+        "actorId": "pc-cleric"
+      }
+    },
+    {
+      "seq": 10,
+      "type": "plan.chosen",
+      "round": 1,
+      "turnId": "t3",
+      "cinemaGroup": null,
+      "payload": {
+        "actorId": "pc-cleric",
+        "kind": "melee",
+        "targetId": "m-bugbear",
+        "source": "player",
+        "weapon": "Mace",
+        "spellId": null,
+        "castAtLevel": null,
+        "featuresFired": [],
+        "archetype": "manual"
+      }
+    },
+    {
+      "seq": 11,
+      "type": "damage",
+      "round": 1,
+      "turnId": "t3",
+      "cinemaGroup": null,
+      "payload": {
+        "sourceId": "pc-cleric",
+        "targetId": "m-bugbear",
+        "amount": 8,
+        "type": null,
+        "hpBefore": 9,
+        "hpAfter": 1
+      }
+    },
+    {
+      "seq": 12,
+      "type": "turn.ended",
+      "round": 1,
+      "turnId": "t3",
+      "cinemaGroup": null,
+      "payload": {
+        "actorId": "pc-cleric",
+        "stateHash": "77ef4b18",
+        "rngDraws": 3
+      }
+    }
+  ],
+  "final": {
+    "m-bugbear": {
+      "hp": 1,
+      "pos": {
+        "col": 4,
+        "row": 2
+      },
+      "conditions": [],
+      "reactionUsed": false,
+      "slots": null,
+      "lvl1Pool": null,
+      "lvl3Pool": null,
+      "innate": null,
+      "legendaryBudget": 0,
+      "concentration": null,
+      "actionSurgeUsed": 0,
+      "secondWindUsed": false,
+      "shieldActive": false,
+      "damageDealt": 0
+    },
+    "m-gob": {
+      "hp": 7,
+      "pos": {
+        "col": 7,
+        "row": 3
+      },
+      "conditions": [],
+      "reactionUsed": false,
+      "slots": null,
+      "lvl1Pool": null,
+      "lvl3Pool": null,
+      "innate": null,
+      "legendaryBudget": 0,
+      "concentration": null,
+      "actionSurgeUsed": 0,
+      "secondWindUsed": false,
+      "shieldActive": false,
+      "damageDealt": 0
+    },
+    "pc-cleric": {
+      "hp": 38,
+      "pos": {
+        "col": 5,
+        "row": 2
+      },
+      "conditions": [],
+      "reactionUsed": false,
+      "slots": {
+        "1": 4,
+        "2": 3,
+        "3": 2,
+        "4": 0,
+        "5": 0
+      },
+      "lvl1Pool": 4,
+      "lvl3Pool": 2,
+      "innate": null,
+      "legendaryBudget": 0,
+      "concentration": null,
+      "actionSurgeUsed": 0,
+      "secondWindUsed": false,
+      "shieldActive": false,
+      "damageDealt": 8
+    },
+    "pc-fighter": {
+      "hp": 44,
+      "pos": {
+        "col": 3,
+        "row": 2
+      },
+      "conditions": [],
+      "reactionUsed": false,
+      "slots": {
+        "1": 0,
+        "2": 0,
+        "3": 0,
+        "4": 0,
+        "5": 0
+      },
+      "lvl1Pool": 0,
+      "lvl3Pool": 0,
+      "innate": null,
+      "legendaryBudget": 0,
+      "concentration": null,
+      "actionSurgeUsed": 0,
+      "secondWindUsed": false,
+      "shieldActive": false,
+      "damageDealt": 8
+    },
+    "pc-wizard": {
+      "hp": 32,
+      "pos": {
+        "col": 6,
+        "row": 3
+      },
+      "conditions": [],
+      "reactionUsed": false,
+      "slots": {
+        "1": 4,
+        "2": 3,
+        "3": 2,
+        "4": 0,
+        "5": 0
+      },
+      "lvl1Pool": 4,
+      "lvl3Pool": 2,
+      "innate": null,
+      "legendaryBudget": 0,
+      "concentration": null,
+      "actionSurgeUsed": 0,
+      "secondWindUsed": false,
+      "shieldActive": false,
+      "damageDealt": 10
+    }
+  }
+}

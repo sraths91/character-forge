@@ -1,0 +1,209 @@
+{
+  "scenario": "upcast-heal",
+  "seed": 1,
+  "events": [
+    {
+      "seq": 1,
+      "type": "turn.started",
+      "round": 1,
+      "turnId": "t1",
+      "cinemaGroup": null,
+      "payload": {
+        "actorId": "pc-cleric"
+      }
+    },
+    {
+      "seq": 2,
+      "type": "plan.chosen",
+      "round": 1,
+      "turnId": "t1",
+      "cinemaGroup": null,
+      "payload": {
+        "actorId": "pc-cleric",
+        "kind": "cast",
+        "targetId": "pc-fighter",
+        "source": "player",
+        "weapon": null,
+        "spellId": "cure-wounds",
+        "castAtLevel": 2,
+        "featuresFired": [],
+        "archetype": "manual"
+      }
+    },
+    {
+      "seq": 3,
+      "type": "resource.spent",
+      "round": 1,
+      "turnId": "t1",
+      "cinemaGroup": null,
+      "payload": {
+        "entityId": "pc-cleric",
+        "resource": "spell-slot",
+        "level": 2
+      }
+    },
+    {
+      "seq": 4,
+      "type": "heal",
+      "round": 1,
+      "turnId": "t1",
+      "cinemaGroup": null,
+      "payload": {
+        "sourceId": "pc-cleric",
+        "targetId": "pc-fighter",
+        "amount": 10,
+        "hpBefore": 10,
+        "hpAfter": 20
+      }
+    },
+    {
+      "seq": 5,
+      "type": "turn.ended",
+      "round": 1,
+      "turnId": "t1",
+      "cinemaGroup": null,
+      "payload": {
+        "actorId": "pc-cleric",
+        "stateHash": "c36ca886",
+        "rngDraws": 2
+      }
+    },
+    {
+      "seq": 6,
+      "type": "turn.started",
+      "round": 2,
+      "turnId": "t2",
+      "cinemaGroup": null,
+      "payload": {
+        "actorId": "pc-cleric"
+      }
+    },
+    {
+      "seq": 7,
+      "type": "plan.chosen",
+      "round": 2,
+      "turnId": "t2",
+      "cinemaGroup": null,
+      "payload": {
+        "actorId": "pc-cleric",
+        "kind": "cast",
+        "targetId": "pc-fighter",
+        "source": "player",
+        "weapon": null,
+        "spellId": "healing-word",
+        "castAtLevel": 3,
+        "featuresFired": [],
+        "archetype": "manual"
+      }
+    },
+    {
+      "seq": 8,
+      "type": "resource.spent",
+      "round": 2,
+      "turnId": "t2",
+      "cinemaGroup": null,
+      "payload": {
+        "entityId": "pc-cleric",
+        "resource": "spell-slot",
+        "level": 3
+      }
+    },
+    {
+      "seq": 9,
+      "type": "heal",
+      "round": 2,
+      "turnId": "t2",
+      "cinemaGroup": null,
+      "payload": {
+        "sourceId": "pc-cleric",
+        "targetId": "pc-fighter",
+        "amount": 14,
+        "hpBefore": 20,
+        "hpAfter": 34
+      }
+    },
+    {
+      "seq": 10,
+      "type": "turn.ended",
+      "round": 2,
+      "turnId": "t2",
+      "cinemaGroup": null,
+      "payload": {
+        "actorId": "pc-cleric",
+        "stateHash": "c0fd3f38",
+        "rngDraws": 3
+      }
+    }
+  ],
+  "final": {
+    "m-gob": {
+      "hp": 7,
+      "pos": {
+        "col": 8,
+        "row": 4
+      },
+      "conditions": [],
+      "reactionUsed": false,
+      "slots": null,
+      "lvl1Pool": null,
+      "lvl3Pool": null,
+      "innate": null,
+      "legendaryBudget": 0,
+      "concentration": null,
+      "actionSurgeUsed": 0,
+      "secondWindUsed": false,
+      "shieldActive": false,
+      "damageDealt": 0
+    },
+    "pc-cleric": {
+      "hp": 38,
+      "pos": {
+        "col": 2,
+        "row": 2
+      },
+      "conditions": [],
+      "reactionUsed": false,
+      "slots": {
+        "1": 4,
+        "2": 2,
+        "3": 1,
+        "4": 0,
+        "5": 0
+      },
+      "lvl1Pool": 4,
+      "lvl3Pool": 2,
+      "innate": null,
+      "legendaryBudget": 0,
+      "concentration": null,
+      "actionSurgeUsed": 0,
+      "secondWindUsed": false,
+      "shieldActive": false,
+      "damageDealt": 0
+    },
+    "pc-fighter": {
+      "hp": 34,
+      "pos": {
+        "col": 3,
+        "row": 2
+      },
+      "conditions": [],
+      "reactionUsed": false,
+      "slots": {
+        "1": 0,
+        "2": 0,
+        "3": 0,
+        "4": 0,
+        "5": 0
+      },
+      "lvl1Pool": 0,
+      "lvl3Pool": 0,
+      "innate": null,
+      "legendaryBudget": 0,
+      "concentration": null,
+      "actionSurgeUsed": 0,
+      "secondWindUsed": false,
+      "shieldActive": false,
+      "damageDealt": 0
+    }
+  }
+}

@@ -1,0 +1,244 @@
+{
+  "scenario": "downed-dm-sethp",
+  "seed": 3,
+  "events": [
+    {
+      "seq": 1,
+      "type": "turn.started",
+      "round": 1,
+      "turnId": "t1",
+      "cinemaGroup": null,
+      "payload": {
+        "actorId": "m-gob-a"
+      }
+    },
+    {
+      "seq": 2,
+      "type": "plan.chosen",
+      "round": 1,
+      "turnId": "t1",
+      "cinemaGroup": null,
+      "payload": {
+        "actorId": "m-gob-a",
+        "kind": "attack",
+        "targetId": "pc-fighter",
+        "source": "ai",
+        "weapon": null,
+        "spellId": null,
+        "castAtLevel": null,
+        "featuresFired": [],
+        "archetype": "nimble_skirmisher"
+      }
+    },
+    {
+      "seq": 3,
+      "type": "damage",
+      "round": 1,
+      "turnId": "t1",
+      "cinemaGroup": null,
+      "payload": {
+        "sourceId": "m-gob-a",
+        "targetId": "pc-fighter",
+        "amount": 2,
+        "type": null,
+        "hpBefore": 2,
+        "hpAfter": 0
+      }
+    },
+    {
+      "seq": 4,
+      "type": "entity.downed",
+      "round": 1,
+      "turnId": "t1",
+      "cinemaGroup": null,
+      "payload": {
+        "entityId": "pc-fighter"
+      }
+    },
+    {
+      "seq": 5,
+      "type": "turn.ended",
+      "round": 1,
+      "turnId": "t1",
+      "cinemaGroup": null,
+      "payload": {
+        "actorId": "m-gob-a",
+        "stateHash": "1feeadc8",
+        "rngDraws": 2
+      }
+    },
+    {
+      "seq": 6,
+      "type": "turn.started",
+      "round": 1,
+      "turnId": "t2",
+      "cinemaGroup": null,
+      "payload": {
+        "actorId": "m-gob-b"
+      }
+    },
+    {
+      "seq": 7,
+      "type": "plan.chosen",
+      "round": 1,
+      "turnId": "t2",
+      "cinemaGroup": null,
+      "payload": {
+        "actorId": "m-gob-b",
+        "kind": "attack",
+        "targetId": null,
+        "source": "ai",
+        "weapon": null,
+        "spellId": null,
+        "castAtLevel": null,
+        "featuresFired": [],
+        "archetype": "nimble_skirmisher"
+      }
+    },
+    {
+      "seq": 8,
+      "type": "turn.ended",
+      "round": 1,
+      "turnId": "t2",
+      "cinemaGroup": null,
+      "payload": {
+        "actorId": "m-gob-b",
+        "stateHash": "2991aa58",
+        "rngDraws": 0
+      }
+    },
+    {
+      "seq": 9,
+      "type": "dm.override",
+      "round": 1,
+      "turnId": null,
+      "cinemaGroup": null,
+      "payload": {
+        "kind": "hp",
+        "entityId": "pc-fighter",
+        "before": 0,
+        "after": 12
+      }
+    },
+    {
+      "seq": 10,
+      "type": "turn.started",
+      "round": 2,
+      "turnId": "t3",
+      "cinemaGroup": null,
+      "payload": {
+        "actorId": "pc-fighter"
+      }
+    },
+    {
+      "seq": 11,
+      "type": "plan.chosen",
+      "round": 2,
+      "turnId": "t3",
+      "cinemaGroup": null,
+      "payload": {
+        "actorId": "pc-fighter",
+        "kind": "melee",
+        "targetId": "m-gob-a",
+        "source": "player",
+        "weapon": "Longsword",
+        "spellId": null,
+        "castAtLevel": null,
+        "featuresFired": [],
+        "archetype": "manual"
+      }
+    },
+    {
+      "seq": 12,
+      "type": "damage",
+      "round": 2,
+      "turnId": "t3",
+      "cinemaGroup": null,
+      "payload": {
+        "sourceId": "pc-fighter",
+        "targetId": "m-gob-a",
+        "amount": 4,
+        "type": null,
+        "hpBefore": 7,
+        "hpAfter": 3
+      }
+    },
+    {
+      "seq": 13,
+      "type": "turn.ended",
+      "round": 2,
+      "turnId": "t3",
+      "cinemaGroup": null,
+      "payload": {
+        "actorId": "pc-fighter",
+        "stateHash": "e3c33e11",
+        "rngDraws": 2
+      }
+    }
+  ],
+  "final": {
+    "m-gob-a": {
+      "hp": 3,
+      "pos": {
+        "col": 3,
+        "row": 2
+      },
+      "conditions": [],
+      "reactionUsed": false,
+      "slots": null,
+      "lvl1Pool": null,
+      "lvl3Pool": null,
+      "innate": null,
+      "legendaryBudget": 0,
+      "concentration": null,
+      "actionSurgeUsed": 0,
+      "secondWindUsed": false,
+      "shieldActive": false,
+      "damageDealt": 3
+    },
+    "m-gob-b": {
+      "hp": 7,
+      "pos": {
+        "col": 2,
+        "row": 3
+      },
+      "conditions": [],
+      "reactionUsed": false,
+      "slots": null,
+      "lvl1Pool": null,
+      "lvl3Pool": null,
+      "innate": null,
+      "legendaryBudget": 0,
+      "concentration": null,
+      "actionSurgeUsed": 0,
+      "secondWindUsed": false,
+      "shieldActive": false,
+      "damageDealt": 0
+    },
+    "pc-fighter": {
+      "hp": 12,
+      "pos": {
+        "col": 2,
+        "row": 2
+      },
+      "conditions": [],
+      "reactionUsed": false,
+      "slots": {
+        "1": 0,
+        "2": 0,
+        "3": 0,
+        "4": 0,
+        "5": 0
+      },
+      "lvl1Pool": 0,
+      "lvl3Pool": 0,
+      "innate": null,
+      "legendaryBudget": 0,
+      "concentration": null,
+      "actionSurgeUsed": 0,
+      "secondWindUsed": false,
+      "shieldActive": false,
+      "damageDealt": 4
+    }
+  }
+}

@@ -1,0 +1,32 @@
+[
+  {
+    "t": "round.start"
+  },
+  {
+    "t": "turn.delegate",
+    "actorId": "m-gob-a"
+  },
+  {
+    "t": "turn.delegate",
+    "actorId": "m-gob-b"
+  },
+  {
+    "t": "dm.entity.patch",
+    "p": {
+      "entityId": "pc-fighter",
+      "hp": 12
+    }
+  },
+  {
+    "t": "round.start"
+  },
+  {
+    "t": "turn.act",
+    "actorId": "pc-fighter",
+    "plan": {
+      "kind": "melee",
+      "targetId": "m-gob-a",
+      "weaponName": "Longsword"
+    }
+  }
+]

@@ -1,0 +1,25 @@
+[
+  {
+    "t": "round.start"
+  },
+  {
+    "t": "turn.act",
+    "actorId": "m-fanatic-a",
+    "plan": {
+      "kind": "cast",
+      "spellId": "hold-person",
+      "castAtLevel": 2,
+      "targetId": "pc-fighter"
+    }
+  },
+  {
+    "t": "turn.act",
+    "actorId": "m-fanatic-b",
+    "plan": {
+      "kind": "cast",
+      "spellId": "hold-person",
+      "castAtLevel": 2,
+      "targetId": "pc-fighter"
+    }
+  }
+]

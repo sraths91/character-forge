@@ -1,0 +1,21 @@
+[
+  {
+    "t": "round.start"
+  },
+  {
+    "t": "turn.act",
+    "actorId": "m-bugbear",
+    "plan": {
+      "kind": "attack",
+      "targetId": "pc-wizard"
+    }
+  },
+  {
+    "t": "turn.act",
+    "actorId": "m-gob",
+    "plan": {
+      "kind": "attack",
+      "targetId": "pc-wizard"
+    }
+  }
+]

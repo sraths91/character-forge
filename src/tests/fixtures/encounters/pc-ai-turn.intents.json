@@ -1,0 +1,9 @@
+[
+  {
+    "t": "round.start"
+  },
+  {
+    "t": "turn.delegate",
+    "actorId": "pc-fighter"
+  }
+]

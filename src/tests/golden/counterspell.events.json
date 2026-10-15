@@ -1,0 +1,291 @@
+{
+  "scenario": "counterspell",
+  "seed": 7,
+  "events": [
+    {
+      "seq": 1,
+      "type": "turn.started",
+      "round": 1,
+      "turnId": "t1",
+      "cinemaGroup": null,
+      "payload": {
+        "actorId": "m-fanatic-a"
+      }
+    },
+    {
+      "seq": 2,
+      "type": "plan.chosen",
+      "round": 1,
+      "turnId": "t1",
+      "cinemaGroup": null,
+      "payload": {
+        "actorId": "m-fanatic-a",
+        "kind": "cast",
+        "targetId": "pc-fighter",
+        "source": "dm",
+        "weapon": null,
+        "spellId": "hold-person",
+        "castAtLevel": 2,
+        "featuresFired": [],
+        "archetype": "manual"
+      }
+    },
+    {
+      "seq": 3,
+      "type": "move",
+      "round": 1,
+      "turnId": "t1",
+      "cinemaGroup": null,
+      "payload": {
+        "actorId": "m-fanatic-a",
+        "from": {
+          "col": 7,
+          "row": 2
+        },
+        "to": {
+          "col": 3,
+          "row": 2
+        }
+      }
+    },
+    {
+      "seq": 4,
+      "type": "resource.spent",
+      "round": 1,
+      "turnId": "t1",
+      "cinemaGroup": null,
+      "payload": {
+        "entityId": "m-fanatic-a",
+        "resource": "spell-slot",
+        "level": 2
+      }
+    },
+    {
+      "seq": 5,
+      "type": "resource.spent",
+      "round": 1,
+      "turnId": "t1",
+      "cinemaGroup": null,
+      "payload": {
+        "entityId": "pc-wizard",
+        "resource": "reaction",
+        "level": null
+      }
+    },
+    {
+      "seq": 6,
+      "type": "resource.spent",
+      "round": 1,
+      "turnId": "t1",
+      "cinemaGroup": null,
+      "payload": {
+        "entityId": "pc-wizard",
+        "resource": "counterspell-pool",
+        "level": 3
+      }
+    },
+    {
+      "seq": 7,
+      "type": "turn.ended",
+      "round": 1,
+      "turnId": "t1",
+      "cinemaGroup": null,
+      "payload": {
+        "actorId": "m-fanatic-a",
+        "stateHash": "da33d88b",
+        "rngDraws": 0
+      }
+    },
+    {
+      "seq": 8,
+      "type": "turn.started",
+      "round": 1,
+      "turnId": "t2",
+      "cinemaGroup": null,
+      "payload": {
+        "actorId": "m-fanatic-b"
+      }
+    },
+    {
+      "seq": 9,
+      "type": "plan.chosen",
+      "round": 1,
+      "turnId": "t2",
+      "cinemaGroup": null,
+      "payload": {
+        "actorId": "m-fanatic-b",
+        "kind": "cast",
+        "targetId": "pc-fighter",
+        "source": "dm",
+        "weapon": null,
+        "spellId": "hold-person",
+        "castAtLevel": 2,
+        "featuresFired": [],
+        "archetype": "manual"
+      }
+    },
+    {
+      "seq": 10,
+      "type": "move",
+      "round": 1,
+      "turnId": "t2",
+      "cinemaGroup": null,
+      "payload": {
+        "actorId": "m-fanatic-b",
+        "from": {
+          "col": 7,
+          "row": 4
+        },
+        "to": {
+          "col": 3,
+          "row": 0
+        }
+      }
+    },
+    {
+      "seq": 11,
+      "type": "concentration.started",
+      "round": 1,
+      "turnId": "t2",
+      "cinemaGroup": null,
+      "payload": {
+        "casterId": "m-fanatic-b",
+        "spellId": "hold-person"
+      }
+    },
+    {
+      "seq": 12,
+      "type": "resource.spent",
+      "round": 1,
+      "turnId": "t2",
+      "cinemaGroup": null,
+      "payload": {
+        "entityId": "m-fanatic-b",
+        "resource": "spell-slot",
+        "level": 2
+      }
+    },
+    {
+      "seq": 13,
+      "type": "condition.applied",
+      "round": 1,
+      "turnId": "t2",
+      "cinemaGroup": null,
+      "payload": {
+        "entityId": "pc-fighter",
+        "condition": "paralyzed",
+        "sourceId": "m-fanatic-b"
+      }
+    },
+    {
+      "seq": 14,
+      "type": "turn.ended",
+      "round": 1,
+      "turnId": "t2",
+      "cinemaGroup": null,
+      "payload": {
+        "actorId": "m-fanatic-b",
+        "stateHash": "7e7d7c05",
+        "rngDraws": 1
+      }
+    }
+  ],
+  "final": {
+    "m-fanatic-a": {
+      "hp": 33,
+      "pos": {
+        "col": 3,
+        "row": 2
+      },
+      "conditions": [],
+      "reactionUsed": false,
+      "slots": {
+        "1": 4,
+        "2": 2
+      },
+      "lvl1Pool": null,
+      "lvl3Pool": null,
+      "innate": null,
+      "legendaryBudget": 0,
+      "concentration": null,
+      "actionSurgeUsed": 0,
+      "secondWindUsed": false,
+      "shieldActive": false,
+      "damageDealt": 0
+    },
+    "m-fanatic-b": {
+      "hp": 33,
+      "pos": {
+        "col": 3,
+        "row": 0
+      },
+      "conditions": [],
+      "reactionUsed": false,
+      "slots": {
+        "1": 4,
+        "2": 2
+      },
+      "lvl1Pool": null,
+      "lvl3Pool": null,
+      "innate": null,
+      "legendaryBudget": 0,
+      "concentration": "hold-person",
+      "actionSurgeUsed": 0,
+      "secondWindUsed": false,
+      "shieldActive": false,
+      "damageDealt": 0
+    },
+    "pc-fighter": {
+      "hp": 44,
+      "pos": {
+        "col": 2,
+        "row": 2
+      },
+      "conditions": [
+        "paralyzed"
+      ],
+      "reactionUsed": false,
+      "slots": {
+        "1": 0,
+        "2": 0,
+        "3": 0,
+        "4": 0,
+        "5": 0
+      },
+      "lvl1Pool": 0,
+      "lvl3Pool": 0,
+      "innate": null,
+      "legendaryBudget": 0,
+      "concentration": null,
+      "actionSurgeUsed": 0,
+      "secondWindUsed": false,
+      "shieldActive": false,
+      "damageDealt": 0
+    },
+    "pc-wizard": {
+      "hp": 32,
+      "pos": {
+        "col": 1,
+        "row": 3
+      },
+      "conditions": [],
+      "reactionUsed": true,
+      "slots": {
+        "1": 4,
+        "2": 3,
+        "3": 2,
+        "4": 0,
+        "5": 0
+      },
+      "lvl1Pool": 4,
+      "lvl3Pool": 1,
+      "innate": null,
+      "legendaryBudget": 0,
+      "concentration": null,
+      "actionSurgeUsed": 0,
+      "secondWindUsed": false,
+      "shieldActive": false,
+      "damageDealt": 0
+    }
+  }
+}

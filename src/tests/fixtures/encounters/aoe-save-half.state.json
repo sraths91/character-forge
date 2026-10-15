@@ -1,0 +1,215 @@
+{
+  "v": 1,
+  "encounterId": "golden-aoe-save-half",
+  "round": 0,
+  "turnIndex": 0,
+  "phase": "running",
+  "rng": {
+    "algo": "mulberry32",
+    "s": 1
+  },
+  "grid": {
+    "cols": 10,
+    "rows": 7,
+    "cellFt": 5,
+    "flankingEnabled": false
+  },
+  "map": null,
+  "initiative": [
+    {
+      "entityId": "pc-fighter",
+      "score": 20
+    },
+    {
+      "entityId": "pc-cleric",
+      "score": 19
+    },
+    {
+      "entityId": "pc-wizard",
+      "score": 18
+    },
+    {
+      "entityId": "m-dragon",
+      "score": 17
+    }
+  ],
+  "entities": {
+    "pc-fighter": {
+      "id": "pc-fighter",
+      "kind": "pc",
+      "side": "party",
+      "name": "Fixture Fighter",
+      "controller": {
+        "type": "ai",
+        "seatId": null
+      },
+      "pos": {
+        "col": 3,
+        "row": 3
+      },
+      "hp": 44,
+      "hpMax": 44,
+      "hpTemp": 0,
+      "ac": 18,
+      "speedFt": 30,
+      "conditions": [],
+      "concentration": null,
+      "resources": {
+        "reactionUsed": false,
+        "slots": {},
+        "pact": {},
+        "innate": null,
+        "legendaryBudget": 0,
+        "features": {
+          "action-surge": {
+            "max": 1,
+            "spent": 0
+          },
+          "second-wind": {
+            "max": 1,
+            "spent": 0
+          }
+        }
+      },
+      "turnFlags": {},
+      "sheetRef": {
+        "characterId": "fighter-l5",
+        "rev": 1
+      }
+    },
+    "pc-cleric": {
+      "id": "pc-cleric",
+      "kind": "pc",
+      "side": "party",
+      "name": "Fixture Cleric",
+      "controller": {
+        "type": "ai",
+        "seatId": null
+      },
+      "pos": {
+        "col": 5,
+        "row": 3
+      },
+      "hp": 38,
+      "hpMax": 38,
+      "hpTemp": 0,
+      "ac": 18,
+      "speedFt": 30,
+      "conditions": [],
+      "concentration": null,
+      "resources": {
+        "reactionUsed": false,
+        "slots": {
+          "1": {
+            "max": 4,
+            "spent": 0
+          },
+          "2": {
+            "max": 3,
+            "spent": 0
+          },
+          "3": {
+            "max": 2,
+            "spent": 0
+          }
+        },
+        "pact": {},
+        "innate": null,
+        "legendaryBudget": 0,
+        "features": {}
+      },
+      "turnFlags": {},
+      "sheetRef": {
+        "characterId": "cleric-l5",
+        "rev": 1
+      }
+    },
+    "pc-wizard": {
+      "id": "pc-wizard",
+      "kind": "pc",
+      "side": "party",
+      "name": "Fixture Wizard",
+      "controller": {
+        "type": "ai",
+        "seatId": null
+      },
+      "pos": {
+        "col": 4,
+        "row": 5
+      },
+      "hp": 32,
+      "hpMax": 32,
+      "hpTemp": 0,
+      "ac": 12,
+      "speedFt": 30,
+      "conditions": [],
+      "concentration": null,
+      "resources": {
+        "reactionUsed": false,
+        "slots": {
+          "1": {
+            "max": 4,
+            "spent": 0
+          },
+          "2": {
+            "max": 3,
+            "spent": 0
+          },
+          "3": {
+            "max": 2,
+            "spent": 0
+          }
+        },
+        "pact": {},
+        "innate": null,
+        "legendaryBudget": 0,
+        "features": {}
+      },
+      "turnFlags": {},
+      "sheetRef": {
+        "characterId": "wizard-l5",
+        "rev": 1
+      }
+    },
+    "m-dragon": {
+      "id": "m-dragon",
+      "kind": "monster",
+      "side": "hostile",
+      "name": "Young Dragon",
+      "controller": {
+        "type": "ai",
+        "seatId": null
+      },
+      "pos": {
+        "col": 4,
+        "row": 3
+      },
+      "hp": 80,
+      "hpMax": 80,
+      "hpTemp": 0,
+      "ac": 17,
+      "speedFt": 30,
+      "conditions": [],
+      "concentration": null,
+      "resources": {
+        "reactionUsed": false,
+        "slots": {},
+        "pact": {},
+        "innate": {
+          "atWill": [],
+          "recharges": {
+            "fire-breath": true
+          },
+          "perDay": {}
+        },
+        "legendaryBudget": 3,
+        "features": {}
+      },
+      "turnFlags": {},
+      "statBlock": {
+        "slug": "young-dragon"
+      }
+    }
+  },
+  "lastEventSeq": 0
+}
