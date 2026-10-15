@@ -77,7 +77,7 @@ Three layers stack on top of each other for action selection:
 
 1. **Utility AI** (M32 / M42) — per-target considerations × weights
    produce a per-option score. Defined declaratively per archetype
-   in `src/js/scene/ai/pc-profiles.js` and `monster-profiles.js`.
+   in `src/js/scene/ai/pc-profiles.js` and `ai/profiles.js`.
 
 2. **Class features** (M42.1) — `pc-features.js` lists Sneak Attack,
    Action Surge, Second Wind, Cunning Action, Divine Smite, and

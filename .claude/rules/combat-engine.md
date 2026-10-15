@@ -17,7 +17,7 @@ auto-fight (`runVersusPartyAuto` in `main.js`), and manual canvas clicks
 - **Do NOT add helpers to `main.js` for combat resolution** — those belong in
   `combat-engine.js` or `ai/pc-action.js`.
 - Action selection stacks three layers: utility AI (declarative per-archetype
-  weights in `ai/pc-profiles.js` / `ai/monster-profiles.js`), class features
+  weights in `ai/pc-profiles.js` / `ai/profiles.js`), class features
   (`ai/pc-features.js` — each defines `available()`, `scoreBoost()`,
   `consume()`), and MCTS for resource decisions (`ai/mcts.js`, shallow rollouts
   refining which slot to burn; `pickUpcastTier` in `pc-action.js`).
