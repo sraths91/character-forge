@@ -218,17 +218,13 @@ async function resolveTurn(attacker, enemies, allies, scene, rng, prompts, ctx) 
   // display/movement weapon (attacker.weapon) so a chosen weapon drives
   // reach, the to-hit/damage in the log, and the cinema.
   if (plan?.weapon) { attacker._chosenWeapon = plan.weapon; attacker.weapon = plan.weapon; }
+  // Every plan (player, DM or AI) names its side: an ally-targeted plan
+  // (Healing Word, Cure Wounds) resolves among the allies. M64 round 3 —
+  // AI heal plans used to be looked up among the enemies and never landed.
   let target;
-  if (explicit) {
-    // A player / DM plan names its side explicitly.
-    if (plan.targetSide === 'ally') target = allies.find(a => sameId(a.id, plan.targetId));
-    else if (plan.targetId != null) target = enemies.find(e => sameId(e.id, plan.targetId));
-    else target = pickTarget(enemies);
-  } else if (plan?.targetId) {
-    target = enemies.find(e => sameId(e.id, plan.targetId));
-  } else {
-    target = pickTarget(enemies);
-  }
+  if (plan?.targetSide === 'ally') target = allies.find(a => sameId(a.id, plan.targetId));
+  else if (plan?.targetId != null) target = enemies.find(e => sameId(e.id, plan.targetId));
+  else target = pickTarget(enemies);
   if (plan && canEmit(ctx)) {
     emitEvent(ctx, 'plan.chosen', {
       actorId, kind: String(plan.kind), targetId: plan.targetId != null ? String(plan.targetId) : null,
@@ -262,7 +258,10 @@ async function resolveTurn(attacker, enemies, allies, scene, rng, prompts, ctx) 
   // toward it, and skips the attack roll this turn.
   const attackerPos = attacker._position || attacker.position;
   const targetPos   = target._position   || target.position;
-  if (attackerPos && targetPos) {
+  // An AI ally-targeted cast does not walk toward the ally: the planner
+  // only offers it in range. Player / DM plans move as before.
+  const staysPut = healsAlly && !explicit;
+  if (attackerPos && targetPos && !staysPut) {
     const weapon = attacker.kind === 'pc' ? attacker.weapon : { name: attacker.attack?.name };
     const occupied = occupiedCellsOf({
       party: allies, monsters: enemies,
@@ -371,11 +370,7 @@ async function resolveTurn(attacker, enemies, allies, scene, rng, prompts, ctx) 
 
   // M34 — Casting branch.
   if (plan && plan.kind === 'cast') {
-    let castTarget = target;
-    if (plan.targetSide === 'ally') {
-      castTarget = allies.find(a => sameId(a.id, plan.targetId)) || null;
-    }
-    if (!castTarget) return;
+    const castTarget = target;
     if (attacker.kind === 'pc' && !attacker._slots) {
       attacker._slots = slotsForPc(attacker.ref || attacker);
     }
