@@ -107,9 +107,7 @@ export function parseCharacter(raw) {
     // Note: skinTone is intentionally NOT set here. The renderer's
     // inferSkinTone() consults character.appearance.skin first (via the
     // E1 appearance-parser) and falls back to a race default — setting
-    // a race-derived tone here would mask appearance overrides. The
-    // legacy export of deriveSkinTone is kept for any callers that
-    // want a quick race-based hint without the full pipeline.
+    // a race-derived tone here would mask appearance overrides.
     visualHints: deriveVisualHints({ feats, equipment, abilityScores }),
     // Phase E1 — physical appearance free-text fields from D&DB. The sprite
     // renderer's appearance-parser consumes these to override race defaults.
@@ -215,19 +213,6 @@ function parseTraits(raw) {
     appearance: trim(t.appearance),
     backstory:  trim(raw.notes?.backstory) || trim(t.backstory)
   };
-}
-
-function deriveSkinTone(race) {
-  const name = String(race?.name || race?.base || '').toLowerCase();
-  if (name.includes('drow') || name.includes('dark elf') || name.includes('duergar')) return 'ashen';
-  if (name.includes('orc') || name.includes('hobgoblin') || name.includes('goblin') || name.includes('bugbear')) return 'green';
-  if (name.includes('tiefling')) return 'red';
-  if (name.includes('triton') || name.includes('sea elf')) return 'blue';
-  if (name.includes('halfling') || name.includes('hill dwarf') || name.includes('gnome')) return 'tan';
-  if (name.includes('mountain dwarf')) return 'tan';
-  if (name.includes('dragonborn')) return 'olive';
-  if (name.includes('aasimar') || name.includes('high elf')) return 'pale';
-  return 'light';
 }
 
 function parseRace(raw) {
