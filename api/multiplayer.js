@@ -41,6 +41,12 @@ export async function startMultiplayerServer({
   let gateway = null;
   const srv = await startServer({
     db, env, dataDir, port, host, log, app, ...serverOpts,
+    // Graceful shutdown v2 (B9, P0-12), in plan order: rooms stop taking
+    // intents and persist what is buffered (every turn end and DM edit is
+    // already snapshotted; an in-flight turn re-runs on boot), broadcast
+    // room.closing and close sockets 1012; the gateway waits briefly for
+    // the close handshakes and terminates stragglers; then start.js runs
+    // server.close and closes the DB (WAL checkpoint).
     onClose: async () => {
       registry.shutdown();
       if (gateway) await gateway.close();
