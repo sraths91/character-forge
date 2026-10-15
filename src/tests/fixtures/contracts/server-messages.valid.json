@@ -1,0 +1,22 @@
+[
+  { "v": 1, "t": "hello.ok", "ts": 1760400000000, "p": { "memberId": "mem_1", "role": "player", "seats": [{ "characterId": "fighter-l5" }], "serverNow": 1760400000000, "cfg": { "reactionMs": 20000 } } },
+  { "v": 1, "t": "room.snapshot", "ts": 1760400000001, "p": { "seq": 41, "room": { "code": "7K3QWX", "status": "in-encounter" }, "encounter": null, "openPrompt": null, "history": [] } },
+  { "v": 1, "t": "ack", "ts": 1760400000002, "p": { "cid": "c06", "ok": true } },
+  { "v": 1, "t": "error", "ts": 1760400000003, "p": { "cid": "c06", "code": "E_STALE", "message": "turn t6 is over" } },
+  { "v": 1, "t": "prompt.open", "ts": 1760400000004, "p": { "promptId": "pr_1", "kind": "shield", "payload": { "attackTotal": 15, "ac": 12 }, "autoAnswer": true, "deadlineAt": 1760400020004, "serverNow": 1760400000004 } },
+  { "v": 1, "t": "prompt.closed", "ts": 1760400000005, "p": { "promptId": "pr_1", "reason": "answered" } },
+  { "v": 1, "t": "turn.planProposed", "ts": 1760400000006, "p": { "entityId": "m-goblin", "plan": { "kind": "attack", "targetId": "pc-wizard" }, "breakdown": [{ "name": "lowHp", "score": 0.4 }] } },
+  { "v": 1, "t": "member.joined", "seq": 1, "ts": 1760400000007, "p": { "memberId": "mem_2", "displayName": "Robin" } },
+  { "v": 1, "t": "member.left", "seq": 2, "ts": 1760400000008, "p": { "memberId": "mem_2" } },
+  { "v": 1, "t": "member.presence", "seq": 3, "ts": 1760400000009, "p": { "memberId": "mem_2", "online": false } },
+  { "v": 1, "t": "seat.updated", "seq": 4, "ts": 1760400000010, "p": { "characterId": "fighter-l5", "memberId": "mem_1", "controller": "player" } },
+  { "v": 1, "t": "encounter.created", "seq": 5, "ts": 1760400000011, "p": { "encounterId": "enc_fixture_01", "grid": { "cols": 12, "rows": 8 } } },
+  { "v": 1, "t": "encounter.initiative", "seq": 6, "ts": 1760400000012, "p": { "order": [{ "entityId": "pc-fighter", "score": 17 }] } },
+  { "v": 1, "t": "round.started", "seq": 7, "ts": 1760400000013, "p": { "round": 1 } },
+  { "v": 1, "t": "entity.updated", "seq": 8, "ts": 1760400000014, "p": { "entityId": "pc-fighter", "patch": { "hp": 12 }, "cause": "dm.entity.patch" } },
+  { "v": 1, "t": "room.status", "seq": 9, "ts": 1760400000015, "p": { "status": "paused" } },
+  { "v": 1, "t": "room.closing", "seq": 10, "ts": 1760400000016, "p": { "reason": "server-restarting" } },
+  { "v": 1, "t": "redacted", "seq": 11, "ts": 1760400000017, "p": { "type": "dm.override" } },
+  { "v": 1, "t": "attack.rolled", "seq": 12, "ts": 1760400000018, "p": { "seq": 12, "type": "attack.rolled", "round": 1, "turnId": "t1", "cinemaGroup": "x2", "payload": { "attackerId": "pc-fighter", "targetId": "m-goblin", "weapon": "Longsword", "isReaction": false, "advantage": "normal", "d20": [17], "kept": 17, "bonus": 6, "total": 23, "ac": 15, "hit": true, "crit": false, "shielded": false } } },
+  { "v": 1, "t": "turn.ended", "seq": 13, "ts": 1760400000019, "p": { "seq": 13, "type": "turn.ended", "round": 1, "turnId": "t1", "cinemaGroup": null, "payload": { "actorId": "pc-fighter", "stateHash": "9f2c11aa" } } }
+]
