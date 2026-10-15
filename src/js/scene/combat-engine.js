@@ -256,6 +256,7 @@ export async function runOneAttack(attacker, enemies, allies, scene, rng, prompt
   // use the preset attack record directly. M42 weapon-switch is honored
   // via attacker._chosenWeapon (set by the planner above).
   let attackStats;
+  let sneakDice = 0;
   if (attacker.kind === 'pc') {
     const chosen = attacker._chosenWeapon || attacker.weapon;
     const a = deriveWeaponAttack(attacker.ref, chosen);
@@ -264,11 +265,12 @@ export async function runOneAttack(attacker, enemies, allies, scene, rng, prompt
       parts: [{ source: chosen?.name || 'Attack', value: a.bonus }],
       damageParts: []
     };
-    // M42 — Sneak Attack
+    // M42 — Sneak Attack. M64 R1 — the extra dice are appended AFTER the
+    // resolver (below) so its flat combatMods damage fold still sees a
+    // single-term spec; rollDamage handles the multi-term result.
     if (plan?.featuresFired?.includes('sneak-attack')) {
       const lvl = (attacker.ref.classes || []).find(c => /rogue/i.test(c.name))?.level || 1;
-      const saDice = Math.max(1, Math.ceil(lvl / 2));
-      attackStats.dice = `${attackStats.dice}+${saDice}d6`;
+      sneakDice = Math.max(1, Math.ceil(lvl / 2));
       PC_FEATURES['sneak-attack'].consume(attacker);
     }
     // M42.1 — Reckless Attack
@@ -330,7 +332,9 @@ export async function runOneAttack(attacker, enemies, allies, scene, rng, prompt
   if (verdict.autoMiss) return;
 
   const finalBonus = verdict.attackBonus.total;
-  const finalDmgDice = verdict.damage.dice;
+  const finalDmgDice = sneakDice > 0
+    ? `${verdict.damage.dice}+${sneakDice}d6`
+    : verdict.damage.dice;
   let atk;
   if (verdict.autoCrit) {
     atk = { hit: true, crit: true, total: 20 + finalBonus };

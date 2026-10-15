@@ -8,6 +8,9 @@
  * Conventions:
  *   - `advantage`: 'normal' | 'advantage' | 'disadvantage'
  *   - dice strings: '1d8+3', '2d6-1', 'd20', '4d4' (count optional, mod optional)
+ *     and, since M64 R1, multi-term expressions such as '1d8+3+3d6'
+ *     (weapon + Sneak Attack) or '2d6+1d4-1'. Every dice term is rolled;
+ *     a crit doubles the dice of EVERY term, never the flat modifiers.
  *   - Natural 20 on the to-hit die = automatic hit and critical
  *   - Natural 1  on the to-hit die = automatic miss (no damage rolled)
  */
@@ -31,20 +34,65 @@ export function parseDice(spec) {
   return { count, sides, mod };
 }
 
+const TERM_RE = /^(\d*)d(\d+)$|^(\d+)$/i;
+
+/**
+ * M64 R1 — Parse a multi-term dice expression ('1d8+3+3d6', '2d6-1d4+2')
+ * into `{ terms: [{count, sides, sign}], mod }`. Single-term specs parse
+ * to one term, so every existing spec rolls exactly as before. Returns
+ * null on invalid input.
+ *
+ * @param {string} spec
+ * @returns {{terms: {count: number, sides: number, sign: 1|-1}[], mod: number}|null}
+ */
+export function parseDiceExpr(spec) {
+  if (typeof spec !== 'string') return null;
+  const compact = spec.replace(/\s+/g, '');
+  if (!compact) return null;
+  const parts = compact.match(/[+-]?[^+-]+/g);
+  if (!parts || parts.join('') !== compact) return null;
+  const terms = [];
+  let mod = 0;
+  for (const raw of parts) {
+    const sign = raw.startsWith('-') ? -1 : 1;
+    const body = raw.replace(/^[+-]/, '');
+    const m = body.match(TERM_RE);
+    if (!m) return null;
+    if (m[3] !== undefined) { mod += sign * parseInt(m[3], 10); continue; }
+    const count = m[1] ? parseInt(m[1], 10) : 1;
+    const sides = parseInt(m[2], 10);
+    if (count < 1 || count > 100 || sides < 2 || sides > 1000) return null;
+    terms.push({ count, sides, sign });
+  }
+  if (terms.length === 0) return null;
+  return { terms, mod };
+}
+
 /**
  * Roll a dice spec. Returns { total, rolls, mod, spec } where `rolls` is
- * the array of raw face values (length === count). The total includes mod.
+ * the array of raw face values in term order. The total includes mod.
+ * Multi-term specs ('1d8+3+3d6') are supported (M64 R1).
  */
 export function rollDice(spec, rng) {
   requireRng(rng, 'rollDice');
-  const parsed = parseDice(spec);
+  const parsed = parseDiceExpr(spec);
   if (!parsed) return { total: 0, rolls: [], mod: 0, spec };
-  const rolls = [];
-  for (let i = 0; i < parsed.count; i++) {
-    rolls.push(1 + Math.floor(rng() * parsed.sides));
-  }
-  const sum = rolls.reduce((a, b) => a + b, 0);
+  const { rolls, sum } = rollTerms(parsed.terms, 1, rng);
   return { total: sum + parsed.mod, rolls, mod: parsed.mod, spec };
+}
+
+// Roll every term `mult` times its count (mult 2 = crit), in term order.
+function rollTerms(terms, mult, rng) {
+  const rolls = [];
+  let sum = 0;
+  for (const t of terms) {
+    for (let i = 0; i < t.count * mult; i++) {
+      const face = 1 + Math.floor(rng() * t.sides);
+      rolls.push(face);
+      sum += t.sign * face;
+    }
+  }
+  return { rolls, sum };
 }
 
 /**
@@ -79,20 +127,17 @@ export function rollAttack({ bonus = 0, advantage = 'normal', targetAC = 10 }, r
 }
 
 /**
- * Roll damage from a dice spec. On a crit, every die is rolled twice and
- * summed (5e RAW); the flat modifier is NOT doubled. Returns the same
- * shape as rollDice plus a `crit` flag.
+ * Roll damage from a dice spec. On a crit, every die of every term is
+ * rolled twice and summed (5e RAW, PHB p196: "roll all of the attack's
+ * damage dice twice"); flat modifiers are NOT doubled. Multi-term specs
+ * ('1d8+3+3d6') are supported (M64 R1). Returns the same shape as
+ * rollDice plus a `crit` flag.
  */
 export function rollDamage(spec, { crit = false } = {}, rng) {
   requireRng(rng, 'rollDamage');
-  const parsed = parseDice(spec);
+  const parsed = parseDiceExpr(spec);
   if (!parsed) return { total: 0, rolls: [], mod: 0, spec, crit };
-  const dieCount = crit ? parsed.count * 2 : parsed.count;
-  const rolls = [];
-  for (let i = 0; i < dieCount; i++) {
-    rolls.push(1 + Math.floor(rng() * parsed.sides));
-  }
-  const sum = rolls.reduce((a, b) => a + b, 0);
+  const { rolls, sum } = rollTerms(parsed.terms, crit ? 2 : 1, rng);
   // Floor at 1 — D&D damage is never less than 1 even with big negative mods
   const total = Math.max(1, sum + parsed.mod);
   return { total, rolls, mod: parsed.mod, spec, crit };
