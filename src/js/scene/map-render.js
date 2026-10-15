@@ -22,6 +22,7 @@ import { generateMapModel } from './map-generator.js';
 import { makeValueNoise2D, fbm2D } from './noise.js';
 import { applyAtmosphere } from './map-grade.js';
 import { getHeroSprite, HERO_CONTENT_FRACTION } from './hero-sprites.js';
+import { imageSourceRect } from '../map/calibration.js';
 
 /**
  * Paint a full generated map for `scene` onto `ctx`.
@@ -66,6 +67,84 @@ export function paintMapModel(ctx, model, { cellPx } = {}) {
   // M50 Phase A — cinematic finishing pass (grade + sun + bloom). Runs
   // once inside the cached offscreen paint; safe no-op on a headless ctx.
   applyAtmosphere(ctx, model, model.cols * px, model.rows * px);
+}
+
+/* =====================================================================
+ * M64 M3 — image backgrounds + grid lines (shared by every map kind)
+ * ===================================================================== */
+
+/**
+ * Paint an uploaded map image under a cols × rows world grid.
+ *
+ * Calibrated maps (`map.calib`) draw one source rect so the painted grid
+ * lines land exactly on the game grid. Uncalibrated (legacy local) images
+ * keep the old cover-fit so existing scenes look unchanged.
+ *
+ * @param {CanvasRenderingContext2D} ctx
+ * @param {CanvasImageSource} img
+ * @param {{calib?: {cellPx: number, offsetX: number, offsetY: number}, imgW?: number, imgH?: number}} map
+ * @param {number} cols
+ * @param {number} rows
+ * @param {number} cellPx — world units per cell
+ * @returns {boolean} true when something was drawn
+ */
+export function drawMapImage(ctx, img, map, cols, rows, cellPx) {
+  if (!ctx || !img) return false;
+  const totalW = cols * cellPx;
+  const totalH = rows * cellPx;
+  ctx.save();
+  ctx.imageSmoothingEnabled = true;
+  let drew = false;
+  if (map?.calib?.cellPx > 0) {
+    const r = imageSourceRect(map, cols, rows, cellPx, img);
+    if (r) {
+      ctx.drawImage(img, r.sx, r.sy, r.sw, r.sh, r.dx, r.dy, r.dw, r.dh);
+      drew = true;
+    }
+  } else {
+    const iw = img.naturalWidth || img.width;
+    const ih = img.naturalHeight || img.height;
+    if (iw > 0 && ih > 0) {
+      const scale = Math.max(totalW / iw, totalH / ih);
+      const w = iw * scale;
+      const h = ih * scale;
+      ctx.drawImage(img, (totalW - w) / 2, (totalH - h) / 2, w, h);
+      drew = true;
+    }
+  }
+  ctx.restore();
+  return drew;
+}
+
+/**
+ * Stroke the cell grid in world units. Lines sit on half-pixel centres at
+ * zoom 1 so a 1 px stroke stays crisp.
+ * @param {CanvasRenderingContext2D} ctx
+ * @param {number} cols
+ * @param {number} rows
+ * @param {number} cellPx
+ * @param {{color?: string, lineWidth?: number}} [style]
+ */
+export function drawGridLines(ctx, cols, rows, cellPx, { color = 'rgba(255,255,255,0.18)', lineWidth = 1 } = {}) {
+  if (!ctx) return;
+  const totalW = cols * cellPx;
+  const totalH = rows * cellPx;
+  ctx.save();
+  ctx.strokeStyle = color;
+  ctx.lineWidth = lineWidth;
+  ctx.beginPath();
+  for (let c = 0; c <= cols; c++) {
+    const x = c * cellPx + 0.5;
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x, totalH);
+  }
+  for (let r = 0; r <= rows; r++) {
+    const y = r * cellPx + 0.5;
+    ctx.moveTo(0, y);
+    ctx.lineTo(totalW, y);
+  }
+  ctx.stroke();
+  ctx.restore();
 }
 
 /* =====================================================================

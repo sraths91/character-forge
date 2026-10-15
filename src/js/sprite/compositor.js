@@ -1,7 +1,7 @@
 import { FRAME, SLOT_COLORS, SLOT_BOXES, buildRenderPlan, getFrame } from './lpc-config.js';
 import { loadImage } from './image-cache.js';
 import { generateItemSprite, rarityToAuraTier } from './item-generator.js';
-import { paintGeneratedBackground } from '../scene/map-render.js';
+import { paintGeneratedBackground, drawMapImage, drawGridLines } from '../scene/map-render.js';
 
 // Tier ranks: higher beats lower. Used to pick the single character-level aura.
 const RARITY_RANK = {
@@ -77,16 +77,19 @@ export async function renderBattleScene(canvas, characters, scene, opts = {}) {
   ctx.imageSmoothingEnabled = false;
   ctx.clearRect(0, 0, totalW, totalH);
 
-  // 1. Background fill — color OR custom image (M2.5). Image draws are
-  //    cover-fitted so the canvas is fully painted regardless of aspect.
-  if (scene.map?.kind === 'image' && scene.map.image) {
+  // 1. Background fill — color, generated terrain, or an image (M2.5;
+  //    calibrated source-rect draw since M64 M3).
+  const imageSrc = scene.map?.kind === 'image' ? (scene.map.url || scene.map.image) : null;
+  if (imageSrc) {
     // Paint the fallback colour first so a slow image decode doesn't
     // flash white before the bitmap appears.
     ctx.fillStyle = scene.map.color || '#3d5a3d';
     ctx.fillRect(0, 0, totalW, totalH);
     try {
-      const img = await loadCachedImage(scene.map.image);
-      drawImageCover(ctx, img, totalW, totalH);
+      const img = await loadCachedImage(imageSrc);
+      // M64 M3 — calibrated maps draw a source rect aligned to the grid;
+      // uncalibrated legacy images keep the cover-fit.
+      drawMapImage(ctx, img, scene.map, scene.cols, scene.rows, cellPx);
     } catch { /* fall back to the colour we already painted */ }
   } else if (scene.map?.kind === 'generated') {
     // Procedural terrain. Painted once to an offscreen canvas keyed by
@@ -104,24 +107,7 @@ export async function renderBattleScene(canvas, characters, scene, opts = {}) {
 
   // 2. Grid overlay (drawn UNDER characters so cell lines show through gaps)
   if (scene.grid?.visible) {
-    ctx.save();
-    ctx.strokeStyle = scene.grid.color || 'rgba(255,255,255,0.18)';
-    ctx.lineWidth = 1;
-    for (let c = 0; c <= scene.cols; c++) {
-      const x = c * cellPx + 0.5;
-      ctx.beginPath();
-      ctx.moveTo(x, 0);
-      ctx.lineTo(x, totalH);
-      ctx.stroke();
-    }
-    for (let r = 0; r <= scene.rows; r++) {
-      const y = r * cellPx + 0.5;
-      ctx.beginPath();
-      ctx.moveTo(0, y);
-      ctx.lineTo(totalW, y);
-      ctx.stroke();
-    }
-    ctx.restore();
+    drawGridLines(ctx, scene.cols, scene.rows, cellPx, { color: scene.grid.color || 'rgba(255,255,255,0.18)' });
   }
 
   // 2.5 M8 — AoE template overlay (below sprites so creatures sit on top).
@@ -605,19 +591,6 @@ function loadCachedImage(src) {
   });
   _bgImageCache.set(src, promise);
   return promise;
-}
-
-/** Cover-fit an image into a target rect (preserves aspect, crops overflow). */
-function drawImageCover(ctx, img, targetW, targetH) {
-  const scale = Math.max(targetW / img.width, targetH / img.height);
-  const w = img.width  * scale;
-  const h = img.height * scale;
-  const x = (targetW - w) / 2;
-  const y = (targetH - h) / 2;
-  ctx.save();
-  ctx.imageSmoothingEnabled = true;
-  ctx.drawImage(img, x, y, w, h);
-  ctx.restore();
 }
 
 /** Draw a hollow rectangle outline at (x,y) of size sz, in the given color. */

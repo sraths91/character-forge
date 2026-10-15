@@ -2,8 +2,10 @@
  * M26 — Scene snapshot encoding for async share links.
  *
  * Strips a scene record down to the visual-state fields a recipient
- * needs to reproduce the view: grid dimensions, map style, positions,
- * monsters (with HP / conditions), initiative, flanking toggle.
+ * needs to reproduce the view: grid dimensions, map style (colour,
+ * generated biome+seed, or a hosted image reference with calibration),
+ * terrain flags, positions, monsters (with HP / conditions), initiative,
+ * flanking toggle.
  *
  * Local-only fields (the multi-scene container, the legacy single-scene
  * blob, scene presets) are NOT serialized — they're recipient state.
@@ -23,24 +25,11 @@ export function buildSceneSnapshot(scene) {
     cellSize: scene.cellSize,
     scale: scene.scale
   };
-  // Map: only color is allowed in the URL — image data URLs blow past
-  // reasonable URL lengths (think 100KB+). The recipient gets a flat
-  // colored background even if the sender uploaded an image.
-  if (scene.map?.kind === 'color') {
-    snap.map = { kind: 'color', color: scene.map.color };
-  } else if (scene.map?.kind === 'image') {
-    snap.map = { kind: 'color', color: scene.map.color || '#3d5a3d' };
-  } else if (scene.map?.kind === 'generated') {
-    // Generated maps are just (biome, seed) — tiny, so they travel in
-    // the URL intact and the recipient regenerates identical terrain.
-    snap.map = {
-      kind: 'generated',
-      biome: scene.map.biome,
-      seed: scene.map.seed >>> 0,
-      color: scene.map.color || '#3d5a3d',
-      preset: scene.map.preset
-    };
-  }
+  // Map: data-URL images never travel (100 KB+ in a URL). A colour map,
+  // a generated map (biome + seed, regenerated identically) and a
+  // server-hosted image REFERENCE (imageId / url + calibration) do.
+  const snapMap = snapshotMap(scene.map);
+  if (snapMap) snap.map = snapMap;
   if (scene.grid) {
     snap.grid = {
       visible: !!scene.grid.visible,
@@ -64,7 +53,67 @@ export function buildSceneSnapshot(scene) {
     snap.initiative = scene.initiative.map(i => ({ ...i }));
   }
   if (scene.flankingEnabled) snap.flankingEnabled = true;
+  if (scene.terrain && typeof scene.terrain.flags === 'string') {
+    snap.terrain = { v: scene.terrain.v || 1, cols: scene.terrain.cols, rows: scene.terrain.rows, flags: scene.terrain.flags };
+  }
   return snap;
+}
+
+const DEFAULT_COLOR = '#3d5a3d';
+
+/** True for a URL a share link may carry: not an inline data/blob URL. */
+function isShareableUrl(url) {
+  return typeof url === 'string' && url.length > 0 && url.length <= 2048 && !/^(data|blob):/i.test(url);
+}
+
+/** Copy only the image-reference fields that exist. */
+function imageRef(map) {
+  const out = { kind: 'image', color: map.color || DEFAULT_COLOR };
+  if (map.imageId) out.imageId = String(map.imageId);
+  if (isShareableUrl(map.url)) out.url = map.url;
+  if (Number.isFinite(map.imgW)) out.imgW = map.imgW;
+  if (Number.isFinite(map.imgH)) out.imgH = map.imgH;
+  if (map.calib && Number(map.calib.cellPx) > 0) {
+    out.calib = {
+      cellPx: Number(map.calib.cellPx),
+      offsetX: Number(map.calib.offsetX) || 0,
+      offsetY: Number(map.calib.offsetY) || 0
+    };
+  }
+  if (map.cinemaBiome) out.cinemaBiome = String(map.cinemaBiome);
+  return out;
+}
+
+function snapshotMap(map) {
+  if (!map) return null;
+  if (map.kind === 'color') return { kind: 'color', color: map.color };
+  if (map.kind === 'generated') {
+    // Generated maps are just (biome, seed) — tiny, so they travel in
+    // the URL intact and the recipient regenerates identical terrain.
+    return {
+      kind: 'generated',
+      biome: map.biome,
+      seed: map.seed >>> 0,
+      color: map.color || DEFAULT_COLOR,
+      preset: map.preset
+    };
+  }
+  if (map.kind === 'image') {
+    if (map.imageId || isShareableUrl(map.url)) return imageRef(map);
+    return { kind: 'color', color: map.color || DEFAULT_COLOR };
+  }
+  return null;
+}
+
+function restoreMap(map) {
+  if (map?.kind === 'generated' && map.biome) {
+    const out = { kind: 'generated', biome: map.biome, seed: map.seed >>> 0, color: map.color || DEFAULT_COLOR };
+    if (map.preset) out.preset = map.preset;
+    return out;
+  }
+  if (map?.kind === 'image' && (map.imageId || isShareableUrl(map.url))) return imageRef(map);
+  if (map?.kind === 'color') return { kind: 'color', color: map.color || DEFAULT_COLOR };
+  return { kind: 'color', color: DEFAULT_COLOR };
 }
 
 /**
@@ -79,9 +128,7 @@ export function restoreSceneFromSnapshot(snap) {
     rows: Number.isFinite(snap.rows) ? snap.rows : 7,
     cellSize: Number.isFinite(snap.cellSize) ? snap.cellSize : 64,
     scale: Number.isFinite(snap.scale) ? snap.scale : 3,
-    map: snap.map?.kind === 'color'
-      ? { kind: 'color', color: snap.map.color || '#3d5a3d' }
-      : { kind: 'color', color: '#3d5a3d' },
+    map: restoreMap(snap.map),
     grid: {
       visible: snap.grid?.visible !== false,
       snap: true,
@@ -99,6 +146,9 @@ export function restoreSceneFromSnapshot(snap) {
         }))
       : [],
     initiative: Array.isArray(snap.initiative) ? snap.initiative.map(i => ({ ...i })) : [],
-    flankingEnabled: !!snap.flankingEnabled
+    flankingEnabled: !!snap.flankingEnabled,
+    ...(snap.terrain && typeof snap.terrain.flags === 'string'
+      ? { terrain: { v: snap.terrain.v || 1, cols: snap.terrain.cols, rows: snap.terrain.rows, flags: snap.terrain.flags } }
+      : {})
   };
 }

@@ -169,7 +169,7 @@ export const WRAPPER_FIELD_MAP = Object.freeze({
  * @property {'setup'|'running'|'awaiting-prompt'|'ended'} phase
  * @property {{algo: 'mulberry32', s: number}} [rng] — absent in per-seat projections
  * @property {{cols: number, rows: number, cellFt: number, flankingEnabled: boolean, terrain?: {v: number, cols: number, rows: number, flags: string}|null}} grid
- * @property {{imageId?: string|null, imgW?: number, imgH?: number, calib?: {cellPx: number, offsetX: number, offsetY: number}, cinemaBiome?: string|null}|null} map
+ * @property {{kind?: 'color'|'generated'|'image', url?: string|null, color?: string, biome?: string|null, seed?: number, preset?: string|null, imageId?: string|null, imgW?: number, imgH?: number, calib?: {cellPx: number, offsetX: number, offsetY: number}, cinemaBiome?: string|null}|null} map
  * @property {{entityId: string, score: number}[]} initiative
  * @property {Record<string, EncounterEntity>} entities
  * @property {number} lastEventSeq
@@ -243,7 +243,20 @@ const TERRAIN = shape({
   flags: str({ allowEmpty: true, pattern: /^[A-Za-z0-9+/]*={0,2}$/ })
 });
 
+/** Map background kinds (`map.kind`). */
+export const MAP_KINDS = Object.freeze(['color', 'generated', 'image']);
+
+// v1 additive fields (E5, M64 Wave 3 — all optional, so no version bump):
+// `kind`, `url`, `color`, `biome`, `seed`, `preset`. They let the 2D
+// renderer draw every background kind from state, and carry the served
+// image URL next to its content-hash `imageId`.
 const MAP = shape({
+  kind: optional(oneOf(MAP_KINDS)),
+  url: optional(nullable(str({ maxLength: 2048 }))),
+  color: optional(str({ maxLength: 64 })),
+  biome: optional(nullable(str({ maxLength: 64 }))),
+  seed: optional(int(0, 0xFFFFFFFF)),
+  preset: optional(nullable(str({ maxLength: 64 }))),
   imageId: optional(nullable(str())),
   imgW: optional(int(1)),
   imgH: optional(int(1)),

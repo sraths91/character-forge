@@ -89,3 +89,42 @@ test('M26: restoreSceneFromSnapshot — null input returns null', () => {
 test('M26: buildSceneSnapshot — null scene returns null', () => {
   assert.strictEqual(buildSceneSnapshot(null), null);
 });
+
+// M64 M3 — generated maps and hosted image references survive restore.
+test('M64 M3: a generated map round-trips through build + restore', () => {
+  const scene = fullScene();
+  scene.map = { kind: 'generated', biome: 'forest', seed: 4242, color: '#2f4f2f', preset: 'forest' };
+  const restored = restoreSceneFromSnapshot(JSON.parse(JSON.stringify(buildSceneSnapshot(scene))));
+  assert.deepStrictEqual(restored.map, { kind: 'generated', biome: 'forest', seed: 4242, color: '#2f4f2f', preset: 'forest' });
+});
+
+test('M64 M3: a hosted image reference with calibration round-trips', () => {
+  const scene = fullScene();
+  scene.cols = 30; scene.rows = 20;
+  scene.map = {
+    kind: 'image', imageId: 'abc123', url: '/uploads/maps/abc123.webp', imgW: 3000, imgH: 2000,
+    calib: { cellPx: 100, offsetX: 37, offsetY: 12 }, cinemaBiome: 'dungeon', color: '#222222'
+  };
+  const restored = restoreSceneFromSnapshot(JSON.parse(JSON.stringify(buildSceneSnapshot(scene))));
+  assert.deepStrictEqual(restored.map, scene.map);
+  assert.strictEqual(restored.cols, 30);
+});
+
+test('M64 M3: inline data/blob URLs never travel; the colour fallback does', () => {
+  const scene = fullScene();
+  scene.map = { kind: 'image', color: '#112233', url: 'blob:https://x/1', image: 'data:image/png;base64,AAAA' };
+  const snap = buildSceneSnapshot(scene);
+  assert.deepStrictEqual(snap.map, { kind: 'color', color: '#112233' });
+  assert.ok(!JSON.stringify(snap).includes('data:'));
+  // A forged snapshot with a data URL restores to a colour map.
+  const forged = restoreSceneFromSnapshot({ map: { kind: 'image', url: 'data:image/png;base64,AAAA' } });
+  assert.strictEqual(forged.map.kind, 'color');
+});
+
+test('M64 M2: terrain flags travel with the snapshot', () => {
+  const scene = fullScene();
+  scene.terrain = { v: 1, cols: 10, rows: 7, flags: 'AQID' };
+  const restored = restoreSceneFromSnapshot(buildSceneSnapshot(scene));
+  assert.deepStrictEqual(restored.terrain, scene.terrain);
+  assert.strictEqual(restoreSceneFromSnapshot({ cols: 3, rows: 3 }).terrain, undefined);
+});
