@@ -38,6 +38,7 @@ import {
   chooseLegendaryAction, spendLegendaryAction
 } from './monster-legendary.js';
 import { rollSave } from './save-rolls.js';
+import { createRng } from './rng.js';
 // M45 Phase 4 — Combat resolution moved to a shared engine module so
 // the live runner can dispatch through the same spine without
 // re-implementing rules. Per-attack logic, spell casting, reactions,
@@ -51,16 +52,15 @@ import {
 /**
  * Small mulberry32 PRNG. Pure JS, deterministic, fast. Seed in (0, 2^32).
  * Returns a function compatible with the resolver's rng param.
+ *
+ * M64 T3 — thin wrapper over `createRng` (rng.js), so the returned
+ * function also exposes `.state()` for snapshot / resume.
+ *
+ * @param {number} seed — any number; coerced to uint32
+ * @returns {(function(): number) & { state: function(): { algo: string, s: number } }}
  */
 export function seedRng(seed) {
-  let s = seed >>> 0;
-  return function rng() {
-    s = (s + 0x6D2B79F5) >>> 0;
-    let t = s;
-    t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
+  return createRng({ s: seed >>> 0 });
 }
 
 /**
