@@ -2,6 +2,7 @@ import { FRAME, SLOT_COLORS, SLOT_BOXES, buildRenderPlan, getFrame } from './lpc
 import { loadImage } from './image-cache.js';
 import { generateItemSprite, rarityToAuraTier } from './item-generator.js';
 import { paintGeneratedBackground, drawMapImage, drawGridLines } from '../scene/map-render.js';
+import { WORLD_CELL_PX, cameraTransform, sizeCanvasToViewport } from '../map/camera.js';
 
 // Tier ranks: higher beats lower. Used to pick the single character-level aura.
 const RARITY_RANK = {
@@ -65,17 +66,18 @@ export async function renderBattleScene(canvas, characters, scene, opts = {}) {
     // M8 — AoE template overlay: { cells: [{col,row}], color, label }
     aoeTemplate = null,
     // M27 — Effect queue (list of effect descriptors from scene/effects.js)
-    effects = null
+    effects = null,
+    // M64 M4 — viewport camera ({x, y, zoom, viewW, viewH, dpr}, see
+    // map/camera.js). Absent ⇒ the legacy full-map canvas at scene.scale.
+    camera = null
   } = opts;
   const list = (characters || []).filter(Boolean);
   const cellPx = scene.cellSize * scene.scale;
   const totalW = scene.cols * cellPx;
   const totalH = scene.rows * cellPx;
-  canvas.width = totalW;
-  canvas.height = totalH;
   const ctx = canvas.getContext('2d');
+  applyBattleCamera(canvas, ctx, scene, camera, totalW, totalH);
   ctx.imageSmoothingEnabled = false;
-  ctx.clearRect(0, 0, totalW, totalH);
 
   // 1. Background fill — color, generated terrain, or an image (M2.5;
   //    calibrated source-rect draw since M64 M3).
@@ -280,6 +282,41 @@ export async function renderBattleScene(canvas, characters, scene, opts = {}) {
   }
 
   return { canvas, generatedCount: totalGenerated, cellCount: list.length + monsterCharacters.length };
+}
+
+/**
+ * M64 M4 — size the canvas and install the world→device transform.
+ *
+ * Without a camera the canvas is the whole map at scene.scale (legacy,
+ * CSS-zoomed by main.js). With a camera that has a viewport (viewW/viewH)
+ * the backing store is viewport × min(dpr, 2) — never the whole map — and
+ * zoom/pan are a ctx transform. Drawing code keeps using legacy units
+ * (cellSize·scale per cell); the transform folds that factor in.
+ * Width/height are written only when they change (each write reallocates).
+ */
+function applyBattleCamera(canvas, ctx, scene, camera, totalW, totalH) {
+  const legacyCell = scene.cellSize * scene.scale;
+  if (!camera) {
+    if (canvas.width !== totalW) canvas.width = totalW;
+    if (canvas.height !== totalH) canvas.height = totalH;
+    ctx.setTransform?.(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, totalW, totalH);
+    return;
+  }
+  let pixelRatio = 1;
+  if (camera.viewW > 0 && camera.viewH > 0) {
+    pixelRatio = sizeCanvasToViewport(canvas, camera.viewW, camera.viewH, camera.dpr || 1).pixelRatio;
+  } else {
+    const w = Math.max(1, Math.round(scene.cols * WORLD_CELL_PX * camera.zoom));
+    const h = Math.max(1, Math.round(scene.rows * WORLD_CELL_PX * camera.zoom));
+    if (canvas.width !== w) canvas.width = w;
+    if (canvas.height !== h) canvas.height = h;
+  }
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  const [a, , , d, e, f] = cameraTransform(camera, pixelRatio);
+  const unit = WORLD_CELL_PX / legacyCell;   // legacy px → world units
+  ctx.setTransform(a * unit, 0, 0, d * unit, e, f);
 }
 
 // M27 — Direction unit vectors for sprite displacement.
@@ -1039,6 +1076,14 @@ function drawGlowAt(ctx, tint, scale, ox, oy) {
 }
 
 function applySaturationBoostAt(ctx, x, y, w, h) {
+  // getImageData ignores the current transform, so map the cell rect to
+  // device pixels first (the M64 camera draws under a world transform).
+  const m = typeof ctx.getTransform === 'function' ? ctx.getTransform() : null;
+  if (m && (m.a !== 1 || m.d !== 1 || m.e !== 0 || m.f !== 0)) {
+    const nx = Math.round(m.a * x + m.e), ny = Math.round(m.d * y + m.f);
+    w = Math.round(m.a * w); h = Math.round(m.d * h); x = nx; y = ny;
+    if (w <= 0 || h <= 0) return;
+  }
   const data = ctx.getImageData(x, y, w, h);
   const px = data.data;
   for (let i = 0; i < px.length; i += 4) {
