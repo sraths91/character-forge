@@ -81,15 +81,18 @@ test('live-bridge: planForLivePc requires an injected rng', () => {
   assert.throws(() => planForLivePc(pc, { party: [pc], scene: sc }), TypeError);
 });
 
-// ---------- wrap: shared refs ----------
+// ---------- wrap: fresh copies (M64 T5) ----------
 
-test('live-bridge: wrapPcForEngine shares conditions and _slots by reference', () => {
+test('live-bridge: wrapPcForEngine returns a copy; writeBackPc carries conditions and slots back', () => {
   const pc = livePc({ classes: [{ name: 'Wizard', level: 5 }] });
-  const w = wrapPcForEngine(pc, 0, scene());
-  assert.equal(w.conditions, pc.conditions);
-  assert.equal(w._slots, pc._slots);
+  const sc = scene();
+  const w = wrapPcForEngine(pc, 0, sc);
+  assert.notEqual(w.conditions, pc.conditions, 'no shared references any more');
+  assert.notEqual(w._slots, pc._slots);
   w.conditions.push('prone');
   w._slots[1] = 0;
+  assert.deepEqual(pc.conditions, [], 'live record untouched until write-back');
+  writeBackPc(pc, w, sc);
   assert.deepEqual(pc.conditions, ['prone']);
   assert.equal(pc._slots[1], 0);
   assert.equal(w.hp, 27);
@@ -102,19 +105,53 @@ test('live-bridge: wrapPcForEngine creates a conditions array on records without
   delete pc.conditions;
   const w = wrapPcForEngine(pc, 0, scene());
   assert.ok(Array.isArray(pc.conditions));
-  assert.equal(w.conditions, pc.conditions);
+  assert.deepEqual(w.conditions, pc.conditions);
 });
 
-test('live-bridge: wrapMonsterForEngine reads preset AC/attack and shares conditions', () => {
+test('live-bridge: wrapMonsterForEngine reads preset AC/attack and copies conditions + slots', () => {
   const m = liveMonster();
   m._slots = { 1: 2 };
+  m.conditions = ['prone'];
   const w = wrapMonsterForEngine(m);
   assert.equal(w.ac, 15);
   assert.equal(w.attack.name, 'Scimitar');
-  assert.equal(w.conditions, m.conditions);
-  assert.equal(w._slots, m._slots);
-  assert.equal(w.position, m.position);
+  assert.deepEqual(w.conditions, ['prone']);
+  assert.deepEqual(w._slots, { 1: 2 });
+  assert.deepEqual(w.position, m.position);
+  assert.equal(w.ref, m);
   assert.equal(wrapMonsterForEngine(null), null);
+});
+
+test('live-bridge: liveEncounterState is a valid EncounterState v1', async () => {
+  const { validateEncounterState } = await import('../js/shared/encounter-state.js');
+  const { liveEncounterState } = await import('../js/scene/live-bridge.js');
+  const pc = livePc({ id: 7, classes: [{ name: 'Wizard', level: 5 }] });
+  pc._slots = { 1: 1, 2: 3, 3: 2, 4: 0, 5: 0 };
+  const m = liveMonster();
+  m._aiProfile = { archetype: 'custom', considerations: {} };
+  const { state, sheets } = liveEncounterState({ party: [pc], scene: scene({ monsters: [m], positions: { 7: { col: 1, row: 1 } } }) });
+  const v = validateEncounterState(state);
+  assert.ok(v.ok, JSON.stringify(v.errors));
+  assert.deepEqual(state.entities['7'].resources.slots['1'], { max: 4, spent: 3 });
+  assert.equal(state.entities.g1.statBlock.profile.archetype, 'custom');
+  assert.equal(sheets['7'], pc);
+});
+
+test('live-bridge: a live Shield spends the PC\'s slot and the spend survives to the next turn', async () => {
+  const pc = livePc({ classes: [{ name: 'Wizard', level: 5 }] });
+  pc.spells = ['Shield'];
+  pc._slots = { 1: 2, 2: 0, 3: 0, 4: 0, 5: 0 };
+  const m = liveMonster({ hp: 40, max: 40, pos: { col: 3, row: 2 } });
+  const sc = scene({ monsters: [m] });
+  const party = [pc];
+  const forcePlan = { kind: 'attack', targetId: 'p1', targetSide: 'enemy', featuresFired: [] };
+  // Every d20 = 11 → 15 vs the wizard's AC 11: a hit +5 AC turns into a miss.
+  await runTurn({ party, scene: sc, entity: m, kind: 'monster', rng: () => 0.5, prompts: { forcePlan } });
+  assert.equal(pc._slots[1], 1);
+  assert.equal(pc._reactionUsed, true);
+  pc._reactionUsed = false;
+  await runTurn({ party, scene: sc, entity: m, kind: 'monster', rng: () => 0.5, prompts: { forcePlan } });
+  assert.equal(pc._slots[1], 0, 'second Shield spent the last 1st-level slot');
 });
 
 // ---------- write-back ----------

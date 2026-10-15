@@ -32,6 +32,10 @@ globalThis.localStorage = tripwire('localStorage');
     const sim = await import(dir + 'simulator.js');
     const cal = await import(dir + 'calibrator.js');
     const rng = await import(dir + 'rng.js');
+    // M64 T5 — the one bridge (adapters + live-bridge + pure scene model) is Node-safe too.
+    await import(dir + 'encounter-adapters.js');
+    await import(dir + 'live-bridge.js');
+    await import(dir + 'scene-model.js');
     const stats = await sim.simulateEncounter(workerData.encounter);
     const report = await cal.calibrateEncounter({ ...workerData.encounter, iterations: 5 });
     parentPort.postMessage({

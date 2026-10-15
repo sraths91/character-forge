@@ -1,21 +1,20 @@
 /**
  * M64 C1 — Live runner ↔ combat-engine bridge (pure, Node-safe).
  *
- * Extracted from main.js (M45 Phase 2 / 4b.2). The combat engine works
- * on per-turn "wrappers": flat objects with `hp: number`, `hpMax`, `ac`,
- * `weapon`, `_position`, `_slots`, per-turn flags, etc. Live records
- * have a different shape: PCs carry `hp: { current, max }` and keep
- * their grid cell in `scene.positions`; monsters carry
- * `hp: { current, max }` and `position`. This module:
+ * Extracted from main.js (M45 Phase 2 / 4b.2). Live records have the
+ * browser's shape: PCs carry `hp: { current, max }` and keep their grid
+ * cell in `scene.positions`; monsters carry `hp: { current, max }` and
+ * `position`. Since M64 T5 this module no longer builds engine wrappers
+ * itself — there is ONE bridge, shared with the server:
  *
- *   1. wrapPcForEngine / wrapMonsterForEngine build engine wrappers
- *      from the live records. Mutable runtime pools (`_slots`,
- *      `conditions[]`) are SHARED by reference so engine mutations
- *      persist to the live entity automatically. Scalar state (hp,
- *      position, per-turn flags) is copied and written back after.
- *   2. runTurn wraps the active entity plus every live enemy and ally,
- *      calls the engine with the injected `rng` and `prompts`, then
- *      writes every wrapper back.
+ *   live records ──liveEncounterState──▶ EncounterState v1
+ *     ──toEngineSides──▶ wrappers ──runOneAttack──▶ wrappers
+ *     ──applyEngineSides──▶ EncounterState ──copy──▶ live records
+ *
+ * (encounter-adapters.js). Wrappers are fresh copies; nothing is shared
+ * by reference with the live records, and everything the engine changes
+ * (HP, position, conditions, the one slot ledger, concentration, flags)
+ * is written back after the turn.
  *
  * Everything that used to close over main.js's `currentScene` and
  * `partyComposedCharacters` now takes them as explicit `scene` and
@@ -33,9 +32,14 @@ import { positionOf } from './scene-model.js';
 import { MONSTER_PRESETS } from './monster-presets.js';
 import { deriveAC } from './pc-stats.js';
 import { slotsForPc } from './reactions.js';
+import { freshSlots } from './monster-spells.js';
 import { choosePcAction } from './ai/pc-action.js';
 import { resetPerTurnFlags } from './ai/pc-features.js';
 import { runOneAttack } from './combat-engine.js';
+import {
+  toEngineSides, applyEngineSides, wrapperFromEntity, applyWrapperToEntity, ledgerFromPool
+} from './encounter-adapters.js';
+import { ENCOUNTER_STATE_VERSION } from '../shared/encounter-state.js';
 
 /**
  * Find a live entity by id on the given side.
@@ -86,7 +90,11 @@ export function planForLivePc(pc, { party, scene, rng }) {
   const allies = (party || [])
     .map((p, i) => ({ ...p, _position: positionOf(scene, p.id, i) }))
     .filter(p => (p.hp?.current ?? 0) > 0);
-  return choosePcAction({ self: pc, enemies, allies, rng });
+  const plan = choosePcAction({ self: pc, enemies, allies, rng });
+  // M64 T5 — the planner's MCTS context holds an entity copy; never let
+  // it linger on the live record.
+  delete pc._mctsTargetCtx;
+  return plan;
 }
 
 /**
@@ -106,9 +114,184 @@ export function resolvePlanTarget(plan, { party, scene }) {
   return monster ? { kind: 'monster', entity: monster } : null;
 }
 
+// ---------------------------------------------------------------------
+// Live record ↔ EncounterState entity
+// ---------------------------------------------------------------------
+
+/** Live-record fields that share their name with an engine wrapper field. */
+const LIVE_PC_FIELDS = [
+  '_reactionUsed', '_shieldActive', '_actionSurgeUsed', '_secondWindUsed',
+  '_sneakAttackUsedThisTurn', '_cunningActionUsedThisTurn', '_recklessUsedThisTurn',
+  '_recklessUntilNextTurn', '_smiteSlotUsed', '_surgeFiredThisTurn', '_extraActionThisTurn',
+  '_concentrating'
+];
+const LIVE_MONSTER_FIELDS = [
+  '_reactionUsed', '_legendaryBudget', '_recklessUntilNextTurn', '_innate', '_concentrating'
+];
+
+const intOr = (v, d) => (Number.isFinite(v) ? Math.trunc(v) : d);
+
+function fullLedger(pool) {
+  const out = {};
+  for (const [lvl, n] of Object.entries(pool || {})) {
+    if (/^[1-9]$/.test(lvl) && n > 0) out[lvl] = { max: n, spent: 0 };
+  }
+  return out;
+}
+
+function pick(record, fields) {
+  const out = {};
+  for (const f of fields) if (record[f] !== undefined) out[f] = record[f];
+  return out;
+}
+
+function baseEntity({ id, kind, side, name, pos, hpCur, hpMax, hpTemp, ac }) {
+  const max = Math.max(1, intOr(hpMax, 1));
+  return {
+    id: String(id), kind, side, name: String(name || (kind === 'pc' ? 'PC' : 'Monster')),
+    controller: { type: 'ai', seatId: null },
+    pos: { col: Math.max(0, intOr(pos?.col, 0)), row: Math.max(0, intOr(pos?.row, 0)) },
+    hp: Math.max(0, Math.min(max, intOr(hpCur, max))),
+    hpMax: max,
+    hpTemp: Math.max(0, intOr(hpTemp, 0)),
+    ac: intOr(ac, 10),
+    speedFt: 30,
+    conditions: [],
+    concentration: null,
+    resources: { reactionUsed: false, slots: {}, pact: {}, innate: null, legendaryBudget: 0, features: {} },
+    turnFlags: {}
+  };
+}
+
 /**
- * Build an engine wrapper from a live PC record. `conditions` and
- * `_slots` are shared by reference with the live record.
+ * EncounterState entity for a live PC record. The slot ledger's max is
+ * the sheet's full pool (slotsForPc); the live `_slots` are what remain.
+ * @param {object} pc — live PC record
+ * @param {number} idx — party index (position fallback)
+ * @param {object} scene — live scene
+ * @returns {object} EncounterState entity (sheetRef.characterId = String(pc.id))
+ */
+export function entityFromLivePc(pc, idx, scene) {
+  const e = baseEntity({
+    id: pc.id, kind: 'pc', side: 'party', name: pc.name,
+    pos: positionOf(scene, pc.id, idx),
+    hpCur: pc.hp?.current ?? pc.hp?.max ?? 1, hpMax: pc.hp?.max ?? 1, hpTemp: pc.hp?.temp,
+    ac: deriveAC(pc)
+  });
+  const fresh = slotsForPc(pc);
+  e.resources.slots = ledgerFromPool(fullLedger(fresh), pc._slots || fresh);
+  if (pc._pact && Number.isInteger(pc._pact.level)) e.resources.pact = { ...pc._pact };
+  e.sheetRef = { characterId: String(pc.id), rev: 0 };
+  return applyWrapperToEntity(e, {
+    ...pick(pc, LIVE_PC_FIELDS),
+    conditions: Array.isArray(pc.conditions) ? pc.conditions : []
+  });
+}
+
+/**
+ * EncounterState entity for a live monster record. AC and attacks come
+ * from the visual preset unless the record carries a `statBlock`;
+ * `_aiProfile` (Open5e inference / the DM AI editor) rides
+ * `statBlock.profile`.
+ * @param {object} m — live monster instance
+ * @returns {object} EncounterState entity
+ */
+export function entityFromLiveMonster(m) {
+  const preset = MONSTER_PRESETS[m.presetSlug] || {};
+  const sb = m.statBlock && typeof m.statBlock === 'object' ? m.statBlock : {};
+  const e = baseEntity({
+    id: m.id, kind: 'monster', side: 'hostile', name: m.name || preset.name,
+    pos: m.position,
+    hpCur: m.hp?.current ?? m.hp?.max ?? 1, hpMax: m.hp?.max ?? 1, hpTemp: m.hp?.temp,
+    ac: sb.ac ?? preset.ac ?? 12
+  });
+  e.resources.slots = m._slots ? ledgerFromPool(fullLedger(freshSlots(m.presetSlug)), m._slots) : {};
+  e.statBlock = { ...JSON.parse(JSON.stringify(sb)), slug: m.presetSlug };
+  if (m._aiProfile) e.statBlock.profile = JSON.parse(JSON.stringify(m._aiProfile));
+  return applyWrapperToEntity(e, {
+    ...pick(m, LIVE_MONSTER_FIELDS),
+    conditions: Array.isArray(m.conditions) ? m.conditions : []
+  });
+}
+
+/**
+ * Copy an EncounterState entity's dynamic state onto its live record.
+ * @param {object} live — live PC / monster record (mutated)
+ * @param {object} entity — EncounterState entity
+ * @param {object} scene — live scene (PC positions live in scene.positions)
+ * @param {{position?: boolean}} [opts] — write the position (default true)
+ */
+function copyEntityToLive(live, entity, scene, { position = true } = {}) {
+  const w = wrapperFromEntity(entity, live);
+  if (live.hp) live.hp = { ...live.hp, current: entity.hp };
+  live.conditions = [...w.conditions];
+  if (entity.kind === 'pc') {
+    if (position && scene) {
+      scene.positions = { ...(scene.positions || {}), [String(live.id)]: { ...entity.pos } };
+    }
+    for (const f of LIVE_PC_FIELDS) live[f] = w[f];
+    live._slots = { ...w._slots };
+    if (w._pact) live._pact = { ...w._pact };
+  } else {
+    if (position) live.position = { ...entity.pos };
+    for (const f of LIVE_MONSTER_FIELDS) live[f] = w[f];
+    if (w._slots) live._slots = { ...w._slots };
+    if (entity.statBlock?.profile) live._aiProfile = entity.statBlock.profile;
+  }
+}
+
+/**
+ * Project the live versus roster into an EncounterState: every living
+ * PC and monster, plus the active entity even at 0 HP.
+ * @param {{party: object[], scene: object, active?: object|null}} args
+ * @returns {{state: object, sheets: Record<string, object>,
+ *            live: Map<string, {record: object, kind: 'pc'|'monster'}>}}
+ *   `sheets` maps each id to its live record (PC sheet / monster ref).
+ */
+export function liveEncounterState({ party, scene, active = null }) {
+  const pcs = party || [];
+  const entities = {};
+  const sheets = {};
+  const live = new Map();
+  pcs.forEach((p, i) => {
+    if (!p || ((p.hp?.current ?? 0) <= 0 && p !== active)) return;
+    const e = entityFromLivePc(p, i, scene);
+    entities[e.id] = e; sheets[e.id] = p; live.set(e.id, { record: p, kind: 'pc' });
+  });
+  for (const m of scene?.monsters || []) {
+    if (!m || ((m.hp?.current ?? 0) <= 0 && m !== active)) continue;
+    const e = entityFromLiveMonster(m);
+    entities[e.id] = e; sheets[e.id] = m; live.set(e.id, { record: m, kind: 'monster' });
+  }
+  const state = {
+    v: ENCOUNTER_STATE_VERSION, encounterId: 'live', round: 0, turnIndex: 0, phase: 'running',
+    rng: { algo: 'mulberry32', s: 0 },
+    grid: {
+      cols: Math.max(1, intOr(scene?.cols, 10)), rows: Math.max(1, intOr(scene?.rows, 7)),
+      cellFt: 5, flankingEnabled: !!scene?.flankingEnabled
+    },
+    map: null, initiative: [], entities, lastEventSeq: 0
+  };
+  return { state, sheets, live };
+}
+
+function applyLiveTransient(wrapper, record) {
+  if (wrapper?.kind === 'pc' && record?._chosenWeapon) {
+    wrapper.weapon = record._chosenWeapon;
+    wrapper._chosenWeapon = record._chosenWeapon;
+  }
+  return wrapper;
+}
+
+// ---------------------------------------------------------------------
+// Legacy wrap / write-back API (names and signatures kept; internals go
+// through the EncounterState adapters)
+// ---------------------------------------------------------------------
+
+/**
+ * Build an engine wrapper from a live PC record (a fresh copy — write
+ * changes back with writeBackPc). Lazy-inits `conditions[]` and `_slots`
+ * on the live record as before.
  * @param {object} pc
  * @param {number} idx  the PC's index in the party (position fallback)
  * @param {object} scene
@@ -118,71 +301,25 @@ export function wrapPcForEngine(pc, idx, scene) {
   if (!pc) return null;
   if (!Array.isArray(pc.conditions)) pc.conditions = [];
   if (!pc._slots) pc._slots = slotsForPc(pc);
-  return {
-    ref: pc,
-    id: pc.id,
-    name: pc.name || 'PC',
-    kind: 'pc',
-    hp: pc.hp?.current ?? pc.hp?.max ?? 1,
-    hpMax: pc.hp?.max ?? 1,
-    ac: deriveAC(pc),
-    weapon: pc._chosenWeapon || pc.equipment?.mainhand || null,
-    _chosenWeapon: pc._chosenWeapon || null,
-    // SHARED — engine push/pop persists to the live record.
-    conditions: pc.conditions,
-    _position: positionOf(scene, pc.id, idx),
-    damageDealt: 0,
-    combatMods: pc.combatMods || [],
-    _reactionUsed: !!pc._reactionUsed,
-    // SHARED — slot decrements persist directly.
-    _slots: pc._slots,
-    _shieldActive: !!pc._shieldActive,
-    _actionSurgeUsed: pc._actionSurgeUsed ?? 0,
-    _secondWindUsed: !!pc._secondWindUsed,
-    _sneakAttackUsedThisTurn: !!pc._sneakAttackUsedThisTurn,
-    _cunningActionUsedThisTurn: !!pc._cunningActionUsedThisTurn,
-    _recklessUsedThisTurn: !!pc._recklessUsedThisTurn,
-    _recklessUntilNextTurn: !!pc._recklessUntilNextTurn,
-    _smiteSlotUsed: pc._smiteSlotUsed || null
-  };
+  return applyLiveTransient(wrapperFromEntity(entityFromLivePc(pc, idx, scene), pc), pc);
 }
 
 /**
- * Build an engine wrapper from a live monster record. `conditions` is
- * shared by reference; `_slots` / `_innate` pools are shared when set.
+ * Build an engine wrapper from a live monster record (a fresh copy).
  * @param {object} m
  * @returns {object|null}
  */
 export function wrapMonsterForEngine(m) {
   if (!m) return null;
   if (!Array.isArray(m.conditions)) m.conditions = [];
-  const preset = MONSTER_PRESETS[m.presetSlug] || {};
-  return {
-    ref: m,
-    id: m.id,
-    name: m.name || preset.name || 'Monster',
-    kind: 'monster',
-    presetSlug: m.presetSlug,
-    hp: m.hp?.current ?? m.hp?.max ?? 1,
-    hpMax: m.hp?.max ?? 1,
-    ac: preset.ac ?? 12,
-    attack: preset.attack || { name: 'Strike', bonus: 2, dice: '1d6' },
-    secondary: preset.secondary || null,
-    conditions: m.conditions,
-    position: m.position,
-    damageDealt: 0,
-    _innate: m._innate || null,
-    _slots: m._slots || null,
-    _reactionUsed: !!m._reactionUsed,
-    _legendaryBudget: m._legendaryBudget ?? 0,
-    _recklessUntilNextTurn: !!m._recklessUntilNextTurn
-  };
+  return wrapperFromEntity(entityFromLiveMonster(m), m);
 }
 
 /**
  * Copy mutated state from an engine wrapper back to its live PC: HP
- * (clamped to [0, max]), grid position (into `scene.positions`), and
- * per-turn flags. Shared refs (conditions, _slots) need no copy.
+ * (clamped to [0, max]), grid position (into `scene.positions`),
+ * conditions, the slot ledger, concentration and per-turn flags.
+ * Fields the wrapper lacks keep their live value.
  * @param {object} pc
  * @param {object} wrapper
  * @param {object} scene
@@ -190,45 +327,26 @@ export function wrapMonsterForEngine(m) {
  */
 export function writeBackPc(pc, wrapper, scene) {
   if (!pc || !wrapper) return;
-  if (pc.hp && Number.isFinite(wrapper.hp)) {
-    pc.hp = { ...pc.hp, current: Math.max(0, Math.min(pc.hp.max, wrapper.hp | 0)) };
-  }
-  if (wrapper._position && scene) {
-    scene.positions = {
-      ...(scene.positions || {}),
-      [String(pc.id)]: wrapper._position
-    };
-  }
-  pc._reactionUsed = !!wrapper._reactionUsed;
-  pc._shieldActive = !!wrapper._shieldActive;
-  pc._actionSurgeUsed = wrapper._actionSurgeUsed ?? 0;
-  pc._secondWindUsed = !!wrapper._secondWindUsed;
-  pc._sneakAttackUsedThisTurn = !!wrapper._sneakAttackUsedThisTurn;
-  pc._cunningActionUsedThisTurn = !!wrapper._cunningActionUsedThisTurn;
-  pc._recklessUsedThisTurn = !!wrapper._recklessUsedThisTurn;
-  pc._recklessUntilNextTurn = !!wrapper._recklessUntilNextTurn;
-  pc._smiteSlotUsed = wrapper._smiteSlotUsed || null;
+  const before = entityFromLivePc(pc, 0, scene || { cols: 10, rows: 7 });
+  const after = applyWrapperToEntity(before, wrapper);
+  copyEntityToLive(pc, after, scene, { position: !!wrapper._position });
   pc._lastPlan = wrapper._lastPlan || null;
   pc._chosenWeapon = wrapper._chosenWeapon || null;
 }
 
 /**
  * Copy mutated state from an engine wrapper back to its live monster:
- * HP (clamped), position, reaction / legendary / reckless state, plan.
+ * HP (clamped), position, conditions, reaction / legendary / reckless
+ * state, slots, innate state, concentration, plan.
  * @param {object} m
  * @param {object} wrapper
  * @returns {void}
  */
 export function writeBackMonster(m, wrapper) {
   if (!m || !wrapper) return;
-  if (m.hp && Number.isFinite(wrapper.hp)) {
-    m.hp = { ...m.hp, current: Math.max(0, Math.min(m.hp.max, wrapper.hp | 0)) };
-  }
-  if (wrapper.position) m.position = wrapper.position;
-  m._reactionUsed = !!wrapper._reactionUsed;
-  m._legendaryBudget = wrapper._legendaryBudget ?? 0;
+  const after = applyWrapperToEntity(entityFromLiveMonster(m), wrapper);
+  copyEntityToLive(m, after, null, { position: !!wrapper.position });
   m._lastPlan = wrapper._lastPlan || null;
-  m._recklessUntilNextTurn = !!wrapper._recklessUntilNextTurn;
 }
 
 /**
@@ -239,23 +357,25 @@ export function writeBackMonster(m, wrapper) {
  *            pcWrappers: object[], monWrappers: object[]}}
  */
 export function buildEngineSides({ party, scene, active, kind }) {
-  const pcs = party || [];
-  const pcWrappers = pcs
-    .filter(p => (p.hp?.current ?? 0) > 0 || p === active)
-    .map(p => wrapPcForEngine(p, pcs.indexOf(p), scene));
-  const monWrappers = (scene?.monsters || [])
-    .filter(m => (m.hp?.current ?? 0) > 0 || m === active)
-    .map(m => wrapMonsterForEngine(m));
-  const enemies = kind === 'pc' ? monWrappers : pcWrappers;
-  const allies  = kind === 'pc' ? pcWrappers : monWrappers;
-  const activeWrapper = (kind === 'pc' ? pcWrappers : monWrappers)
-    .find(w => w.id === active?.id) || null;
-  return { active: activeWrapper, enemies, allies, pcWrappers, monWrappers };
+  const { state, sheets, live } = liveEncounterState({ party, scene, active });
+  const activeId = active ? String(active.id) : null;
+  const isActive = activeId && live.get(activeId)?.record === active && live.get(activeId)?.kind === kind;
+  const sides = toEngineSides(state, sheets, isActive ? activeId : null);
+  for (const w of sides.wrappers) applyLiveTransient(w, live.get(w.id)?.record);
+  const pcWrappers = sides.wrappers.filter(w => w.kind === 'pc');
+  const monWrappers = sides.wrappers.filter(w => w.kind === 'monster');
+  return {
+    active: sides.active,
+    enemies: kind === 'pc' ? monWrappers : pcWrappers,
+    allies: kind === 'pc' ? pcWrappers : monWrappers,
+    pcWrappers, monWrappers
+  };
 }
 
 /**
  * Run one entity's turn through the unified combat engine, then write
- * every wrapper back to its live record.
+ * every wrapper back to its live record (through the EncounterState
+ * adapters — the same path the server takes).
  *
  * @param {object} args
  * @param {object[]} args.party   live PC records (mutated by write-back)
@@ -272,22 +392,21 @@ export async function runTurn({ party, scene, entity, kind, rng, prompts = {} })
   if (typeof rng !== 'function') {
     throw new TypeError('live-bridge.runTurn: rng must be a function');
   }
-  const { active, enemies, allies, pcWrappers, monWrappers } =
-    buildEngineSides({ party, scene, active: entity, kind });
-  if (!active) return null;
+  const { state, sheets, live } = liveEncounterState({ party, scene, active: entity });
+  const activeId = entity ? String(entity.id) : null;
+  const slot = activeId ? live.get(activeId) : null;
+  if (!slot || slot.record !== entity || slot.kind !== kind) return null;
+  const sides = toEngineSides(state, sheets, activeId);
+  for (const w of sides.wrappers) applyLiveTransient(w, live.get(w.id)?.record);
 
-  await runOneAttack(active, enemies, allies, scene, rng, prompts);
+  await runOneAttack(sides.active, sides.enemies, sides.allies, sides.scene, rng, prompts);
 
-  // Write back every wrapper. Order only matters for the active entity
-  // (an OA may have damaged it before its own attack); walk them all.
-  const pcs = party || [];
-  for (const w of pcWrappers) {
-    const live = pcs.find(p => p.id === w.id);
-    if (live) writeBackPc(live, w, scene);
+  const next = applyEngineSides(state, sides.wrappers);
+  for (const [id, e] of Object.entries(next.entities)) {
+    const rec = live.get(id);
+    if (rec) copyEntityToLive(rec.record, e, scene);
   }
-  for (const w of monWrappers) {
-    const live = (scene?.monsters || []).find(m => m.id === w.id);
-    if (live) writeBackMonster(live, w);
-  }
-  return active;
+  entity._lastPlan = sides.active._lastPlan || null;
+  if (kind === 'pc') entity._chosenWeapon = sides.active._chosenWeapon || null;
+  return sides.active;
 }
