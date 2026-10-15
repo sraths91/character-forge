@@ -3,6 +3,9 @@ import assert from 'node:assert';
 import { choosePcAction } from '../js/scene/ai/pc-action.js';
 import { spellById } from '../js/scene/monster-spells.js';
 
+// M64 T2 — rng is required; a constant keeps tie-breaks deterministic.
+const tieRng = () => 0.5;
+
 /** Build a minimal PC wrapper that satisfies choosePcAction's contract.
  *  Mirrors the simulator's per-iteration wrap shape. */
 function buildPcWrapper(ref, overrides = {}) {
@@ -51,7 +54,7 @@ test('M45 Phase 3: choosePcAction produces a cast plan for a wizard with magic-m
     hp: { current: 22, max: 22 }
   });
   const enemy = buildEnemy({ _position: { col: 6, row: 0 } });   // 30ft away
-  const plan = choosePcAction({ self: wizard, enemies: [enemy], allies: [wizard] });
+  const plan = choosePcAction({ self: wizard, enemies: [enemy], allies: [wizard], rng: tieRng });
   // The wizard should at least CONSIDER casting — exact pick depends
   // on profile weights. We just verify the cast path is exercised when
   // slots + range + weight all line up.
@@ -71,7 +74,7 @@ test('M45 Phase 3: cantrips bypass the slot pool', () => {
     hp: { current: 8, max: 8 }
   }, { _slots: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 } });
   const enemy = buildEnemy({ _position: { col: 5, row: 0 } });
-  const plan = choosePcAction({ self: wizard, enemies: [enemy], allies: [wizard] });
+  const plan = choosePcAction({ self: wizard, enemies: [enemy], allies: [wizard], rng: tieRng });
   // With no slots, the cantrip is the wizard's only ranged option. If
   // the planner picked it, plan.kind === 'cast' AND castAtLevel === 0.
   if (plan.kind === 'cast') {
@@ -96,7 +99,8 @@ test('M45 Phase 3: MCTS upcast — chooses base level for a low-HP target', () =
   const plan = choosePcAction({
     self: sorc,
     enemies: [lowHpEnemy],
-    allies: [sorc]
+    allies: [sorc],
+    rng: tieRng
   });
   if (plan.kind === 'cast' && plan.spellId === 'magic-missile') {
     // The kill is at base — no reason to upcast
@@ -121,7 +125,8 @@ test('M45 Phase 3: MCTS upcast — considers higher tiers for high-HP targets', 
   const plan = choosePcAction({
     self: sorc,
     enemies: [bigEnemy],
-    allies: [sorc]
+    allies: [sorc],
+    rng: tieRng
   });
   // The plan should be internally consistent regardless of which tier
   // MCTS picked.
@@ -144,7 +149,7 @@ test('M45 Phase 3: MCTS upcast — no slots → no leveled cast', () => {
     hp: { current: 32, max: 32 }
   }, { _slots: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 } });
   const enemy = buildEnemy({ _position: { col: 5, row: 0 } });
-  const plan = choosePcAction({ self: sorc, enemies: [enemy], allies: [sorc] });
+  const plan = choosePcAction({ self: sorc, enemies: [enemy], allies: [sorc], rng: tieRng });
   // No slots → magic-missile should NOT appear as a leveled cast
   // candidate. The planner falls back to whatever else is available
   // (likely the dagger), and the cast plan must NOT carry magic-missile.
@@ -169,7 +174,7 @@ test('M45 Phase 3: cast plan carries spellId + castAtLevel + targetId', () => {
     hp: { current: 30, max: 30 }
   });
   const enemy = buildEnemy({ _position: { col: 5, row: 0 } });
-  const plan = choosePcAction({ self: wizard, enemies: [enemy], allies: [wizard] });
+  const plan = choosePcAction({ self: wizard, enemies: [enemy], allies: [wizard], rng: tieRng });
   if (plan.kind === 'cast') {
     assert.ok(plan.spellId, 'cast plan must carry spellId');
     assert.ok(Number.isFinite(plan.castAtLevel), 'cast plan must carry castAtLevel');

@@ -10,6 +10,7 @@
  */
 
 import { rollDamage } from './combat-roll.js';
+import { requireRng } from './rng.js';
 
 /**
  * Roll a single saving throw.
@@ -20,7 +21,8 @@ import { rollDamage } from './combat-roll.js';
  *
  * Returns { kept, dice, advantage, total, dc, success }.
  */
-export function rollSave({ bonus = 0, dc = 10, advantage = 'normal' } = {}, rng = Math.random) {
+export function rollSave({ bonus = 0, dc = 10, advantage = 'normal' } = {}, rng) {
+  requireRng(rng, 'rollSave');
   const a = 1 + Math.floor(rng() * 20);
   let kept, dice;
   if (advantage === 'normal') {
@@ -51,7 +53,8 @@ export function rollSave({ bonus = 0, dc = 10, advantage = 'normal' } = {}, rng 
  *     outcome: 'full' | 'half' | 'none'   // verbal description
  *   }
  */
-export function resolveSpellSave({ spell, targetSaveBonus = 0, dc, advantage = 'normal' }, rng = Math.random) {
+export function resolveSpellSave({ spell, targetSaveBonus = 0, dc, advantage = 'normal' }, rng) {
+  requireRng(rng, 'resolveSpellSave');
   const save = rollSave({ bonus: targetSaveBonus, dc, advantage }, rng);
   // No dice on the spell? Then it's pure control (Hold Person) — no damage either way.
   if (!spell?.dice) {

@@ -26,6 +26,7 @@ import { scoreConsideration } from './considerations.js';
 import { chebyshevFeet } from '../grid-rules.js';
 import { spellById, canCastSpell, applyUpcast } from '../monster-spells.js';
 import { mctsEvaluate, shallowRolloutForResource } from './mcts.js';
+import { requireRng } from '../rng.js';
 
 function posOf(e) { return e?._position || e?.position || null; }
 function hpOf(e)  { return typeof e?.hp === 'number' ? e.hp : (e?.hp?.current ?? 0); }
@@ -38,7 +39,8 @@ function alive(e) { return e && hpOf(e) > 0; }
  * @param {object[]} args.allies
  * @param {function} [args.rng]
  */
-export function choosePcAction({ self, enemies, allies, rng = Math.random } = {}) {
+export function choosePcAction({ self, enemies, allies, rng } = {}) {
+  requireRng(rng, 'choosePcAction');
   const profile = profileForPc(self);
   const archetype = profile.archetype;
   const liveEnemies = (enemies || []).filter(alive);
@@ -49,7 +51,7 @@ export function choosePcAction({ self, enemies, allies, rng = Math.random } = {}
   // For each live enemy, score the best action against them.
   let best = null;
   for (const target of liveEnemies) {
-    const candidate = scoreActionsAgainst({ self, target, allies: allies || [], enemies: liveEnemies, profile });
+    const candidate = scoreActionsAgainst({ self, target, allies: allies || [], enemies: liveEnemies, profile, rng });
     if (candidate && (!best || candidate.score > best.score ||
         (candidate.score === best.score && rng() < 0.5))) {
       best = { ...candidate, target };
@@ -107,7 +109,7 @@ export function choosePcAction({ self, enemies, allies, rng = Math.random } = {}
  * Score every option this PC has against `target`. Returns the
  * highest-scoring action + breakdown.
  */
-function scoreActionsAgainst({ self, target, allies, enemies, profile }) {
+function scoreActionsAgainst({ self, target, allies, enemies, profile, rng }) {
   const selfPos = posOf(self);
   const targetPos = posOf(target);
   const distance = (selfPos && targetPos) ? chebyshevFeet(selfPos, targetPos) : 999;
@@ -227,7 +229,7 @@ function scoreActionsAgainst({ self, target, allies, enemies, profile }) {
     }
 
     if (!slots) continue;
-    const upcastChoice = pickUpcastTier({ spell, baseScore: perTargetBase + w + kindWeight, slots, target });
+    const upcastChoice = pickUpcastTier({ spell, baseScore: perTargetBase + w + kindWeight, slots, target, rng });
     if (!upcastChoice) continue;
     if (!bestOption || upcastChoice.score > bestOption.score) {
       bestOption = {
@@ -261,7 +263,7 @@ function scoreActionsAgainst({ self, target, allies, enemies, profile }) {
  * low-HP targets favor the base level (kill window already closed by
  * the base dice).
  */
-function pickUpcastTier({ spell, baseScore, slots, target }) {
+function pickUpcastTier({ spell, baseScore, slots, target, rng }) {
   const baseLevel = spell.level;
   const candidates = [];
   const slotPool = Object.values(slots).reduce((s, n) => s + (n || 0), 0);
@@ -290,7 +292,7 @@ function pickUpcastTier({ spell, baseScore, slots, target }) {
       candidate: cand,
       ctx: { target, roundsLeft: 3, slotPool: slotPool / cand._slotTax }
     }),
-    rollouts: 4, depth: 1
+    rollouts: 4, depth: 1, rng
   });
   const best = ranked[0];
   return {

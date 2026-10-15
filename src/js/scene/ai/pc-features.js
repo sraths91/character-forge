@@ -27,7 +27,7 @@ import { mctsEvaluate, shallowRolloutForResource } from './mcts.js';
  * Caller (the consume() above) reads the returned slot level and
  * decrements the pool accordingly.
  */
-function pickSmiteSlot(pc, slots) {
+function pickSmiteSlot(pc, slots, rng) {
   // Target context lives on `pc._mctsTargetCtx` (stamped by the scorer
   // just before consume). If absent we fall back to lowest-slot.
   const targetCtx = pc._mctsTargetCtx;
@@ -51,7 +51,7 @@ function pickSmiteSlot(pc, slots) {
       candidate: cand,
       ctx: { ...targetCtx, slotPool }
     }),
-    rollouts: 4, depth: 1
+    rollouts: 4, depth: 1, rng
   });
   return ranked[0].level;
 }
@@ -215,14 +215,14 @@ export const PC_FEATURES = {
       if (targetIsCaster) boost += 0.2;
       return boost;
     },
-    consume(pc) {
+    consume(pc, rng) {
       // Pick the slot via MCTS-style lookahead: 2d8 base + 1d8 per
       // upcast (max 5d8). Cheap shallow rollout estimates which slot
       // tier maximizes expected encounter value given the current
       // target HP and slot economy. If MCTS pool is empty, falls back
       // to the lowest available slot (cheapest baseline).
       const slots = pc._slots || {};
-      const choice = pickSmiteSlot(pc, slots);
+      const choice = pickSmiteSlot(pc, slots, rng);
       if (choice && (slots[choice] ?? 0) > 0) {
         slots[choice] -= 1;
         pc._smiteSlotUsed = choice;

@@ -118,7 +118,7 @@ test('M34: handleDamageOnConcentration — failing save drops concentration', ()
 });
 
 test('M34: handleDamageOnConcentration — no-op when not concentrating', () => {
-  const out = handleDamageOnConcentration({ caster: {}, damage: 5 });
+  const out = handleDamageOnConcentration({ caster: {}, damage: 5 }, () => 0.5);
   assert.strictEqual(out.broke, false);
   assert.strictEqual(out.save, null);
 });

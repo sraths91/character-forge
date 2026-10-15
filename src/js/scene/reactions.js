@@ -21,6 +21,7 @@
  */
 
 import { chebyshevFeet, meleeReachFt } from './grid-rules.js';
+import { requireRng } from './rng.js';
 
 const INCAPACITATING_CONDITIONS = ['incapacitated', 'paralyzed', 'stunned', 'unconscious', 'petrified'];
 
@@ -376,7 +377,8 @@ export function shouldCounterspell(entity, spellLevel) {
  *   For the 'check' path, the rng yields the d20; mod is the counterer's
  *   spellcasting ability modifier (defaults to 0 if not provided).
  */
-export function resolveCounterspell({ spellLevel, counterMod = 0 } = {}, rng = Math.random) {
+export function resolveCounterspell({ spellLevel, counterMod = 0 } = {}, rng) {
+  requireRng(rng, 'resolveCounterspell');
   if (spellLevel <= 3) {
     return { countered: true, mode: 'auto' };
   }

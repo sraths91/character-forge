@@ -36,7 +36,7 @@ test('M42.2: mctsEvaluate — returns candidates sorted by total value', () => {
   ];
   // Rollout: 'b' is best (returns 10), 'a' middling (5), 'c' bad (0).
   const rollout = (c) => ({ a: 5, b: 10, c: 0 })[c.id];
-  const ranked = mctsEvaluate({ candidates, rollout, rollouts: 1 });
+  const ranked = mctsEvaluate({ candidates, rollout, rollouts: 1, rng: Math.random });
   assert.strictEqual(ranked[0].id, 'b');
   assert.strictEqual(ranked[1].id, 'a');
   assert.strictEqual(ranked[2].id, 'c');
@@ -46,13 +46,13 @@ test('M42.2: mctsEvaluate — averages multiple rollouts per candidate', () => {
   const candidates = [{ id: 'x', baseScore: 0 }];
   let calls = 0;
   const rollout = () => ++calls;   // returns 1, 2, 3, 4 across rollouts
-  const ranked = mctsEvaluate({ candidates, rollout, rollouts: 4 });
+  const ranked = mctsEvaluate({ candidates, rollout, rollouts: 4, rng: Math.random });
   // average of 1,2,3,4 = 2.5
   assert.strictEqual(ranked[0].mctsValue, 2.5);
 });
 
 test('M42.2: mctsEvaluate — returns empty when given no candidates', () => {
-  assert.deepStrictEqual(mctsEvaluate({ candidates: [], rollout: () => 0 }), []);
+  assert.deepStrictEqual(mctsEvaluate({ candidates: [], rollout: () => 0, rng: Math.random }), []);
 });
 
 // ---------- shallowRolloutForResource ----------
@@ -92,7 +92,7 @@ test('M42.2: smite picks higher slot when target is tanky and slots plenty', () 
     _slots: { 1: 4, 2: 3, 3: 2 },
     _mctsTargetCtx: { target: { hp: 80, attack: { dice: '2d8+4' } }, roundsLeft: 4 }
   };
-  PC_FEATURES['divine-smite'].consume(pc);
+  PC_FEATURES['divine-smite'].consume(pc, Math.random);
   assert.ok(pc._smiteSlotUsed >= 2,
     `expected higher slot when target is tanky; got ${pc._smiteSlotUsed}`);
 });
@@ -104,7 +104,7 @@ test('M42.2: smite picks lower slot when target is at low HP', () => {
     _slots: { 1: 4, 2: 3, 3: 2 },
     _mctsTargetCtx: { target: { hp: 5, attack: { dice: '2d8+4' } }, roundsLeft: 1 }
   };
-  PC_FEATURES['divine-smite'].consume(pc);
+  PC_FEATURES['divine-smite'].consume(pc, Math.random);
   // Lowest slot is enough to kill; AI should choose 1st (or 2nd at most).
   assert.ok(pc._smiteSlotUsed <= 2,
     `expected low slot for low-HP target; got ${pc._smiteSlotUsed}`);
@@ -112,6 +112,17 @@ test('M42.2: smite picks lower slot when target is at low HP', () => {
 
 test('M42.2: smite falls back to lowest available slot when no MCTS ctx', () => {
   const pc = { _slots: { 1: 0, 2: 0, 3: 1 } };
-  PC_FEATURES['divine-smite'].consume(pc);
+  PC_FEATURES['divine-smite'].consume(pc, Math.random);
   assert.strictEqual(pc._smiteSlotUsed, 3);
+});
+
+test('M64 T2: mctsEvaluate — rng is required (no Math.random default)', () => {
+  assert.throws(() => mctsEvaluate({ candidates: [], rollout: () => 0 }), /mctsEvaluate: rng is required/);
+});
+
+test('M64 T2: mctsEvaluate — threads rng into every rollout', () => {
+  const seen = [];
+  const rng = () => 0.25;
+  mctsEvaluate({ candidates: [{ id: 'a', baseScore: 0 }], rollout: (_c, ctx) => { seen.push(ctx.rng); return 1; }, rollouts: 3, rng });
+  assert.deepStrictEqual(seen, [rng, rng, rng]);
 });

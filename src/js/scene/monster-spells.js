@@ -19,6 +19,8 @@
  * Pure module — no side effects, no DOM.
  */
 
+import { requireRng } from './rng.js';
+
 export const MONSTER_SPELLS = {
   'sacred-flame': {
     id: 'sacred-flame', name: 'Sacred Flame',
@@ -225,7 +227,8 @@ export function freshInnateState(slug) {
  * the start of the monster's turn. Returns the list of recharged spell
  * ids so the caller can surface them in the roll log.
  */
-export function rollInnateRecharges(self, rng = Math.random) {
+export function rollInnateRecharges(self, rng) {
+  requireRng(rng, 'rollInnateRecharges');
   const block = innateBlockFor(self?.presetSlug);
   const state = self?._innate;
   if (!block || !state || !block.recharge) return [];

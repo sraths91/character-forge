@@ -12,6 +12,8 @@
  *   - Natural 1  on the to-hit die = automatic miss (no damage rolled)
  */
 
+import { requireRng } from './rng.js';
+
 const DICE_RE = /^\s*(\d*)d(\d+)\s*([+-]\s*\d+)?\s*$/i;
 
 /**
@@ -33,7 +35,8 @@ export function parseDice(spec) {
  * Roll a dice spec. Returns { total, rolls, mod, spec } where `rolls` is
  * the array of raw face values (length === count). The total includes mod.
  */
-export function rollDice(spec, rng = Math.random) {
+export function rollDice(spec, rng) {
+  requireRng(rng, 'rollDice');
   const parsed = parseDice(spec);
   if (!parsed) return { total: 0, rolls: [], mod: 0, spec };
   const rolls = [];
@@ -48,7 +51,8 @@ export function rollDice(spec, rng = Math.random) {
  * Roll a d20 with optional advantage / disadvantage. Returns both dice
  * (so callers can show the breakdown) plus which one was kept.
  */
-export function rollD20(advantage = 'normal', rng = Math.random) {
+export function rollD20(advantage = 'normal', rng) {
+  requireRng(rng, 'rollD20');
   const a = 1 + Math.floor(rng() * 20);
   if (advantage === 'normal') return { kept: a, dice: [a], advantage };
   const b = 1 + Math.floor(rng() * 20);
@@ -62,7 +66,8 @@ export function rollD20(advantage = 'normal', rng = Math.random) {
  *
  * Nat 20 → crit + hit (regardless of AC). Nat 1 → automatic miss.
  */
-export function rollAttack({ bonus = 0, advantage = 'normal', targetAC = 10 }, rng = Math.random) {
+export function rollAttack({ bonus = 0, advantage = 'normal', targetAC = 10 }, rng) {
+  requireRng(rng, 'rollAttack');
   const d20 = rollD20(advantage, rng);
   const nat = d20.kept;
   const total = nat + bonus;
@@ -78,7 +83,8 @@ export function rollAttack({ bonus = 0, advantage = 'normal', targetAC = 10 }, r
  * summed (5e RAW); the flat modifier is NOT doubled. Returns the same
  * shape as rollDice plus a `crit` flag.
  */
-export function rollDamage(spec, { crit = false } = {}, rng = Math.random) {
+export function rollDamage(spec, { crit = false } = {}, rng) {
+  requireRng(rng, 'rollDamage');
   const parsed = parseDice(spec);
   if (!parsed) return { total: 0, rolls: [], mod: 0, spec, crit };
   const dieCount = crit ? parsed.count * 2 : parsed.count;

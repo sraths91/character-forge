@@ -30,6 +30,7 @@ import {
   spellbookFor, spellById,
   innateBlockFor, canInnateCast
 } from '../monster-spells.js';
+import { requireRng } from '../rng.js';
 
 // M40 — slot-economy penalty per slot level burned above a spell's base.
 // Keep small; spells with large upcast scoreBonus will outweigh it.
@@ -58,7 +59,8 @@ function alive(e) { return e && hpOf(e) > 0; }
  * @returns {{kind:'attack'|'flee', targetId:string|null, archetype:string,
  *           score:number, breakdown:Array<{name:string,raw:number,weighted:number}>}}
  */
-export function chooseAction({ self, slug, enemies, allies, rng = Math.random } = {}) {
+export function chooseAction({ self, slug, enemies, allies, rng } = {}) {
+  requireRng(rng, 'chooseAction');
   // M32.2: prefer a per-entity override (Open5e-inferred profile attached
   // at spawn) over the slug-based lookup.
   const profile = profileForEntity(self) || profileFor(slug || self?.presetSlug);
@@ -348,7 +350,8 @@ function nearestEnemy(self, enemies) {
  * on the opposite side of the grid from the threat, clamped to bounds.
  * The simulator passes this to planMovement instead of the threat's pos.
  */
-export function fleeTargetCell(self, threat, bounds = { cols: 10, rows: 10 }, rng = Math.random) {
+export function fleeTargetCell(self, threat, bounds = { cols: 10, rows: 10 }, rng) {
+  requireRng(rng, 'fleeTargetCell');
   const sp = posOf(self), tp = posOf(threat);
   if (!sp || !tp) return sp;
   // When the mover is axis-aligned with the threat, pick a perpendicular

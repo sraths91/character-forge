@@ -2483,7 +2483,7 @@ async function runAttackPrompt(targetKind, targetEntity) {
       bonus: finalBonus, total: 20 + finalBonus, ac
     };
   } else {
-    atk = rollAttack({ bonus: finalBonus, advantage: verdict.d20.mode, targetAC: ac });
+    atk = rollAttack({ bonus: finalBonus, advantage: verdict.d20.mode, targetAC: ac }, Math.random);
   }
 
   // M38 — Shield reaction prompt. Fires when a monster's attack would
@@ -2515,7 +2515,7 @@ async function runAttackPrompt(targetKind, targetEntity) {
   let damage = 0;
   let dmgRoll = null;
   if (atk.hit) {
-    dmgRoll = rollDamage(finalDmgDice, { crit: atk.crit });
+    dmgRoll = rollDamage(finalDmgDice, { crit: atk.crit }, Math.random);
     damage = dmgRoll.total;
     applyDamage(targetKind, targetEntity.id, damage);
   }
@@ -2614,7 +2614,7 @@ async function runSpellSavePrompt(attackerHit, targetHit, spell) {
   // Roll!
   const result = resolveSpellSave({
     spell, targetSaveBonus, dc, advantage: 'normal'
-  });
+  }, Math.random);
 
   // Apply damage if the spell deals damage on this outcome.
   if (result.damage > 0) {
@@ -4441,7 +4441,7 @@ document.addEventListener('click', (e) => {
   if (!weapon) return;
   const atk = deriveWeaponAttack(originalCharacter, weapon);
   const d20 = 1 + Math.floor(Math.random() * 20);
-  const dmgRoll = rollDamage(atk.dice, { crit: d20 === 20 });
+  const dmgRoll = rollDamage(atk.dice, { crit: d20 === 20 }, Math.random);
   const crit = d20 === 20 ? ' CRIT!' : (d20 === 1 ? ' (nat 1)' : '');
   const total = d20 + atk.bonus;
   const sign = atk.bonus >= 0 ? '+' : '';
@@ -4550,7 +4550,7 @@ document.addEventListener('click', (e) => {
   const dice = e.target.dataset.dice;
   const name = e.target.dataset.name;
   if (!dice) return;
-  const dmg = rollDamage(dice, { crit: false });
+  const dmg = rollDamage(dice, { crit: false }, Math.random);
   appendRollLog(`${name}: ${dice} (rolls ${dmg.rolls.join(',')}) = ${dmg.total}`);
 });
 

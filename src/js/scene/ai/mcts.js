@@ -28,6 +28,8 @@
  *     turn is independent for our purposes.
  */
 
+import { requireRng } from '../rng.js';
+
 /**
  * @typedef {object} Candidate
  * @property {string} id        — opaque identifier
@@ -49,10 +51,11 @@
  * @param {function}    args.rollout      — (candidate, {rng,depth}) → number
  * @param {number}      [args.rollouts]   — per candidate, default 6
  * @param {number}      [args.depth]      — plies to look ahead, default 2
- * @param {function}    [args.rng]        — RNG; defaults to Math.random
+ * @param {function}    args.rng          — RNG, required (M64 T2: no Math.random default)
  * @returns {Candidate[]} sorted by descending total value
  */
-export function mctsEvaluate({ candidates, rollout, rollouts = 6, depth = 2, rng = Math.random } = {}) {
+export function mctsEvaluate({ candidates, rollout, rollouts = 6, depth = 2, rng } = {}) {
+  requireRng(rng, 'mctsEvaluate');
   if (!Array.isArray(candidates) || candidates.length === 0) return [];
   if (typeof rollout !== 'function') return candidates.slice();
   for (const cand of candidates) {

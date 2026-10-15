@@ -13,6 +13,8 @@
  * targetIds for that).
  */
 
+import { requireRng } from './rng.js';
+
 /** Mark `caster` as concentrating on `spell`, targeting `targetIds[]`. */
 export function startConcentration(caster, spell, targetIds = []) {
   if (!caster || !spell?.concentration) return;
@@ -42,7 +44,8 @@ export function dropConcentration(caster) {
  *   dc       — max(10, floor(damageTaken / 2))
  *   rng      — injectable for tests
  */
-export function rollConcentrationSave({ conMod = 0, dc = 10 } = {}, rng = Math.random) {
+export function rollConcentrationSave({ conMod = 0, dc = 10 } = {}, rng) {
+  requireRng(rng, 'rollConcentrationSave');
   const d20 = Math.floor(rng() * 20) + 1;
   const total = d20 + conMod;
   return { d20, conMod, total, dc, success: total >= dc };
@@ -60,7 +63,8 @@ export function concentrationDc(damage) {
  *   rng    — RNG; threaded for determinism
  * Returns { broke: bool, dropped: block|null, save: rollResult|null }.
  */
-export function handleDamageOnConcentration({ caster, damage, conMod = 0 } = {}, rng = Math.random) {
+export function handleDamageOnConcentration({ caster, damage, conMod = 0 } = {}, rng) {
+  requireRng(rng, 'handleDamageOnConcentration');
   if (!isConcentrating(caster)) return { broke: false, dropped: null, save: null };
   if (damage <= 0) return { broke: false, dropped: null, save: null };
   const dc = concentrationDc(damage);

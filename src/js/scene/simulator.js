@@ -287,7 +287,7 @@ function applyLegendaryAction(monster, pick, scene, rng) {
     }
     if (!atk.hit) return;
     const dmg = rollDamage(action.dice, { crit: atk.crit }, rng);
-    applyDamageToEntity(target, dmg.total);
+    applyDamageToEntity(target, dmg.total, rng);
     monster.damageDealt += dmg.total;
     return;
   }
@@ -306,7 +306,7 @@ function applyLegendaryAction(monster, pick, scene, rng) {
       const dmgRoll = rollDamage(action.dice, { crit: false }, rng);
       let dmg = dmgRoll.total;
       if (save.success) dmg = Math.floor(dmg / 2);
-      applyDamageToEntity(e, dmg);
+      applyDamageToEntity(e, dmg, rng);
       monster.damageDealt += dmg;
     }
   }

@@ -259,7 +259,7 @@ test('M32.1: hobgoblin gets a pack-tactics bonus when allies are adjacent', () =
 test('M32: fleeTargetCell — moves away from threat, stays in bounds', () => {
   const self   = { _position: { col: 5, row: 5 } };
   const threat = { _position: { col: 7, row: 5 } };
-  const cell = fleeTargetCell(self, threat, { cols: 10, rows: 10 });
+  const cell = fleeTargetCell(self, threat, { cols: 10, rows: 10 }, () => 0.5);
   // Move was -col direction (away from threat)
   assert.ok(cell.col < 5);
   assert.ok(cell.col >= 0 && cell.col < 10);

@@ -98,7 +98,8 @@ export async function runOneAttack(attacker, enemies, allies, scene, rng, prompt
   // M37 — At the start of each monster's turn, roll d6 for any innate
   // spells that are cooling down. The recharged-list isn't surfaced in
   // the simulator path (we have no log here); main.js can read it for
-  // versus.
+  // versus. M64 T2 — this is the single source of the per-turn recharge
+  // roll; callers (the live runner included) must not roll it again.
   if (attacker.kind === 'monster' && attacker._innate) {
     rollInnateRecharges(attacker, rng);
   }
@@ -357,7 +358,7 @@ export async function runOneAttack(attacker, enemies, allies, scene, rng, prompt
   // M42.1 — Divine Smite
   let smiteTotal = 0;
   if (attacker.kind === 'pc' && plan?.featuresFired?.includes('divine-smite')) {
-    PC_FEATURES['divine-smite'].consume(attacker);
+    PC_FEATURES['divine-smite'].consume(attacker, rng);
     const slotLevel = attacker._smiteSlotUsed || 1;
     let smiteDice = Math.min(5, 2 + (slotLevel - 1));
     const tType = String(target?.ref?.race?.name || target?.presetSlug || '').toLowerCase();
@@ -472,7 +473,7 @@ export async function runMonsterSpell({ attacker, target, plan, scene: _scene, r
       const r = rollDamage(spell.perDart, { crit: false }, rng);
       totalDmg += r.total;
     }
-    applyDamageToEntity(target, totalDmg);
+    applyDamageToEntity(target, totalDmg, rng);
     attacker.damageDealt += totalDmg;
     await castCinema(target, { dmg: totalDmg, darts });
     return;
@@ -494,7 +495,7 @@ export async function runMonsterSpell({ attacker, target, plan, scene: _scene, r
       return;
     }
     const dmg = rollDamage(spell.dice, { crit: atk.crit }, rng);
-    applyDamageToEntity(target, dmg.total);
+    applyDamageToEntity(target, dmg.total, rng);
     attacker.damageDealt += dmg.total;
     await castCinema(target, { dmg: dmg.total, crit: !!atk.crit });
     return;
@@ -516,7 +517,7 @@ export async function runMonsterSpell({ attacker, target, plan, scene: _scene, r
         const dmgRoll = rollDamage(spell.dice, { crit: false }, rng);
         let dmg = dmgRoll.total;
         if (eSave.success) dmg = spell.saveOnHalf ? Math.floor(dmg / 2) : 0;
-        applyDamageToEntity(e, dmg);
+        applyDamageToEntity(e, dmg, rng);
         totalDmg += dmg;
         aoeResults.push({ entity: e, dmg, saved: eSave.success });
       }
@@ -544,7 +545,7 @@ export async function runMonsterSpell({ attacker, target, plan, scene: _scene, r
     const dmgRoll = rollDamage(spell.dice, { crit: false }, rng);
     let dmg = dmgRoll.total;
     if (save.success) dmg = spell.saveOnHalf ? Math.floor(dmg / 2) : 0;
-    applyDamageToEntity(target, dmg);
+    applyDamageToEntity(target, dmg, rng);
     attacker.damageDealt += dmg;
     saveDmg = dmg;
   }
@@ -651,14 +652,24 @@ export async function runReactionAttack(attacker, target, targetBeforePos, scene
 // Shared helpers (exported so simulator's legendary path can reuse them)
 // =====================================================================
 
-export function applyDamageToEntity(target, damage) {
+/**
+ * Apply damage to an entity wrapper, then roll the concentration save
+ * (PHB p203) if it was concentrating. M64 T2 — `rng` is threaded into
+ * the concentration save; it used to fall back to Math.random, which
+ * broke seeded replay for any fight with a concentrating caster.
+ *
+ * @param {object} target — entity wrapper ({ hp, _concentrating, ... })
+ * @param {number} damage — non-positive values are a no-op
+ * @param {function} rng — () → [0,1); required when target may be concentrating
+ */
+export function applyDamageToEntity(target, damage, rng) {
   if (!target || damage <= 0) return;
   const before = target.hp;
   target.hp = Math.max(0, target.hp - damage);
   const dealtDamage = before - target.hp;
   if (dealtDamage > 0 && isConcentrating(target)) {
     const conMod = saveBonusFor(target, 'CON');
-    handleDamageOnConcentration({ caster: target, damage: dealtDamage, conMod });
+    handleDamageOnConcentration({ caster: target, damage: dealtDamage, conMod }, rng);
   }
 }
 

@@ -18,6 +18,8 @@
  * auto-fight pacing) and DOM updates externally.
  */
 
+import { requireRng } from './rng.js';
+
 /**
  * Build a small ephemeral arena scene: 5×3 grid, PC at col 1, monster
  * at col 3. Returns a scene record compatible with the existing
@@ -147,7 +149,8 @@ export function partyEndStateOf({ partyHps = [], monsterHps = [] } = {}) {
  *   { entityId, entityKind, name, score }
  * Sorted descending by score. Pure: caller injects rng for tests.
  */
-export function rollPartyInitiative({ pcs = [], monsters = [] } = {}, rng = Math.random) {
+export function rollPartyInitiative({ pcs = [], monsters = [] } = {}, rng) {
+  requireRng(rng, 'rollPartyInitiative');
   const d20 = () => 1 + Math.floor(rng() * 20);
   const dexMod = ent => Number.isFinite(ent.abilityModifiers?.DEX) ? ent.abilityModifiers.DEX : 0;
   const entries = [];
