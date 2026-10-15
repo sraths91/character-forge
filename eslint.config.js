@@ -18,7 +18,8 @@ const browserGlobals = {
   confirm: 'readonly', performance: 'readonly', crypto: 'readonly',
   TextEncoder: 'readonly', TextDecoder: 'readonly', AbortController: 'readonly',
   ClipboardItem: 'readonly',
-  btoa: 'readonly', atob: 'readonly', history: 'readonly'
+  btoa: 'readonly', atob: 'readonly', history: 'readonly',
+  WebSocket: 'readonly', CustomEvent: 'readonly', EventTarget: 'readonly'
 };
 
 const nodeGlobals = {
