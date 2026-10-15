@@ -51,7 +51,9 @@ export const RNG_ALGOS = Object.freeze(['mulberry32']);
 /** Per-turn flags (reset by the turn manager). */
 export const TURN_FLAG_KEYS = Object.freeze([
   'sneakUsed', 'cunningUsed', 'recklessUsed', 'recklessUntilNextTurn',
-  'shieldActive', 'surgeFired', 'extraAction', 'smiteSlotUsed'
+  'shieldActive', 'surgeFired', 'extraAction', 'smiteSlotUsed',
+  // v1 additive (M64 R13, E1): Dodge lasts until the creature's next turn.
+  'dodging', 'disengaged'
 ]);
 
 /**
@@ -100,6 +102,8 @@ export const WRAPPER_FIELD_MAP = Object.freeze({
   speedFt: 'speedFt',
   saves: 'statBlock.saves',
   secondary: 'statBlock.attacks[1]',
+  _dodging: 'turnFlags.dodging',
+  _disengaged: 'turnFlags.disengaged',
   // Transient — never persisted.
   weapon: null,
   _chosenWeapon: null,
@@ -207,7 +211,9 @@ const TURN_FLAGS = shape({
   shieldActive: optional(bool()),
   surgeFired: optional(bool()),
   extraAction: optional(bool()),
-  smiteSlotUsed: optional(nullable(int(1, 9)))
+  smiteSlotUsed: optional(nullable(int(1, 9))),
+  dodging: optional(bool()),
+  disengaged: optional(bool())
 });
 
 const ENTITY = shape({

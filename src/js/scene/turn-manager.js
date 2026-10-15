@@ -187,6 +187,8 @@ export function beginTurnResets(actor) {
   if (!actor) return;
   resetReaction(actor);
   if (actor._shieldActive) actor._shieldActive = false;
+  if (actor._dodging) actor._dodging = false;
+  if (actor._disengaged) actor._disengaged = false;
   if (actor.kind === 'pc') {
     actor._recklessUsedThisTurn = false;
     actor._recklessUntilNextTurn = false;

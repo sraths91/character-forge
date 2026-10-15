@@ -132,6 +132,8 @@ const NON_ATTACK_KINDS = new Set(['dash', 'dodge', 'disengage', 'move']);
 
 async function resolveTurn(attacker, enemies, allies, scene, rng, prompts, ctx) {
   const actorId = idOf(attacker);
+  // M64 R13 — Dodge lasts until the start of this creature's next turn.
+  if (attacker._dodging) attacker._dodging = false;
   // M37 — At the start of each monster's turn, roll d6 for any innate
   // spells that are cooling down. M64 T2 — this is the single source of
   // the per-turn recharge roll; callers must not roll it again.
@@ -247,7 +249,12 @@ async function resolveTurn(attacker, enemies, allies, scene, rng, prompts, ctx) 
     });
     const bounds = { cols: scene?.cols || 99, rows: scene?.rows || 99 };
     // M64 T9 — movement budget from the entity (sheet / preset), 30 ft default.
-    const speedFt = Number.isFinite(attacker.speedFt) ? attacker.speedFt : 30;
+    // M64 R13 — Dash doubles the movement budget this turn; Disengage
+    // stops this move provoking opportunity attacks (reactions.js reads
+    // _disengaged).
+    const baseSpeed = Number.isFinite(attacker.speedFt) ? attacker.speedFt : 30;
+    const speedFt = plan?.kind === 'dash' ? baseSpeed * 2 : baseSpeed;
+    attacker._disengaged = plan?.kind === 'disengage';
     let next;
     if (explicit && plan.moveTo) {
       // M64 T9 — a player-chosen destination is honoured as-is, within
@@ -308,6 +315,9 @@ async function resolveTurn(attacker, enemies, allies, scene, rng, prompts, ctx) 
     }
   }
 
+  // M64 R13 — Dodge: attacks against this creature have disadvantage
+  // until its next turn (cleared at the top of resolveTurn).
+  if (plan?.kind === 'dodge') attacker._dodging = true;
   // Fleeing creatures Dash instead of attacking
   if (plan && plan.kind === 'flee') return;
   // M64 T6 — the target may have dropped while we awaited reactions.
@@ -440,7 +450,7 @@ async function resolveTurn(attacker, enemies, allies, scene, rng, prompts, ctx) 
   if (verdict.autoCrit) {
     atk = { hit: true, crit: true, total: 20 + finalBonus };
   } else {
-    atk = rollAttack({ bonus: finalBonus, advantage: verdict.d20.mode, targetAC: target.ac }, rng);
+    atk = rollAttack({ bonus: finalBonus, advantage: dodgeMode(verdict.d20.mode, target), targetAC: target.ac }, rng);
     if (prompts.onRoll) atk = await reviewRoll(prompts, ctx, group, 'attack', attacker, target, atk);
   }
   // M33.1 — Shield reaction (target casts AFTER the roll lands).
@@ -686,7 +696,7 @@ export async function runMonsterSpell({ attacker, target, plan, scene, rng, witn
     const mode = verdict.d20.mode;
     let atk = verdict.autoCrit
       ? { hit: true, crit: true, total: 20 + verdict.attackBonus.total }
-      : rollAttack({ bonus: verdict.attackBonus.total, advantage: mode, targetAC: target.ac }, rng);
+      : rollAttack({ bonus: verdict.attackBonus.total, advantage: dodgeMode(mode, target), targetAC: target.ac }, rng);
     if (prompts.onRoll) atk = await reviewRoll(prompts, ctx, group, 'attack', attacker, target, atk);
     if (await askShield(target, atk, { weapon: null, spell }, prompts, ctx, group)) {
       spendShield(target, ctx, group);
@@ -835,7 +845,7 @@ export async function runReactionAttack(attacker, target, targetBeforePos, scene
   const targetHpBefore = target.hp;
   let atk = verdict.autoCrit
     ? { hit: true, crit: true, total: 20 + verdict.attackBonus.total }
-    : rollAttack({ bonus: verdict.attackBonus.total, advantage: verdict.d20.mode, targetAC: target.ac }, rng);
+    : rollAttack({ bonus: verdict.attackBonus.total, advantage: dodgeMode(verdict.d20.mode, target), targetAC: target.ac }, rng);
   if (prompts.onRoll && atk.d20) atk = await reviewRoll(prompts, ctx, group, 'attack', attacker, target, atk);
   if (await askShield(target, atk, { weapon: attacker.weapon }, prompts, ctx, group)) {
     spendShield(target, ctx, group);
@@ -913,7 +923,7 @@ async function applyLegendaryAction(monster, pick, scene, rng, prompts, ctx, gro
   if (action.kind === 'melee-attack') {
     const target = pick.target;
     if (!target || !isAlive(target)) return;
-    let atk = rollAttack({ bonus: action.attackBonus, advantage: 'normal', targetAC: target.ac }, rng);
+    let atk = rollAttack({ bonus: action.attackBonus, advantage: dodgeMode('normal', target), targetAC: target.ac }, rng);
     if (prompts.onRoll) atk = await reviewRoll(prompts, ctx, group, 'attack', monster, target, atk);
     // M33.1: Shield can still block a legendary melee attack.
     if (await askShield(target, atk, { weapon: { name: action.name } }, prompts, ctx, group)) {
@@ -998,6 +1008,19 @@ function rollSummary(kind, r) {
   if (kind === 'attack') return { kept: r.d20?.kept ?? null, total: r.total ?? null, hit: !!r.hit, crit: !!r.crit };
   if (kind === 'save') return { kept: r.kept ?? null, total: r.total ?? null, success: !!r.success };
   return { total: r.total ?? 0 };
+}
+
+/**
+ * M64 R13 — fold the target's Dodge into an attack's d20 mode: a dodging,
+ * capable target imposes disadvantage (cancelling advantage, PHB p173).
+ * @param {'normal'|'advantage'|'disadvantage'} mode
+ * @param {object} target
+ * @returns {'normal'|'advantage'|'disadvantage'}
+ */
+export function dodgeMode(mode, target) {
+  if (!target?._dodging || isIncapacitated(target)) return mode;
+  if (mode === 'advantage') return 'normal';
+  return 'disadvantage';
 }
 
 /** JSON summary of a plan for dm.override before/after (ids only). */
