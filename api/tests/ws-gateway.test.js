@@ -11,8 +11,11 @@ import { originAllowed } from '../ws/gateway.js';
 import { createStubEngine } from '../rooms/engine-port.js';
 import { viewFor, stateHash } from '../rooms/view.js';
 import { stateHash as sharedStateHash } from '../../src/js/shared/state-hash.js';
+import { validateEncounterState } from '../../src/js/shared/encounter-state.js';
 import { tempRoot, tempDb, quiet, ddbFixture, api } from './helpers/server.js';
 import { TestClient, rawSocket, closed } from './helpers/ws.js';
+import { revealCells } from '../../src/js/map/fog.js';
+import { asTerrain } from '../../src/js/map/terrain.js';
 
 const { root, cleanup } = tempRoot('cf-ws-');
 after(cleanup);
@@ -500,6 +503,37 @@ for (const engineKind of ENGINES) {
   });
 }
 
+test('[real] fog: players get the filtered projection, the DM the full one; dm.terrain.paint uses the terrain codec', async () => {
+  const srv = await boot({ engineKind: 'real' });
+  try {
+    const t = await table(srv, 1);
+    const { dm, ps } = await connectAll(srv, t);
+    // Rows 0-2 revealed; the goblin waits in row 5.
+    const fog = revealCells(null, 8, 6, Array.from({ length: 24 }, (_, i) => ({ col: i % 8, row: Math.floor(i / 8) })));
+    const r = await dm.send('dm.encounter.setup', { ...SETUP, fog, placements: { gob: { col: 3, row: 5 } } });
+    assert.equal(r.t, 'ack', JSON.stringify(r.p));
+    const created = await ps[0].find(m => m.t === 'encounter.created');
+    assert.equal(created.p.encounter.entities.gob, undefined, 'hidden monster is not broadcast');
+    assert.ok(created.p.encounter.entities['pc-1']);
+    const dmSnap = await dm.find(m => m.t === 'room.snapshot' && m.p.encounter?.entities?.gob);
+    assert.deepEqual(dmSnap.p.encounter.fog, fog);
+    // Paint difficult terrain (2) in a revealed and a hidden cell, then blocked (1) on top; clear one bit.
+    assert.equal((await dm.send('dm.terrain.paint', { cells: [{ col: 0, row: 1 }, { col: 3, row: 4 }], flags: 2 | 64, mode: 'set' })).t, 'ack');
+    assert.equal((await dm.send('dm.terrain.paint', { cells: [{ col: 0, row: 1 }], flags: 1, mode: 'set' })).t, 'ack');
+    assert.equal((await dm.send('dm.terrain.paint', { cells: [{ col: 0, row: 1 }], flags: 2, mode: 'clear' })).t, 'ack');
+    await dm.send('resync', {});
+    const full = asTerrain(dm.of('room.snapshot').at(-1).p.encounter.grid.terrain);
+    assert.equal(full.cells[1 * 8 + 0], 1, 'set then clear on the same cell');
+    assert.equal(full.cells[4 * 8 + 3], 2, 'undefined bits (64) are masked off');
+    await ps[0].send('resync', {});
+    const mine = ps[0].of('room.snapshot').at(-1).p.encounter;
+    assert.equal(mine.entities.gob, undefined);
+    assert.equal(asTerrain(mine.grid.terrain).cells[4 * 8 + 3], 0, 'terrain under fog is not sent to players');
+    assert.equal(asTerrain(mine.grid.terrain).cells[1 * 8 + 0], 1);
+    assertClean(dm, ...ps);
+  } finally { await srv.close(); }
+});
+
 test('seat.claim over ws seats the player and broadcasts seat.updated', async () => {
   const srv = await boot();
   try {
@@ -547,6 +581,21 @@ test('viewFor drops the RNG; stateHash is the shared hash of the projection', ()
   assert.notEqual(v, st);
   assert.equal(stateHash(st), sharedStateHash(v));
   assert.equal(viewFor(null, null), null);
+  // Without fog every seat gets the same projection (identity filter).
+  assert.deepEqual(viewFor(st, { role: 'player' }), v);
+});
+
+test('viewFor filters fog for player seats only, and the result is a valid projection', () => {
+  const st = createStubEngine().buildEncounter({ encounterId: 'e', seed: 5, setup: { ...SETUP, monsters: [{ id: 'gob' }, { id: 'gob2' }], placements: { gob: { col: 0, row: 5 }, gob2: { col: 1, row: 0 } } }, party: [] });
+  st.fog = revealCells(null, 8, 6, [{ col: 1, row: 0 }]);
+  st.initiative = [{ entityId: 'gob', score: 20 }, { entityId: 'gob2', score: 10 }];
+  st.turnIndex = 1;
+  const player = viewFor(st, { role: 'player' });
+  assert.deepEqual(Object.keys(player.entities), ['gob2']);
+  assert.deepEqual([player.initiative.map(r => r.entityId), player.turnIndex], [['gob2'], 0]);
+  assert.ok(validateEncounterState(player, { projected: true }).ok);
+  assert.deepEqual(Object.keys(viewFor(st, { role: 'dm' }).entities).sort(), ['gob', 'gob2']);
+  assert.equal(stateHash(st), sharedStateHash(viewFor(st, null)), 'the hash covers the unfiltered state');
 });
 
 test('dm-only overrides reach players as redacted with the same seq', async () => {

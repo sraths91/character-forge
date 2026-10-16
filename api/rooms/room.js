@@ -20,7 +20,7 @@ import { validateEvent } from '../../src/js/shared/events.js';
 import { validateEncounterState } from '../../src/js/shared/encounter-state.js';
 import { PROTOCOL_VERSION, INTENT_ROLES, CLOSE_CODES, validateServerMessage } from '../../src/js/shared/protocol.js';
 import { PromptBroker } from './prompt-broker.js';
-import { viewFor, canSeeEvent, stateHash } from './view.js';
+import { viewFor, publicView, canSeeEvent, stateHash } from './view.js';
 import { newId } from './tokens.js';
 import { publicSeat, RoomError, MAX_SEATS } from './service.js';
 
@@ -948,8 +948,11 @@ export class Room {
     this.enc = { id: encounterId, state, status: 'setup', liveState: null, history: [], outcome: null };
     this.lastEventSeq = 0;
     this.store.setRoomStatus(this.id, 'active');
-    this.#broadcastRoom('encounter.created', { encounterId, encounter: viewFor(state, null) });
+    // One broadcast for every seat, so it carries the player projection;
+    // under fog the DM also gets its unfiltered snapshot.
+    this.#broadcastRoom('encounter.created', { encounterId, encounter: publicView(state) });
     this.#setStatus('setup');
+    if (state.fog && this.dm?.conn) this.#sendSnapshot(this.dm);
     return { encounterId };
   }
 

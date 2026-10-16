@@ -22,6 +22,9 @@
  * and one broadcast: `redacted {type}` keeps `seq` gap-free when viewFor
  * hides an event (e.g. a dm-only dm.override) from a seat.
  *
+ * v1 additive (E3, M64 Wave 4 — optional fields only, PROTOCOL_VERSION
+ * unchanged): `dm.encounter.setup.fog`.
+ *
  * Client payloads are strict (unknown fields rejected); server payloads
  * enforce required fields and allow additive ones.
  *
@@ -163,7 +166,9 @@ const INTENT_PAYLOADS = {
     map: nullable(shape({}, LOOSE)),
     grid: shape({ cols: int(1, 500), rows: int(1, 500) }, LOOSE),
     monsters: arrayOf(shape({}, LOOSE), { max: 64 }),
-    placements: shape({}, LOOSE)
+    placements: shape({}, LOOSE),
+    // v1 additive (E3, M64 W4): the starting fog-of-war bitset (map/fog.js).
+    fog: optional(nullable(shape({ revealed: str({ allowEmpty: true, maxLength: 4096, pattern: /^[A-Za-z0-9+/]*={0,2}$/ }) })))
   }),
   'dm.initiative.roll': shape({}),
   'dm.initiative.set': shape({ order: arrayOf(ID, { min: 1, unique: true }) }),

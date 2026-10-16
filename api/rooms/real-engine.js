@@ -35,7 +35,7 @@ import { validateIntent as validateTurnIntent, planFromIntent } from '../../src/
 import { weaponRangeBand, lineOfSight } from '../../src/js/scene/grid-legality.js';
 import { chebyshevFeet } from '../../src/js/scene/grid-rules.js';
 import { emptyEncounterState } from '../../src/js/shared/encounter-state.js';
-import { asTerrain, encodeTerrain } from '../../src/js/map/terrain.js';
+import { asTerrain, createTerrain, encodeTerrain, applyTerrainPaint, TERRAIN_FLAG_MASK } from '../../src/js/map/terrain.js';
 
 /**
  * Engine version stored as encounters.engine_version. Distinct from the
@@ -496,6 +496,13 @@ export function createRealEngine({ resolveSheets = () => null, monsterLookup = (
         const ts = TM.turnStateFromEncounter(state, sheetsFor(state));
         state.initiative = TM.rollInitiative(ts, rng);
         state.turnIndex = 0;
+        return { state, events: [] };
+      }
+      case 'dm.terrain.paint': {
+        // map/terrain.js codec: one flag byte per cell, undefined bits masked.
+        const t = asTerrain(state.grid.terrain) || createTerrain(state.grid.cols, state.grid.rows);
+        const painted = applyTerrainPaint(t, { cells: p.cells, flag: (p.flags | 0) & TERRAIN_FLAG_MASK, op: p.mode === 'clear' ? 'clear' : 'set' });
+        state.grid.terrain = encodeTerrain(painted);
         return { state, events: [] };
       }
       case 'dm.initiative.set': {
