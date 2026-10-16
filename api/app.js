@@ -8,7 +8,16 @@ import { dirname, join, resolve } from 'node:path';
 
 import { ITEM_GENERATOR_VERSION } from './db/database.js';
 import { extractCharacterId, fetchDdbCharacter, UPSTREAM_TIMEOUT_MS } from './lib/ddb-fetch.js';
-import { parseCharacter } from './lib/ddb-parser.js';
+import * as ddbParser from './lib/ddb-parser.js';
+
+const { parseCharacter } = ddbParser;
+/**
+ * Strip other players' data (campaign roster) from a raw DDB character
+ * before it is stored. E4's parser exports `scrubRawCharacter`; until that
+ * lands this falls back to storing the raw JSON unchanged.
+ * @type {(raw: object) => object}
+ */
+const scrubRawCharacter = ddbParser.scrubRawCharacter ?? ((raw) => raw);
 import { searchOpen5eCreatures, fetchOpen5eCreature, toSummary } from './lib/open5e.js';
 import { createRoomService } from './rooms/service.js';
 import { mountRoomRoutes } from './rooms/http.js';
@@ -238,7 +247,7 @@ export function createApp({
       const row = upsertCharacter({
         ddbId: parsed.id,
         name: parsed.name,
-        rawJson: raw,
+        rawJson: scrubRawCharacter(raw),
         parsedJson: parsed,
         source
       });

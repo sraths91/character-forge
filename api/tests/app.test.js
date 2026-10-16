@@ -141,3 +141,23 @@ test('/api/health returns 503 when the database is unusable', async () => {
     await srv.close();
   }
 });
+
+test('an imported character is stored through scrubRawCharacter (other players stripped when the parser has it)', async () => {
+  const ddbParser = await import('../lib/ddb-parser.js');
+  const { readFileSync } = await import('node:fs');
+  const raw = JSON.parse(readFileSync(new URL('../../src/tests/fixtures/ddb/fighter-l5.json', import.meta.url), 'utf8'));
+  const data = raw.data || raw;
+  data.campaign = { id: 7, name: 'Table', characters: [{ userId: 1, username: 'someone-else', characterId: 2, characterName: 'Other PC' }] };
+  const srv = await boot();
+  try {
+    const res = await fetch(`${srv.url}/api/import`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ json: data }) });
+    assert.equal(res.status, 200);
+    const stored = JSON.parse(srv.db.db.prepare('SELECT raw_json FROM characters').get().raw_json);
+    const scrub = ddbParser.scrubRawCharacter ?? ((r) => r);
+    assert.deepEqual(stored, JSON.parse(JSON.stringify(scrub(data))));
+    if (ddbParser.scrubRawCharacter) assert.equal(stored.campaign.characters, undefined, 'campaign roster stripped');
+    else assert.equal(stored.campaign.characters.length, 1, 'fallback: stored unchanged until E4 lands');
+  } finally {
+    await srv.close();
+  }
+});
