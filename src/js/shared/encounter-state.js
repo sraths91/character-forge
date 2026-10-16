@@ -104,6 +104,12 @@ export const WRAPPER_FIELD_MAP = Object.freeze({
   secondary: 'statBlock.attacks[1]',
   _dodging: 'turnFlags.dodging',
   _disengaged: 'turnFlags.disengaged',
+  // v1 additive (M64 R8, E1): damage R/I/V lists read by applyDamage. PCs
+  // carry them on the sheet (`ref`); monsters on the stat block (opaque
+  // in v1, so no schema change).
+  resistances: 'statBlock.resistances',
+  immunities: 'statBlock.immunities',
+  vulnerabilities: 'statBlock.vulnerabilities',
   // Transient — never persisted.
   weapon: null,
   _chosenWeapon: null,

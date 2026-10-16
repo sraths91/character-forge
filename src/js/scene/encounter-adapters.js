@@ -172,6 +172,11 @@ export function wrapperFromEntity(entity, sheet = null) {
   const secondary = attacks[1] || preset.secondary;
   if (secondary) w.secondary = clone(secondary);
   if (sb.saves && typeof sb.saves === 'object') w.saves = { ...sb.saves };
+  // M64 R8 — damage resistances / immunities / vulnerabilities from an
+  // imported stat block (applyDamage reads them; PCs read their sheet).
+  for (const key of ['resistances', 'immunities', 'vulnerabilities']) {
+    if (Array.isArray(sb[key]) && sb[key].length) w[key] = clone(sb[key]);
+  }
   if (sb.profile) w._aiProfile = clone(sb.profile);
   return w;
 }

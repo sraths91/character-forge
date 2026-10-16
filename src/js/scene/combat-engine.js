@@ -168,6 +168,8 @@ async function resolveTurn(attacker, enemies, allies, scene, rng, prompts, ctx) 
       self: attacker,
       enemies: enemies.filter(isAlive),
       allies: allies.filter(isAlive),
+      // M64 R8 — downed PCs (0 HP) can be healed back up.
+      downedAllies: allies.filter(a => a.kind === 'pc' && !isAlive(a)),
       rng
     });
   }
@@ -314,7 +316,7 @@ async function resolveTurn(attacker, enemies, allies, scene, rng, prompts, ctx) 
       for (const { triggerer } of leaveTriggers) {
         if (!isAlive(attacker)) break;
         if (await askReactionAttack(triggerer, attacker, 'leave', prompts, ctx)) {
-          await runReactionAttack(triggerer, attacker, attackerPos, scene, rng, prompts, ctx);
+          await runReactionAttack(triggerer, attacker, attackerPos, scene, rng, prompts, ctx, { roster: [...allies, ...enemies] });
           consumeReaction(triggerer);
           emitEvent(ctx, 'resource.spent', { entityId: idOf(triggerer), resource: 'reaction', level: null });
         }
@@ -322,7 +324,7 @@ async function resolveTurn(attacker, enemies, allies, scene, rng, prompts, ctx) 
       for (const { triggerer } of entryTriggers) {
         if (!isAlive(attacker)) break;
         if (await askReactionAttack(triggerer, attacker, 'entry', prompts, ctx)) {
-          await runReactionAttack(triggerer, attacker, next, scene, rng, prompts, ctx);
+          await runReactionAttack(triggerer, attacker, next, scene, rng, prompts, ctx, { roster: [...allies, ...enemies] });
           consumeReaction(triggerer);
           emitEvent(ctx, 'resource.spent', { entityId: idOf(triggerer), resource: 'reaction', level: null });
         }
@@ -509,15 +511,18 @@ async function resolveTurn(attacker, enemies, allies, scene, rng, prompts, ctx) 
     dmg = await reviewRoll(prompts, ctx, group, 'damage', attacker, target, dmg);
     if (!isAlive(attacker) || !isAlive(target)) return;
   }
-  const hpBeforeHit = target.hp;
-  target.hp = Math.max(0, target.hp - dmg.total);
-  attacker.damageDealt += dmg.total;
-  emitDamage(ctx, group, attacker, target, hpBeforeHit, dmg.total, verdict.damage.damageType ?? null,
-    { weapon: dmg.total, ...(sneakDice > 0 ? { sneakDice } : {}) });
+  // M64 R8 — one damage path. With a smite following, the concentration
+  // save waits for the smite so the hit forces ONE save on its total.
+  const smiting = attacker.kind === 'pc' && !!plan?.featuresFired?.includes('divine-smite');
+  const weaponHit = applyDamage(target, dmg.total, verdict.damage.damageType ?? null, {
+    crit: !!atk.crit, attacker, ctx, rng, group, roster: [...allies, ...enemies],
+    parts: { weapon: dmg.total, ...(sneakDice > 0 ? { sneakDice } : {}) },
+    checkConcentration: !smiting
+  });
 
   // M42.1 — Divine Smite
   let smiteTotal = 0;
-  if (attacker.kind === 'pc' && plan?.featuresFired?.includes('divine-smite')) {
+  if (smiting) {
     PC_FEATURES['divine-smite'].consume(attacker, rng);
     const slotLevel = attacker._smiteSlotUsed || 1;
     modifiers.smiteSlot = slotLevel;
@@ -530,11 +535,12 @@ async function resolveTurn(attacker, enemies, allies, scene, rng, prompts, ctx) 
     if (/fiend|devil|demon|undead|zombie|skeleton|vampire|ghoul/.test(tType)) smiteDice += 1;
     let smiteRoll = rollDamage(`${smiteDice}d8`, { crit: atk.crit }, rng);
     if (prompts.onRoll) smiteRoll = await reviewRoll(prompts, ctx, group, 'damage', attacker, target, smiteRoll);
-    const hpBeforeSmite = target.hp;
-    target.hp = Math.max(0, target.hp - smiteRoll.total);
-    attacker.damageDealt += smiteRoll.total;
+    const smiteHit = applyDamage(target, smiteRoll.total, 'Radiant', {
+      crit: !!atk.crit, attacker, ctx, rng, group, roster: [...allies, ...enemies],
+      parts: { smite: smiteRoll.total }, checkConcentration: false
+    });
     smiteTotal = smiteRoll.total;
-    emitDamage(ctx, group, attacker, target, hpBeforeSmite, smiteRoll.total, 'Radiant', { smite: smiteRoll.total });
+    concentrationCheck(target, weaponHit.amount + smiteHit.amount, rng, ctx, group, [...allies, ...enemies]);
   }
 
   // M45 Phase 4b — Dramatize the resolved exchange.
@@ -575,8 +581,7 @@ export async function runMonsterSpell({ attacker, target, plan, scene, rng, witn
   const group = nextCinemaGroup(ctx);
 
   if (spell.concentration && isConcentrating(attacker)) {
-    const dropped = dropConcentration(attacker);
-    emitEvent(ctx, 'concentration.broken', { casterId, spellId: String(dropped?.spellId), reason: 'recast' }, group);
+    endConcentration(attacker, 'recast', ctx, group);
   }
 
   let slotSpent = null;
@@ -654,10 +659,8 @@ export async function runMonsterSpell({ attacker, target, plan, scene, rng, witn
     const mod = spell.addsAbilityMod ? (effectiveBook.abilityMod || 0) : 0;
     const heal = dmgRoll.total + mod;
     if (target?.hpMax > 0) {
-      const before = target.hp;
-      target.hp = Math.min(target.hpMax, target.hp + heal);
-      emitEvent(ctx, 'heal', { sourceId: casterId, targetId: idOf(target), amount: target.hp - before, hpBefore: before, hpAfter: target.hp, rolled: heal }, group);
-      await castCinema(target, { heal }, { hpBefore: before });
+      const healed = applyHealing(target, heal, { ctx, source: attacker, group });
+      await castCinema(target, { heal }, { hpBefore: healed.hpBefore });
     }
     return;
   }
@@ -683,8 +686,7 @@ export async function runMonsterSpell({ attacker, target, plan, scene, rng, witn
       if (!isAlive(attacker) || !isAlive(target)) return;
     }
     const before = target.hp;
-    applyDamageToEntity(target, totalDmg, rng, ctx, { source: attacker, type: spell.damageType ?? null, parts: { darts }, group });
-    attacker.damageDealt += totalDmg;
+    applyDamage(target, totalDmg, spell.damageType ?? null, { attacker, ctx, rng, group, parts: { darts }, roster: [...allies, ...allEnemies] });
     await castCinema(target, { dmg: totalDmg, darts }, { hpBefore: before });
     return;
   }
@@ -745,8 +747,7 @@ export async function runMonsterSpell({ attacker, target, plan, scene, rng, witn
       if (!isAlive(attacker) || !isAlive(target)) return;
     }
     const before = target.hp;
-    applyDamageToEntity(target, dmg.total, rng, ctx, { source: attacker, type: spell.damageType ?? null, group });
-    attacker.damageDealt += dmg.total;
+    applyDamage(target, dmg.total, spell.damageType ?? null, { crit: !!atk.crit, attacker, ctx, rng, group, roster: [...allies, ...allEnemies] });
     await castCinema(target, { dmg: dmg.total, crit: !!atk.crit }, { hpBefore: before });
     return;
   }
@@ -769,11 +770,10 @@ export async function runMonsterSpell({ attacker, target, plan, scene, rng, witn
         let dmg = dmgRoll.total;
         if (eSave.success) dmg = spell.saveOnHalf ? Math.floor(dmg / 2) : 0;
         const before = e.hp;
-        applyDamageToEntity(e, dmg, rng, ctx, { source: attacker, type: spell.damageType ?? null, group });
+        applyDamage(e, dmg, spell.damageType ?? null, { attacker, ctx, rng, group, roster: [...allies, ...allEnemies] });
         totalDmg += dmg;
         aoeResults.push({ entity: e, dmg, saved: eSave.success, before });
       }
-      attacker.damageDealt += totalDmg;
       // Frame the hardest-hit target; nobody in range → no dispatch.
       if (aoeResults.length > 0) {
         const framed = aoeResults.reduce((a, b) => (b.dmg > a.dmg ? b : a));
@@ -802,8 +802,7 @@ export async function runMonsterSpell({ attacker, target, plan, scene, rng, witn
     if (prompts.onRoll) dmgRoll = await reviewRoll(prompts, ctx, group, 'damage', attacker, target, dmgRoll);
     let dmg = dmgRoll.total;
     if (save.success) dmg = spell.saveOnHalf ? Math.floor(dmg / 2) : 0;
-    applyDamageToEntity(target, dmg, rng, ctx, { source: attacker, type: spell.damageType ?? null, group });
-    attacker.damageDealt += dmg;
+    applyDamage(target, dmg, spell.damageType ?? null, { attacker, ctx, rng, group, roster: [...allies, ...allEnemies] });
     saveDmg = dmg;
   }
   if (!save.success && spell.appliesCondition) {
@@ -825,7 +824,7 @@ export async function runMonsterSpell({ attacker, target, plan, scene, rng, witn
 // runReactionAttack — opportunity / reaction attacks
 // =====================================================================
 
-export async function runReactionAttack(attacker, target, targetBeforePos, scene, rng, prompts = {}, ctx = NO_CTX) {
+export async function runReactionAttack(attacker, target, targetBeforePos, scene, rng, prompts = {}, ctx = NO_CTX, opts = {}) {
   if (!attacker || !target) return;
   let attackStats;
   if (attacker.kind === 'pc') {
@@ -899,10 +898,9 @@ export async function runReactionAttack(attacker, target, targetBeforePos, scene
     dmg = await reviewRoll(prompts, ctx, group, 'damage', attacker, target, dmg);
     if (!isAlive(attacker) || !isAlive(target)) return;
   }
-  const before = target.hp;
-  target.hp = Math.max(0, target.hp - dmg.total);
-  attacker.damageDealt += dmg.total;
-  emitDamage(ctx, group, attacker, target, before, dmg.total, verdict.damage.damageType ?? null, { weapon: dmg.total });
+  applyDamage(target, dmg.total, verdict.damage.damageType ?? null, {
+    crit: !!atk.crit, attacker, ctx, rng, group, parts: { weapon: dmg.total }, roster: opts.roster ?? null
+  });
   await dispatchCinema(prompts, ctx, group, {
     attacker, defender: target, plan: null, atk,
     dmg: dmg.total, crit: !!atk.crit, miss: false, reaction: true
@@ -965,8 +963,7 @@ async function applyLegendaryAction(monster, pick, scene, rng, prompts, ctx, gro
       dmg = await reviewRoll(prompts, ctx, group, 'damage', monster, target, dmg);
       if (!isAlive(monster) || !isAlive(target)) return;
     }
-    applyDamageToEntity(target, dmg.total, rng, ctx, { source: monster, type: action.damageType ?? null, group });
-    monster.damageDealt += dmg.total;
+    applyDamage(target, dmg.total, action.damageType ?? null, { crit: !!atk.crit, attacker: monster, ctx, rng, group });
     return;
   }
   if (action.kind === 'aoe-save') {
@@ -983,8 +980,7 @@ async function applyLegendaryAction(monster, pick, scene, rng, prompts, ctx, gro
       const dmgRoll = rollDamage(action.dice, { crit: false }, rng);
       let dmg = dmgRoll.total;
       if (save.success) dmg = Math.floor(dmg / 2);
-      applyDamageToEntity(e, dmg, rng, ctx, { source: monster, type: action.damageType ?? null, group });
-      monster.damageDealt += dmg;
+      applyDamage(e, dmg, action.damageType ?? null, { attacker: monster, ctx, rng, group });
     }
   }
 }
@@ -1091,19 +1087,6 @@ function emitAttackRolled(ctx, group, attacker, target, atk, { weapon, isReactio
     ...(atk.d20 ? {} : { autoCrit: true }),
     ...(spellId ? { spellId } : {})
   }, group);
-}
-
-function emitDamage(ctx, group, source, target, hpBefore, rolled, type, parts) {
-  if (!canEmit(ctx)) return;
-  emitEvent(ctx, 'damage', {
-    sourceId: idOf(source), targetId: idOf(target),
-    amount: Math.max(0, hpBefore - target.hp),
-    type: type ?? null,
-    hpBefore, hpAfter: target.hp,
-    rolled,
-    ...(parts ? { parts } : {})
-  }, group);
-  if (hpBefore > 0 && target.hp <= 0) emitEvent(ctx, 'entity.downed', { entityId: idOf(target), byId: idOf(source) }, group);
 }
 
 function emitSave(ctx, group, entity, stat, save, reason) {
@@ -1277,35 +1260,234 @@ async function askShield(defender, atk, info, prompts, ctx = NO_CTX, group = nul
 // Shared helpers (exported so simulator's legendary path can reuse them)
 // =====================================================================
 
+// =====================================================================
+// M64 R8 — the one damage path and the one healing path
+// =====================================================================
+
 /**
- * Apply damage to an entity wrapper, then roll the concentration save
- * (PHB p203) if it was concentrating. M64 T2 — `rng` is threaded into
- * the concentration save. M64 T4 — emits `damage`, `entity.downed`,
- * `save.rolled` (reason 'concentration') and `concentration.broken`.
+ * Lower-cased damage-type list from an entity's `resistances` /
+ * `immunities` / `vulnerabilities` (the wrapper's own array, else the
+ * sheet's / stat block's). Entries may be strings ('fire') or DDB-style
+ * modifier objects ({ subType | type | damageType | friendlySubtypeName }).
+ * @param {object} entity — wrapper
+ * @param {'resistances'|'immunities'|'vulnerabilities'} key
+ * @returns {string[]}
+ */
+export function damageTypeList(entity, key) {
+  const raw = Array.isArray(entity?.[key]) ? entity[key]
+    : Array.isArray(entity?.ref?.[key]) ? entity.ref[key]
+      : [];
+  const out = [];
+  for (const r of raw) {
+    const v = typeof r === 'string' ? r : (r?.subType ?? r?.type ?? r?.damageType ?? r?.friendlySubtypeName);
+    if (typeof v === 'string' && v) out.push(v.toLowerCase().replace(/\s*damage$/, '').trim());
+  }
+  return out;
+}
+
+/**
+ * Apply immunity / resistance / vulnerability to one damage amount
+ * (PHB p197: resistance, then vulnerability; immunity zeroes it).
+ * @param {object} target — wrapper
+ * @param {number} amount — non-negative integer
+ * @param {string|null} type — damage type ('Fire', 'slashing', …); null skips R/I/V
+ * @returns {{amount: number, modifier: 'immune'|'resistant'|'vulnerable'|'resistant+vulnerable'|null}}
+ */
+export function applyDamageModifiers(target, amount, type) {
+  if (!type || amount <= 0) return { amount, modifier: null };
+  const t = String(type).toLowerCase();
+  if (damageTypeList(target, 'immunities').includes(t)) return { amount: 0, modifier: 'immune' };
+  const resist = damageTypeList(target, 'resistances').includes(t);
+  const vuln = damageTypeList(target, 'vulnerabilities').includes(t);
+  let out = amount;
+  if (resist) out = Math.floor(out / 2);
+  if (vuln) out *= 2;
+  const modifier = resist && vuln ? 'resistant+vulnerable' : resist ? 'resistant' : vuln ? 'vulnerable' : null;
+  return { amount: out, modifier };
+}
+
+/**
+ * M64 R8 — the ONE way damage reaches a creature. Every engine path
+ * (weapon, opportunity attack, smite, spell attack, auto-hit, AoE save,
+ * single-target save, legendary action) calls it. In order:
  *
- * @param {object} target — entity wrapper ({ hp, _concentrating, ... })
- * @param {number} damage — non-positive values are a no-op
- * @param {function} rng — () → [0,1); required when target may be concentrating
- * @param {object} [ctx] — engine ctx ({ emit })
+ *   1. resistance / immunity / vulnerability (`damageTypeList`)
+ *   2. temporary hit points (`hpTemp`) absorb what is left
+ *   3. HP drops (floor 0); `damage` event; the source's damageDealt
+ *      is credited with the post-R/I/V amount
+ *   4. concentration: a CON save (seeded rng) at DC max(10, taken/2)
+ *      — skipped when the hit drops the creature, whose concentration
+ *      simply ends (incapacitated, PHB p203)
+ *   5. downed: HP 0 emits `entity.downed`. The creature stays in the
+ *      encounter (death saves land in phase 1.5); `isAlive` is unchanged.
+ *
+ * `raw: true` (DM HP edits) skips 1, 2, 4 and every event.
+ *
+ * @param {object} target — wrapper ({ hp, hpMax, hpTemp?, _concentrating?, … })
+ * @param {number} amount — rolled damage; non-positive is a no-op
+ * @param {string|null} [type] — damage type
+ * @param {object} [opts]
+ * @param {boolean} [opts.crit]
+ * @param {object|null} [opts.attacker] — the source wrapper (credited, named in events)
+ * @param {object} [opts.ctx] — engine ctx ({ emit })
+ * @param {function} [opts.rng] — required when the target may be concentrating
+ * @param {string|null} [opts.group] — cinema group
+ * @param {object} [opts.parts] — damage event `parts`
+ * @param {boolean} [opts.checkConcentration=true] — false defers the save to
+ *   the caller (a weapon hit with a smite forces ONE save on the total)
+ * @param {boolean} [opts.credit=true] — add to attacker.damageDealt
+ * @param {boolean} [opts.raw=false]
+ * @returns {{rolled: number, amount: number, absorbed: number, hpLost: number,
+ *   hpBefore: number, hpAfter: number, modifier: string|null, downed: boolean}}
+ *   `amount` is the damage taken after R/I/V (temp HP included).
+ */
+export function applyDamage(target, amount, type = null, opts = {}) {
+  const {
+    attacker = null, ctx = NO_CTX, rng = null, group = null, parts = null,
+    checkConcentration = true, credit = true, raw = false
+  } = opts;
+  const n = Math.max(0, Math.trunc(Number(amount) || 0));
+  const hpBefore = target?.hp ?? 0;
+  const out = { rolled: n, amount: 0, absorbed: 0, hpLost: 0, hpBefore, hpAfter: hpBefore, modifier: null, downed: false };
+  if (!target || n <= 0) return out;
+  if (raw) {
+    target.hp = Math.max(0, hpBefore - n);
+    out.amount = n;
+    out.hpLost = hpBefore - target.hp;
+    out.hpAfter = target.hp;
+    out.downed = hpBefore > 0 && target.hp <= 0;
+    return out;
+  }
+  // 1. R/I/V
+  const mod = applyDamageModifiers(target, n, type);
+  out.amount = mod.amount;
+  out.modifier = mod.modifier;
+  // 2. temp HP
+  const temp = Math.max(0, Math.trunc(Number(target.hpTemp) || 0));
+  out.absorbed = Math.min(temp, out.amount);
+  if (out.absorbed > 0) target.hpTemp = temp - out.absorbed;
+  // 3. HP
+  target.hp = Math.max(0, hpBefore - (out.amount - out.absorbed));
+  out.hpLost = hpBefore - target.hp;
+  out.hpAfter = target.hp;
+  out.downed = hpBefore > 0 && target.hp <= 0;
+  if (attacker && credit) attacker.damageDealt = (attacker.damageDealt || 0) + out.amount;
+  if (canEmit(ctx)) {
+    emitEvent(ctx, 'damage', {
+      sourceId: idOf(attacker), targetId: idOf(target),
+      amount: out.hpLost,
+      type: type ?? null,
+      hpBefore, hpAfter: target.hp,
+      rolled: n,
+      ...(parts ? { parts } : {}),
+      ...(out.absorbed > 0 ? { absorbed: out.absorbed } : {}),
+      ...(out.modifier ? { modifier: out.modifier } : {})
+    }, group);
+  }
+  // 4. concentration
+  if (out.downed) {
+    if (isConcentrating(target)) endConcentration(target, 'downed', ctx, group);
+  } else if (checkConcentration) {
+    concentrationCheck(target, out.amount, rng, ctx, group);
+  }
+  // 5. downed
+  if (out.downed) emitEvent(ctx, 'entity.downed', { entityId: idOf(target), byId: idOf(attacker) }, group);
+  return out;
+}
+
+/**
+ * The concentration save after a creature takes `taken` damage (PHB
+ * p203): CON save (saveBonusFor — proficiency and combatMods included)
+ * against max(10, taken / 2), seeded rng. Emits `save.rolled` (reason
+ * 'concentration') and, on a failure, `concentration.broken`.
+ *
+ * @param {object} target — wrapper
+ * @param {number} taken — damage taken (temp HP included)
+ * @param {function} rng
+ * @param {object} [ctx]
+ * @param {string|null} [group]
+ * @returns {{broke: boolean, save: object|null}}
+ */
+export function concentrationCheck(target, taken, rng, ctx = NO_CTX, group = null) {
+  if (!target || !(taken > 0) || !isConcentrating(target) || !isAlive(target)) return { broke: false, save: null };
+  const conMod = saveBonusFor(target, 'CON');
+  const res = handleDamageOnConcentration({ caster: target, damage: taken, conMod }, rng);
+  if (res.save) emitSave(ctx, group, target, 'CON', res.save, 'concentration');
+  if (res.broke) {
+    emitEvent(ctx, 'concentration.broken', {
+      casterId: idOf(target), spellId: String(res.dropped?.spellId), reason: 'damage'
+    }, group);
+  }
+  return { broke: res.broke, save: res.save };
+}
+
+/**
+ * End a creature's concentration for `reason` and emit
+ * `concentration.broken`. No-op when it is not concentrating.
+ * @param {object} caster — wrapper
+ * @param {string} reason — 'downed' | 'recast' | …
+ * @param {object} [ctx]
+ * @param {string|null} [group]
+ * @returns {object|null} the dropped block
+ */
+export function endConcentration(caster, reason, ctx = NO_CTX, group = null) {
+  const dropped = dropConcentration(caster);
+  if (!dropped) return null;
+  emitEvent(ctx, 'concentration.broken', { casterId: idOf(caster), spellId: String(dropped.spellId), reason }, group);
+  return dropped;
+}
+
+/**
+ * M64 R8 — the ONE way healing reaches a creature. HP rises to at most
+ * `hpMax`; a creature at 0 HP (downed) may be healed back up. Emits
+ * `heal`. `raw: true` (DM HP edits) emits nothing.
+ *
+ * @param {object} target — wrapper
+ * @param {number} amount — rolled healing; non-positive is a no-op
+ * @param {{ctx?: object, source?: object|null, group?: string|null, raw?: boolean}} [opts]
+ * @returns {{rolled: number, amount: number, hpBefore: number, hpAfter: number}}
+ */
+export function applyHealing(target, amount, opts = {}) {
+  const { ctx = NO_CTX, source = null, group = null, raw = false } = opts;
+  const n = Math.max(0, Math.trunc(Number(amount) || 0));
+  const hpBefore = target?.hp ?? 0;
+  if (!target || n <= 0) return { rolled: n, amount: 0, hpBefore, hpAfter: hpBefore };
+  const max = Number.isFinite(target.hpMax) ? target.hpMax : Infinity;
+  target.hp = Math.max(hpBefore, Math.min(max, hpBefore + n));
+  const healed = target.hp - hpBefore;
+  if (!raw) {
+    emitEvent(ctx, 'heal', { sourceId: idOf(source), targetId: idOf(target), amount: healed, hpBefore, hpAfter: target.hp, rolled: n }, group);
+  }
+  return { rolled: n, amount: healed, hpBefore, hpAfter: target.hp };
+}
+
+/**
+ * Set a creature's HP to `value` through applyDamage / applyHealing in
+ * raw mode (DM edits: no R/I/V, temp HP, concentration or events).
+ * @param {object} target — wrapper
+ * @param {number} value
+ * @returns {number} the new HP
+ */
+export function setHpRaw(target, value) {
+  const want = Math.max(0, Math.min(target.hpMax ?? Infinity, Math.trunc(Number(value) || 0)));
+  if (want < target.hp) applyDamage(target, target.hp - want, null, { raw: true });
+  else if (want > target.hp) applyHealing(target, want - target.hp, { raw: true });
+  return target.hp;
+}
+
+/**
+ * @deprecated M64 R8 — use applyDamage. Kept for existing callers: the
+ * same path, with the source credited by the caller as before.
+ * @param {object} target
+ * @param {number} damage
+ * @param {function} rng
+ * @param {object} [ctx]
  * @param {{source?: object, type?: string|null, parts?: object, group?: string|null}} [meta]
  */
 export function applyDamageToEntity(target, damage, rng, ctx = NO_CTX, meta = {}) {
-  if (!target || damage <= 0) return;
-  const before = target.hp;
-  target.hp = Math.max(0, target.hp - damage);
-  const dealtDamage = before - target.hp;
-  const group = meta.group ?? null;
-  emitDamage(ctx, group, meta.source ?? null, target, before, damage, meta.type ?? null, meta.parts);
-  if (dealtDamage > 0 && isConcentrating(target)) {
-    const conMod = saveBonusFor(target, 'CON');
-    const res = handleDamageOnConcentration({ caster: target, damage: dealtDamage, conMod }, rng);
-    if (res.save) emitSave(ctx, group, target, 'CON', res.save, 'concentration');
-    if (res.broke) {
-      emitEvent(ctx, 'concentration.broken', {
-        casterId: idOf(target), spellId: String(res.dropped?.spellId), reason: 'damage'
-      }, group);
-    }
-  }
+  applyDamage(target, damage, meta.type ?? null, {
+    attacker: meta.source ?? null, ctx, rng, group: meta.group ?? null, parts: meta.parts ?? null, credit: false
+  });
 }
 
 /**

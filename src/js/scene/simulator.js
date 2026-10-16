@@ -116,6 +116,7 @@ async function runOneIteration({ party, monsters, scene, maxRounds, rng, index =
     ref: p, id: p.id, name: p.name || 'PC', kind: 'pc',
     hp: p.hp?.current ?? p.hp?.max ?? 10,
     hpMax: p.hp?.max ?? 10,
+    hpTemp: p.hp?.temp ?? 0,                     // M64 R8 — absorbed first
     ac: deriveAC(p),
     weapon: p.equipment?.mainhand || null,
     _chosenWeapon: p.equipment?.mainhand || null,   // M42 weapon-of-the-turn
@@ -141,6 +142,7 @@ async function runOneIteration({ party, monsters, scene, maxRounds, rng, index =
       ref: m, id: m.id, name: m.name || 'Monster', kind: 'monster', presetSlug: m.presetSlug,
       hp: m.hp?.current ?? m.hp?.max ?? preset.defaultHp?.max ?? 1,
       hpMax: m.hp?.max ?? preset.defaultHp?.max ?? 1,
+      hpTemp: m.hp?.temp ?? 0,
       ac: preset.ac ?? 12,
       attack: preset.attack || { name: 'Strike', bonus: 2, dice: '1d6' },
       conditions: Array.isArray(m.conditions) ? [...m.conditions] : [],

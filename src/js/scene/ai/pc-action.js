@@ -37,9 +37,11 @@ function alive(e) { return e && hpOf(e) > 0; }
  * @param {object} args.self      — PC entity (simulator wrapper or live)
  * @param {object[]} args.enemies
  * @param {object[]} args.allies
+ * @param {object[]} [args.downedAllies] — allies at 0 HP (M64 R8): heal
+ *   candidates only (Healing Word picks a downed ally back up)
  * @param {function} [args.rng]
  */
-export function choosePcAction({ self, enemies, allies, rng } = {}) {
+export function choosePcAction({ self, enemies, allies, downedAllies = [], rng } = {}) {
   requireRng(rng, 'choosePcAction');
   const profile = profileForPc(self);
   const archetype = profile.archetype;
@@ -60,7 +62,7 @@ export function choosePcAction({ self, enemies, allies, rng } = {}) {
   // M42.1 — Healing Word & Cure Wounds for PCs. If an ally is hurt
   // and the PC knows a heal spell with a positive castWeight, score
   // the heal plan and compete against the offensive plan.
-  const healPlan = considerPcHeal({ self, profile, allies: allies || [] });
+  const healPlan = considerPcHeal({ self, profile, allies: [...(allies || []), ...(downedAllies || [])] });
   if (healPlan && (!best || healPlan.score > best.score)) {
     best = { ...healPlan, target: healPlan.target };
   }
@@ -333,7 +335,8 @@ function considerPcHeal({ self, profile, allies }) {
     if (a === self || a?.id === selfId) return false;
     const max = a.hpMax || a.hp?.max || 0;
     const cur = typeof a.hp === 'number' ? a.hp : a.hp?.current;
-    return max > 0 && cur > 0 && cur < max;
+    // M64 R8 — a downed ally (0 HP) is a heal candidate, the most urgent one.
+    return max > 0 && cur >= 0 && cur < max;
   });
   if (hurt.length === 0) return null;
   let mostHurt = null;

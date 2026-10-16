@@ -225,7 +225,9 @@ export function entityFromLiveMonster(m) {
  */
 function copyEntityToLive(live, entity, scene, { position = true } = {}) {
   const w = wrapperFromEntity(entity, live);
-  if (live.hp) live.hp = { ...live.hp, current: entity.hp };
+  // HP is projected, not changed, here (applyDamage / applyHealing own
+  // every change); temp HP rides along once it exists.
+  if (live.hp) live.hp = { ...live.hp, current: entity.hp, ...(entity.hpTemp || live.hp.temp ? { temp: entity.hpTemp } : {}) };
   live.conditions = [...w.conditions];
   if (entity.kind === 'pc') {
     if (position && scene) {

@@ -45,7 +45,7 @@
  */
 
 import {
-  runOneAttack, runLegendaryActions, isAlive, isIncapacitated, sameId
+  runOneAttack, runLegendaryActions, isAlive, isIncapacitated, sameId, setHpRaw
 } from './combat-engine.js';
 import { resetReaction } from './reactions.js';
 import { isLegendary, resetLegendaryBudget } from './monster-legendary.js';
@@ -463,8 +463,8 @@ export function applyDmCommands(ts, ctx = {}) {
     let after;
     if (cmd.kind === 'hp') {
       before = w.hp;
-      after = Math.max(0, Math.min(w.hpMax ?? Infinity, Math.trunc(Number(cmd.value) || 0)));
-      w.hp = after;
+      // M64 R8 — HP changes only through applyDamage / applyHealing (raw).
+      after = setHpRaw(w, cmd.value);
     } else {
       before = [...(w.conditions || [])];
       const seen = new Set();
