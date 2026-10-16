@@ -13,7 +13,7 @@ import { validateClientMessage } from '../js/shared/protocol.js';
 import { createTerrain, encodeTerrain, setFlag, TERRAIN_FLAGS } from '../js/map/terrain.js';
 import { projectedState, clone } from './helpers/client-fixtures.js';
 
-const WIZ_SHEET = { name: 'Fixture Wizard', equipment: { mainhand: { name: 'Quarterstaff', damage: { dice: '1d6', type: 'bludgeoning' } } }, spells: [] };
+const WIZ_SHEET = { name: 'Fixture Wizard', equipment: { mainhand: { name: 'Quarterstaff', damage: '1d6', damageType: 'bludgeoning' } }, spells: [] };
 const SHEETS = { 'wizard-l5': WIZ_SHEET, 'fighter-l5': { equipment: {} } };
 const wire = (intent) => ({ v: 1, cid: '01J0000000000000000000000A', ...intent });
 

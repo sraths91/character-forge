@@ -94,6 +94,7 @@ export function cinemaActorFor(entity, appearanceCache = null) {
  *   skip: () => void,
  *   dispose: () => void,
  *   redraw: () => void,
+ *   invalidate: () => void,
  *   setCinemaEnabled: (on: boolean) => void,
  *   view: () => object|null,
  *   readonly busy: boolean,
@@ -332,6 +333,9 @@ export function createRenderAdapter({
     skip,
 
     redraw() { scheduler.markDirty(); },
+
+    /** Re-project the view (e.g. a character sheet arrived, so tokens get their look) and redraw. */
+    invalidate() { viewMemo = { enc: undefined, view: null }; scheduler.markDirty(); },
 
     setCinemaEnabled(on) {
       cinemaOn = !!on;

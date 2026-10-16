@@ -174,18 +174,28 @@ function reduceBroadcast(s, msg) {
   }
   switch (msg.t) {
     case 'member.joined':
-      return { ...next, members: { ...s.members, [p.memberId]: { memberId: p.memberId, displayName: p.displayName, online: true } } };
+      return { ...next, members: { ...s.members, [p.memberId]: { memberId: p.memberId, displayName: p.displayName, online: true, ...(p.role ? { role: p.role } : {}) } } };
     case 'member.left': {
       const members = { ...s.members };
       delete members[p.memberId];
-      return { ...next, members };
+      const room = s.room && Array.isArray(s.room.members)
+        ? { ...s.room, members: s.room.members.filter(m => m.id !== p.memberId) }
+        : s.room;
+      return { ...next, members, room };
     }
     case 'member.presence': {
       const m = s.members[p.memberId] || { memberId: p.memberId };
       return { ...next, members: { ...s.members, [p.memberId]: { ...m, online: p.online } } };
     }
-    case 'seat.updated':
-      return { ...next, seats: { ...s.seats, [p.characterId]: { memberId: p.memberId, controller: p.controller } } };
+    case 'seat.updated': {
+      // Extra fields (seat number, slot id, removed) are kept when the
+      // server sends them, so selectors can overlay room.seats.
+      const extra = {};
+      if (Number.isInteger(p.seat)) extra.seat = p.seat;
+      if (typeof p.slotId === 'string') extra.slotId = p.slotId;
+      if (p.removed === true) extra.removed = true;
+      return { ...next, seats: { ...s.seats, [p.characterId]: { memberId: p.memberId, controller: p.controller, ...extra } } };
+    }
     case 'encounter.created':
       return {
         ...next,
@@ -233,6 +243,10 @@ function stateFromSnapshot(base, p) {
     synced: true,
     seq: p.seq,
     room: p.room,
+    // The snapshot's room carries the full member and seat lists; the
+    // incremental overlays restart from it.
+    members: {},
+    seats: {},
     encounter: p.encounter ?? null,
     openPrompt: p.openPrompt ?? null,
     lastExchange: null,

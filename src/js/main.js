@@ -49,6 +49,7 @@ import {
 } from './scene/reactions.js';
 import { promptReaction } from './scene/reaction-prompt.js';
 import { reactionCostLabel } from './client/reaction-labels.js';
+import { matchPresetForOpen5e } from './client/monster-match.js';
 import { previewMove, moveIntent } from './client/intents.js';
 import {
   createCamera, attachCameraControls, screenToWorld, zoomAt, fitToGrid, clampCamera, WORLD_CELL_PX
@@ -2141,27 +2142,6 @@ function spawnMonsterFromPreset(slug, opts = {}) {
   }
   saveScene(currentScene);
   rerender();
-}
-
-/**
- * Heuristic: given an Open5e creature name/type, pick the closest LPC
- * preset for the visual. Falls back to 'bandit' as a generic humanoid.
- */
-function matchPresetForOpen5e(name, type) {
-  const n = String(name || '').toLowerCase();
-  const t = String(type || '').toLowerCase();
-  for (const slug of Object.keys(MONSTER_PRESETS)) {
-    if (n.includes(slug)) return slug;
-  }
-  if (t.includes('undead') || n.includes('skeleton')) return 'skeleton';
-  if (n.includes('zombie') || n.includes('ghoul'))    return 'zombie';
-  if (n.includes('vampire'))                          return 'vampire';
-  if (n.includes('orc') || n.includes('hobgoblin'))   return 'orc';
-  if (n.includes('goblin') || n.includes('kobold'))   return 'goblin';
-  if (n.includes('troll') || n.includes('ogre') || n.includes('giant')) return 'troll';
-  if (n.includes('minotaur'))                         return 'minotaur';
-  if (n.includes('wolf') || n.includes('gnoll'))      return 'gnoll';
-  return 'bandit';   // generic humanoid fallback
 }
 
 async function searchMonstersOnline(query) {

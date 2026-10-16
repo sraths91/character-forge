@@ -34,6 +34,10 @@
  *   v1.1 (2026-10-15, E2 M8) — `dm.entity.patch.override` (bool): the
  *        DM's free move; the server applies `position` as a teleport
  *        (no speed budget, no opportunity attacks).
+ *   v1.2 (2026-10-15, E2 C9) — `dm.encounter.setup.initiativeMode`
+ *        ('individual' | 'grouped': one roll per monster type) and
+ *        `dm.review.set.aiParty` (bool): with `plans: true`, also pause
+ *        AI-run party members, not only monsters.
  *
  * Client payloads are strict (unknown fields rejected); server payloads
  * enforce required fields and allow additive ones.
@@ -52,7 +56,7 @@ import { EVENT_TYPES, REACTION_KINDS, ENCOUNTER_OUTCOMES, validateEvent } from '
 /** Wire protocol version; every message's `v` must equal this. */
 export const PROTOCOL_VERSION = 1;
 /** Additive minor revision of protocol v1 (see the header). */
-export const PROTOCOL_MINOR = 1;
+export const PROTOCOL_MINOR = 2;
 /** Longest accepted client message id. */
 export const MAX_CID_LENGTH = 64;
 
@@ -181,7 +185,8 @@ const INTENT_PAYLOADS = {
     monsters: arrayOf(shape({}, LOOSE), { max: 64 }),
     placements: shape({}, LOOSE),
     // v1 additive (E3, M64 W4): the starting fog-of-war bitset (map/fog.js).
-    fog: optional(nullable(shape({ revealed: str({ allowEmpty: true, maxLength: 4096, pattern: /^[A-Za-z0-9+/]*={0,2}$/ }) })))
+    fog: optional(nullable(shape({ revealed: str({ allowEmpty: true, maxLength: 4096, pattern: /^[A-Za-z0-9+/]*={0,2}$/ }) }))),
+    initiativeMode: optional(oneOf(['individual', 'grouped']))   // v1.2
   }),
   'dm.initiative.roll': shape({}),
   'dm.initiative.set': shape({ order: arrayOf(ID, { min: 1, unique: true }) }),
@@ -217,7 +222,7 @@ const INTENT_PAYLOADS = {
     slotLevel: optional(int(1, 9))
   }),
   'dm.roll.arm': shape({ entityId: optional(nullable(ID)), rollKind: oneOf(ROLL_KINDS), value: int() }),
-  'dm.review.set': shape({ plans: optional(bool()), rolls: optional(bool()), monsterReactions: optional(bool()) }),
+  'dm.review.set': shape({ plans: optional(bool()), rolls: optional(bool()), monsterReactions: optional(bool()), aiParty: optional(bool()) }),   // aiParty: v1.2
   'dm.prompt.force': shape({ promptId: ID, answer: anyJson() }),
   'dm.member.revoke': shape({ memberId: ID })
 };
