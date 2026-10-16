@@ -18,7 +18,7 @@ backend, node:test for unit tests.
   current encounter with seeded RNG; aggregates win-rate / average
   rounds / per-entity stats. Backs the M35 encounter calibrator.
 
-## The combat architecture (post M45)
+## The combat architecture (post M45, M64)
 
 There used to be two parallel implementations of D&D combat: the
 headless simulator (M20) and the live versus runner (M28+). They
@@ -26,46 +26,58 @@ drifted — by M45 the live runner was missing PC AI entirely (no
 weapon switching, no spell casting) because it never invoked
 `choosePcAction`. Phase 4 of M45 collapsed them onto a single spine.
 
-The current shape:
+The current shape (M64):
 
 ```
+src/js/scene/turn-manager.js           ← ONE round loop
+  startEncounter / runTurn / runRound / runEncounter
+    initiative, start-of-turn resets, condition lifecycle (R7),
+    incapacitated skip, legendary actions, victory check, round cap,
+    DM command queue (HP / conditions) at safe points, pause
+      → runOneAttack(attacker, enemies, allies, scene, rng, prompts, ctx)
+
 src/js/scene/combat-engine.js          ← the spine
-  runOneAttack(attacker, enemies, allies, scene, rng, prompts)
-    → planner dispatch
-        - prompts.forcePlan ? use it
-        - monster ? chooseAction(profile)
-        - PC      ? choosePcAction (utility + MCTS for resources)
-    → movement + opportunity attacks (prompts.onReactionAttack)
-    → attack OR cast
-       - weapon: resolveAttack → roll → Shield (prompts.onShieldReaction)
-                 → damage → smite/sneak/reckless/surge → cinema
-                   (prompts.onCinemaRound)
-       - cast:   runMonsterSpell → book lookup → Counterspell
-                 (prompts.onCounterspell) → kind branch (heal /
-                 auto-hit / spell-attack / AoE / single-target save)
+  runOneAttack
+    → plan: prompts.forcePlan | chooseAction (monster) |
+            choosePcAction (PC: utility + features + MCTS)
+      → prompts.onPlanReady (DM review) → target by plan.targetSide
+    → movement (pathing.js / grid-legality.findPath on terrain maps)
+      + opportunity attacks (prompts.onReactionAttack)
+    → weapon: resolveAttack → roll (prompts.onRoll) → Shield
+              (prompts.onShieldReaction) → applyDamage → smite / sneak
+              / reckless / surge → exchange event + prompts.onCinemaRound
+    → cast:   runMonsterSpell → book → Counterspell
+              (prompts.onCounterspell) → heal / auto-hit / spell attack
+              / AoE / single-target save
+  applyDamage / applyHealing — the ONLY HP writers (R/I/V → temp HP →
+    HP → concentration → downed); applyCondition / removeCondition +
+    conditions.js for the condition lifecycle
+  ctx.emit(ev) — every state change as a catalogue-v1 event
+    (engine-events.js, src/js/shared/events.js)
 ```
 
-Three callers fan out into this spine:
+Callers:
 
-1. **Simulator** (`src/js/scene/simulator.js`) — passes
-   `prompts: {}`. Every reaction auto-resolves via the engine's
-   heuristic. Hot loop runs ~200 iterations × 12 rounds × N entities
-   in the headless test path.
+1. **Simulator** (`simulator.js`) — `prompts: {}`, no emit; every
+   reaction auto-resolves via the engine heuristic. Hot loop:
+   ~200 iterations × 12 rounds × N entities.
+2. **Browser auto-fight** (`runVersusPartyAuto` in `main.js`) —
+   `runTurn` with `runActorTurn` routing each turn through
+   `scene/live-bridge.js` (live records ⇄ EncounterState ⇄ wrappers)
+   and its UI prompts (cinema, logs, Shield dialog). Manual canvas
+   clicks build a `forcePlan` (`manual-plan.js`) and call
+   `runOneAttack` through the same bridge (`live-bridge.runTurn`).
+3. **Server** (M64 online table) — `turnStateFromEncounter` →
+   `runTurn` → `encounterFromTurnState`; player intents pass
+   `validateIntent` / `planFromIntent` (`intent-validation.js`) and
+   reactions go through `createPromptAdapter` (`prompt-adapter.js`:
+   timeout → autoAnswer, answers logged for replay).
 
-2. **Live auto-fight** (`runVersusPartyAuto` in `src/js/main.js`)
-   — passes prompts that wire to the cinema, attack log, cast log,
-   and (in `interactive` mode) the real `promptReaction` dialog.
-   The wrap-then-write-back bridge lives in
-   `wrapLivePcForEngine` / `wrapLiveMonsterForEngine` /
-   `writeBackPcFromEngine` / `writeBackMonsterFromEngine` /
-   `runEngineTurn`.
-
-3. **Manual canvas click** (`runManualWeaponAttack` /
-   `runManualCast` in `src/js/main.js`) — builds a synthetic plan
-   from the player's pick (weapon + target, or queued spell +
-   target) and dispatches via `runEngineTurn` with
-   `{ forcePlan, interactive: true }`. The forcePlan injection
-   skips AI planning so the player's choice wins.
+State crosses the engine boundary only as EncounterState v1
+(`src/js/shared/encounter-state.js`) via `encounter-adapters.js`
+(`toEngineSides` / `applyEngineSides`; `WRAPPER_FIELD_MAP` lists every
+wrapper field). Shared contracts in `src/js/shared/` (encounter state,
+events, protocol, state hash) change additively with a version note.
 
 The non-engine `runAttackPrompt` / `runSpellSavePrompt` path remains
 as a fallback for spells without a `monster-spells.js` registry
