@@ -16,10 +16,14 @@
  *     remove the creature. Clicking a token on the map selects it.
  *   - "+ Monster": pick a preset, click a cell (`dm.entity.add`).
  *   - "End encounter" with an outcome picker and a confirmation step.
+ *   - "DM adjudicates" (C11): cast a spell outside the engine registry —
+ *     caster, spell (the sheet's off-registry spells are suggested), slot,
+ *     and per target damage / type / healing / condition →
+ *     `dm.spell.adjudicate`.
  *   - Monster reaction prompts addressed to the DM are answered in the
  *     battle view's dialog.
  *
- * mount(root, ctx) → unmount. ctx: {store, send, dmBridge, deps: {timers}}
+ * mount(root, ctx) → unmount. ctx: {store, send, dmBridge, sheets?() → Record<id, sheet>, deps: {timers}}
  */
 
 import { h, replace, createScope, delegate, attempt, select } from './dom.js';
@@ -29,6 +33,8 @@ import { entityFromPreset } from '../../scene/encounter-adapters.js';
 import { MONSTER_PRESETS } from '../../scene/monster-presets.js';
 import { ENCOUNTER_OUTCOMES } from '../../shared/events.js';
 import { PAUSE_MODES } from './setup.js';
+import { spellById } from '../../scene/monster-spells.js';
+import { nameToSpellId } from '../../scene/ai/pc-action.js';
 
 /** Conditions the inspector can add. */
 export const CONDITION_CHOICES = Object.freeze([
@@ -78,6 +84,56 @@ export function pendingPlan(s) {
 }
 
 /**
+ * Spells on a caster's sheet the engine registry does not model — the
+ * ones the DM adjudicates (M64 C11).
+ * @param {object|null} sheet — parsed character
+ * @returns {{id: string, name: string, level: number|null}[]}
+ */
+export function adjudicableSpells(sheet) {
+  const seen = new Set();
+  const out = [];
+  for (const sp of Array.isArray(sheet?.spells) ? sheet.spells : []) {
+    const name = typeof sp === 'string' ? sp : sp?.name;
+    if (!name) continue;
+    const id = nameToSpellId(name);
+    if (!id || spellById(id) || seen.has(id)) continue;
+    seen.add(id);
+    out.push({ id, name, level: typeof sp === 'object' && Number.isInteger(sp.level) ? sp.level : null });
+  }
+  return out;
+}
+
+/**
+ * The `dm.spell.adjudicate` payload from the form's raw values; null
+ * when nothing is targeted.
+ * @param {{casterId: string, spellId: string, slotLevel?: string|number|null,
+ *          targets: {entityId: string, damage?: string|number, type?: string, healed?: string|number, condition?: string}[]}} form
+ * @returns {object|null}
+ */
+export function adjudicationPayload(form) {
+  const num = (v) => { const n = Math.trunc(Number(v)); return Number.isFinite(n) && n > 0 ? Math.min(n, 999) : null; };
+  const targets = [];
+  for (const t of form.targets || []) {
+    if (!t.entityId) continue;
+    const row = { entityId: String(t.entityId) };
+    const dmg = num(t.damage);
+    const healed = num(t.healed);
+    if (dmg !== null) { row.damage = dmg; row.type = t.type ? String(t.type).slice(0, 32) : null; }
+    if (healed !== null) row.healed = healed;
+    if (t.condition) row.conditions = [String(t.condition)];
+    targets.push(row);
+  }
+  if (!form.casterId || !form.spellId || !targets.length) return null;
+  const slot = num(form.slotLevel);
+  return {
+    casterId: String(form.casterId),
+    spellId: nameToSpellId(form.spellId) || String(form.spellId),
+    targets,
+    ...(slot !== null && slot <= 9 ? { slotLevel: slot } : {})
+  };
+}
+
+/**
  * @param {HTMLElement} root
  * @param {object} ctx
  * @returns {() => void} unmount
@@ -88,6 +144,7 @@ export function mount(root, ctx) {
   const timers = ctx.deps?.timers || { setTimeout: (fn, ms) => globalThis.setTimeout(fn, ms), clearTimeout: (id) => globalThis.clearTimeout(id) };
   const bridge = ctx.dmBridge || createDmBridge();
   const send = (intent) => ctx.send(intent);
+  const enc = () => ctx.store.getState().encounter;
   let confirmEnd = false;
   let confirmTimer = null;
   let pauseMode = 'auto';
@@ -103,10 +160,10 @@ export function mount(root, ctx) {
   const inspector = h(doc, 'div', { class: 'play-card play-inspector' });
   const monsterCard = h(doc, 'div', { class: 'play-card play-add-monster' });
   const endCard = h(doc, 'div', { class: 'play-card play-end' });
-  const extra = h(doc, 'div', { class: 'play-dm-extra' });   // C11 adjudication mounts here
+  const adjCard = h(doc, 'div', { class: 'play-card play-adjudicate' });
   view.appendChild(h(doc, 'h2', { text: 'DM' }));
   view.appendChild(status);
-  for (const c of [statusCard, pendingCard, initCard, rollCard, inspector, monsterCard, extra, endCard]) view.appendChild(c);
+  for (const c of [statusCard, pendingCard, initCard, rollCard, inspector, monsterCard, adjCard, endCard]) view.appendChild(c);
   root.appendChild(view);
 
   // Static controls (built once so selections survive re-renders).
@@ -135,7 +192,44 @@ export function mount(root, ctx) {
   ]);
   const outcomeSel = select(doc, { attrs: { 'aria-label': 'Outcome' } }, ENCOUNTER_OUTCOMES.map(o => ({ value: o, label: o })), 'dm-ended');
 
-  const enc = () => ctx.store.getState().encounter;
+  // M64 C11 — "DM adjudicates" a spell outside the engine registry.
+  const adjCaster = select(doc, { dataset: { action: 'adj-caster' }, attrs: { 'aria-label': 'Caster' } }, [{ value: '', label: 'Caster…' }]);
+  const adjSpell = h(doc, 'input', { type: 'text', placeholder: 'Spell (e.g. Bless)', attrs: { list: 'play-adj-spells', 'aria-label': 'Spell' } });
+  const adjList = h(doc, 'datalist', { attrs: { id: 'play-adj-spells' } });
+  const adjSlot = select(doc, { attrs: { 'aria-label': 'Slot level' } }, [{ value: '', label: 'no slot' }, ...[1, 2, 3, 4, 5, 6, 7, 8, 9].map(n => ({ value: String(n), label: `level ${n} slot` }))]);
+  const adjRows = h(doc, 'div', { class: 'play-adj-rows' });
+  const adjHint = h(doc, 'p', { class: 'hint-line' });
+  replace(doc, adjCard, [
+    h(doc, 'h3', { text: 'DM adjudicates a spell' }),
+    h(doc, 'p', { class: 'hint-line', text: 'For spells the rules engine does not model: you decide the outcome (roll saves yourself), the table sees the result.' }),
+    h(doc, 'div', { class: 'play-row' }, [adjCaster, adjSpell, adjList, adjSlot]),
+    adjHint,
+    adjRows,
+    h(doc, 'div', { class: 'play-row' }, [
+      h(doc, 'button', { type: 'button', class: 'play-btn small', dataset: { action: 'adj-add-target' }, text: '+ target' }),
+      h(doc, 'button', { type: 'button', class: 'play-btn primary', dataset: { action: 'adj-cast' }, text: 'Cast' })
+    ])
+  ]);
+  function adjTargetRow() {
+    const e = enc();
+    return h(doc, 'div', { class: 'play-row play-adj-row', dataset: { adjRow: '1' } }, [
+      select(doc, { dataset: { field: 'adj-target' }, attrs: { 'aria-label': 'Target' } }, [{ value: '', label: 'Target…' }, ...Object.values(e?.entities || {}).map(x => ({ value: x.id, label: x.name }))]),
+      h(doc, 'input', { type: 'number', min: 0, placeholder: 'dmg', dataset: { field: 'adj-damage' }, attrs: { 'aria-label': 'Damage' } }),
+      h(doc, 'input', { type: 'text', placeholder: 'type', dataset: { field: 'adj-type' }, attrs: { maxlength: 32, 'aria-label': 'Damage type' } }),
+      h(doc, 'input', { type: 'number', min: 0, placeholder: 'heal', dataset: { field: 'adj-healed' }, attrs: { 'aria-label': 'Healing' } }),
+      select(doc, { dataset: { field: 'adj-condition' }, attrs: { 'aria-label': 'Condition' } }, [{ value: '', label: 'no condition' }, ...CONDITION_CHOICES])
+    ]);
+  }
+  adjRows.appendChild(adjTargetRow());
+  function refreshAdjSpells() {
+    const e = enc();
+    const caster = e?.entities?.[adjCaster.value];
+    const sheet = caster?.kind === 'pc' ? (typeof ctx.sheets === 'function' ? ctx.sheets() : ctx.sheets || {})[caster.sheetRef?.characterId] : null;
+    const spells = adjudicableSpells(sheet);
+    replace(doc, adjList, spells.map(sp => h(doc, 'option', { value: sp.name })));
+    adjHint.textContent = spells.length ? `Off-registry spells on this sheet: ${spells.map(x => x.name).join(', ')}.` : '';
+  }
+
 
   delegate(scope, view, 'click', {
     pause: () => attempt(() => send({ t: 'dm.pause', p: {} }), fail),
@@ -218,6 +312,28 @@ export function mount(root, ctx) {
         attempt(() => send({ t: 'dm.entity.add', p: { entity } }).then(() => say(`${entity.name} joins the fight.`)), fail);
       });
     },
+    'adj-add-target': () => { if (adjRows.children.length < 16) adjRows.appendChild(adjTargetRow()); },
+    'adj-cast': () => {
+      const rows = [...adjRows.children];
+      const payload = adjudicationPayload({
+        casterId: adjCaster.value,
+        spellId: adjSpell.value.trim(),
+        slotLevel: adjSlot.value,
+        targets: rows.map(r => ({
+          entityId: r.querySelector?.('[data-field="adj-target"]')?.value,
+          damage: r.querySelector?.('[data-field="adj-damage"]')?.value,
+          type: r.querySelector?.('[data-field="adj-type"]')?.value,
+          healed: r.querySelector?.('[data-field="adj-healed"]')?.value,
+          condition: r.querySelector?.('[data-field="adj-condition"]')?.value
+        }))
+      });
+      if (!payload) { say('Pick a caster, name the spell and at least one target.', 'error'); return; }
+      attempt(() => send({ t: 'dm.spell.adjudicate', p: payload }).then(() => {
+        say(`${nameOf(enc(), payload.casterId)} casts ${adjSpell.value.trim()} (adjudicated).`);
+        adjSpell.value = '';
+        replace(doc, adjRows, [adjTargetRow()]);
+      }), fail);
+    },
     'end-encounter': () => {
       if (!confirmEnd) {
         confirmEnd = true;
@@ -238,7 +354,8 @@ export function mount(root, ctx) {
     },
     'roll-review': (el) => attempt(() => send({ t: 'dm.review.set', p: { rolls: !!el.checked } }), fail),
     'monster-reactions': (el) => attempt(() => send({ t: 'dm.review.set', p: { monsterReactions: !!el.checked } }), fail),
-    'inspect-select': (el) => bridge.select(el.value || null)
+    'inspect-select': (el) => bridge.select(el.value || null),
+    'adj-caster': () => refreshAdjSpells()
   });
   scope.add(() => { if (confirmTimer !== null) timers.clearTimeout(confirmTimer); });
   scope.add(bridge.onSelect(() => renderInspector()));
@@ -422,7 +539,18 @@ export function mount(root, ctx) {
     ]);
   }
 
+  let adjEntities = null;
+  function renderAdjCasters() {
+    const e = enc();
+    if (e?.entities === adjEntities) return;
+    adjEntities = e?.entities;
+    const keep = adjCaster.value;
+    replace(doc, adjCaster, [h(doc, 'option', { value: '', text: 'Caster…' }), ...Object.values(e?.entities || {}).map(x => h(doc, 'option', { value: x.id, text: x.name }))]);
+    adjCaster.value = keep && e?.entities?.[keep] ? keep : '';
+  }
+
   function renderAll() {
+    renderAdjCasters();
     renderStatus();
     renderPending();
     renderInitiative();

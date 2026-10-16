@@ -807,6 +807,42 @@ export function createFakeServer({
         broadcast(room, 'entity.updated', { entityId: e.id, patch: { controller: clone(e.controller) }, cause: 'dm.seat.setController' });
         return {};
       }
+      case 'dm.spell.adjudicate': {
+        requireEnc(room);
+        const st = room.enc.state;
+        const caster = st.entities[p.casterId];
+        if (!caster) throw new IntentFail('E_INVALID_INTENT', 'unknown caster');
+        for (const t of p.targets) if (!st.entities[t.entityId]) throw new IntentFail('E_INVALID_INTENT', `unknown target ${t.entityId}`);
+        if (p.slotLevel) {
+          const l = caster.resources.slots[String(p.slotLevel)];
+          if (!l || l.max - l.spent <= 0) throw new IntentFail('E_INVALID_INTENT', `${caster.name} has no level-${p.slotLevel} slot left`);
+          l.spent += 1;
+        }
+        const group = `adj${++room.groupN}`;
+        emit(room, 'spell.cast', { casterId: caster.id, spellId: p.spellId, castAtLevel: p.slotLevel ?? 0, slotSpent: p.slotLevel ?? null, innate: false, targetIds: p.targets.map(t => t.entityId), adjudicated: true }, group);
+        if (p.slotLevel) emit(room, 'resource.spent', { entityId: caster.id, resource: 'spell-slot', level: p.slotLevel }, group);
+        for (const t of p.targets) {
+          const e = st.entities[t.entityId];
+          if (t.damage) {
+            const before = e.hp;
+            e.hp = Math.max(0, before - t.damage);
+            emit(room, 'damage', { sourceId: caster.id, targetId: e.id, amount: before - e.hp, type: t.type ?? null, hpBefore: before, hpAfter: e.hp }, group);
+            if (before > 0 && e.hp === 0) emit(room, 'entity.downed', { entityId: e.id, byId: caster.id }, group);
+          }
+          if (t.healed) {
+            const before = e.hp;
+            e.hp = Math.min(e.hpMax, before + t.healed);
+            emit(room, 'heal', { sourceId: caster.id, targetId: e.id, amount: e.hp - before, hpBefore: before, hpAfter: e.hp }, group);
+          }
+          for (const c of t.conditions || []) {
+            if (e.conditions.some(x => (typeof x === 'string' ? x : x.id) === c)) continue;
+            e.conditions = [...e.conditions, c];
+            emit(room, 'condition.applied', { entityId: e.id, condition: c, sourceId: caster.id }, group);
+          }
+        }
+        emit(room, 'dm.override', { kind: 'spell.adjudicate', entityId: caster.id, before: null, after: { spellId: p.spellId, targets: clone(p.targets) } });
+        return {};
+      }
       case 'dm.member.revoke': {
         const x = room.members.get(p.memberId);
         if (!x || x.role === 'dm') throw new IntentFail('E_INVALID_INTENT', 'unknown member');

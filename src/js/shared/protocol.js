@@ -38,6 +38,14 @@
  *        ('individual' | 'grouped': one roll per monster type) and
  *        `dm.review.set.aiParty` (bool): with `plans: true`, also pause
  *        AI-run party members, not only monsters.
+ *   v1.3 (2026-10-15, E2 C11) — `dm.spell.adjudicate` (DM-only): cast a
+ *        spell the engine registry does not model (homebrew, non-SRD,
+ *        the DDB character's feat / race spells). The DM states the
+ *        result: `{casterId, spellId, targets: [{entityId, damage?, type?,
+ *        healed?, conditions?}], slotLevel?}`. The server applies it at a
+ *        safe point, spends the slot when `slotLevel` is given, and emits
+ *        spell.cast (payload.adjudicated: true) + damage / heal /
+ *        condition.applied + dm.override like any DM edit.
  *
  * Client payloads are strict (unknown fields rejected); server payloads
  * enforce required fields and allow additive ones.
@@ -56,7 +64,7 @@ import { EVENT_TYPES, REACTION_KINDS, ENCOUNTER_OUTCOMES, validateEvent } from '
 /** Wire protocol version; every message's `v` must equal this. */
 export const PROTOCOL_VERSION = 1;
 /** Additive minor revision of protocol v1 (see the header). */
-export const PROTOCOL_MINOR = 2;
+export const PROTOCOL_MINOR = 3;
 /** Longest accepted client message id. */
 export const MAX_CID_LENGTH = 64;
 
@@ -88,7 +96,8 @@ export const INTENT_ROLES = Object.freeze({
   'dm.roll.arm': 'dm',
   'dm.review.set': 'dm',
   'dm.prompt.force': 'dm',
-  'dm.member.revoke': 'dm'
+  'dm.member.revoke': 'dm',
+  'dm.spell.adjudicate': 'dm'   // v1.3
 });
 
 /** Every client → server message type. */
@@ -224,7 +233,20 @@ const INTENT_PAYLOADS = {
   'dm.roll.arm': shape({ entityId: optional(nullable(ID)), rollKind: oneOf(ROLL_KINDS), value: int() }),
   'dm.review.set': shape({ plans: optional(bool()), rolls: optional(bool()), monsterReactions: optional(bool()), aiParty: optional(bool()) }),   // aiParty: v1.2
   'dm.prompt.force': shape({ promptId: ID, answer: anyJson() }),
-  'dm.member.revoke': shape({ memberId: ID })
+  'dm.member.revoke': shape({ memberId: ID }),
+  // v1.3 — the DM resolves a spell outside the engine's registry.
+  'dm.spell.adjudicate': shape({
+    casterId: ID,
+    spellId: str({ maxLength: 128 }),
+    targets: arrayOf(shape({
+      entityId: ID,
+      damage: optional(int(0, 999)),
+      type: optional(nullable(str({ maxLength: 32 }))),
+      healed: optional(int(0, 999)),
+      conditions: optional(arrayOf(str({ maxLength: 64 }), { max: 8, unique: true }))
+    }), { min: 1, max: 16 }),
+    slotLevel: optional(nullable(int(1, 9)))
+  })
 };
 
 /** Server room-message payload specs (required fields; extras allowed). */

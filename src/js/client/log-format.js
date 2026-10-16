@@ -61,7 +61,8 @@ export function formatEvent(ev, nameOf = (id) => String(id ?? '—')) {
     case 'feature.used': return { text: `${n(p.entityId)} uses ${p.featureId}.`, cls: 'roll-feature', dm: false };
     case 'entity.downed': return { text: `${n(p.entityId)} is down!`, cls: 'roll-crit', dm: false };
     case 'dm.override': {
-      const what = p.kind === 'plan' ? 'changed the plan'
+      const what = p.kind === 'spell.adjudicate' ? `adjudicated ${p.after?.spellId || 'a spell'}`
+        : p.kind === 'plan' ? 'changed the plan'
         : p.kind === 'plan.skip' ? 'skipped the turn'
           : String(p.kind).startsWith('roll.') ? `set the ${String(p.kind).slice(5)} roll to ${typeof p.after === 'object' ? JSON.stringify(p.after) : p.after}`
             : `edited ${p.kind}`;
