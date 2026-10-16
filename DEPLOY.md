@@ -36,13 +36,13 @@ Set in the Railway service → Variables:
 | Variable | Required | Default | Notes |
 |---|---|---|---|
 | `NODE_ENV` | yes | — | `production` — enables `dist/` static serving and the volume guard |
-| `CF_MULTIPLAYER` | no | unset | `1` enables online tables: the ws gateway at `/ws`, room recovery on boot, the janitor; also disables the global `GET /api/characters` list and requires a room token to write the shared item-sprite cache |
+| `CF_MULTIPLAYER` | no | unset | `1` enables online tables: the ws gateway at `/ws`, room recovery on boot, the janitor; also disables the global `GET /api/characters` list and requires a room token to write the shared item-sprite cache. Read only by the entry point `api/server.js`: tests and tools that boot in-process call `startMultiplayerServer` (api/multiplayer.js) directly instead of setting it |
 | `CF_ENGINE` | no | `real` | Which engine runs online encounters: `real` (the combat engine through the turn manager — production) or `stub` (a tiny deterministic rules stand-in for tests and tooling). Any other value fails startup. Each engine stamps its version on the encounters it builds (real = 2, stub = 1); on boot an encounter built by the other one is marked `abandoned`, so only change this between sessions |
 | `ALLOWED_ORIGINS` | prod | — | Comma-separated origins, e.g. `https://character-forge-gh-production.up.railway.app,https://cf.example.com`. Used for CORS **and** for the WebSocket `Origin` check (403 otherwise). A socket from the page's own host is always allowed, so list custom domains and any other front-ends |
 | `CF_DATA_DIR` | no | `RAILWAY_VOLUME_MOUNT_PATH`, else `dirname(CF_DB_PATH)` | Directory for persistent data: the DB when `CF_DB_PATH` is unset, and uploaded maps (`maps/<roomId>/`). Must be on the volume in production |
 | `CF_DB_PATH` | no | `<data dir>/character-forge.db`, else `<repo>/character-forge.db` | Explicit SQLite file path. Leave unset on Railway to derive it from the volume, or set it under the mount, e.g. `/app/data/character-forge.db` |
 | `RAILWAY_VOLUME_MOUNT_PATH` | auto | — | Injected by Railway when a volume is attached. With `NODE_ENV=production`, the server **refuses to boot** if the DB path or data dir is not under it, rather than silently writing to the ephemeral container disk |
-| `PORT` | no | `3101` | Railway auto-injects; the server respects it |
+| `PORT` | no | `3101` | Railway auto-injects; the server respects it. `0` binds an ephemeral port (smoke tests); an empty value counts as unset; anything else that is not an integer 0–65535 fails startup |
 
 ### 3. Persistent volume (SQLite)
 Settings → **Volumes**:

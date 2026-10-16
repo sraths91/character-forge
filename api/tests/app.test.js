@@ -161,3 +161,12 @@ test('an imported character is stored through scrubRawCharacter (other players s
     await srv.close();
   }
 });
+
+test('portFromEnv: PORT=0 is an ephemeral port, unset/empty is 3101, junk is a config error', async () => {
+  const { portFromEnv, DEFAULT_PORT } = await import('../start.js');
+  assert.equal(portFromEnv({ PORT: '0' }), 0);
+  assert.equal(portFromEnv({ PORT: '8080' }), 8080);
+  assert.equal(portFromEnv({}), DEFAULT_PORT);
+  assert.equal(portFromEnv({ PORT: '' }), DEFAULT_PORT);
+  for (const bad of ['abc', '3.5', '-1', '70000']) assert.throws(() => portFromEnv({ PORT: bad }), /PORT must be an integer/, bad);
+});

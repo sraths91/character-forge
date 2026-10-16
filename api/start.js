@@ -126,3 +126,23 @@ export async function startServer({
 
   return { url, port: bound.port, httpServer, app: expressApp, close };
 }
+
+/** Port used when PORT is unset. */
+export const DEFAULT_PORT = 3101;
+
+/**
+ * The listen port from the environment: PORT when set (0 = an ephemeral
+ * port), else DEFAULT_PORT. An empty PORT counts as unset; anything that
+ * is not an integer in 0..65535 is a configuration error.
+ * @param {Record<string, string|undefined>} env
+ * @returns {number}
+ */
+export function portFromEnv(env) {
+  const raw = env.PORT;
+  if (raw === undefined || String(raw).trim() === '') return DEFAULT_PORT;
+  const port = Number(raw);
+  if (!Number.isInteger(port) || port < 0 || port > 65535) {
+    throw new Error(`PORT must be an integer between 0 and 65535, got "${raw}"`);
+  }
+  return port;
+}
