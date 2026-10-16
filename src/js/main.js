@@ -364,7 +364,10 @@ function syncBfCamera() {
   const cssH = Math.max(1, Math.round(cssW * rows / cols));
   const key = `${cssW}x${cssH}:${cols}x${rows}`;
   if (key === bfFitKey) return;
-  const factor = bfFitKey ? bfCamera.zoom / bfFitZoom() : 1;
+  // A new grid (scene switch, versus arena) refits; a resized box keeps
+  // the zoom factor. The factor is read before the viewport changes.
+  const sameGrid = bfFitKey.endsWith(`:${cols}x${rows}`);
+  const factor = sameGrid ? bfCamera.zoom / bfFitZoom() : 1;
   bfFitKey = key;
   Object.assign(bfCamera, { viewW: cssW, viewH: cssH, dpr: globalThis.devicePixelRatio || 1 });
   const fit = bfFitZoom();
