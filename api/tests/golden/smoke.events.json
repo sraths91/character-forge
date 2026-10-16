@@ -1,0 +1,21 @@
+{
+  "about": "M64 S1 smoke: broadcast types both clients see from the player's connect to the end of pc-1's first turn (seed 42, preset goblin at 30 HP, melee turn.act).",
+  "seed": 42,
+  "types": [
+    "member.presence",
+    "seat.updated",
+    "encounter.created",
+    "room.status",
+    "encounter.initiative",
+    "round.started",
+    "room.status",
+    "turn.started",
+    "room.status",
+    "plan.chosen",
+    "move",
+    "attack.rolled",
+    "damage",
+    "exchange",
+    "turn.ended"
+  ]
+}
