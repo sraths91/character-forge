@@ -70,6 +70,21 @@ export function bodyAnimForSwing(swingId) {
   }
 }
 
+/**
+ * Motion metadata for a weapon, without building a full plan: the base
+ * motion id plus the Sequence's `meta.kind` ('melee' | 'ranged' | …) and
+ * `meta.weaponClass`. Callers that resolve a per-attack swing before
+ * building the exchange (the forge's 'varied' swing counter) need to know
+ * whether the weapon swings at all.
+ * @param {object|null} weapon
+ * @returns {{motionId: string, kind: string|null, weaponClass: string|null}}
+ */
+export function motionMetaForWeapon(weapon) {
+  const motionId = motionForWeapon(weapon);
+  const meta = buildMotion(motionId)?.meta || {};
+  return { motionId, kind: meta.kind ?? null, weaponClass: meta.weaponClass ?? null };
+}
+
 function payloadOf(exchangeEvent) {
   if (exchangeEvent && exchangeEvent.type === 'exchange' && exchangeEvent.payload) return exchangeEvent.payload;
   return exchangeEvent || {};

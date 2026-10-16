@@ -49,20 +49,16 @@ import {
 } from './scene/reactions.js';
 import { promptReaction } from './scene/reaction-prompt.js';
 import { createCinema, phaseAt } from './anim/cinema.js';
-import { buildMotion, motionForWeapon } from './anim/weapon-motions.js';
-import { buildSpellSequence } from './anim/spell-motions.js';
+import { motionForWeapon } from './anim/weapon-motions.js';
 import {
-  applyStyle, availableStyles, styleForPc, saveStyle, isStyle
+  availableStyles, styleForPc, saveStyle, isStyle
 } from './anim/motion-styles.js';
 import {
   SWING_TYPES, availableSwings, swingForPc, saveSwing, isSwing, isSwingSelection,
-  nextVariedSwing, applySwing
+  nextVariedSwing
 } from './anim/swing-types.js';
-import {
-  applyModifiers, modifiersForAttack, snapshotAttackerFlags
-} from './anim/modifiers.js';
-import { applyPolish } from './anim/polish.js';
-import { applyHitReaction } from './anim/hit-reactions.js';
+import { modifiersForAttack, snapshotAttackerFlags } from './anim/modifiers.js';
+import { buildCinemaSequence, motionMetaForWeapon, bodyAnimForSwing } from './anim/cinema-plan.js';
 import { idlePoseAt } from './anim/idle-pose.js';
 import { springConfig, springStep, hipSwayAt } from './anim/secondary-motion.js';
 import { createThreeViewer } from './anim/three-viewer.js';
@@ -606,29 +602,6 @@ function setupVersusCinema(active) {
 }
 
 
-/** M51 Phase 2 — Map a cinema motion id to the LPC body animation that
- *  the attacker's body should play. */
-function bodyAnimForMotion(motionId) {
-  if (motionId === 'staff-cast') return 'cast';
-  if (motionId === 'sword-thrust' || motionId === 'lance-thrust') return 'thrust';
-  if (motionId === 'bow-draw') return 'slash';   // no shoot body sheet; slash reads ok
-  return 'slash';   // sword-slash / axe-cleave / dagger-stab / fist
-}
-
-/** M54 Phase 2 — Map a resolved SWING to the LPC body animation so the
- *  character's body matches the cut, not just the weapon + effect. Bodies
- *  without backslash/halfslash (muscular) fall back to idle automatically
- *  (bodyAnimSheet returns null → preloadActorAttack yields no frames). */
-function bodyAnimForSwing(swingId) {
-  switch (swingId) {
-    case 'thrust':     return 'thrust';
-    case 'backslash':  return 'backslash';
-    case 'rising':     return 'backslash';   // reverse wind-up reads as a rising cut
-    case 'horizontal': return 'halfslash';   // quick, flatter cut
-    default:           return 'slash';        // diagonal / overhead / spin
-  }
-}
-
 /** M54 — Resolve a PC's swing for one attack. 'varied' advances a per-
  *  entity counter so the cut alternates; everything else returns as-is.
  *  Shared by the cinema (auto) and manual click-to-attack paths. */
@@ -639,135 +612,88 @@ function resolveSwingForPc(entity, weaponClass) {
   return nextVariedSwing(weaponClass, n);
 }
 
-/** M43.2 — Play one cinema round for a versus attack. Looks up the
- *  attacker's chosen weapon, builds the matching motion sequence, and
- *  plays it with the resolved damage as the verdict. Awaits completion
- *  so the auto-loop pacing reads as a series of dramatized exchanges. */
+/** M43.2 — Play one cinema round for a versus attack.
+ *  M64 C8 — the Sequence is built by the same pure builder the online
+ *  table uses (anim/cinema-plan.js `buildCinemaSequence`): this function
+ *  only gathers the forge's per-attack inputs (mainhand weapon, the PC's
+ *  style, the 'varied' swing counter, flag-diffed modifiers) into an
+ *  exchange payload, then drives the cinema. Awaits completion so the
+ *  auto-loop pacing reads as a series of dramatized exchanges. */
 async function playCinemaRoundForAttack(attackerHit, targetHit, dmg, opts = {}) {
   if (!versusCinema) return;
-  const weapon = attackerHit.kind === 'pc'
-    ? (attackerHit.entity.equipment?.mainhand || null)
-    : { name: MONSTER_PRESETS[attackerHit.entity.presetSlug]?.attack?.name };
-  // M56 Phase 2 — Resolved casts route to the spell-sequence builder
-  // (per-kind variants: heal / missiles / bolt / save / aoe) instead
-  // of the bare staff-cast motion. Weapon attacks keep the
-  // weapon-by-default behavior.
   const isCast = !!opts.cast;
-  const motionId = isCast ? 'staff-cast' : motionForWeapon(weapon);
-  let seq = isCast
-    ? buildSpellSequence({ spell: opts.spell || {}, outcome: opts.outcome || {} })
-    : buildMotion(motionId);
-  if (!seq) return;
-  // M43.3 — Apply the PC's chosen attack style (Quick / Standard /
-  // Power / Flourish). Monsters always use Standard for v1.
-  // M56 Phase 4 — opportunity attacks are single snapped strikes:
-  // always Quick, regardless of the attacker's chosen style.
-  if (opts.reaction) {
-    seq = applyStyle(seq, 'quick');
-  } else if (attackerHit.kind === 'pc') {
-    seq = applyStyle(seq, styleForPc(attackerHit.entity));
+  const isPc = attackerHit.kind === 'pc';
+  const attacker = attackerHit.entity;
+  const target = targetHit.entity;
+  const weapon = isPc
+    ? (attacker.equipment?.mainhand || null)
+    : { name: MONSTER_PRESETS[attacker.presetSlug]?.attack?.name };
+  // M54 — 'varied' advances the per-entity counter, so resolve the swing
+  // only when this weapon actually swings (melee, not casts/reactions).
+  let swing = null;
+  if (isPc && !isCast && !opts.reaction) {
+    const meta = motionMetaForWeapon(weapon);
+    if (meta.kind === 'melee') swing = resolveSwingForPc(attacker, meta.weaponClass || 'sword');
   }
-  // M54 — Apply the PC's chosen SWING direction (melee only; not casts
-  // or reactions). 'varied' resolves to a concrete type that
-  // alternates each attack.
-  let resolvedSwing = null;
-  if (attackerHit.kind === 'pc' && !isCast && !opts.reaction && seq.meta?.kind === 'melee') {
-    resolvedSwing = resolveSwingForPc(attackerHit.entity, seq.meta?.weaponClass || 'sword');
-    seq = applySwing(seq, resolvedSwing);
-  }
-  // M43.4 — Detect which class-feature modifiers fired on this exchange
-  // by diffing pre-attack flags against the attacker's current state,
-  // then compose each modifier's overlay onto the sequence.
-  const attackerLevel = attackerHit.kind === 'pc'
-    ? ((attackerHit.entity.classes || []).reduce((s, c) => s + (c?.level || 0), 0) || 1)
+  const attackerLevel = isPc
+    ? ((attacker.classes || []).reduce((s, c) => s + (c?.level || 0), 0) || 1)
     : 1;
-  // M56 Phase 2 — class-feature modifier overlays are weapon-swing
-  // dressing (Sneak/Rage/GWM/Smite/Reckless); casts skip them.
-  // M56 Phase 4 — reactions skip them too: the captured preAttackFlags
-  // belong to the active entity, so diffing would mis-attribute
-  // modifiers to the OA attacker.
-  if (attackerHit.kind === 'pc' && !isCast && !opts.reaction) {
-    const post = snapshotAttackerFlags(attackerHit.entity);
-    const fired = modifiersForAttack({
-      pre: opts.preAttackFlags || {},
-      post,
-      attacker: attackerHit.entity
-    });
-    if (fired.length) {
-      seq = applyModifiers(seq, fired, {
-        level: attackerLevel, slot: opts.smiteSlot || post._smiteSlotUsed || 1
-      });
-    }
+  // M43.4 — modifiers that fired on this exchange, by flag diffing (the
+  // server sends them in the event instead).
+  let modifiers = [];
+  let smiteSlot = null;
+  if (isPc && !isCast && !opts.reaction) {
+    const post = snapshotAttackerFlags(attacker);
+    modifiers = modifiersForAttack({ pre: opts.preAttackFlags || {}, post, attacker });
+    smiteSlot = opts.smiteSlot || post._smiteSlotUsed || 1;
   }
-  // M43.5 — Final polish pass: crit / magical / silvered / level
-  // particle density / big-hit camera zoom / killing-blow flash.
-  const defenderMax = targetHit.entity.hp?.max
-    ?? targetHit.entity.hpMax
-    ?? (targetHit.entity.hp?.current ?? 0) + (dmg || 0);
-  // M56 Phase 2 — friendly sequences (heals) skip polish entirely:
-  // crit pauses, big-hit zooms, and level-tier impact bursts are all
-  // offensive dressing. Casts that DO hit read the spell's damage
-  // type; weapon swings keep reading the weapon.
-  if (!seq.meta?.friendly) {
-    seq = applyPolish(seq, {
-      level:      attackerLevel,
-      crit:       !!opts.crit,
-      dmg:        dmg | 0,
-      defenderHp: defenderMax,
-      magical:    isCast ? false : !!weapon?.magical,
-      material:   isCast ? null : (weapon?.material || null),
-      damageType: isCast ? (opts.spell?.damageType || null) : (weapon?.damageType || null),
-      killing:    !!opts.killing
-    });
-    // M56 Phase 5 — per-damage-type defender reaction (fire knockback,
-    // cold freeze, lightning staccato, necrotic drain). Only damaging
-    // hits react; misses and 0-dmg saves keep the base read. Unknown
-    // types are a no-op, so plain slashing/piercing stays unchanged.
-    if (!opts.miss && (dmg | 0) > 0) {
-      seq = applyHitReaction(seq, {
-        damageType: isCast ? opts.spell?.damageType : weapon?.damageType
-      });
+  const defenderId = String(target.id ?? 'defender');
+  const defenderMax = target.hp?.max ?? target.hpMax ?? (target.hp?.current ?? 0) + (dmg || 0);
+  const miss = opts.miss != null ? !!opts.miss : !dmg;
+  const plan = buildCinemaSequence({
+    exchangeId: null,
+    attackerId: String(attacker.id ?? 'attacker'),
+    defenderId,
+    reaction: !!opts.reaction,
+    cast: isCast,
+    roll: isCast ? null : { hit: !miss, crit: !!opts.crit },
+    damage: { total: dmg | 0 },
+    effects: [{ entityId: defenderId, hp: { before: 0, after: 0, max: defenderMax } }],
+    cinema: {
+      weapon: isCast ? null : weapon,
+      style: isPc ? styleForPc(attacker) : null,
+      swing,
+      modifiers,
+      smiteSlot,
+      attackerLevel,
+      killing: !!opts.killing,
+      spell: isCast ? (opts.spell || {}) : null,
+      outcome: isCast ? (opts.outcome || {}) : null,
+      fxSeed: 0,
+      durationMs: 0
     }
-  }
-  // Update actor sprites to match the current attacker / defender
-  await versusCinema.setActors?.({
-    attacker: attackerHit.entity,
-    defender: targetHit.entity
   });
-  // M51 Phase 2 — Preload the REAL LPC body attack frames for this
-  // exchange: the attacker plays slash/thrust/cast (mapped from the
-  // motion), the defender plays hurt. Human bodies only; monsters fall
-  // back to idle + the Phase-1 weapon swing. Awaited so the frames are
-  // ready before playRound starts.
-  // M54 Phase 2 — a chosen swing drives the body animation too (backslash
-  // body for a backslash cut, quick body for horizontal, etc.); otherwise
-  // the motion decides.
-  const bodyAnim = resolvedSwing ? bodyAnimForSwing(resolvedSwing) : bodyAnimForMotion(motionId);
+  if (!plan.seq) return;
+  // Update actor sprites to match the current attacker / defender
+  await versusCinema.setActors?.({ attacker, defender: target });
+  // M51 Phase 2 / M54 Phase 2 — preload the REAL LPC body attack frames
+  // (the plan maps swing → body, else motion → body) and the defender's
+  // hurt frames; awaited so they are ready before playRound starts.
   await Promise.all([
-    preloadActorAttack(attackerHit.entity, { animation: bodyAnim }),
-    preloadActorAttack(targetHit.entity, { animation: 'hurt' }),
+    preloadActorAttack(attacker, { animation: plan.bodyAnim }),
+    preloadActorAttack(target, { animation: 'hurt' }),
     // M59 — load the weapon's real attack sheet matching the body
     // animation (slash/thrust) when one exists; else the walk fallback.
-    setActorWeapon(attackerHit.entity, { swing: resolvedSwing, animation: bodyAnim })
+    setActorWeapon(attacker, { swing: plan.swing, animation: plan.bodyAnim })
   ]);
   // M64 C10 / F1 — the stage may have been torn down (fight exited)
   // while the sprites were loading.
   if (!versusCinema) return;
   versusCinema.resetHp({
-    attHp: attackerHit.entity.hp?.current ?? attackerHit.entity.hp ?? 1,
-    defHp: targetHit.entity.hp?.current   ?? targetHit.entity.hp   ?? 1
+    attHp: attacker.hp?.current ?? attacker.hp ?? 1,
+    defHp: target.hp?.current   ?? target.hp   ?? 1
   });
-  await versusCinema.playRound(seq, {
-    victim: 'defender',
-    dmg: Math.max(0, dmg | 0),
-    crit: !!opts.crit,
-    // M56 Phase 2 — heals ride the verdict and ADD HP (green popup).
-    heal: Math.max(0, opts.outcome?.heal | 0),
-    // M43.6 — Prefer the explicit miss signal from the attack resolver
-    // (a 0-damage hit on a resistant target should NOT read as a miss).
-    // Fall back to the dmg-derived inference for legacy callers.
-    miss: opts.miss != null ? !!opts.miss : !dmg
-  });
+  await versusCinema.playRound(plan.seq, plan.verdict);
 }
 
 let versusInitiative = [];

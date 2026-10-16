@@ -1,0 +1,354 @@
+/**
+ * M64 C8 — 2D render adapter + playback queue for the play client.
+ *
+ *   const adapter = createRenderAdapter({ canvas, store, appearanceCache, cinemaCanvas });
+ *   ws.on('message', (msg) => {
+ *     if (store.apply(msg) === 'applied' && msg.seq) adapter.play([msg.t in events ? msg.p : {seq: msg.seq, type: msg.t}]);
+ *   });
+ *
+ * The store (C6) applies every broadcast to `authoritative` on receipt;
+ * this adapter decides WHEN each one reaches `presented` (what the screen
+ * shows) by calling `store.presentUpTo(seq)`:
+ *
+ *   - ordinary events present as soon as the queue reaches them;
+ *   - events of a cinema group (`cinemaGroup`, e.g. `attack.rolled`,
+ *     `damage`, `entity.downed`) wait for the group's `exchange` event;
+ *   - an `exchange` plays through `buildCinemaSequence` + the existing
+ *     cinema (`createCinema`) when cinema is on, and presents its group
+ *     at the Sequence's impact keyframe (the hit-pause), so HP bars move
+ *     when the blow lands, not when the packet arrives. With cinema off
+ *     it presents instantly.
+ *   - `skip()` drops the backlog and jumps `presented` to `authoritative`.
+ *
+ * The battle map is drawn with E5's read-only `renderBattleScene(canvas,
+ * view, local)` through one `createRenderScheduler` (single rAF, dirty
+ * flag): presented-state changes and `redraw()` mark it dirty. No
+ * setInterval anywhere; the only timer is the one-shot impact timeout
+ * (injectable for tests).
+ *
+ * `local` is the per-viewer presentation object E5's renderer reads
+ * (camera, ownEntityId, hover, pathPreview, selectionId, dm …); views
+ * mutate it and call `redraw()`.
+ */
+
+import { renderBattleScene } from '../sprite/compositor.js';
+import { createRenderScheduler } from '../map/scheduler.js';
+import { createCamera } from '../map/camera.js';
+import { projectBattleView } from '../map/view.js';
+import { buildCinemaSequence } from '../anim/cinema-plan.js';
+import { createCinema, findHitPauseAt } from '../anim/cinema.js';
+import { MONSTER_PRESETS, buildMonsterCharacter } from '../scene/monster-presets.js';
+
+const DEFAULT_TIMERS = {
+  setTimeout: (fn, ms) => globalThis.setTimeout(fn, ms),
+  clearTimeout: (id) => globalThis.clearTimeout(id)
+};
+
+/**
+ * The cinema actor record for an encounter entity: the look (sheet from
+ * the appearance cache, or the monster preset) plus id / name / HP.
+ * @param {object|null} entity — EncounterState entity
+ * @param {object|null} appearanceCache — map/view.js createAppearanceCache()
+ * @returns {object|null}
+ */
+export function cinemaActorFor(entity, appearanceCache = null) {
+  if (!entity) return null;
+  let look = null;
+  if (entity.kind === 'monster') {
+    const preset = MONSTER_PRESETS[entity.statBlock?.slug];
+    look = preset ? buildMonsterCharacter(preset, entity.id) : null;
+  } else {
+    const key = appearanceCache?.keyFor?.(entity.sheetRef?.characterId ?? entity.id);
+    look = key ? appearanceCache.characterFor(key) : null;
+  }
+  return {
+    ...(look || {}),
+    id: entity.id,
+    name: entity.name,
+    hpMax: entity.hpMax,
+    hp: { current: entity.hp, max: entity.hpMax, temp: entity.hpTemp || 0 }
+  };
+}
+
+/**
+ * @param {object} opts
+ * @param {HTMLCanvasElement|null} opts.canvas — battle map canvas (null = no map drawing)
+ * @param {object} opts.store — client/store.js createStore()
+ * @param {object} [opts.appearanceCache] — map/view.js createAppearanceCache()
+ * @param {HTMLCanvasElement|null} [opts.cinemaCanvas] — creates the cinema when given
+ * @param {object} [opts.cinema] — an existing cinema controller (tests / custom sprites)
+ * @param {object} [opts.cinemaOptions] — extra createCinema options (drawSprite, drawWeapon, drawBackground)
+ * @param {object} [opts.lookups] — buildCinemaSequence lookups
+ * @param {boolean} [opts.cinemaEnabled=true]
+ * @param {object} [opts.camera] — map/camera.js camera (default: created from the canvas size)
+ * @param {Function} [opts.render] — renderBattleScene override (tests)
+ * @param {{raf?: Function, caf?: Function}} [opts.schedulerOpts]
+ * @param {{setTimeout: Function, clearTimeout: Function}} [opts.timers]
+ * @param {(exchangeId: string|null, info: {skipped: boolean}) => void} [opts.onExchangeDone]
+ *   — called once per exchange (played, instant or skipped); the play
+ *     client sends `cinema.done` from here
+ * @param {(state: {playing: boolean, exchange: object|null}) => void} [opts.onCinemaState]
+ * @param {{warn: Function}} [opts.logger]
+ * @returns {{
+ *   play: (events: object[]) => Promise<void>,
+ *   skip: () => void,
+ *   dispose: () => void,
+ *   redraw: () => void,
+ *   setCinemaEnabled: (on: boolean) => void,
+ *   view: () => object|null,
+ *   readonly busy: boolean,
+ *   readonly queued: number,
+ *   local: object
+ * }}
+ */
+export function createRenderAdapter({
+  canvas = null,
+  store,
+  appearanceCache = null,
+  cinemaCanvas = null,
+  cinema = null,
+  cinemaOptions = {},
+  lookups = {},
+  cinemaEnabled = true,
+  camera = null,
+  render = renderBattleScene,
+  schedulerOpts = {},
+  timers = DEFAULT_TIMERS,
+  onExchangeDone = null,
+  onCinemaState = null,
+  logger = { warn: (...a) => globalThis.console?.warn?.(...a) }
+} = {}) {
+  if (!store || typeof store.presentUpTo !== 'function') throw new TypeError('createRenderAdapter: store is required');
+
+  let cinemaOn = !!cinemaEnabled;
+  let disposed = false;
+  let pumping = false;
+  let lastQueuedSeq = store.getPresented().seq || 0;
+  const queue = [];      // {ev, done}
+  const deferred = [];   // group members waiting for their exchange
+  let skipGen = 0;       // bumps on skip(); in-flight exchanges compare it
+  let skipWake = null;   // resolves the in-flight cinema race on skip()
+  let lastRound = Promise.resolve();
+  let currentExchange = null;
+
+  const cinemaCtl = cinema || (cinemaCanvas ? createCinema({ canvas: cinemaCanvas, ...cinemaOptions }) : null);
+
+  const local = {
+    camera: camera || createCamera({
+      zoom: 1, minZoom: 0.1, maxZoom: 4,
+      viewW: canvas?.clientWidth || 0, viewH: canvas?.clientHeight || 0,
+      dpr: globalThis.devicePixelRatio || 1
+    }),
+    ownEntityId: null,
+    hover: null,
+    pathPreview: null,
+    aoePreview: null,
+    selectionId: null,
+    dm: null,
+    showTerrain: false,
+    grid: { visible: true },
+    resolveAppearance: (key) => (appearanceCache?.characterFor?.(key) || undefined),
+    requestRedraw: () => scheduler.markDirty()
+  };
+
+  let viewMemo = { enc: undefined, view: null };
+  function currentView() {
+    const enc = store.getPresented().encounter;
+    if (enc !== viewMemo.enc) viewMemo = { enc, view: enc ? projectBattleView(enc, appearanceCache) : null };
+    return viewMemo.view;
+  }
+
+  const scheduler = createRenderScheduler(async () => {
+    if (disposed || !canvas) return false;
+    const view = currentView();
+    if (!view) return false;
+    const res = await render(canvas, view, local);
+    return !!res?.needsRedraw;
+  }, schedulerOpts);
+
+  const unsubscribe = store.subscribe((_a, p) => p.encounter, () => scheduler.markDirty());
+  scheduler.markDirty();   // first frame
+
+  function settle(item) { item.done(); }
+
+  function present(seq) {
+    if (Number.isInteger(seq)) store.presentUpTo(seq);
+  }
+
+  function flushDeferred(upToSeq) {
+    for (let i = deferred.length - 1; i >= 0; i--) {
+      if (deferred[i].ev.seq <= upToSeq) { settle(deferred[i]); deferred.splice(i, 1); }
+    }
+  }
+
+  function setCinemaVisible(on, exchange) {
+    if (cinemaCanvas) cinemaCanvas.hidden = !on;
+    currentExchange = on ? exchange : null;
+    try { onCinemaState?.({ playing: on, exchange: on ? exchange : null }); } catch (error) {
+      logger.warn(JSON.stringify({ event: 'render_adapter.cinema_state_listener_failed', error: String(error?.message || error) }));
+    }
+  }
+
+  function exchangeDone(ev, skipped) {
+    try { onExchangeDone?.(ev?.payload?.exchangeId ?? null, { skipped }); } catch (error) {
+      logger.warn(JSON.stringify({ event: 'render_adapter.exchange_done_listener_failed', error: String(error?.message || error) }));
+    }
+  }
+
+  async function playExchange(ev) {
+    const gen = skipGen;
+    if (!cinemaOn || !cinemaCtl) {
+      present(ev.seq);
+      exchangeDone(ev, false);
+      return;
+    }
+    let plan;
+    try {
+      plan = buildCinemaSequence(ev, lookups);
+    } catch (error) {
+      logger.warn(JSON.stringify({ event: 'render_adapter.cinema_plan_failed', seq: ev.seq, error: String(error?.message || error) }));
+      plan = null;
+    }
+    if (!plan?.seq) {
+      present(ev.seq);
+      exchangeDone(ev, false);
+      return;
+    }
+    // A skipped cinema's rAF loop may still be drawing; never run two.
+    await lastRound;
+    if (gen !== skipGen || disposed) return;
+
+    const p = ev.payload || {};
+    const enc = store.getPresented().encounter;
+    const att = enc?.entities?.[p.attackerId] || null;
+    const def = p.defenderId ? (enc?.entities?.[p.defenderId] || null) : null;
+    const defEffect = (p.effects || []).find(e => e.entityId === p.defenderId);
+    setCinemaVisible(true, ev);
+    try {
+      await cinemaCtl.setActors?.({
+        attacker: cinemaActorFor(att, appearanceCache),
+        defender: cinemaActorFor(def || att, appearanceCache)
+      });
+      if (gen !== skipGen || disposed) return;
+      cinemaCtl.resetHp?.({
+        attHp: att?.hp ?? 1,
+        defHp: defEffect?.hp?.before ?? def?.hp ?? 1
+      });
+      const impactAt = Math.max(0, findHitPauseAt(plan.seq) | 0);
+      let impactTimer = timers.setTimeout(() => {
+        impactTimer = null;
+        if (gen === skipGen && !disposed) present(ev.seq);
+      }, impactAt);
+      const round = Promise.resolve(cinemaCtl.playRound(plan.seq, plan.verdict)).catch((error) => {
+        logger.warn(JSON.stringify({ event: 'render_adapter.cinema_failed', seq: ev.seq, error: String(error?.message || error) }));
+      });
+      lastRound = round;
+      const wake = new Promise((resolve) => { skipWake = resolve; });
+      await Promise.race([round, wake]);
+      skipWake = null;
+      if (impactTimer !== null) { timers.clearTimeout(impactTimer); impactTimer = null; }
+    } finally {
+      if (gen === skipGen && !disposed) {
+        present(ev.seq);
+        setCinemaVisible(false, null);
+        exchangeDone(ev, false);
+      }
+    }
+  }
+
+  function groupHasExchange(group) {
+    return queue.some(q => q.ev.type === 'exchange' && q.ev.cinemaGroup === group);
+  }
+
+  async function pump() {
+    if (pumping || disposed) return;
+    pumping = true;
+    try {
+      while (queue.length && !disposed) {
+        const item = queue[0];
+        const ev = item.ev;
+        if (ev.type === 'exchange') {
+          const gen = skipGen;
+          await playExchange(ev);
+          if (gen !== skipGen || disposed) continue;   // skip() already settled it; new items may follow
+          queue.shift();
+          flushDeferred(ev.seq);
+          settle(item);
+          continue;
+        }
+        if (cinemaOn && cinemaCtl && ev.cinemaGroup) {
+          if (groupHasExchange(ev.cinemaGroup)) {
+            queue.shift();
+            deferred.push(item);
+            continue;
+          }
+          // The group may still be arriving; wait unless something after it already came.
+          if (queue.every(q => q.ev.cinemaGroup === ev.cinemaGroup)) break;
+        }
+        queue.shift();
+        present(ev.seq);
+        flushDeferred(ev.seq);
+        settle(item);
+      }
+    } finally {
+      pumping = false;
+    }
+  }
+
+  /** Drop the backlog and show the authoritative state now. */
+  function skip() {
+    skipGen++;
+    const seen = new Set();
+    const pendingExchanges = [currentExchange, ...deferred.map(i => i.ev), ...queue.map(i => i.ev)]
+      .filter(e => e && e.type === 'exchange' && !seen.has(e.seq) && seen.add(e.seq));
+    const items = [...deferred.splice(0), ...queue.splice(0)];
+    if (skipWake) { skipWake(); skipWake = null; }
+    store.presentUpTo(store.getState().seq);
+    lastQueuedSeq = Math.max(lastQueuedSeq, store.getState().seq);
+    setCinemaVisible(false, null);
+    for (const ev of pendingExchanges) exchangeDone(ev, true);
+    for (const item of items) settle(item);
+    scheduler.markDirty();
+  }
+
+  return {
+    local,
+
+    play(events) {
+      const list = Array.isArray(events) ? events : [events];
+      const waits = [];
+      for (const ev of list) {
+        if (!ev || !Number.isInteger(ev.seq) || ev.seq <= lastQueuedSeq || disposed) continue;
+        lastQueuedSeq = ev.seq;
+        let done;
+        const p = new Promise((resolve) => { done = resolve; });
+        queue.push({ ev, done });
+        waits.push(p);
+      }
+      pump();
+      return Promise.all(waits).then(() => undefined);
+    },
+
+    skip,
+
+    redraw() { scheduler.markDirty(); },
+
+    setCinemaEnabled(on) {
+      cinemaOn = !!on;
+      if (!cinemaOn) skip();
+    },
+
+    view: currentView,
+
+    get busy() { return queue.length > 0 || deferred.length > 0 || currentExchange !== null; },
+    get queued() { return queue.length + deferred.length; },
+
+    dispose() {
+      if (disposed) return;
+      skip();
+      disposed = true;
+      unsubscribe();
+      scheduler.stop();
+    }
+  };
+}
