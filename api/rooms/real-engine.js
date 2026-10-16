@@ -24,11 +24,12 @@
 import { MONSTER_PRESETS } from '../../src/js/scene/monster-presets.js';
 import { PC_PROFILES } from '../../src/js/scene/ai/pc-profiles.js';
 import { inferProfile } from '../../src/js/scene/ai/infer.js';
-import { runOneAttack } from '../../src/js/scene/combat-engine.js';
+import { runOneAttack, applyDamageToEntity } from '../../src/js/scene/combat-engine.js';
 import {
   entityFromSheet, entityFromPreset, toEngineSides, applyEngineSides, stripTransient,
-  setEntityHp, setEntityConditions, wrapperFromEntity
+  setEntityHp, setEntityConditions, wrapperFromEntity, poolFromLedger, ledgerFromPool
 } from '../../src/js/scene/encounter-adapters.js';
+import { spellById } from '../../src/js/scene/monster-spells.js';
 import * as TM from '../../src/js/scene/turn-manager.js';
 import { createPromptAdapter } from '../../src/js/scene/prompt-adapter.js';
 import { validateIntent as validateTurnIntent, planFromIntent } from '../../src/js/scene/intent-validation.js';
@@ -432,7 +433,7 @@ export function createRealEngine({ resolveSheets = () => null, monsterLookup = (
 
   // -------------------------------------------------------- DM edits
 
-  function applyDmCommand(input, { type, payload }, { rng }) {
+  function applyDmCommand(input, { type, payload }, { emit, rng }) {
     const p = payload || {};
     const state = clone(input);
     const need = (id) => {
@@ -513,9 +514,67 @@ export function createRealEngine({ resolveSheets = () => null, monsterLookup = (
         state.turnIndex = 0;
         return { state, events: [] };
       }
+      case 'dm.spell.adjudicate':
+        return adjudicateSpell(state, p, { emit, rng });
       default:
         throw invalid(`unsupported DM command ${type}`);
     }
+  }
+
+  /**
+   * The DM rules a spell the engine cannot resolve (homebrew, no registry
+   * entry): spend the slot from the ledger, then apply the DM's numbers —
+   * damage through the engine's applyDamageToEntity (concentration saves
+   * included), healing and conditions through the adapters.
+   */
+  function adjudicateSpell(state, p, { emit, rng }) {
+    const caster = state.entities[p.casterId];
+    if (!caster) throw invalid(`unknown caster ${p.casterId}`);
+    for (const t of p.targets) if (!state.entities[t.entityId]) throw invalid(`unknown target ${t.entityId}`);
+    const events = [];
+    const out = (type, payload) => { const ev = emit({ type, payload }); if (ev) events.push(ev); };
+    let s = state;
+    let slotSpent = null;
+    if (Number.isInteger(p.slotLevel)) {
+      const lvl = String(p.slotLevel);
+      const res = s.entities[caster.id].resources;
+      const pool = poolFromLedger(res.slots);
+      if ((pool[lvl] ?? 0) > 0) {
+        res.slots = ledgerFromPool(res.slots, { ...pool, [lvl]: pool[lvl] - 1 });
+      } else if (res.pact?.level === p.slotLevel && res.pact.max - res.pact.spent > 0) {
+        res.pact.spent += 1;
+      } else {
+        throw invalid(`${caster.name} has no level-${lvl} slot left`);
+      }
+      slotSpent = p.slotLevel;
+      out('resource.spent', { entityId: caster.id, resource: 'spell-slot', level: slotSpent });
+    }
+    const known = spellById(p.spellId);
+    out('spell.cast', {
+      casterId: caster.id, spellId: p.spellId,
+      castAtLevel: slotSpent ?? known?.level ?? 0,
+      slotSpent, innate: false, targetIds: p.targets.map(t => t.entityId), adjudicated: true
+    });
+    for (const t of p.targets) {
+      if (t.damage > 0) {
+        const w = wrapperFromEntity(s.entities[t.entityId], sheetsFor(s)[s.entities[t.entityId].sheetRef?.characterId] ?? null);
+        applyDamageToEntity(w, t.damage, rng, { emit: (ev) => { const st = emit(ev); if (st) events.push(st); } }, { source: { id: caster.id }, type: t.type ?? null });
+        s = applyEngineSides(s, [w]);
+      }
+      if (t.healed > 0) {
+        const before = s.entities[t.entityId].hp;
+        const r = setEntityHp(s, t.entityId, before + t.healed);
+        s = r.state;
+        out('heal', { sourceId: caster.id, targetId: t.entityId, amount: r.after - before, hpBefore: before, hpAfter: r.after });
+      }
+      if (t.conditions?.length) {
+        const have = new Set(s.entities[t.entityId].conditions.map(c => (typeof c === 'string' ? c : c.id)));
+        s = setEntityConditions(s, t.entityId, [...s.entities[t.entityId].conditions, ...t.conditions]).state;
+        for (const c of t.conditions) if (!have.has(c)) { have.add(c); out('condition.applied', { entityId: t.entityId, condition: c, sourceId: caster.id }); }
+      }
+    }
+    log('info', 'engine: DM adjudicated a spell', { encounterId: state.encounterId, casterId: caster.id, spellId: p.spellId, targets: p.targets.length });
+    return { state: clone(s), events };
   }
 
   return { version, buildEncounter, startEncounter, runTurn, validateIntent, applyDmCommand, sheetsFor };

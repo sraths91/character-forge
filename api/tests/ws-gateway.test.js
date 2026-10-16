@@ -534,6 +534,58 @@ test('[real] fog: players get the filtered projection, the DM the full one; dm.t
   } finally { await srv.close(); }
 });
 
+test('[real] dm.spell.adjudicate: DM-only; slot from the ledger, damage / heal / conditions as events plus dm.override', async () => {
+  const srv = await boot({ engineKind: 'real' });
+  try {
+    const t = await table(srv, 1, ['wizard-l5']);
+    const { dm, ps } = await connectAll(srv, t);
+    await dm.send('dm.encounter.setup', { ...SETUP, monsters: [{ id: 'gob', name: 'Goblin', hp: 20 }] });
+    await dm.send('dm.entity.patch', { entityId: 'pc-1', hp: 20 });
+    const before = (await dm.send('resync', {}), dm.of('room.snapshot').at(-1).p.encounter.entities['pc-1'].resources.slots['1']);
+    const ruling = {
+      casterId: 'pc-1', spellId: 'homebrew-storm', slotLevel: 1,
+      targets: [{ entityId: 'gob', damage: 5, type: 'lightning', conditions: ['frightened'] }, { entityId: 'pc-1', healed: 3 }]
+    };
+    assert.equal((await ps[0].send('dm.spell.adjudicate', ruling)).p.code, 'E_FORBIDDEN');
+    const since = ps[0].frames.length;
+    const r = await dm.send('dm.spell.adjudicate', ruling);
+    assert.equal(r.t, 'ack', JSON.stringify(r.p));
+    const cast = await ps[0].next(m => m.t === 'spell.cast', { since });
+    assert.deepEqual([cast.p.payload.casterId, cast.p.payload.slotSpent, cast.p.payload.targetIds, cast.p.payload.adjudicated], ['pc-1', 1, ['gob', 'pc-1'], true]);
+    const dmg = await ps[0].next(m => m.t === 'damage', { since });
+    assert.deepEqual([dmg.p.payload.targetId, dmg.p.payload.amount, dmg.p.payload.type, dmg.p.payload.hpAfter], ['gob', 5, 'lightning', 15]);
+    const heal = await ps[0].next(m => m.t === 'heal', { since });
+    assert.deepEqual([heal.p.payload.targetId, heal.p.payload.hpBefore, heal.p.payload.hpAfter], ['pc-1', 20, 23]);
+    await ps[0].next(m => m.t === 'condition.applied' && m.p.payload.condition === 'frightened', { since });
+    await ps[0].next(m => m.t === 'resource.spent' && m.p.payload.resource === 'spell-slot', { since });
+    const overrides = ps[0].frames.slice(since).filter(m => m.t === 'dm.override').map(m => [m.p.payload.kind, m.p.payload.entityId]);
+    assert.deepEqual(overrides.sort(), [['spell.adjudicate', 'gob'], ['spell.adjudicate', 'pc-1']]);
+    await ps[0].next(m => m.t === 'entity.updated' && m.p.entityId === 'gob' && m.p.patch.hp === 15, { since });
+    await dm.send('resync', {});
+    const after = dm.of('room.snapshot').at(-1).p.encounter.entities;
+    assert.equal(after['pc-1'].resources.slots['1'].spent, before.spent + 1);
+    assert.deepEqual(after.gob.conditions, ['frightened']);
+    // Out of level-1 slots → rejected, nothing changes.
+    for (let i = before.spent + 1; i < before.max; i++) assert.equal((await dm.send('dm.spell.adjudicate', { ...ruling, targets: [{ entityId: 'gob', damage: 1 }] })).t, 'ack');
+    const none = await dm.send('dm.spell.adjudicate', { ...ruling, targets: [{ entityId: 'gob', damage: 1 }] });
+    assert.equal(none.p.code, 'E_INVALID_INTENT');
+    assert.match(none.p.message, /no level-1 slot/);
+    assert.equal((await dm.send('dm.spell.adjudicate', { ...ruling, casterId: 'nobody' })).p.code, 'E_INVALID_INTENT');
+    assertClean(dm, ...ps);
+  } finally { await srv.close(); }
+});
+
+test('[stub] dm.spell.adjudicate is rejected by an engine without it', async () => {
+  const srv = await boot({ engineKind: 'stub' });
+  try {
+    const t = await table(srv, 1);
+    const { dm } = await connectAll(srv, t);
+    await dm.send('dm.encounter.setup', SETUP);
+    const r = await dm.send('dm.spell.adjudicate', { casterId: 'pc-1', spellId: 'x', targets: [{ entityId: 'gob', damage: 1 }] });
+    assert.equal(r.p.code, 'E_INVALID_INTENT');
+  } finally { await srv.close(); }
+});
+
 test('seat.claim over ws seats the player and broadcasts seat.updated', async () => {
   const srv = await boot();
   try {

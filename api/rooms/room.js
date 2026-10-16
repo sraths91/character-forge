@@ -36,7 +36,7 @@ export const FALLBACK_CINEMA_MS = 2500;
 export const ROLL_REVIEW_MS = 8000;
 
 /** DM edits that may apply while a turn waits for its intent. */
-const INTENT_SAFE = new Set(['dm.entity.patch', 'dm.entity.add', 'dm.entity.remove', 'dm.terrain.paint', 'dm.seat.setController']);
+const INTENT_SAFE = new Set(['dm.entity.patch', 'dm.entity.add', 'dm.entity.remove', 'dm.terrain.paint', 'dm.seat.setController', 'dm.spell.adjudicate']);
 /** DM edits handled as state commands (safe point or queued). */
 const STATE_COMMANDS = new Set([...INTENT_SAFE, 'dm.initiative.roll', 'dm.initiative.set']);
 /** Entity fields compared to produce `entity.updated` patches. */

@@ -22,8 +22,12 @@
  * and one broadcast: `redacted {type}` keeps `seq` gap-free when viewFor
  * hides an event (e.g. a dm-only dm.override) from a seat.
  *
- * v1 additive (E3, M64 Wave 4 — optional fields only, PROTOCOL_VERSION
- * unchanged): `dm.encounter.setup.fog`.
+ * v1 additive (E3, M64 Wave 4 — PROTOCOL_VERSION unchanged): the optional
+ * `dm.encounter.setup.fog`, and the DM-only intent `dm.spell.adjudicate
+ * {casterId, spellId, targets: [{entityId, damage?, type?, healed?,
+ * conditions?}], slotLevel?}` — the DM rules a spell the engine cannot
+ * resolve. E2 adds the same intent on its branch; one copy survives the
+ * merge.
  *
  * Client payloads are strict (unknown fields rejected); server payloads
  * enforce required fields and allow additive ones.
@@ -68,6 +72,7 @@ export const INTENT_ROLES = Object.freeze({
   'dm.entity.add': 'dm',
   'dm.entity.remove': 'dm',
   'dm.terrain.paint': 'dm',
+  'dm.spell.adjudicate': 'dm',
   'dm.roll.arm': 'dm',
   'dm.review.set': 'dm',
   'dm.prompt.force': 'dm',
@@ -189,6 +194,19 @@ const INTENT_PAYLOADS = {
   'dm.entity.add': shape({ entity: shape({}, LOOSE), initiativeScore: optional(num()) }),
   'dm.entity.remove': shape({ entityId: ID }),
   'dm.terrain.paint': shape({ cells: arrayOf(POS, { min: 1, max: 4096 }), flags: int(0, 255), mode: oneOf(['set', 'clear']) }),
+  // v1 additive (M64 W4; E2 adds the same intent on its branch — reconcile at merge).
+  'dm.spell.adjudicate': shape({
+    casterId: ID,
+    spellId: str({ maxLength: 128 }),
+    targets: arrayOf(shape({
+      entityId: ID,
+      damage: optional(int(0, 10000)),
+      type: optional(nullable(str({ maxLength: 32 }))),
+      healed: optional(int(0, 10000)),
+      conditions: optional(arrayOf(str({ maxLength: 64 }), { max: 16 }))
+    }), { min: 1, max: 32 }),
+    slotLevel: optional(int(1, 9))
+  }),
   'dm.roll.arm': shape({ entityId: optional(nullable(ID)), rollKind: oneOf(ROLL_KINDS), value: int() }),
   'dm.review.set': shape({ plans: optional(bool()), rolls: optional(bool()), monsterReactions: optional(bool()) }),
   'dm.prompt.force': shape({ promptId: ID, answer: anyJson() }),
