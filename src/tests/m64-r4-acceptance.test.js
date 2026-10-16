@@ -120,9 +120,9 @@ test('R4: the engine and shared model no longer use _lvl1Slots / _lvl3Slots', ()
   assert.equal(w._lvl3Slots, undefined);
 });
 
-test('R4: main.js Shield prompt labels no longer read _lvl1Slots', {
-  todo: 'E2: main.js:1186 and :2508 still read `_lvl1Slots` for the Shield prompt cost label; the field is gone, so it always shows "1 of 0". Read availableSlotLevel / _slots instead.'
-}, () => {
+// Was a todo until E2 moved the Shield prompt cost label onto the one
+// slot ledger (the label used to read the retired field and show "1 of 0").
+test('R4: main.js Shield prompt labels no longer read _lvl1Slots', () => {
   const main = readFileSync(new URL('main.js', SCRIPT_DIR), 'utf8');
   assert.deepEqual(codeHits(main, '_lvl1Slots').map(([n]) => n), []);
 });
