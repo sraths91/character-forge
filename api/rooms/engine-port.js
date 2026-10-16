@@ -44,8 +44,10 @@
 //   roll({rollKind:'attack'|'damage'|'save', actorId, targetId, result}) → Promise<number>
 //     Called after the rng draw so the stream stays aligned.
 //   cinema(exchangeEvent) → Promise<void>
-//     After emitting an `exchange` (payload.durationMs = sequence length);
-//     resolves on every connected member's `cinema.done` or the cap.
+//     After emitting an `exchange` (events v1.1: payload.cinema.durationMs =
+//     sequence length, 0 when unknown); resolves on every connected
+//     member's `cinema.done` or the cap (durationMs, or the room's fallback
+//     when 0, plus 1.5 s).
 
 /** Version of this interface; also stored as encounters.engine_version by the stub. */
 export const ENGINE_PORT_VERSION = 1;
@@ -104,7 +106,7 @@ const clone = (v) => JSON.parse(JSON.stringify(v));
  *
  * @param {object} [opts]
  * @param {number} [opts.version=ENGINE_PORT_VERSION]
- * @param {number} [opts.cinemaMs=600]  durationMs put on each exchange
+ * @param {number} [opts.cinemaMs=600]  cinema.durationMs put on each exchange
  * @returns {EnginePort}
  */
 export function createStubEngine({ version = ENGINE_PORT_VERSION, cinemaMs = 600 } = {}) {
@@ -263,8 +265,10 @@ export function createStubEngine({ version = ENGINE_PORT_VERSION, cinemaMs = 600
           roll: { kept, total: kept + bonus, ac, hit, crit, shielded },
           damage: hit ? { total: before - target.hp } : null,
           effects: [{ entityId: target.id, hp: { before, after: target.hp, max: target.hpMax } }],
-          cinema: { fxSeed: fx, killing: before > 0 && target.hp === 0 },
-          durationMs: cinemaMs
+          cinema: {
+            weapon: null, style: null, swing: null, modifiers: [], smiteSlot: null, attackerLevel: 1,
+            killing: before > 0 && target.hp === 0, spell: null, outcome: null, fxSeed: fx, durationMs: cinemaMs
+          }
         } });
         ctx.progress(s);
         await ctx.prompts.cinema(exchange);

@@ -30,6 +30,8 @@ export const HISTORY_LIMIT = 50;
 export const CID_CACHE_SIZE = 256;
 /** Extra cinema wait on top of the exchange's durationMs. */
 export const CINEMA_SLACK_MS = 1500;
+/** Cinema length assumed when an exchange carries durationMs 0 (engine cannot know it). */
+export const FALLBACK_CINEMA_MS = 2500;
 /** Cap on a DM roll-review prompt. */
 export const ROLL_REVIEW_MS = 8000;
 
@@ -417,8 +419,10 @@ export class Room {
       this.pendingEvents = [];
       this.outbox = this.outbox.filter(i => i.kind === 'room');
       this.turnEndBuffered = false;
-      this.enc.liveState = null;
+      if (this.enc) this.enc.liveState = null;
       this.#setStatus('error');
+      // Dropped events consumed seqs: give every client a fresh baseline.
+      for (const m of this.members.values()) if (m.conn) this.#sendSnapshot(m);
     }
   }
 
@@ -611,7 +615,8 @@ export class Room {
         this.#flush();
         const waiting = new Set([...this.members.values()].filter(m => m.conn).map(m => m.id));
         if (waiting.size === 0) return;
-        const capMs = (Number(exchange.payload.durationMs) || 0) + CINEMA_SLACK_MS;
+        const d = Number(exchange.payload.cinema?.durationMs ?? exchange.payload.durationMs) || 0;
+        const capMs = (d > 0 ? d : FALLBACK_CINEMA_MS) + CINEMA_SLACK_MS;
         await new Promise((resolve) => {
           this.cinemaWait = { exchangeId: exchange.payload.exchangeId, waiting, resolve, timer: this.setTimer(() => this.#endCinema(), capMs) };
         });

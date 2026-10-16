@@ -8,6 +8,9 @@ import assert from 'node:assert/strict';
 import { startMultiplayerServer } from '../multiplayer.js';
 import { createRoomService } from '../rooms/service.js';
 import { originAllowed } from '../ws/gateway.js';
+import { createStubEngine } from '../rooms/engine-port.js';
+import { viewFor, stateHash } from '../rooms/view.js';
+import { stateHash as sharedStateHash } from '../../src/js/shared/state-hash.js';
 import { tempRoot, tempDb, quiet, ddbFixture, api } from './helpers/server.js';
 import { TestClient, rawSocket, closed } from './helpers/ws.js';
 
@@ -16,11 +19,11 @@ after(cleanup);
 
 const LOOSE = { roomCreate: { windowMs: 60_000, max: 1000 }, roomJoin: { windowMs: 60_000, max: 1000 } };
 
-async function boot({ gatewayOpts = {}, roomOpts = {} } = {}) {
+async function boot({ gatewayOpts = {}, roomOpts = {}, engine } = {}) {
   const { db } = await tempDb(root);
   const srv = await startMultiplayerServer({
     db, env: { NODE_ENV: 'test' }, port: 0, host: '127.0.0.1', log: quiet,
-    appOpts: { limits: LOOSE }, gatewayOpts, roomOpts
+    appOpts: { limits: LOOSE }, gatewayOpts, roomOpts, ...(engine ? { engine } : {})
   });
   const clients = [];
   srv.track = (c) => { clients.push(c); return c; };
@@ -506,4 +509,47 @@ test('the room service rejects an unknown room in the registry', async () => {
   const svc = createRoomService({ db });
   assert.equal(svc.authenticate('nope'), null);
   db.close();
+});
+
+test('viewFor drops the RNG; stateHash is the shared hash of the projection', () => {
+  const st = createStubEngine().buildEncounter({ encounterId: 'e', seed: 5, setup: SETUP, party: [] });
+  const v = viewFor(st, null);
+  assert.equal(v.rng, undefined);
+  assert.notEqual(v, st);
+  assert.equal(stateHash(st), sharedStateHash(v));
+  assert.equal(viewFor(null, null), null);
+});
+
+test('dm-only overrides reach players as redacted with the same seq', async () => {
+  const srv = await boot();
+  try {
+    const t = await table(srv, 1);
+    const { dm, ps } = await connectAll(srv, t);
+    srv.registry.get(t.room.roomId).settings.dmOverrideVisibility = 'dm-only';
+    await dm.send('dm.encounter.setup', SETUP);
+    await dm.send('dm.entity.patch', { entityId: 'gob', hp: 2 });
+    const ov = await dm.find(m => m.t === 'dm.override');
+    const red = await ps[0].find(m => m.t === 'redacted');
+    assert.equal(red.seq, ov.seq);
+    assert.deepEqual(red.p, { type: 'dm.override' });
+    assert.equal(ps[0].of('dm.override').length, 0);
+    assertClean(dm, ...ps);
+  } finally { await srv.close(); }
+});
+
+test('a failing turn lane puts the room in error and re-baselines every client', async () => {
+  const stub = createStubEngine();
+  const engine = { ...stub, runTurn: async (state, ctx) => { ctx.emit({ type: 'turn.started', payload: { actorId: 'x' } }); ctx.emit({ type: 'damage', payload: { bogus: true } }); return { state, events: [] }; } };
+  const srv = await boot({ engine });
+  try {
+    const t = await table(srv, 1);
+    const { dm, ps } = await connectAll(srv, t);
+    await dm.send('dm.encounter.setup', SETUP);
+    await dm.send('dm.encounter.start', { seed: 1 });
+    await dm.find(m => m.t === 'room.status' && m.p.status === 'error');
+    const snap = await ps[0].find(m => m.t === 'room.snapshot' && m.p.room.status === 'error');
+    assert.ok(snap.p.seq >= 1);
+    assert.equal(srv.registry.get(t.room.roomId).status, 'error');
+    for (const c of [dm, ...ps]) assert.deepEqual(c.invalid, []);
+  } finally { await srv.close(); }
 });
