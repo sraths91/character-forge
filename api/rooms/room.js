@@ -447,7 +447,14 @@ export class Room {
       rng,
       emit: (ev) => this.#emit(ev),
       progress: (s) => { if (this.enc === enc) enc.liveState = clone(s); },
-      prompts: this.#prompts()
+      prompts: this.#prompts(),
+      // Which DM gates the engine should call (the real engine skips the
+      // planReady / roll hooks otherwise). A replayed turn re-asks exactly
+      // what its log answered, whatever the live flags are now.
+      review: rec
+        ? { plans: rec.answers.some(a => a.kind === 'plan'), rolls: rec.answers.some(a => a.kind === 'roll') }
+        : { plans: this.review.plans, rolls: this.review.rolls || this.armedRolls.length > 0 },
+      cinemaInputs: ({ attackerId }) => this.#cinemaInputs(attackerId)
     };
     const res = await this.engine.runTurn(clone(state), ctx);
     if (this.closing || this.enc !== enc) return;
@@ -473,6 +480,14 @@ export class Room {
       this.broker.cancelAll();
       this.#setStatus('encounter-over');
     }
+  }
+
+  /** A seat's chosen cinema style / swing (char.setStyle) for an attacker, or {}. */
+  #cinemaInputs(attackerId) {
+    const e = this.#currentState()?.entities?.[attackerId];
+    const seat = e?.controller?.seatId ? this.seats.find(s => s.id === e.controller.seatId) : null;
+    const pick = (seat && this.styles.get(String(seat.characterId))) || (e?.sheetRef && this.styles.get(String(e.sheetRef.characterId)));
+    return pick ? { style: pick.style, swing: pick.swing } : {};
   }
 
   /** The next logged answer during replay (kind must match), or undefined when live. */
@@ -922,7 +937,8 @@ export class Room {
     }));
     let state;
     try {
-      state = this.engine.buildEncounter({ encounterId, seed: randomInt(0, 0x100000000), setup: clone(p), party });
+      const settings = { importLiveState: this.settings.importDdbState === true || this.settings.importLiveState === true };
+      state = this.engine.buildEncounter({ encounterId, seed: randomInt(0, 0x100000000), setup: clone(p), party, settings });
     } catch (err) {
       throw new IntentError('E_INVALID_INTENT', `setup rejected: ${err.message}`);
     }
@@ -995,10 +1011,18 @@ export class Room {
   }
 }
 
-/** Payload minus fields that legitimately differ on replay (hash filled later, prompt deadline). */
+/**
+ * Payload minus fields that legitimately differ on replay: the hash
+ * (filled later), the prompt deadline, and the seat's cinema style /
+ * swing (in-memory seat state, lost on restart).
+ */
 function stripVolatile(payload) {
   if (!payload || typeof payload !== 'object') return payload;
   const { stateHash: _h, deadlineMs: _d, ...rest } = payload;
+  if (rest.cinema && typeof rest.cinema === 'object') {
+    const { style: _s, swing: _w, ...cinema } = rest.cinema;
+    rest.cinema = cinema;
+  }
   return rest;
 }
 

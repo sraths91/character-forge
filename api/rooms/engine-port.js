@@ -1,10 +1,10 @@
 // The engine-step interface the room drives (M64 B7/B8).
 //
 // The room never imports the combat engine directly; it drives an
-// EnginePort. Wave 3 ships `createStubEngine` (deterministic, tiny rules)
-// so rooms, prompts, persistence and recovery are testable now. Wave 4
-// swaps in an adapter over E1's turn manager + encounter adapters + prompt
-// adapter + validateIntent (one file: implement this typedef).
+// EnginePort. `createStubEngine` (deterministic, tiny rules) stays for
+// tests and `CF_ENGINE=stub`; the default is `createRealEngine` in
+// real-engine.js, an adapter over E1's turn manager + encounter adapters
+// + prompt adapter + validateIntent.
 //
 // Contract rules (the room relies on every one of them):
 //  1. State in, state out. Every method takes an EncounterState v1 (pure
@@ -71,6 +71,10 @@ export const ENGINE_PORT_VERSION = 1;
  * @property {(ev: PortEvent) => EncounterEvent} emit
  * @property {(state: EncounterState) => void} progress
  * @property {TurnPrompts} prompts
+ * @property {{plans?: boolean, rolls?: boolean}} [review]  DM gates in force: the
+ *   engine calls `planReady` / `roll` only when set (the stub always calls them)
+ * @property {(a: {attackerId: string, weapon: object|null}) => {style?: string, swing?: string|null}} [cinemaInputs]
+ *   the attacker's seat style / swing for the exchange's cinema spec
  *
  * @typedef {object} SeatInfo
  * @property {string} slotId        party_slots.id (becomes controller.seatId)
@@ -83,8 +87,9 @@ export const ENGINE_PORT_VERSION = 1;
  *
  * @typedef {object} EnginePort
  * @property {number} version
- * @property {(a: {encounterId: string, seed: number, setup: object, party: SeatInfo[]}) => EncounterState} buildEncounter
+ * @property {(a: {encounterId: string, seed: number, setup: object, party: SeatInfo[], settings?: {importLiveState?: boolean}}) => EncounterState} buildEncounter
  *   From `dm.encounter.setup {map, grid, monsters, placements}` and the seats; phase 'setup'.
+ *   `settings.importLiveState`: PCs start with the sheet's current HP / spent slots, not rested.
  * @property {(state: EncounterState, ctx: {emit: TurnContext['emit'], rng: PortRng}) => Promise<{state: EncounterState, events: EncounterEvent[]}>} startEncounter
  *   Rolls initiative if empty, round 1, turnIndex 0, phase 'running'.
  * @property {(state: EncounterState, ctx: TurnContext) => Promise<{state: EncounterState, events: EncounterEvent[]}>} runTurn

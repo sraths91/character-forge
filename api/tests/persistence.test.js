@@ -1,4 +1,4 @@
-// M64 B8 — encounter persistence and boot recovery with the stub engine.
+// M64 B8 — encounter persistence and boot recovery, with both engine ports.
 // The gate: kill (close) mid-encounter, reopen on the same DB, resume, and
 // finish with a state (including the RNG) identical to an uninterrupted run.
 
@@ -9,7 +9,7 @@ import { join } from 'node:path';
 
 import { openDb } from '../db/database.js';
 import { startMultiplayerServer } from '../multiplayer.js';
-import { createStubEngine } from '../rooms/engine-port.js';
+import { REAL_ENGINE_VERSION } from '../rooms/real-engine.js';
 import { createSqliteJournal } from '../rooms/persistence.js';
 import { stateHash } from '../rooms/view.js';
 import { validateEventLog } from '../../src/js/shared/events.js';
@@ -24,10 +24,10 @@ after(async () => { for (const s of open) await s.close().catch(() => {}); });
 
 const LOOSE = { roomCreate: { windowMs: 60_000, max: 1000 }, roomJoin: { windowMs: 60_000, max: 1000 } };
 
-async function boot(path, { engine, log = quiet } = {}) {
+async function boot(path, { engine, engineKind, log = quiet } = {}) {
   const db = await openDb(path, { log: quiet });
   const srv = await startMultiplayerServer({
-    db, env: { NODE_ENV: 'test' }, port: 0, host: '127.0.0.1', log, appOpts: { limits: LOOSE },
+    db, env: { NODE_ENV: 'test', ...(engineKind ? { CF_ENGINE: engineKind } : {}) }, port: 0, host: '127.0.0.1', log, appOpts: { limits: LOOSE },
     ...(engine ? { engine } : {})
   });
   const out = { db, ...srv };
@@ -96,98 +96,100 @@ function finalState(db) {
   return { row, state: JSON.parse(row.snapshot_json), events };
 }
 
-test('kill mid-encounter, reopen, resume: identical final state, RNG and event types', async () => {
-  // Reference: one uninterrupted run.
-  const refPath = join(mkdtempSync(join(root, 'ref-')), 'ref.db');
-  const ref = await boot(refPath);
-  let refFinal;
-  {
-    const { room, p } = await newTable(ref);
-    const dm = await TestClient.connect(ref.url, room.dmToken, { name: 'dm' });
-    const pl = await TestClient.connect(ref.url, p.token, { name: 'p' });
+for (const engineKind of ['stub', 'real']) {
+  test(`[${engineKind}] kill mid-encounter, reopen, resume: identical final state, RNG and event types`, async () => {
+    // Reference: one uninterrupted run.
+    const refPath = join(mkdtempSync(join(root, 'ref-')), 'ref.db');
+    const ref = await boot(refPath, { engineKind });
+    let refFinal;
+    {
+      const { room, p } = await newTable(ref);
+      const dm = await TestClient.connect(ref.url, room.dmToken, { name: 'dm' });
+      const pl = await TestClient.connect(ref.url, p.token, { name: 'p' });
+      const plan = { pcTurns: 0 };
+      const done = drive(dm, pl, plan);
+      await startEncounter(dm);
+      assert.equal(await done, 'ended');
+      assert.ok(plan.pcTurns >= 3, `long enough to crash in the middle (pc turns: ${plan.pcTurns})`);
+      await new Promise(r => setTimeout(r, 20));
+      refFinal = finalState(ref.db);
+      dm.close(); pl.close();
+      await ref.close();
+    }
+    assert.equal(refFinal.row.status, 'ended');
+    assert.equal(refFinal.state.phase, 'ended');
+
+    // Crash run: same table, closed while pc-1's 2nd attack is mid-cinema.
+    const path = join(mkdtempSync(join(root, 'crash-')), 'crash.db');
+    const a = await boot(path, { engineKind });
+    const { room, p } = await newTable(a);
     const plan = { pcTurns: 0 };
-    const done = drive(dm, pl, plan);
-    await startEncounter(dm);
-    assert.equal(await done, 'ended');
-    assert.ok(plan.pcTurns >= 3, `long enough to crash in the middle (pc turns: ${plan.pcTurns})`);
-    await new Promise(r => setTimeout(r, 20));
-    refFinal = finalState(ref.db);
-    dm.close(); pl.close();
-    await ref.close();
-  }
-  assert.equal(refFinal.row.status, 'ended');
-  assert.equal(refFinal.state.phase, 'ended');
+    {
+      const dm = await TestClient.connect(a.url, room.dmToken, { name: 'dm' });
+      const pl = await TestClient.connect(a.url, p.token, { name: 'p' });
+      const done = drive(dm, pl, plan, { crash: true });
+      await startEncounter(dm);
+      assert.equal(await done, 'crash');
+      await a.close();   // graceful shutdown mid-turn (B9 path)
+    }
+    // The DB holds an active encounter with an in-flight turn.
+    const mid = await openDb(path, { log: quiet });
+    const row = mid.db.prepare("SELECT * FROM encounters WHERE status = 'active'").get();
+    assert.ok(row, 'still active');
+    assert.ok(row.head_seq > row.snapshot_seq, 'events past the snapshot');
+    const log = JSON.parse(row.turn_log_json);
+    assert.deepEqual(log.answers.map(x => x.kind), ['intent', 'roll', 'roll'].slice(0, log.answers.length));
+    assert.equal(log.answers[0].dmCommands.length, 1, 'the DM edit is logged with the intent');
+    mid.close();
 
-  // Crash run: same table, closed while pc-1's 2nd attack is mid-cinema.
-  const path = join(mkdtempSync(join(root, 'crash-')), 'crash.db');
-  const a = await boot(path);
-  const { room, p } = await newTable(a);
-  const plan = { pcTurns: 0 };
-  {
-    const dm = await TestClient.connect(a.url, room.dmToken, { name: 'dm' });
-    const pl = await TestClient.connect(a.url, p.token, { name: 'p' });
-    const done = drive(dm, pl, plan, { crash: true });
-    await startEncounter(dm);
-    assert.equal(await done, 'crash');
-    await a.close();   // graceful shutdown mid-turn (B9 path)
-  }
-  // The DB holds an active encounter with an in-flight turn.
-  const mid = await openDb(path, { log: quiet });
-  const row = mid.db.prepare("SELECT * FROM encounters WHERE status = 'active'").get();
-  assert.ok(row, 'still active');
-  assert.ok(row.head_seq > row.snapshot_seq, 'events past the snapshot');
-  const log = JSON.parse(row.turn_log_json);
-  assert.deepEqual(log.answers.map(x => x.kind), ['intent', 'roll', 'roll'].slice(0, log.answers.length));
-  assert.equal(log.answers[0].dmCommands.length, 1, 'the DM edit is logged with the intent');
-  mid.close();
+    // Reopen: recovered paused; the DM resumes once the table is back.
+    const b = await boot(path, { engineKind });
+    try {
+      const live = b.registry.get(room.roomId);
+      assert.equal(live.status, 'paused');
+      const dm = await TestClient.connect(b.url, room.dmToken, { name: 'dm2' });
+      const pl = await TestClient.connect(b.url, p.token, { name: 'p2' });
+      assert.equal(dm.snapshot.p.room.status, 'paused');
+      assert.ok(dm.snapshot.p.history.length > 0, 'history restored');
+      const done = drive(dm, pl, plan);
+      assert.equal((await dm.send('dm.resume', {})).t, 'ack');
+      assert.equal(await done, 'ended');
+      await new Promise(r => setTimeout(r, 20));
+      const got = finalState(b.db);
+      assert.equal(got.row.status, 'ended');
+      // Room-scoped ids (encounter, seat, pasted character) differ between the two tables; nothing else may.
+      const norm = (st) => JSON.parse(JSON.stringify({ ...st, encounterId: 'E', lastEventSeq: 0 })
+        .replace(/"seatId":"s_[^"]+"/g, '"seatId":"S"').replace(/paste:[^:"]+:/g, 'paste:R:'));
+      assert.deepEqual(norm(got.state), norm(refFinal.state));
+      assert.equal(stateHash(got.state), stateHash(refFinal.state));
+      assert.deepEqual(got.state.rng, refFinal.state.rng, 'identical RNG state');
+      // Same engine-event story (seqs differ: presence broadcasts interleave).
+      const types = (evs) => evs.map(e => e.type);
+      assert.deepEqual(types(got.events), types(refFinal.events));
+      assert.ok(validateEventLog(got.events).ok);
+      for (const c of [dm, pl]) { assert.deepEqual(c.invalid, []); assert.deepEqual(c.gaps, []); }
+      dm.close(); pl.close();
+    } finally {
+      await b.close();
+    }
+  });
+}
 
-  // Reopen: recovered paused; the DM resumes once the table is back.
-  const b = await boot(path);
-  try {
-    const live = b.registry.get(room.roomId);
-    assert.equal(live.status, 'paused');
-    const dm = await TestClient.connect(b.url, room.dmToken, { name: 'dm2' });
-    const pl = await TestClient.connect(b.url, p.token, { name: 'p2' });
-    assert.equal(dm.snapshot.p.room.status, 'paused');
-    assert.ok(dm.snapshot.p.history.length > 0, 'history restored');
-    const done = drive(dm, pl, plan);
-    assert.equal((await dm.send('dm.resume', {})).t, 'ack');
-    assert.equal(await done, 'ended');
-    await new Promise(r => setTimeout(r, 20));
-    const got = finalState(b.db);
-    assert.equal(got.row.status, 'ended');
-    // Room-scoped ids (encounter, seat, pasted character) differ between the two tables; nothing else may.
-    const norm = (st) => JSON.parse(JSON.stringify({ ...st, encounterId: 'E', lastEventSeq: 0 })
-      .replace(/"seatId":"s_[^"]+"/g, '"seatId":"S"').replace(/paste:[^:"]+:/g, 'paste:R:'));
-    assert.deepEqual(norm(got.state), norm(refFinal.state));
-    assert.equal(stateHash(got.state), stateHash(refFinal.state));
-    assert.deepEqual(got.state.rng, refFinal.state.rng, 'identical RNG state');
-    // Same engine-event story (seqs differ: presence broadcasts interleave).
-    const types = (evs) => evs.map(e => e.type);
-    assert.deepEqual(types(got.events), types(refFinal.events));
-    assert.ok(validateEventLog(got.events).ok);
-    for (const c of [dm, pl]) { assert.deepEqual(c.invalid, []); assert.deepEqual(c.gaps, []); }
-    dm.close(); pl.close();
-  } finally {
-    await b.close();
-  }
-});
-
-test('an engine_version mismatch marks the encounter abandoned on boot', async () => {
+test('an engine_version mismatch marks the encounter abandoned on boot (stub build → real engine)', async () => {
   const path = join(mkdtempSync(join(root, 'ver-')), 'v.db');
-  const a = await boot(path);
+  const a = await boot(path, { engineKind: 'stub' });
   const { room } = await newTable(a);
   const dm = await TestClient.connect(a.url, room.dmToken);
   await dm.send('dm.encounter.setup', { map: null, grid: { cols: 4, rows: 4 }, monsters: [{ id: 'gob' }], placements: {} });
   dm.close();
   await a.close();
   const lines = [];
-  const b = await boot(path, { engine: createStubEngine({ version: 99 }), log: (level, msg, extra) => lines.push({ level, msg, ...extra }) });
+  const b = await boot(path, { log: (level, msg, extra) => lines.push({ level, msg, ...extra }) });
   try {
     const row = b.db.db.prepare('SELECT status, ended_at FROM encounters').get();
     assert.equal(row.status, 'abandoned');
     assert.ok(row.ended_at > 0);
-    assert.ok(lines.some(l => l.level === 'warn' && /engine version/.test(l.msg)));
+    assert.ok(lines.some(l => l.level === 'warn' && /engine version/.test(l.msg) && l.stored === 1 && l.running === REAL_ENGINE_VERSION));
     const dm2 = await TestClient.connect(b.url, room.dmToken);
     assert.equal(dm2.snapshot.p.encounter, null);
     assert.equal(dm2.snapshot.p.room.status, 'lobby');

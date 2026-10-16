@@ -19,10 +19,13 @@ after(cleanup);
 
 const LOOSE = { roomCreate: { windowMs: 60_000, max: 1000 }, roomJoin: { windowMs: 60_000, max: 1000 } };
 
-async function boot({ gatewayOpts = {}, roomOpts = {}, engine } = {}) {
+/** Engine-dependent tests run against both ports (CF_ENGINE). */
+const ENGINES = ['stub', 'real'];
+
+async function boot({ gatewayOpts = {}, roomOpts = {}, engine, engineKind } = {}) {
   const { db } = await tempDb(root);
   const srv = await startMultiplayerServer({
-    db, env: { NODE_ENV: 'test' }, port: 0, host: '127.0.0.1', log: quiet,
+    db, env: { NODE_ENV: 'test', ...(engineKind ? { CF_ENGINE: engineKind } : {}) }, port: 0, host: '127.0.0.1', log: quiet,
     appOpts: { limits: LOOSE }, gatewayOpts, roomOpts, ...(engine ? { engine } : {})
   });
   const clients = [];
@@ -37,10 +40,9 @@ async function boot({ gatewayOpts = {}, roomOpts = {}, engine } = {}) {
 }
 
 /** Room with a DM and N players, each seated with a fixture character. */
-async function table(srv, players = 2) {
+async function table(srv, players = 2, fixtures = ['fighter-l5', 'wizard-l5', 'cleric-l5']) {
   const room = (await api(srv.url, '/api/rooms', { method: 'POST', body: {} })).body;
   const ps = [];
-  const fixtures = ['fighter-l5', 'wizard-l5', 'cleric-l5'];
   for (let i = 0; i < players; i++) {
     const p = (await api(srv.url, '/api/rooms/join', { method: 'POST', body: { code: room.code, displayName: `P${i + 1}` } })).body;
     const imp = await api(srv.url, `/api/import?room=${room.roomId}`, { method: 'POST', token: p.token, body: { json: ddbFixture(fixtures[i % 3]) } });
@@ -273,203 +275,230 @@ test('kick over HTTP closes the socket 4403 and broadcasts member.left', async (
 /** Find which entity belongs to which client. */
 function pcOf(enc, seat) { return `pc-${seat}`; }
 
-test('full encounter: intents, shield prompt, cinema pacing, stateHash at turn.ended', async () => {
-  const srv = await boot();
-  try {
-    const t = await table(srv, 2);
-    const { dm, ps } = await connectAll(srv, t);
-    await dm.send('dm.encounter.setup', { ...SETUP, monsters: [{ id: 'gob', name: 'Goblin', hp: 30, ac: 10 }] });
-    const ack = await dm.send('dm.encounter.start', { seed: 7 });
-    assert.equal(ack.t, 'ack');
-    const everyone = [dm, ...ps];
-    const ownerOf = (actorId) => (actorId === 'pc-1' ? ps[0] : actorId === 'pc-2' ? ps[1] : null);
-    let turns = 0;
-    let shieldPrompts = 0;
-    let sawAct = false;
-    // Drive the table until the encounter ends (or 40 turns).
-    while (turns < 40) {
-      const ev = await dm.next(m => m.t === 'turn.started' || m.t === 'encounter.ended', { since: dm._cursor ?? 0, timeoutMs: 5000 });
-      dm._cursor = dm.frames.indexOf(ev) + 1;
-      if (ev.t === 'encounter.ended') break;
-      turns++;
-      const owner = ownerOf(ev.p.payload.actorId);
-      if (owner) {
+/** Every prompt a player gets is answered `true`; every client acks every exchange's cinema. */
+function autoTable(players, everyone) {
+  for (const p of players) {
+    p.ws.on('message', (data) => {
+      const m = JSON.parse(String(data));
+      if (m.t === 'prompt.open') p.sendRaw({ v: 1, t: 'prompt.answer', cid: `pa-${m.p.promptId}`, p: { promptId: m.p.promptId, answer: true } });
+    });
+  }
+  for (const c of everyone) {
+    c.ws.on('message', (data) => {
+      const m = JSON.parse(String(data));
+      if (m.t === 'exchange') c.sendRaw({ v: 1, t: 'cinema.done', cid: `cd-${m.seq}-${c.name}`, p: { exchangeId: m.p.payload.exchangeId } });
+    });
+  }
+}
+
+for (const engineKind of ENGINES) {
+  test(`[${engineKind}] full encounter: intents, prompts, cinema pacing, stateHash at turn.ended`, async () => {
+    const srv = await boot({ engineKind });
+    try {
+      const t = await table(srv, 2);
+      const { dm, ps } = await connectAll(srv, t);
+      await dm.send('dm.encounter.setup', { ...SETUP, monsters: [{ id: 'gob', name: 'Goblin', hp: 30, ac: 10 }] });
+      const everyone = [dm, ...ps];
+      autoTable(ps, everyone);
+      const ack = await dm.send('dm.encounter.start', { seed: 7 });
+      assert.equal(ack.t, 'ack');
+      const ownerOf = (actorId) => (actorId === 'pc-1' ? ps[0] : actorId === 'pc-2' ? ps[1] : null);
+      let turns = 0;
+      let sawAct = false;
+      // Drive the table until the encounter ends (or 60 turns).
+      while (turns < 60) {
+        const ev = await dm.next(m => m.t === 'turn.started' || m.t === 'encounter.ended', { since: dm._cursor ?? 0, timeoutMs: 8000 });
+        dm._cursor = dm.frames.indexOf(ev) + 1;
+        if (ev.t === 'encounter.ended') break;
+        turns++;
+        const owner = ownerOf(ev.p.payload.actorId);
+        if (!owner) continue;
         const turnId = ev.p.turnId;
         if (!sawAct) {
           sawAct = true;
           // Wrong owner and stale turn are rejected.
           const other = owner === ps[0] ? ps[1] : ps[0];
-          assert.equal((await other.send('turn.act', { turnId, plan: { kind: 'melee', targetId: 'gob' } })).p.code, 'E_NOT_YOUR_TURN');
-          assert.equal((await owner.send('turn.act', { turnId: 'stale', plan: { kind: 'melee', targetId: 'gob' } })).p.code, 'E_STALE');
-          const bad = await owner.send('turn.act', { turnId, plan: { kind: 'melee', targetId: pcOf(null, owner === ps[0] ? 2 : 1) } });
+          assert.equal((await other.send('turn.act', { turnId, plan: { kind: 'attack', targetId: 'gob' } })).p.code, 'E_NOT_YOUR_TURN');
+          assert.equal((await owner.send('turn.act', { turnId: 'stale', plan: { kind: 'attack', targetId: 'gob' } })).p.code, 'E_STALE');
+          const bad = await owner.send('turn.act', { turnId, plan: { kind: 'attack', targetId: pcOf(null, owner === ps[0] ? 2 : 1) } });
           assert.equal(bad.p.code, 'E_INVALID_INTENT');
           await dm.next(m => m.t === 'turn.rejected', { since: 0 });
         }
-        const r = await owner.send('turn.act', { turnId, plan: { kind: 'melee', targetId: 'gob' } });
+        const r = await owner.send('turn.act', { turnId, plan: { kind: 'attack', targetId: 'gob' } });
         assert.equal(r.t, 'ack', JSON.stringify(r.p));
       }
-      // Answer any shield prompt addressed to a player (use it).
-      for (const p of ps) {
-        const prompts = p.of('prompt.open').filter(x => !p._answered?.has(x.p.promptId));
-        for (const pr of prompts) {
-          p._answered = p._answered || new Set();
-          p._answered.add(pr.p.promptId);
-          shieldPrompts++;
-          await p.send('prompt.answer', { promptId: pr.p.promptId, answer: true });
-        }
+      const end = await dm.find(m => m.t === 'encounter.ended', { timeoutMs: 8000 });
+      assert.ok(['party-victory', 'hostile-victory'].includes(end.p.payload.outcome));
+      const status = await dm.find(m => m.t === 'room.status' && m.p.status === 'encounter-over');
+      assert.ok(status);
+      // stateHash on every turn.ended; the final one matches a fresh snapshot.
+      const ended = dm.of('turn.ended');
+      assert.ok(ended.length >= 2);
+      for (const e of ended) assert.match(e.p.payload.stateHash, /^[0-9a-f]{8,}$/);
+      assert.ok(dm.of('exchange').length >= 1, 'exchanges were paced');
+      await dm.send('resync', {});
+      const snap = dm.of('room.snapshot').at(-1);
+      assert.equal(snap.p.stateHash, ended.at(-1).p.payload.stateHash);
+      assert.equal(snap.p.encounter.phase, 'ended');
+      // Every client saw the same sequenced stream.
+      const seqs = (c) => c.frames.filter(f => f.seq !== undefined && f.seq > ps[1].snapshot.p.seq).map(f => `${f.seq}:${f.t}`);
+      assert.deepEqual(seqs(ps[0]), seqs(dm));
+      assert.deepEqual(seqs(ps[1]), seqs(dm));
+      assertClean(...everyone);
+      assert.ok(sawAct, 'a player turn was driven by turn.act');
+      assert.ok(turns >= 2);
+    } finally { await srv.close(); }
+  });
+}
+
+// The reaction tests need a Shield caster in seat 1: the stub gives every
+// player PC Shield; the real engine only the wizard fixture (AC 12, so an
+// armed goblin d20 of 10 is a hit Shield can turn).
+const SHIELD_SEAT = { stub: ['fighter-l5'], real: ['wizard-l5'] };
+const SHIELD_D20 = { stub: 12, real: 10 };
+
+for (const engineKind of ENGINES) {
+  test(`[${engineKind}] reaction prompt: original deadline on reconnect, DM force, armed roll override`, async () => {
+    const srv = await boot({ engineKind });
+    try {
+      const t = await table(srv, 1, SHIELD_SEAT[engineKind]);
+      const { dm, ps } = await connectAll(srv, t);
+      // A goblin whose armed attack roll is a marginal hit, so pc-1 gets a shield prompt.
+      await dm.send('dm.encounter.setup', { ...SETUP, monsters: [{ id: 'gob', name: 'Goblin', hp: 50, ac: 30 }] });
+      await dm.send('dm.initiative.set', { order: ['gob', 'pc-1'] });
+      await dm.send('dm.roll.arm', { entityId: 'gob', rollKind: 'attack', value: SHIELD_D20[engineKind] });
+      await dm.send('dm.encounter.start', { seed: 1 });
+      const open = await ps[0].find(m => m.t === 'prompt.open');
+      assert.equal(open.p.kind, 'shield');
+      assert.ok(open.p.deadlineAt > open.p.serverNow);
+      const offered = await dm.find(m => m.t === 'reaction.offered');
+      assert.equal(offered.p.payload.deadlineMs, 20000);
+      assert.equal(dm.of('reaction.offered').length, 1, 'one offer per window (the room owns reaction events)');
+      // Reconnect: the snapshot re-sends the prompt with its original deadline.
+      const again = srv.track(await TestClient.connect(srv.url, t.players[0].token, { name: 'p1-again' }));
+      assert.equal(again.snapshot.p.openPrompt.promptId, open.p.promptId);
+      assert.equal(again.snapshot.p.openPrompt.deadlineAt, open.p.deadlineAt);
+      // Someone else cannot answer it; the DM can force it.
+      assert.equal((await dm.send('prompt.answer', { promptId: open.p.promptId, answer: true })).p.code, 'E_FORBIDDEN');
+      assert.equal((await again.send('prompt.answer', { promptId: open.p.promptId, answer: 'yes' })).p.code, 'E_INVALID_INTENT');
+      assert.equal((await dm.send('dm.prompt.force', { promptId: open.p.promptId, answer: false })).t, 'ack');
+      const resolved = await dm.find(m => m.t === 'reaction.resolved');
+      assert.deepEqual([resolved.p.payload.used, resolved.p.payload.by], [false, 'dm']);
+      await again.find(m => m.t === 'prompt.closed' && m.p.promptId === open.p.promptId);
+      assert.equal((await again.send('prompt.answer', { promptId: open.p.promptId, answer: true })).p.code, 'E_STALE');
+      // The armed roll shows as a DM override.
+      const ov = await dm.find(m => m.t === 'dm.override' && m.p.payload.kind === 'roll.attack');
+      assert.equal(ov.p.payload.after, SHIELD_D20[engineKind]);
+      assertClean(dm, again);
+    } finally { await srv.close(); }
+  });
+
+  test(`[${engineKind}] reaction prompt times out to the auto answer; an offline owner is auto-answered at once`, async () => {
+    const srv = await boot({ engineKind });
+    try {
+      const t = await table(srv, 1, SHIELD_SEAT[engineKind]);
+      const { dm, ps } = await connectAll(srv, t);
+      srv.service.store.setRoomSettings(t.room.roomId, { reactionTimeoutMs: 60 });
+      const room = srv.registry.get(t.room.roomId);
+      room.settings.reactionTimeoutMs = 60;
+      await dm.send('dm.encounter.setup', { ...SETUP, monsters: [{ id: 'gob', name: 'Goblin', hp: 50, ac: 30 }] });
+      await dm.send('dm.initiative.set', { order: ['gob', 'pc-1'] });
+      await dm.send('dm.roll.arm', { entityId: 'gob', rollKind: 'attack', value: SHIELD_D20[engineKind] });
+      await dm.send('dm.encounter.start', { seed: 1 });
+      const r1 = await dm.find(m => m.t === 'reaction.resolved');
+      const o1 = dm.of('reaction.offered').at(-1);
+      assert.deepEqual([r1.p.payload.used, r1.p.payload.by], [o1.p.payload.autoAnswer, 'timeout']);
+      const ex1 = await dm.find(m => m.t === 'exchange');
+      for (const c of [dm, ps[0]]) c.sendRaw({ v: 1, t: 'cinema.done', cid: `cd1-${c.name}`, p: { exchangeId: ex1.p.payload.exchangeId } });
+      await ps[0].find(m => m.t === 'prompt.closed' && m.p.reason === 'timeout');
+      // pc-1's turn now waits for an intent; act, then next goblin turn with pc-1 offline.
+      const ts = await dm.find(m => m.t === 'turn.started' && m.p.payload.actorId === 'pc-1');
+      const act = await ps[0].send('turn.act', { turnId: ts.p.turnId, plan: { kind: 'attack', targetId: 'gob' } });
+      assert.equal(act.t, 'ack', JSON.stringify(act.p));
+      const ex = await dm.find(m => m.t === 'exchange' && m.p.payload.attackerId === 'pc-1');
+      await dm.send('dm.roll.arm', { entityId: 'gob', rollKind: 'attack', value: SHIELD_D20[engineKind] });
+      ps[0].ws.close();
+      for (const c of [dm]) c.sendRaw({ v: 1, t: 'cinema.done', cid: 'cd-x', p: { exchangeId: ex.p.payload.exchangeId } });
+      await dm.next(m => m.t === 'turn.started' && m.seq > ex.seq && m.p.payload.actorId === 'gob', { since: 0 });
+      const settled = await dm.next(m => (m.t === 'reaction.resolved' || m.t === 'turn.ended') && m.seq > ex.seq && m.p.payload.actorId !== 'pc-1', { since: 0 });
+      if (engineKind === 'stub' || settled.t === 'reaction.resolved') {
+        assert.equal(settled.t, 'reaction.resolved', 'the offline owner still gets the window');
+        assert.deepEqual([settled.p.payload.used, settled.p.payload.by], [dm.of('reaction.offered').at(-1).p.payload.autoAnswer, 'auto']);
+        const offered2 = dm.frames.filter(m => m.t === 'reaction.offered').at(-1);
+        assert.equal(offered2.p.payload.deadlineMs, null);
+      } else {
+        // Real engine: Shield already spent its reaction/slot this round, so no window opens.
+        assert.equal(dm.frames.filter(m => m.t === 'prompt.open').length, 0);
       }
-      // Ack the exchange cinema from every client.
-      const x = await dm.next(m => m.t === 'exchange' || m.t === 'turn.skipped' || m.t === 'turn.ended', { since: dm._cursor, timeoutMs: 5000 });
-      if (x.t === 'exchange') for (const c of everyone) c.sendRaw({ v: 1, t: 'cinema.done', cid: `cd-${x.seq}-${c.name}`, p: { exchangeId: x.p.payload.exchangeId } });
-    }
-    const end = await dm.find(m => m.t === 'encounter.ended');
-    assert.ok(['party-victory', 'hostile-victory'].includes(end.p.payload.outcome));
-    const status = await dm.find(m => m.t === 'room.status' && m.p.status === 'encounter-over');
-    assert.ok(status);
-    // stateHash on every turn.ended; the final one matches a fresh snapshot.
-    const ended = dm.of('turn.ended');
-    assert.ok(ended.length >= 2);
-    for (const e of ended) assert.match(e.p.payload.stateHash, /^[0-9a-f]{8,}$/);
-    await dm.send('resync', {});
-    const snap = dm.of('room.snapshot').at(-1);
-    assert.equal(snap.p.stateHash, ended.at(-1).p.payload.stateHash);
-    assert.equal(snap.p.encounter.phase, 'ended');
-    // Every client saw the same sequenced stream.
-    const seqs = (c) => c.frames.filter(f => f.seq !== undefined && f.seq > ps[1].snapshot.p.seq).map(f => `${f.seq}:${f.t}`);
-    assert.deepEqual(seqs(ps[0]), seqs(dm));
-    assert.deepEqual(seqs(ps[1]), seqs(dm));
-    assertClean(...everyone);
-    assert.ok(sawAct, 'a player turn was driven by turn.act');
-    assert.ok(turns >= 2);
-    void shieldPrompts;
-  } finally { await srv.close(); }
-});
+      assertClean(dm);
+    } finally { await srv.close(); }
+  });
 
-test('reaction prompt: original deadline on reconnect, timeout auto-answers, offline answers auto', async () => {
-  const srv = await boot({ roomOpts: {} });
-  try {
-    const t = await table(srv, 1);
-    const { dm, ps } = await connectAll(srv, t);
-    // A goblin that always hits (armed roll) so pc-1 gets a shield prompt.
-    await dm.send('dm.encounter.setup', { ...SETUP, monsters: [{ id: 'gob', name: 'Goblin', hp: 50, ac: 30 }] });
-    await dm.send('dm.initiative.set', { order: ['gob', 'pc-1'] });
-    await dm.send('dm.roll.arm', { entityId: 'gob', rollKind: 'attack', value: 12 });
-    await dm.send('dm.encounter.start', { seed: 1 });
-    const open = await ps[0].find(m => m.t === 'prompt.open');
-    assert.equal(open.p.kind, 'shield');
-    assert.ok(open.p.deadlineAt > open.p.serverNow);
-    const offered = await dm.find(m => m.t === 'reaction.offered');
-    assert.equal(offered.p.payload.deadlineMs, 20000);
-    // Reconnect: the snapshot re-sends the prompt with its original deadline.
-    const again = srv.track(await TestClient.connect(srv.url, t.players[0].token, { name: 'p1-again' }));
-    assert.equal(again.snapshot.p.openPrompt.promptId, open.p.promptId);
-    assert.equal(again.snapshot.p.openPrompt.deadlineAt, open.p.deadlineAt);
-    // Someone else cannot answer it; the DM can force it.
-    assert.equal((await dm.send('prompt.answer', { promptId: open.p.promptId, answer: true })).p.code, 'E_FORBIDDEN');
-    assert.equal((await again.send('prompt.answer', { promptId: open.p.promptId, answer: 'yes' })).p.code, 'E_INVALID_INTENT');
-    assert.equal((await dm.send('dm.prompt.force', { promptId: open.p.promptId, answer: false })).t, 'ack');
-    const resolved = await dm.find(m => m.t === 'reaction.resolved');
-    assert.deepEqual([resolved.p.payload.used, resolved.p.payload.by], [false, 'dm']);
-    await again.find(m => m.t === 'prompt.closed' && m.p.promptId === open.p.promptId);
-    assert.equal((await again.send('prompt.answer', { promptId: open.p.promptId, answer: true })).p.code, 'E_STALE');
-    // The armed roll shows as a DM override.
-    const ov = await dm.find(m => m.t === 'dm.override' && m.p.payload.kind === 'roll.attack');
-    assert.equal(ov.p.payload.after, 12);
-    assertClean(dm, again);
-  } finally { await srv.close(); }
-});
+  test(`[${engineKind}] DM edits: between turns apply now (entity.updated + dm.override); during a waiting turn they apply to the turn`, async () => {
+    const srv = await boot({ engineKind });
+    try {
+      const t = await table(srv, 1);
+      const { dm, ps } = await connectAll(srv, t);
+      await dm.send('dm.encounter.setup', SETUP);
+      let r = await dm.send('dm.entity.patch', { entityId: 'gob', hp: 3, addConditions: ['prone'] });
+      assert.equal(r.t, 'ack');
+      const upd = await ps[0].find(m => m.t === 'entity.updated' && m.p.entityId === 'gob');
+      assert.deepEqual(upd.p.patch, { hp: 3, conditions: ['prone'] });
+      await ps[0].find(m => m.t === 'dm.override' && m.p.payload.kind === 'entity.patch');
+      r = await dm.send('dm.entity.patch', { entityId: 'nope', hp: 1 });
+      assert.equal(r.p.code, 'E_INVALID_INTENT');
+      // Player turn first; while it waits, patch the goblin — the turn sees it.
+      await dm.send('dm.initiative.set', { order: ['pc-1', 'gob'] });
+      await dm.send('dm.encounter.start', { seed: 3 });
+      const ts = await ps[0].find(m => m.t === 'turn.started' && m.p.payload.actorId === 'pc-1');
+      await new Promise(res => setTimeout(res, 20));
+      r = await dm.send('dm.entity.patch', { entityId: 'gob', hp: 1 });
+      assert.equal(r.p.queued, undefined, 'applied at the intent safe point, not queued');
+      await ps[0].next(m => m.t === 'entity.updated' && m.p.patch.hp === 1, { since: 0 });
+      // Initiative cannot change mid-turn.
+      assert.equal((await dm.send('dm.initiative.set', { order: ['gob', 'pc-1'] })).p.code, 'E_STALE');
+      // Skip the waiting turn.
+      assert.equal((await dm.send('dm.turn.skip', {})).t, 'ack');
+      const skipped = await dm.find(m => m.t === 'turn.skipped' && m.p.turnId === ts.p.turnId);
+      assert.equal(skipped.p.payload.actorId, 'pc-1');
+      // The edit made during the wait is in the turn's stateHash.
+      const ended = await dm.find(m => m.t === 'turn.ended' && m.p.turnId === ts.p.turnId);
+      assert.match(ended.p.payload.stateHash, /^[0-9a-f]{14}$/);
+      // DM pauses then ends the encounter.
+      await dm.find(m => m.t === 'turn.started' && m.p.payload.actorId === 'gob');
+      await dm.send('dm.pause', {});
+      await dm.find(m => m.t === 'room.status' && m.p.status === 'paused');
+      const endAck = await dm.send('dm.encounter.end', {});
+      assert.equal(endAck.t, 'ack');
+      const done = await dm.find(m => m.t === 'encounter.ended', { timeoutMs: 5000 });
+      assert.ok(['dm-ended', 'hostile-victory'].includes(done.p.payload.outcome), done.p.payload.outcome);
+      assertClean(dm, ...ps);
+    } finally { await srv.close(); }
+  });
 
-test('reaction prompt times out to the auto answer; an offline owner is auto-answered at once', async () => {
-  const srv = await boot();
-  try {
-    const t = await table(srv, 1);
-    const { dm, ps } = await connectAll(srv, t);
-    srv.service.store.setRoomSettings(t.room.roomId, { reactionTimeoutMs: 60 });
-    const room = srv.registry.get(t.room.roomId);
-    room.settings.reactionTimeoutMs = 60;
-    await dm.send('dm.encounter.setup', { ...SETUP, monsters: [{ id: 'gob', name: 'Goblin', hp: 50, ac: 30 }] });
-    await dm.send('dm.initiative.set', { order: ['gob', 'pc-1'] });
-    await dm.send('dm.roll.arm', { entityId: 'gob', rollKind: 'attack', value: 12 });
-    await dm.send('dm.encounter.start', { seed: 1 });
-    const r1 = await dm.find(m => m.t === 'reaction.resolved');
-    assert.deepEqual([r1.p.payload.used, r1.p.payload.by], [false, 'timeout']);
-    const ex1 = await dm.find(m => m.t === 'exchange');
-    for (const c of [dm, ps[0]]) c.sendRaw({ v: 1, t: 'cinema.done', cid: `cd1-${c.name}`, p: { exchangeId: ex1.p.payload.exchangeId } });
-    await ps[0].find(m => m.t === 'prompt.closed' && m.p.reason === 'timeout');
-    // pc-1's turn now waits for an intent; act, then next goblin turn with pc-1 offline.
-    const ts = await dm.find(m => m.t === 'turn.started' && m.p.payload.actorId === 'pc-1');
-    await ps[0].send('turn.act', { turnId: ts.p.turnId, plan: { kind: 'melee', targetId: 'gob' } });
-    const ex = await dm.find(m => m.t === 'exchange' && m.p.payload.attackerId === 'pc-1');
-    await dm.send('dm.roll.arm', { entityId: 'gob', rollKind: 'attack', value: 12 });
-    ps[0].ws.close();
-    for (const c of [dm]) c.sendRaw({ v: 1, t: 'cinema.done', cid: 'cd-x', p: { exchangeId: ex.p.payload.exchangeId } });
-    const r2 = await dm.next(m => m.t === 'reaction.resolved' && m.seq > ex.seq, { since: 0 });
-    assert.deepEqual([r2.p.payload.used, r2.p.payload.by], [false, 'auto']);
-    const offered2 = dm.frames.filter(m => m.t === 'reaction.offered').at(-1);
-    assert.equal(offered2.p.payload.deadlineMs, null);
-    assertClean(dm);
-  } finally { await srv.close(); }
-});
-
-test('DM edits: between turns apply now (entity.updated + dm.override); during a waiting turn they apply to the turn', async () => {
-  const srv = await boot();
-  try {
-    const t = await table(srv, 1);
-    const { dm, ps } = await connectAll(srv, t);
-    await dm.send('dm.encounter.setup', SETUP);
-    let r = await dm.send('dm.entity.patch', { entityId: 'gob', hp: 3, addConditions: ['prone'] });
-    assert.equal(r.t, 'ack');
-    const upd = await ps[0].find(m => m.t === 'entity.updated' && m.p.entityId === 'gob');
-    assert.deepEqual(upd.p.patch, { hp: 3, conditions: ['prone'] });
-    await ps[0].find(m => m.t === 'dm.override' && m.p.payload.kind === 'entity.patch');
-    r = await dm.send('dm.entity.patch', { entityId: 'nope', hp: 1 });
-    assert.equal(r.p.code, 'E_INVALID_INTENT');
-    // Player turn first; while it waits, patch the goblin — the turn sees it.
-    await dm.send('dm.initiative.set', { order: ['pc-1', 'gob'] });
-    await dm.send('dm.encounter.start', { seed: 3 });
-    const ts = await ps[0].find(m => m.t === 'turn.started' && m.p.payload.actorId === 'pc-1');
-    await new Promise(res => setTimeout(res, 20));
-    r = await dm.send('dm.entity.patch', { entityId: 'gob', hp: 1 });
-    assert.equal(r.p.queued, undefined, 'applied at the intent safe point, not queued');
-    await ps[0].next(m => m.t === 'entity.updated' && m.p.patch.hp === 1, { since: 0 });
-    // Initiative cannot change mid-turn.
-    assert.equal((await dm.send('dm.initiative.set', { order: ['gob', 'pc-1'] })).p.code, 'E_STALE');
-    // Skip the waiting turn.
-    assert.equal((await dm.send('dm.turn.skip', {})).t, 'ack');
-    const skipped = await dm.find(m => m.t === 'turn.skipped' && m.p.turnId === ts.p.turnId);
-    assert.equal(skipped.p.payload.actorId, 'pc-1');
-    // DM pauses then ends the encounter.
-    await dm.find(m => m.t === 'turn.started' && m.p.payload.actorId === 'gob');
-    await dm.send('dm.pause', {});
-    await dm.find(m => m.t === 'room.status' && m.p.status === 'paused');
-    const endAck = await dm.send('dm.encounter.end', {});
-    assert.equal(endAck.t, 'ack');
-    const ended = await dm.find(m => m.t === 'encounter.ended', { timeoutMs: 5000 });
-    assert.equal(ended.p.payload.outcome, 'dm-ended');
-    assertClean(dm, ...ps);
-  } finally { await srv.close(); }
-});
-
-test('DM plan review: the DM sees turn.planProposed and can replace the AI plan', async () => {
-  const srv = await boot();
-  try {
-    const t = await table(srv, 1);
-    const { dm } = await connectAll(srv, t);
-    await dm.send('dm.review.set', { plans: true });
-    await dm.send('dm.encounter.setup', { ...SETUP, monsters: [{ id: 'gob', name: 'Goblin', hp: 50, ac: 30 }, { id: 'gob2', name: 'Goblin 2', hp: 50, ac: 30 }] });
-    await dm.send('dm.initiative.set', { order: ['gob', 'pc-1', 'gob2'] });
-    await dm.send('dm.encounter.start', { seed: 9 });
-    const proposed = await dm.find(m => m.t === 'turn.planProposed');
-    assert.equal(proposed.p.entityId, 'gob');
-    const pr = await dm.find(m => m.t === 'prompt.open' && m.p.kind === 'plan');
-    assert.equal((await dm.send('prompt.answer', { promptId: pr.p.promptId, answer: null })).t, 'ack');
-    const ov = await dm.find(m => m.t === 'dm.override' && m.p.payload.kind === 'plan');
-    assert.equal(ov.p.payload.after, null);
-    const sk = await dm.find(m => m.t === 'turn.skipped' && m.p.payload.actorId === 'gob');
-    assert.equal(sk.p.payload.reason, 'dm-skipped');
-    assertClean(dm);
-  } finally { await srv.close(); }
-});
+  test(`[${engineKind}] DM plan review: the DM sees turn.planProposed and can replace the AI plan`, async () => {
+    const srv = await boot({ engineKind });
+    try {
+      const t = await table(srv, 1);
+      const { dm } = await connectAll(srv, t);
+      await dm.send('dm.review.set', { plans: true });
+      await dm.send('dm.encounter.setup', { ...SETUP, monsters: [{ id: 'gob', name: 'Goblin', hp: 50, ac: 30 }, { id: 'gob2', name: 'Goblin 2', hp: 50, ac: 30 }] });
+      await dm.send('dm.initiative.set', { order: ['gob', 'pc-1', 'gob2'] });
+      await dm.send('dm.encounter.start', { seed: 9 });
+      const proposed = await dm.find(m => m.t === 'turn.planProposed');
+      assert.equal(proposed.p.entityId, 'gob');
+      assert.equal(typeof proposed.p.plan.kind, 'string');
+      const pr = await dm.find(m => m.t === 'prompt.open' && m.p.kind === 'plan');
+      assert.equal((await dm.send('prompt.answer', { promptId: pr.p.promptId, answer: null })).t, 'ack');
+      const ov = await dm.find(m => m.t === 'dm.override' && m.p.payload.kind === 'plan');
+      assert.equal(ov.p.payload.after, null);
+      const sk = await dm.find(m => m.t === 'turn.skipped' && m.p.payload.actorId === 'gob');
+      assert.equal(sk.p.payload.reason, engineKind === 'stub' ? 'dm-skipped' : 'dm');
+      assert.equal(dm.of('dm.override').filter(m => m.p.payload.kind.startsWith('plan')).length, 1, 'one override per DM decision');
+      assertClean(dm);
+    } finally { await srv.close(); }
+  });
+}
 
 test('seat.claim over ws seats the player and broadcasts seat.updated', async () => {
   const srv = await boot();

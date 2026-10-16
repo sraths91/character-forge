@@ -7,6 +7,7 @@ import { startServer } from './start.js';
 import { createRoomService } from './rooms/service.js';
 import { createRoomRegistry } from './rooms/registry.js';
 import { createStubEngine } from './rooms/engine-port.js';
+import { createRealEngine, sheetForSeat } from './rooms/real-engine.js';
 import { createSqliteJournal } from './rooms/persistence.js';
 import { attachGateway } from './ws/gateway.js';
 import { createJanitor } from './lib/janitor.js';
@@ -20,7 +21,7 @@ import { dirname, resolve } from 'node:path';
  * @param {number} [o.port=0]
  * @param {string} [o.host]
  * @param {(level: string, msg: string, extra?: object) => void} [o.log]
- * @param {import('./rooms/engine-port.js').EnginePort} [o.engine]  default: the Wave 3 stub
+ * @param {import('./rooms/engine-port.js').EnginePort} [o.engine]  default: `createEngine(env.CF_ENGINE)` (the real engine)
  * @param {object} [o.journal]   default: the SQLite journal over `db` (persistence.js)
  * @param {object} [o.appOpts]   extra createApp options (limits, fetchImpl, ...)
  * @param {object} [o.gatewayOpts]  heartbeatMs, helloTimeoutMs, rate, ...
@@ -30,9 +31,10 @@ import { dirname, resolve } from 'node:path';
  */
 export async function startMultiplayerServer({
   db, env = process.env, dataDir, port = 0, host, log = defaultLog,
-  engine = createStubEngine(), journal, appOpts = {}, gatewayOpts = {}, serverOpts = {}, roomOpts = {}, janitorOpts = {}
+  engine, journal, appOpts = {}, gatewayOpts = {}, serverOpts = {}, roomOpts = {}, janitorOpts = {}
 }) {
   const service = createRoomService({ db });
+  engine ||= createEngine({ kind: env.CF_ENGINE, db, store: service.store, log });
   const jr = journal || createSqliteJournal({ db: db.db, log });
   const registry = createRoomRegistry({ service, engine, journal: jr, log, ...roomOpts });
   // Boot recovery: every room with a setup/active encounter comes back
@@ -61,6 +63,45 @@ export async function startMultiplayerServer({
   });
   gateway = attachGateway({ httpServer: srv.httpServer, registry, service, env, log, ...gatewayOpts });
   return { ...srv, service, registry, gateway, engine, journal: jr, janitor };
+}
+
+/**
+ * The engine port a server runs: the real engine (default) or, with
+ * `CF_ENGINE=stub`, the Wave 3 stub (tests, tooling). The real engine
+ * resolves PC sheets for encounters it did not build in this process
+ * (boot recovery) from the room's seats, then from the character cache,
+ * and Open5e stat blocks from the monster cache.
+ * @param {object} o
+ * @param {string|undefined} o.kind  'stub' | 'real' | undefined
+ * @param {import('./db/database.js').DbHandle} o.db
+ * @param {object} o.store  room store (listSeats)
+ * @param {(level: string, msg: string, extra?: object) => void} [o.log]
+ * @returns {import('./rooms/engine-port.js').EnginePort}
+ */
+export function createEngine({ kind, db, store, log = () => {} }) {
+  if (kind === 'stub') return createStubEngine();
+  if (kind && kind !== 'real') throw new Error(`CF_ENGINE must be "real" or "stub", got "${kind}"`);
+  const roomOf = db.db.prepare('SELECT room_id FROM encounters WHERE id = ?');
+  return createRealEngine({
+    log,
+    resolveSheets(state) {
+      const out = {};
+      const row = roomOf.get(state.encounterId);
+      const seats = row ? store.listSeats(row.room_id) : [];
+      for (const e of Object.values(state.entities)) {
+        if (e.kind !== 'pc') continue;
+        const cid = e.sheetRef.characterId;
+        const seat = seats.find(s => s.id === e.controller.seatId && s.seed && String(s.seed.id) === cid)
+          || seats.find(s => s.seed && String(s.seed.id) === cid);
+        const sheet = seat ? sheetForSeat(seat) : (db.getCharacterByDdbId(cid)?.parsed ?? null);
+        if (sheet) out[cid] = sheet;
+      }
+      return out;
+    },
+    monsterLookup(slug) {
+      try { return db.getMonsterBySlug(slug)?.payload ?? null; } catch { return null; }
+    }
+  });
 }
 
 function defaultLog(level, msg, extra = {}) {
