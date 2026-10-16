@@ -38,9 +38,9 @@ import { rollAttack, rollDamage, withD20, withSaveD20 } from './combat-roll.js';
 import {
   deriveWeaponAttack, saveBonus as pcSaveBonus, proficiencyBonus, totalLevel
 } from './pc-stats.js';
-import { factionLists, chebyshevFeet } from './grid-rules.js';
+import { factionLists, chebyshevFeet, isRangedWeapon, meleeReachFt } from './grid-rules.js';
 import { planMovement, occupiedCellsOf } from './movement.js';
-import { loadFindPath, straightPath } from './pathing.js';
+import { straightPath, terrainPath, terrainApproach } from './pathing.js';
 import { chooseAction, fleeTargetCell } from './ai/profile.js';
 import { choosePcAction } from './ai/pc-action.js';
 import { PC_FEATURES, resetPerTurnFlags } from './ai/pc-features.js';
@@ -126,26 +126,6 @@ export async function runOneAttack(attacker, enemies, allies, scene, rng, prompt
       delete attacker._mctsTargetCtx;
     }
   }
-}
-
-/**
- * M64 T11 — a terrain-aware route toward `to` within the budget, or null
- * (no terrain pathfinder loaded, or no route) so the caller falls back.
- * Occupancy marks each other creature's cell with its side so findPath
- * can pass allies and stop at hostiles.
- */
-async function terrainRoute(terrain, mover, from, to, budgetFt, allies, enemies) {
-  const findPath = await loadFindPath();
-  if (!findPath) return null;
-  const moverSide = mover.kind === 'pc' ? 'party' : 'hostile';
-  const otherSide = moverSide === 'party' ? 'hostile' : 'party';
-  const occupancy = new Map();
-  for (const w of allies) if (w !== mover && isAlive(w)) { const p = w._position || w.position; if (p) occupancy.set(`${p.col},${p.row}`, moverSide); }
-  for (const w of enemies) if (isAlive(w)) { const p = w._position || w.position; if (p) occupancy.set(`${p.col},${p.row}`, otherSide); }
-  const res = findPath(terrain, occupancy, from, to, { budgetFt, moverSide });
-  if (!res || !Array.isArray(res.path) || res.path.length === 0) return null;
-  const end = res.path[res.path.length - 1];
-  return { to: { col: end.col, row: end.row }, path: res.path };
 }
 
 /** Plan kinds that move (or not) but never reach the attack resolver. */
@@ -291,14 +271,28 @@ async function resolveTurn(attacker, enemies, allies, scene, rng, prompts, ctx) 
         return;
       }
       next = { col: mv.col, row: mv.row };
+      // With a terrain layer the destination must be reachable on a legal
+      // path (blocked cells, difficult terrain, no corner squeeze).
+      if (scene?.terrain && (mv.col !== attackerPos.col || mv.row !== attackerPos.row)) {
+        const routed = terrainPath(scene.terrain, attacker, [...allies, ...enemies], attackerPos, next, speedFt);
+        if (!routed || routed.to.col !== mv.col || routed.to.row !== mv.row) {
+          emitEvent(ctx, 'turn.rejected', { actorId, code: 'bad-move', reason: `no legal path to the destination within ${speedFt} ft` });
+          return;
+        }
+        movePath = routed.path;
+      }
     } else {
-      const moveTarget = (plan && plan.kind === 'flee')
-        ? fleeTargetCell(attacker, target, bounds, rng)
-        : targetPos;
-      // M64 T11 — with a terrain layer, route through grid-legality.findPath.
-      const routed = scene?.terrain
-        ? await terrainRoute(scene.terrain, attacker, attackerPos, moveTarget, speedFt, allies, enemies)
-        : null;
+      const fleeing = plan && plan.kind === 'flee';
+      const moveTarget = fleeing ? fleeTargetCell(attacker, target, bounds, rng) : targetPos;
+      // M64 T11 — with a terrain layer, route through grid-legality.
+      let routed = null;
+      if (scene?.terrain) {
+        const creatures = [...allies, ...enemies];
+        routed = fleeing
+          ? terrainPath(scene.terrain, attacker, creatures, attackerPos, moveTarget, speedFt)
+          : terrainApproach(scene.terrain, attacker, creatures, attackerPos, moveTarget,
+            isRangedWeapon(weapon) ? 80 : meleeReachFt(weapon), speedFt);
+      }
       if (routed) {
         next = routed.to;
         movePath = routed.path;

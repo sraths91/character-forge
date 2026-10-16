@@ -107,3 +107,27 @@ test('T9: the engine rejects an illegal moveTo and uses the entity speedFt', asy
   });
   assert.equal(slow._position.col, 2);
 });
+
+test('T9/M1: weapon range goes through grid-legality.weaponRangeBand (long range allowed, beyond long rejected)', () => {
+  const s = fixture('counterspell');
+  s.grid.cols = 200;
+  const fighter = s.entities['pc-fighter'];
+  const target = s.entities['m-fanatic-a'];
+  const bowSheets = { ...sheets, 'fighter-l5': { ...sheets['fighter-l5'], equipment: { ...sheets['fighter-l5'].equipment, mainhand: { name: 'Longbow', range: 150, longRange: 600, damage: '1d8', attackType: 2, properties: [{ name: 'Ammunition' }, { name: 'Heavy' }, { name: 'Two-Handed' }] } } } };
+  const o = { sheets: bowSheets, checkTurn: false };
+  target.pos = { col: fighter.pos.col + 100, row: fighter.pos.row };   // 500 ft: long range
+  assert.deepEqual(validateIntent(s, act('pc-fighter', { kind: 'ranged', targetId: 'm-fanatic-a' }), o), { ok: true });
+  target.pos = { col: fighter.pos.col + 130, row: fighter.pos.row };   // 650 ft: beyond the long range
+  assert.equal(validateIntent(s, act('pc-fighter', { kind: 'ranged', targetId: 'm-fanatic-a' }), o).code, 'out-of-range');
+});
+
+test('T9/M1: with a terrain layer moveTo needs a legal path within speedFt', async () => {
+  const { createTerrain, encodeTerrain, setFlag, TERRAIN_FLAGS } = await import('../js/map/terrain.js');
+  const s = fixture('oa-leave-melee');
+  const fighter = s.entities['pc-fighter'];
+  const dest = { col: fighter.pos.col, row: fighter.pos.row + 1 };
+  if (dest.row >= s.grid.rows) dest.row = fighter.pos.row - 1;
+  assert.deepEqual(validateIntent(s, act('pc-fighter', { kind: 'move', moveTo: dest }), opts), { ok: true });
+  s.grid.terrain = encodeTerrain(setFlag(createTerrain(s.grid.cols, s.grid.rows), dest.col, dest.row, TERRAIN_FLAGS.BLOCKED));
+  assert.equal(validateIntent(s, act('pc-fighter', { kind: 'move', moveTo: dest }), opts).code, 'bad-move');
+});

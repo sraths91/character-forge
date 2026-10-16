@@ -17,16 +17,20 @@
  * moveTo is on the grid, free and within speedFt; features[] are
  * available to this creature now (pc-features `available`).
  *
- * Range: Chebyshev feet on the 5-ft grid. `opts.rangeBand(from, to,
- * {weapon, spell}) → 'normal'|'long'|'out'` overrides it once
- * grid-legality.weaponRangeBand exists (LOS / cover); the server wires it.
+ * Range: Chebyshev feet on the 5-ft grid. Weapons go through
+ * grid-legality.weaponRangeBand (reach / normal / long range; a melee
+ * reach check allows the move budget first). `opts.rangeBand(from, to,
+ * {weapon, spell, budgetFt}) → 'normal'|'long'|'out'` replaces the whole
+ * check (e.g. a server that adds LOS / cover). With a terrain layer,
+ * moveTo must be reachable on a legal findPath route within speedFt.
  *
  * Pure: no DOM, no clock, no rng.
  */
 
 import { spellById, spellbookFor } from './monster-spells.js';
 import { MONSTER_PRESETS } from './monster-presets.js';
-import { chebyshevFeet, isRangedWeapon, meleeReachFt } from './grid-rules.js';
+import { chebyshevFeet, isRangedWeapon } from './grid-rules.js';
+import { weaponRangeBand, findPath, buildOccupancy } from './grid-legality.js';
 import { PC_FEATURES } from './ai/pc-features.js';
 import { nameToSpellId } from './ai/pc-action.js';
 import { wrapperFromEntity } from './encounter-adapters.js';
@@ -93,11 +97,17 @@ function slotAvailable(entity, level) {
   return !!(pact && pact.level === level && (pact.max ?? 0) - (pact.spent ?? 0) > 0);
 }
 
-function rangeFor(weapon) {
-  const long = Number(weapon?.longRange) || Number(weapon?.range?.long) || 0;
-  if (long > 0) return long;
-  const normal = Number(weapon?.range?.normal ?? weapon?.range) || 0;
-  return normal > 0 ? normal * 4 : 320;
+/**
+ * weaponRangeBand reads `range` as `{normal, long}` or "80/320"; the DDB
+ * parser (R6) emits numeric `range` / `longRange` feet. Bridge the two.
+ * @param {object|null} weapon
+ * @returns {object|null}
+ */
+function withRangeObject(weapon) {
+  const normal = Number(weapon?.range);
+  if (!weapon || typeof weapon.range === 'object' || !Number.isFinite(normal) || normal <= 0) return weapon;
+  const long = Number(weapon.longRange);
+  return { ...weapon, range: { normal, long: Number.isFinite(long) && long >= normal ? long : normal } };
 }
 
 /**
@@ -133,6 +143,11 @@ export function validateIntent(state, intent, opts = {}) {
     if (taken) return fail('bad-move', 'destination is occupied');
     const speed = actor.speedFt ?? 30;
     if (chebyshevFeet(actor.pos, mv) > speed) return fail('bad-move', `destination is beyond ${speed} ft`);
+    if (g.terrain && (mv.col !== actor.pos.col || mv.row !== actor.pos.row)) {
+      const occ = buildOccupancy(state.entities, { excludeId: actorId });
+      const route = findPath(g.terrain, occ, actor.pos, mv, { budgetFt: speed, moverSide: actor.side });
+      if (!route) return fail('bad-move', `no legal path to the destination within ${speed} ft`);
+    }
     from = mv;
   }
   if (plan.kind === 'move' && !plan.moveTo) return fail('bad-move', 'a move needs moveTo');
@@ -194,9 +209,11 @@ export function validateIntent(state, intent, opts = {}) {
       if (dist > (spell.range || 5)) return fail('out-of-range', `${target.name} is ${dist} ft away; ${spell.name} reaches ${spell.range || 5} ft`);
     } else if (weapon || plan.kind === 'melee' || plan.kind === 'attack') {
       const ranged = plan.kind === 'ranged' || (actor.kind === 'pc' && isRangedWeapon(weapon));
-      const reach = ranged ? rangeFor(weapon) : meleeReachFt(weapon);
-      if (Math.max(0, dist - (ranged ? 0 : budget)) > reach) {
-        return fail('out-of-range', `${target.name} is ${dist} ft away (${ranged ? 'range' : 'reach'} ${reach} ft${ranged ? '' : `, move ${budget} ft`})`);
+      const band = ranged
+        ? weaponRangeBand({ ...(withRangeObject(weapon) || {}), usedAsRanged: true }, dist)
+        : weaponRangeBand(withRangeObject(weapon), Math.max(0, dist - budget));
+      if (band === 'out') {
+        return fail('out-of-range', `${target.name} is ${dist} ft away (${ranged ? 'out of range' : `beyond reach after a ${budget} ft move`})`);
       }
     }
   }
