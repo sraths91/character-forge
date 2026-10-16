@@ -48,6 +48,7 @@ import {
   resetReactionsForAll, shouldCastShield, consumeShield
 } from './scene/reactions.js';
 import { promptReaction } from './scene/reaction-prompt.js';
+import { reactionCostLabel } from './client/reaction-labels.js';
 import { createCinema, phaseAt } from './anim/cinema.js';
 import { motionForWeapon } from './anim/weapon-motions.js';
 import {
@@ -1109,12 +1110,12 @@ async function runEngineTurn(entity, entityKind, opts = {}) {
     // dialog; auto mode passes the engine's heuristic through.
     onShieldReaction: async ({ autoAnswer, defender, atk }) => {
       if (!interactive || defender.kind !== 'pc') return autoAnswer;
-      const slots = defender._lvl1Slots ?? 0;
       const ac = defender.ac;
       const accepted = await promptReaction({
         title: `Cast Shield? (${defender.name})`,
         body: `${atk.total || '?'} vs your AC ${ac} — +5 AC would dodge it.`,
-        costLabel: `1 reaction · 1 of ${slots} 1st-level slot${slots === 1 ? '' : 's'}`,
+        // T5 retired _lvl1Slots; the label reads the one slot ledger.
+        costLabel: reactionCostLabel(defender, 1),
         defaultMs: 5000,
         auto: false
       });
@@ -2431,11 +2432,10 @@ async function runAttackPrompt(targetKind, targetEntity) {
   let shielded = false;
   if (atk.hit && !atk.crit && attackerHit.kind === 'monster' && targetKind === 'pc' &&
       shouldCastShield({ target: targetEntity, attackerTotal: atk.total, targetAc: ac })) {
-    const slots = targetEntity._lvl1Slots ?? 0;
     const accepted = await promptReaction({
       title: `Cast Shield? (${targetEntity.name})`,
       body: `${attackerName}'s ${atk.total} vs your AC ${ac} — +5 AC would dodge it.`,
-      costLabel: `1 reaction · 1 of ${slots} 1st-level slot${slots === 1 ? '' : 's'}`,
+      costLabel: reactionCostLabel(targetEntity, 1),
       defaultMs: 5000,
       auto: !!versusAutoMode,
       autoAnswer: true   // auto-fight: always cast if it would help
