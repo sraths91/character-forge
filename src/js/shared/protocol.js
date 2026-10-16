@@ -97,7 +97,6 @@ export const INTENT_ROLES = Object.freeze({
   'dm.review.set': 'dm',
   'dm.prompt.force': 'dm',
   'dm.member.revoke': 'dm',
-  'dm.spell.adjudicate': 'dm'   // v1.3
 });
 
 /** Every client → server message type. */
@@ -217,19 +216,6 @@ const INTENT_PAYLOADS = {
   'dm.entity.add': shape({ entity: shape({}, LOOSE), initiativeScore: optional(num()) }),
   'dm.entity.remove': shape({ entityId: ID }),
   'dm.terrain.paint': shape({ cells: arrayOf(POS, { min: 1, max: 4096 }), flags: int(0, 255), mode: oneOf(['set', 'clear']) }),
-  // v1 additive (M64 W4; E2 adds the same intent on its branch — reconcile at merge).
-  'dm.spell.adjudicate': shape({
-    casterId: ID,
-    spellId: str({ maxLength: 128 }),
-    targets: arrayOf(shape({
-      entityId: ID,
-      damage: optional(int(0, 10000)),
-      type: optional(nullable(str({ maxLength: 32 }))),
-      healed: optional(int(0, 10000)),
-      conditions: optional(arrayOf(str({ maxLength: 64 }), { max: 16 }))
-    }), { min: 1, max: 32 }),
-    slotLevel: optional(int(1, 9))
-  }),
   'dm.roll.arm': shape({ entityId: optional(nullable(ID)), rollKind: oneOf(ROLL_KINDS), value: int() }),
   'dm.review.set': shape({ plans: optional(bool()), rolls: optional(bool()), monsterReactions: optional(bool()), aiParty: optional(bool()) }),   // aiParty: v1.2
   'dm.prompt.force': shape({ promptId: ID, answer: anyJson() }),

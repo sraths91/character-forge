@@ -21,7 +21,6 @@
   { "v": 1, "t": "dm.entity.add", "cid": "c20", "p": { "entity": { "id": "m-orc", "kind": "monster" }, "initiativeScore": 11 } },
   { "v": 1, "t": "dm.entity.remove", "cid": "c21", "p": { "entityId": "m-orc" } },
   { "v": 1, "t": "dm.terrain.paint", "cid": "c22", "p": { "cells": [{ "col": 5, "row": 5 }], "flags": 2, "mode": "set" } },
-  { "v": 1, "t": "dm.spell.adjudicate", "cid": "c-adj", "p": { "casterId": "pc-1", "spellId": "homebrew-storm", "slotLevel": 1, "targets": [{ "entityId": "gob", "damage": 5, "type": "lightning", "conditions": ["frightened"] }] } },
   { "v": 1, "t": "dm.roll.arm", "cid": "c23", "p": { "entityId": "m-goblin", "rollKind": "attack", "value": 20 } },
   { "v": 1, "t": "dm.review.set", "cid": "c24", "p": { "plans": true, "rolls": false } },
   { "v": 1, "t": "dm.prompt.force", "cid": "c25", "p": { "promptId": "pr_1", "answer": false } },
