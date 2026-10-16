@@ -11,7 +11,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "start": "NODE_ENV=production node api/server.js",
-    "lint": "eslint . --max-warnings 20",
+    "lint": "eslint . --max-warnings 3",
     "test": "node --test src/tests/*.test.js api/tests/*.test.js",
     "compress:modular": "node scripts/compress-modular.mjs"
   },
