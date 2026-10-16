@@ -150,7 +150,7 @@ export function mount(root, ctx) {
           const holder = seat.memberId ? members.find(m => m.memberId === seat.memberId) : null;
           const cells = [
             h(doc, 'td', { text: String(seat.seat) }),
-            h(doc, 'td', { text: seat.characterName || seat.characterId || 'Empty' }),
+            h(doc, 'td', { text: seat.characterName || characters.find(c => c.ddbId === seat.characterId)?.name || seat.characterId || 'Empty' }),
             h(doc, 'td', { text: !seat.characterId ? '—' : seat.controller === 'player' ? (holder?.displayName || 'player') : `AI${seat.aiArchetype ? ` (${seat.aiArchetype})` : ''}` })
           ];
           if (dm) {

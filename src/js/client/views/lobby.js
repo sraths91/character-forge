@@ -72,12 +72,15 @@ export function mount(root, ctx) {
     'join-field': (_el, e) => { if (e.key === 'Enter') doJoin(); }
   });
 
+  // seat.updated carries no character name; the sheet cache does.
+  const sheetName = (id) => (typeof ctx.sheets === 'function' ? ctx.sheets()[id]?.name : null) || null;
+
   function seatRow(seat, members) {
     const holder = seat.memberId ? members.find(m => m.memberId === seat.memberId) : null;
     const badge = !seat.characterId ? 'empty' : seat.controller === 'player' ? 'player' : 'ai';
     return h(doc, 'li', { class: `play-seat seat-${badge}`, dataset: { seat: seat.seat } }, [
       h(doc, 'span', { class: 'play-seat-n', text: `Seat ${seat.seat}` }),
-      h(doc, 'span', { class: 'play-seat-char', text: seat.characterName || (seat.characterId ? seat.characterId : 'Empty') }),
+      h(doc, 'span', { class: 'play-seat-char', text: seat.characterName || (seat.characterId ? (sheetName(seat.characterId) || seat.characterId) : 'Empty') }),
       h(doc, 'span', { class: `play-badge badge-${badge}`, text: badge === 'player' ? (holder?.displayName || 'Player') : badge === 'ai' ? `AI${seat.aiArchetype ? ` · ${seat.aiArchetype}` : ''}` : '—' }),
       holder ? h(doc, 'span', { class: `play-dot ${holder.online ? 'online' : 'offline'}`, title: holder.online ? 'connected' : 'disconnected', attrs: { 'aria-label': holder.online ? 'connected' : 'disconnected' } }) : null
     ]);
