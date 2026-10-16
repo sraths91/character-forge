@@ -141,7 +141,8 @@ export function validateIntent(state, intent, opts = {}) {
     if (!(mv.col >= 0 && mv.row >= 0 && mv.col < g.cols && mv.row < g.rows)) return fail('bad-move', 'destination is off the grid');
     const taken = Object.values(state.entities).some(e => e.id !== actorId && e.pos.col === mv.col && e.pos.row === mv.row);
     if (taken) return fail('bad-move', 'destination is occupied');
-    const speed = actor.speedFt ?? 30;
+    // M64 R7 — grappled / restrained: speed 0.
+    const speed = conds.includes('grappled') || conds.includes('restrained') ? 0 : (actor.speedFt ?? 30);
     if (chebyshevFeet(actor.pos, mv) > speed) return fail('bad-move', `destination is beyond ${speed} ft`);
     if (g.terrain && (mv.col !== actor.pos.col || mv.row !== actor.pos.row)) {
       const occ = buildOccupancy(state.entities, { excludeId: actorId });
@@ -200,7 +201,8 @@ export function validateIntent(state, intent, opts = {}) {
 
   // Range (after the move budget when the engine will path on its own).
   if (target) {
-    const budget = plan.moveTo ? 0 : (actor.speedFt ?? 30);
+    const pinned = conds.includes('grappled') || conds.includes('restrained');
+    const budget = plan.moveTo || pinned ? 0 : (actor.speedFt ?? 30);
     const dist = chebyshevFeet(from, target.pos);
     if (typeof opts.rangeBand === 'function') {
       const band = opts.rangeBand(from, target.pos, { weapon, spell, budgetFt: budget });

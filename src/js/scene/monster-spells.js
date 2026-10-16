@@ -54,6 +54,10 @@ export const MONSTER_SPELLS = {
     saveOnHalf: false,
     dice: null,      // pure control
     appliesCondition: 'paralyzed',
+    // M64 R7 — condition lifecycle: ends with the caster's concentration;
+    // WIS save (caster's DC) at the end of each of the target's turns.
+    conditionEndsOn: 'concentration',
+    conditionSave: 'WIS',
     concentration: true,
     duration: 'concentration-1m',
     description: 'Target makes a WIS save or is paralyzed. Save at end of each of its turns to break.',
@@ -143,6 +147,8 @@ export const MONSTER_SPELLS = {
     saveOnHalf: false,
     dice: null,
     appliesCondition: 'charmed',
+    // M64 R7 — "for 1 round": ends at the end of the target's next turn.
+    conditionEndsOn: 'turn-end',
     description: 'Target makes a WIS save or is charmed for 1 round.',
     pageRef: 'MM Vampire Spawn'
   },

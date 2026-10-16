@@ -204,8 +204,10 @@ test('M13: stunned attacker → autoMiss', () => {
   assert.strictEqual(r.autoMiss, true);
 });
 
-test('M13: charmed attacker → autoMiss (conservative — refuses all attacks)', () => {
-  const r = resolveAttack(baseCtx({ attacker: pcAt({ conditions: ['charmed'], pos: { col: 5, row: 5 } }) }));
+test('M13/R7: a charmed attacker is refused only against its charmer', () => {
+  const free = resolveAttack(baseCtx({ attacker: pcAt({ conditions: ['charmed'], pos: { col: 5, row: 5 } }) }));
+  assert.equal(free.autoMiss, false, 'no known charmer: nothing blocked');
+  const r = resolveAttack({ ...baseCtx({ attacker: pcAt({ conditions: ['charmed'], pos: { col: 5, row: 5 } }) }), charmerIds: ['m1'], targetId: 'm1' });
   assert.strictEqual(r.autoMiss, true);
   assert.ok(r.blockers.some(s => /charmed/i.test(s)));
 });

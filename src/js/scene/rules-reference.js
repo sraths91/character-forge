@@ -166,7 +166,7 @@ reg('Attacker is petrified (incapacitated — cannot attack)', {
   rule: 'a petrified creature is incapacitated; an incapacitated creature can\'t take actions.',
   page: 'PHB p291'
 });
-reg('Attacker is charmed (cannot attack)', {
+reg('Attacker is charmed by the target (cannot attack the charmer)', {
   rule: 'a charmed creature can\'t attack the charmer or target them with harmful abilities or magical effects.',
   page: 'PHB p290'
 });

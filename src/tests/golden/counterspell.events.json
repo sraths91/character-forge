@@ -311,7 +311,12 @@
       "payload": {
         "entityId": "pc-fighter",
         "condition": "paralyzed",
-        "sourceId": "m-fanatic-b"
+        "sourceId": "m-fanatic-b",
+        "endsOn": "concentration",
+        "save": {
+          "stat": "WIS",
+          "dc": 11
+        }
       }
     },
     {

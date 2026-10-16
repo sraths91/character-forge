@@ -29,6 +29,7 @@ import { spellById, freshSlots, freshInnateState } from './monster-spells.js';
 import { isLegendary, freshLegendaryBudget } from './monster-legendary.js';
 import { deriveAC } from './pc-stats.js';
 import { slotsForPc, pactForPc } from './reactions.js';
+import { wrapperConditions, normalizeCondition, hasLifecycle } from './conditions.js';
 
 /** Wrapper fields that are recomputed per turn and never persisted. */
 export const TRANSIENT_WRAPPER_FIELDS = Object.freeze([
@@ -114,6 +115,9 @@ export function wrapperFromEntity(entity, sheet = null) {
         targetIds: [...(e.concentration.targetIds || [])]
       }
     : null;
+  // M64 R7 — conditions stay string ids on the wrapper; lifecycle objects
+  // ride `_conditionMeta`.
+  const wc = wrapperConditions(e.conditions || []);
   const base = {
     id: e.id,
     name: e.name,
@@ -123,7 +127,8 @@ export function wrapperFromEntity(entity, sheet = null) {
     hpTemp: e.hpTemp ?? 0,
     ac: e.ac,
     speedFt: e.speedFt ?? 30,
-    conditions: (e.conditions || []).map(conditionId).filter(Boolean),
+    conditions: wc.conditions,
+    ...(Object.keys(wc.meta).length ? { _conditionMeta: wc.meta } : {}),
     damageDealt: 0,
     _reactionUsed: !!res.reactionUsed,
     _concentrating: conc
@@ -207,7 +212,14 @@ export function applyWrapperToEntity(entity, w) {
       const id = conditionId(c);
       if (!id || seen.has(id)) continue;
       seen.add(id);
-      e.conditions.push(clone(prior.get(id) ?? id));
+      const meta = w._conditionMeta?.[id] ? normalizeCondition(w._conditionMeta[id]) : null;
+      const before = prior.get(id);
+      // An untouched lifecycle object keeps its exact stored form.
+      if (meta && hasLifecycle(meta)) {
+        e.conditions.push(typeof before === 'object' && JSON.stringify(normalizeCondition(before)) === JSON.stringify(meta) ? clone(before) : meta);
+      }
+      else if (w._conditionMeta && typeof prior.get(id) === 'object') e.conditions.push(id);
+      else e.conditions.push(clone(prior.get(id) ?? id));
     }
   }
   if (w._concentrating !== undefined) {

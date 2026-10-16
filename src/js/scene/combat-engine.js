@@ -64,6 +64,10 @@ import { chooseLegendaryAction, spendLegendaryAction } from './monster-legendary
 import {
   NO_CTX, canEmit, emitEvent, nextCinemaGroup, fxSeedOf, idOf, normalizeAnswer
 } from './engine-events.js';
+import {
+  INCAPACITATING, addConditionTo, removeConditionFrom, conditionIds, conditionMeta,
+  charmerIds, hasCondition, isIncapacitatedBy
+} from './conditions.js';
 
 // =====================================================================
 // runOneAttack — single-entity-turn entry point
@@ -133,6 +137,18 @@ const NON_ATTACK_KINDS = new Set(['dash', 'dodge', 'disengage', 'move']);
 
 async function resolveTurn(attacker, enemies, allies, scene, rng, prompts, ctx) {
   const actorId = idOf(attacker);
+  // M64 R7 — an incapacitated creature takes no actions or movement. The
+  // turn manager already skips it; this guards direct callers (manual
+  // play) too, before any rng draw.
+  if (isIncapacitated(attacker)) {
+    emitEvent(ctx, 'turn.skipped', { actorId, reason: 'incapacitated' });
+    return;
+  }
+  // M64 R7 — a charmed creature can't attack (or target with harmful
+  // effects) the creature that charmed it; the planner never sees it as
+  // a target and an explicit plan against it is rejected.
+  const charmers = charmerIds(attacker);
+  const targetable = charmers.length ? enemies.filter(e => !charmers.some(c => sameId(c, e.id))) : enemies;
   // M64 R13 — Dodge lasts until the start of this creature's next turn.
   if (attacker._dodging) attacker._dodging = false;
   // M37 — At the start of each monster's turn, roll d6 for any innate
@@ -156,7 +172,7 @@ async function resolveTurn(attacker, enemies, allies, scene, rng, prompts, ctx) 
   } else if (attacker.kind === 'monster') {
     plan = chooseAction({
       self: attacker,
-      enemies: enemies.filter(isAlive),
+      enemies: targetable.filter(isAlive),
       allies: allies.filter(isAlive),
       rng
     });
@@ -166,7 +182,7 @@ async function resolveTurn(attacker, enemies, allies, scene, rng, prompts, ctx) 
     resetPerTurnFlags(attacker);
     plan = choosePcAction({
       self: attacker,
-      enemies: enemies.filter(isAlive),
+      enemies: targetable.filter(isAlive),
       allies: allies.filter(isAlive),
       // M64 R8 — downed PCs (0 HP) can be healed back up.
       downedAllies: allies.filter(a => a.kind === 'pc' && !isAlive(a)),
@@ -206,7 +222,7 @@ async function resolveTurn(attacker, enemies, allies, scene, rng, prompts, ctx) 
   let target;
   if (plan?.targetSide === 'ally') target = allies.find(a => sameId(a.id, plan.targetId));
   else if (plan?.targetId != null) target = enemies.find(e => sameId(e.id, plan.targetId));
-  else target = pickTarget(enemies);
+  else target = pickTarget(targetable);
   if (plan && canEmit(ctx)) {
     emitEvent(ctx, 'plan.chosen', {
       actorId, kind: String(plan.kind), targetId: plan.targetId != null ? String(plan.targetId) : null,
@@ -230,6 +246,12 @@ async function resolveTurn(attacker, enemies, allies, scene, rng, prompts, ctx) 
     return;
   }
   const healsAlly = plan?.kind === 'cast' && plan?.targetSide === 'ally';
+  if (!healsAlly && plan?.targetSide !== 'ally' && charmers.some(c => sameId(c, target.id)) && !NON_ATTACK_KINDS.has(plan?.kind)) {
+    emitEvent(ctx, explicit ? 'turn.rejected' : 'turn.skipped', explicit
+      ? { actorId, code: 'charmed', reason: `${attacker.name || actorId} is charmed by ${target.name || idOf(target)}` }
+      : { actorId, reason: 'charmed' });
+    return;
+  }
   if (explicit && !isAlive(target) && !healsAlly && !NON_ATTACK_KINDS.has(plan.kind)) {
     emitEvent(ctx, 'turn.rejected', { actorId, code: 'target-down', reason: `${target.name || idOf(target)} is down` });
     return;
@@ -254,7 +276,9 @@ async function resolveTurn(attacker, enemies, allies, scene, rng, prompts, ctx) 
     // M64 R13 — Dash doubles the movement budget this turn; Disengage
     // stops this move provoking opportunity attacks (reactions.js reads
     // _disengaged).
-    const baseSpeed = Number.isFinite(attacker.speedFt) ? attacker.speedFt : 30;
+    // M64 R7 — grappled / restrained: speed 0.
+    const pinned = hasCondition(attacker, 'grappled') || hasCondition(attacker, 'restrained');
+    const baseSpeed = pinned ? 0 : (Number.isFinite(attacker.speedFt) ? attacker.speedFt : 30);
     const speedFt = plan?.kind === 'dash' ? baseSpeed * 2 : baseSpeed;
     attacker._disengaged = plan?.kind === 'disengage';
     let next;
@@ -457,7 +481,9 @@ async function resolveTurn(attacker, enemies, allies, scene, rng, prompts, ctx) 
     advantageOverride,
     allies: allyList,
     hostiles: hostileList,
-    attackStats
+    attackStats,
+    charmerIds: charmers,
+    targetId: target.id
   });
 
   if (verdict.autoMiss) {
@@ -580,8 +606,9 @@ export async function runMonsterSpell({ attacker, target, plan, scene, rng, witn
   const casterId = idOf(attacker);
   const group = nextCinemaGroup(ctx);
 
+  const roster = [...allies, ...allEnemies];
   if (spell.concentration && isConcentrating(attacker)) {
-    endConcentration(attacker, 'recast', ctx, group);
+    endConcentration(attacker, 'recast', ctx, group, roster);
   }
 
   let slotSpent = null;
@@ -686,7 +713,7 @@ export async function runMonsterSpell({ attacker, target, plan, scene, rng, witn
       if (!isAlive(attacker) || !isAlive(target)) return;
     }
     const before = target.hp;
-    applyDamage(target, totalDmg, spell.damageType ?? null, { attacker, ctx, rng, group, parts: { darts }, roster: [...allies, ...allEnemies] });
+    applyDamage(target, totalDmg, spell.damageType ?? null, { attacker, ctx, rng, group, parts: { darts }, roster });
     await castCinema(target, { dmg: totalDmg, darts }, { hpBefore: before });
     return;
   }
@@ -716,7 +743,9 @@ export async function runMonsterSpell({ attacker, target, plan, scene, rng, witn
       attackStats: {
         bonus: effectiveBook.attackBonus, dice: spell.dice, damageType: spell.damageType ?? null,
         parts: [{ source: spell.name, value: effectiveBook.attackBonus }], damageParts: []
-      }
+      },
+      charmerIds: charmerIds(attacker),
+      targetId: target.id
     });
     if (verdict.autoMiss) {
       await castCinema(target, { dmg: 0, miss: true });
@@ -747,7 +776,7 @@ export async function runMonsterSpell({ attacker, target, plan, scene, rng, witn
       if (!isAlive(attacker) || !isAlive(target)) return;
     }
     const before = target.hp;
-    applyDamage(target, dmg.total, spell.damageType ?? null, { crit: !!atk.crit, attacker, ctx, rng, group, roster: [...allies, ...allEnemies] });
+    applyDamage(target, dmg.total, spell.damageType ?? null, { crit: !!atk.crit, attacker, ctx, rng, group, roster });
     await castCinema(target, { dmg: dmg.total, crit: !!atk.crit }, { hpBefore: before });
     return;
   }
@@ -770,7 +799,7 @@ export async function runMonsterSpell({ attacker, target, plan, scene, rng, witn
         let dmg = dmgRoll.total;
         if (eSave.success) dmg = spell.saveOnHalf ? Math.floor(dmg / 2) : 0;
         const before = e.hp;
-        applyDamage(e, dmg, spell.damageType ?? null, { attacker, ctx, rng, group, roster: [...allies, ...allEnemies] });
+        applyDamage(e, dmg, spell.damageType ?? null, { attacker, ctx, rng, group, roster });
         totalDmg += dmg;
         aoeResults.push({ entity: e, dmg, saved: eSave.success, before });
       }
@@ -802,14 +831,20 @@ export async function runMonsterSpell({ attacker, target, plan, scene, rng, witn
     if (prompts.onRoll) dmgRoll = await reviewRoll(prompts, ctx, group, 'damage', attacker, target, dmgRoll);
     let dmg = dmgRoll.total;
     if (save.success) dmg = spell.saveOnHalf ? Math.floor(dmg / 2) : 0;
-    applyDamage(target, dmg, spell.damageType ?? null, { attacker, ctx, rng, group, roster: [...allies, ...allEnemies] });
+    applyDamage(target, dmg, spell.damageType ?? null, { attacker, ctx, rng, group, roster });
     saveDmg = dmg;
   }
   if (!save.success && spell.appliesCondition) {
-    if (!target.conditions.includes(spell.appliesCondition)) {
-      target.conditions.push(spell.appliesCondition);
-      emitEvent(ctx, 'condition.applied', { entityId: idOf(target), condition: spell.appliesCondition, sourceId: casterId }, group);
-    }
+    // M64 R7 — the registry declares how the condition ends
+    // (conditionEndsOn) and its repeat save (conditionSave, at the
+    // caster's DC).
+    applyCondition(target, {
+      id: spell.appliesCondition,
+      sourceId: casterId,
+      endsOn: spell.conditionEndsOn || (spell.concentration ? 'concentration' : 'encounter'),
+      save: spell.conditionSave ? { stat: spell.conditionSave, dc: effectiveBook.dc } : null,
+      appliedRound: Number.isInteger(ctx.round) ? ctx.round : null
+    }, { ctx, group, roster });
     if (spell.concentration) {
       startConcentration(attacker, spell, [target.id]);
       emitEvent(ctx, 'concentration.started', { casterId, spellId: String(spell.id), targetIds: [idOf(target)] }, group);
@@ -864,7 +899,9 @@ export async function runReactionAttack(attacker, target, targetBeforePos, scene
     targetAC: target.ac,
     advantageOverride: 'auto',
     allies: [], hostiles: [],
-    attackStats
+    attackStats,
+    charmerIds: charmerIds(attacker),
+    targetId: target.id
   });
   if (verdict.autoMiss) return;
   const group = nextCinemaGroup(ctx);
@@ -1336,6 +1373,9 @@ export function applyDamageModifiers(target, amount, type) {
  * @param {boolean} [opts.checkConcentration=true] — false defers the save to
  *   the caller (a weapon hit with a smite forces ONE save on the total)
  * @param {boolean} [opts.credit=true] — add to attacker.damageDealt
+ * @param {object[]|null} [opts.roster] — every wrapper in the encounter: when
+ *   the target's concentration drops, conditions it held end at once (R7);
+ *   without it the turn manager's sweep clears them at the end of the turn
  * @param {boolean} [opts.raw=false]
  * @returns {{rolled: number, amount: number, absorbed: number, hpLost: number,
  *   hpBefore: number, hpAfter: number, modifier: string|null, downed: boolean}}
@@ -1344,7 +1384,7 @@ export function applyDamageModifiers(target, amount, type) {
 export function applyDamage(target, amount, type = null, opts = {}) {
   const {
     attacker = null, ctx = NO_CTX, rng = null, group = null, parts = null,
-    checkConcentration = true, credit = true, raw = false
+    checkConcentration = true, credit = true, raw = false, roster = null
   } = opts;
   const n = Math.max(0, Math.trunc(Number(amount) || 0));
   const hpBefore = target?.hp ?? 0;
@@ -1386,9 +1426,9 @@ export function applyDamage(target, amount, type = null, opts = {}) {
   }
   // 4. concentration
   if (out.downed) {
-    if (isConcentrating(target)) endConcentration(target, 'downed', ctx, group);
+    if (isConcentrating(target)) endConcentration(target, 'downed', ctx, group, roster);
   } else if (checkConcentration) {
-    concentrationCheck(target, out.amount, rng, ctx, group);
+    concentrationCheck(target, out.amount, rng, ctx, group, roster);
   }
   // 5. downed
   if (out.downed) emitEvent(ctx, 'entity.downed', { entityId: idOf(target), byId: idOf(attacker) }, group);
@@ -1406,35 +1446,180 @@ export function applyDamage(target, amount, type = null, opts = {}) {
  * @param {function} rng
  * @param {object} [ctx]
  * @param {string|null} [group]
+ * @param {object[]|null} [roster] — clears the dropped spell's conditions (R7)
  * @returns {{broke: boolean, save: object|null}}
  */
-export function concentrationCheck(target, taken, rng, ctx = NO_CTX, group = null) {
+export function concentrationCheck(target, taken, rng, ctx = NO_CTX, group = null, roster = null) {
   if (!target || !(taken > 0) || !isConcentrating(target) || !isAlive(target)) return { broke: false, save: null };
   const conMod = saveBonusFor(target, 'CON');
   const res = handleDamageOnConcentration({ caster: target, damage: taken, conMod }, rng);
   if (res.save) emitSave(ctx, group, target, 'CON', res.save, 'concentration');
   if (res.broke) {
     emitEvent(ctx, 'concentration.broken', {
-      casterId: idOf(target), spellId: String(res.dropped?.spellId), reason: 'damage'
+      casterId: idOf(target), spellId: String(res.dropped?.spellId), reason: 'damage',
+      targetIds: (res.dropped?.targetIds || []).map(String)
     }, group);
+    if (roster) clearConcentrationConditions(target, roster, ctx, group);
   }
   return { broke: res.broke, save: res.save };
 }
 
 /**
  * End a creature's concentration for `reason` and emit
- * `concentration.broken`. No-op when it is not concentrating.
+ * `concentration.broken` (with the dropped `targetIds`). With a roster,
+ * the conditions the spell held (`endsOn: 'concentration'`) end now.
+ * No-op when it is not concentrating.
  * @param {object} caster — wrapper
- * @param {string} reason — 'downed' | 'recast' | …
+ * @param {string} reason — 'downed' | 'recast' | 'incapacitated' | 'ended' | …
  * @param {object} [ctx]
  * @param {string|null} [group]
+ * @param {object[]|null} [roster] — every wrapper in the encounter
  * @returns {object|null} the dropped block
  */
-export function endConcentration(caster, reason, ctx = NO_CTX, group = null) {
+export function endConcentration(caster, reason, ctx = NO_CTX, group = null, roster = null) {
   const dropped = dropConcentration(caster);
   if (!dropped) return null;
-  emitEvent(ctx, 'concentration.broken', { casterId: idOf(caster), spellId: String(dropped.spellId), reason }, group);
+  emitEvent(ctx, 'concentration.broken', {
+    casterId: idOf(caster), spellId: String(dropped.spellId), reason,
+    targetIds: (dropped.targetIds || []).map(String)
+  }, group);
+  if (roster) clearConcentrationConditions(caster, roster, ctx, group);
   return dropped;
+}
+
+// =====================================================================
+// M64 R7 — condition lifecycle (data helpers in conditions.js)
+// =====================================================================
+
+/**
+ * Apply a condition (string or `{id, sourceId, endsOn, save,
+ * appliedRound}`) and emit `condition.applied` with its lifecycle. An
+ * incapacitating condition ends the bearer's own concentration (PHB
+ * p203). Re-applying a present id refreshes its lifecycle silently.
+ * @param {object} target — wrapper
+ * @param {string|object} cond
+ * @param {{ctx?: object, group?: string|null, roster?: object[]|null}} [opts]
+ * @returns {boolean} whether it was newly applied
+ */
+export function applyCondition(target, cond, { ctx = NO_CTX, group = null, roster = null } = {}) {
+  const { added, condition } = addConditionTo(target, cond);
+  if (!added) return false;
+  emitEvent(ctx, 'condition.applied', {
+    entityId: idOf(target), condition: condition.id, sourceId: condition.sourceId,
+    endsOn: condition.endsOn, save: condition.save ? { ...condition.save } : null
+  }, group);
+  if (INCAPACITATING.includes(condition.id) && isConcentrating(target)) {
+    endConcentration(target, 'incapacitated', ctx, group, roster);
+  }
+  return true;
+}
+
+/**
+ * Remove a condition and emit `condition.removed {entityId, condition,
+ * sourceId, reason}`.
+ * @param {object} target — wrapper
+ * @param {string} id
+ * @param {{ctx?: object, group?: string|null, reason?: string}} [opts]
+ * @returns {object|null} the removed condition
+ */
+export function removeCondition(target, id, { ctx = NO_CTX, group = null, reason = 'removed' } = {}) {
+  const meta = removeConditionFrom(target, id);
+  if (!meta) return null;
+  emitEvent(ctx, 'condition.removed', { entityId: idOf(target), condition: id, sourceId: meta.sourceId, reason }, group);
+  return meta;
+}
+
+/** Remove every `endsOn: 'concentration'` condition `caster` applied. */
+function clearConcentrationConditions(caster, roster, ctx, group) {
+  for (const e of roster) {
+    for (const id of conditionIds(e)) {
+      const meta = conditionMeta(e, id);
+      if (meta?.endsOn === 'concentration' && sameId(meta.sourceId, caster.id)) {
+        removeCondition(e, id, { ctx, group, reason: 'concentration' });
+      }
+    }
+  }
+}
+
+/**
+ * Remove `endsOn: 'concentration'` conditions whose source no longer
+ * concentrates on this creature (dropped elsewhere, e.g. by a legendary
+ * action that saw only part of the encounter). The turn manager runs it
+ * after every turn.
+ * @param {object[]} roster — every wrapper in the encounter
+ * @param {object} [ctx]
+ * @returns {number} conditions removed
+ */
+export function sweepConcentrationConditions(roster, ctx = NO_CTX) {
+  let removed = 0;
+  for (const e of roster) {
+    for (const id of conditionIds(e)) {
+      const meta = conditionMeta(e, id);
+      if (meta?.endsOn !== 'concentration') continue;
+      const source = roster.find(w => sameId(w.id, meta.sourceId));
+      const held = source && isConcentrating(source) &&
+        (source._concentrating.targetIds || []).some(t => sameId(t, e.id));
+      if (!held && removeCondition(e, id, { ctx, reason: 'concentration' })) removed++;
+    }
+  }
+  return removed;
+}
+
+/**
+ * Start-of-turn lifecycle for `actor`: conditions with
+ * `endsOn: 'turn-start'` end.
+ * @param {object} actor — wrapper
+ * @param {object} [ctx]
+ */
+export function startOfTurnConditions(actor, ctx = NO_CTX) {
+  for (const id of conditionIds(actor)) {
+    if (conditionMeta(actor, id)?.endsOn === 'turn-start') removeCondition(actor, id, { ctx, reason: 'turn-start' });
+  }
+}
+
+/**
+ * End-of-turn lifecycle for `actor` (runs even when the actor was too
+ * incapacitated to act):
+ *   - its `endsOn: 'turn-end'` conditions end;
+ *   - each condition with a `save` repeats it (seeded rng, `save.rolled`
+ *     reason 'condition'); a success ends it, and the source stops
+ *     concentrating on this creature (its concentration ends when no
+ *     target is left — Hold Person on one target);
+ *   - conditions anyone holds with `endsOn: 'source-turn-end'` and
+ *     `sourceId` = actor end.
+ * @param {object} actor — wrapper
+ * @param {object[]} roster — every wrapper in the encounter
+ * @param {function} rng
+ * @param {object} [ctx]
+ */
+export function endOfTurnConditions(actor, roster, rng, ctx = NO_CTX) {
+  for (const id of conditionIds(actor)) {
+    const meta = conditionMeta(actor, id);
+    if (!meta) continue;
+    if (meta.endsOn === 'turn-end') {
+      removeCondition(actor, id, { ctx, reason: 'turn-end' });
+      continue;
+    }
+    if (!meta.save || !isAlive(actor)) continue;
+    const save = rollSave({ bonus: saveBonusFor(actor, meta.save.stat), dc: meta.save.dc }, rng);
+    emitSave(ctx, null, actor, meta.save.stat, save, 'condition');
+    if (!save.success) continue;
+    removeCondition(actor, id, { ctx, reason: 'save' });
+    const source = meta.sourceId != null ? roster.find(w => sameId(w.id, meta.sourceId)) : null;
+    const conc = source?._concentrating;
+    if (meta.endsOn === 'concentration' && conc && (conc.targetIds || []).some(t => sameId(t, actor.id))) {
+      conc.targetIds = conc.targetIds.filter(t => !sameId(t, actor.id));
+      if (conc.targetIds.length === 0) endConcentration(source, 'ended', ctx, null, roster);
+    }
+  }
+  for (const e of roster) {
+    for (const id of conditionIds(e)) {
+      const meta = conditionMeta(e, id);
+      if (meta?.endsOn === 'source-turn-end' && sameId(meta.sourceId, actor.id)) {
+        removeCondition(e, id, { ctx, reason: 'source-turn-end' });
+      }
+    }
+  }
 }
 
 /**
@@ -1627,9 +1812,7 @@ export function pickTarget(enemies) {
 
 export function isAlive(e) { return e.hp > 0; }
 export function isIncapacitated(e) {
-  const c = e.conditions || [];
-  return c.includes('paralyzed') || c.includes('stunned') ||
-         c.includes('unconscious') || c.includes('petrified');
+  return isIncapacitatedBy(e);
 }
 export function sideAlive(side) {
   return side.filter(e => isAlive(e) && !isIncapacitated(e)).length;

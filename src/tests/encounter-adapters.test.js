@@ -33,7 +33,7 @@ test('adapters: state → wrappers → state round-trip preserves every resource
   pc.resources.features = { 'action-surge': { max: 1, spent: 1 } };
   pc.resources.pact = { level: 2, max: 2, spent: 1 };
   pc.turnFlags = { sneakUsed: true, smiteSlotUsed: 2 };
-  pc.conditions = ['prone', { id: 'paralyzed', sourceId: 'm-fanatic-a', endsOn: 'save', save: { stat: 'WIS', dc: 13 } }];
+  pc.conditions = ['prone', { id: 'paralyzed', sourceId: 'm-fanatic-a', endsOn: 'concentration', save: { stat: 'WIS', dc: 13 } }];
   pc.concentration = { spellId: 'hold-person', targetIds: ['m-fanatic-b'] };
   const mon = state.entities['m-fanatic-a'];
   mon.resources.legendaryBudget = 2;

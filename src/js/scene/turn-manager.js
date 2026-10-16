@@ -45,8 +45,10 @@
  */
 
 import {
-  runOneAttack, runLegendaryActions, isAlive, isIncapacitated, sameId, setHpRaw
+  runOneAttack, runLegendaryActions, isAlive, isIncapacitated, sameId, setHpRaw,
+  startOfTurnConditions, endOfTurnConditions, sweepConcentrationConditions
 } from './combat-engine.js';
+import { wrapperConditions } from './conditions.js';
 import { resetReaction } from './reactions.js';
 import { isLegendary, resetLegendaryBudget } from './monster-legendary.js';
 import { resetPerTurnFlags } from './ai/pc-features.js';
@@ -237,9 +239,10 @@ function makeEmitter(ts, ctx, turnId) {
 
 function engineCtxFor(ts, ctx, turnId) {
   const emit = makeEmitter(ts, ctx, turnId);
-  if (!emit) return {};
+  // M64 R7 — the round stamps conditions' appliedRound.
+  if (!emit) return { round: ts.round };
   return {
-    emit, turnId,
+    emit, turnId, round: ts.round,
     ...(ctx.planSource ? { planSource: ctx.planSource } : {}),
     ...(Number.isInteger(ctx.reactionDeadlineMs) ? { reactionDeadlineMs: ctx.reactionDeadlineMs } : {}),
     ...(typeof ctx.cinemaInputs === 'function' ? { cinemaInputs: ctx.cinemaInputs } : {})
@@ -301,24 +304,37 @@ export async function runTurn(ts, ctx = {}) {
   const actorId = actor ? String(actor.id) : (ts.initiative[ts.turnIndex]?.entityId ?? null);
   const result = { actorId, round: ts.round, turnIndex: ts.turnIndex, ran: false };
 
+  const engineCtx = engineCtxFor(ts, ctx, turnId);
+  const roster = Object.values(ts.entities);
   if (!actor || !isAlive(actor)) {
     result.skipped = 'down';
     if (emit && actorId) emit({ type: 'turn.skipped', payload: { actorId, reason: 'down' }, cinemaGroup: null });
   } else {
     beginTurnResets(actor);
+    // M64 R7 — condition lifecycle at the start of the turn (before the
+    // incapacitated check: a stun that ends now lets the creature act).
+    startOfTurnConditions(actor, engineCtx);
     if (isIncapacitated(actor)) {
+      // Incapacitated creatures take no actions or movement, in every
+      // caller (simulator, browser, server) — but still make their
+      // end-of-turn repeat saves (Hold Person).
       result.skipped = 'incapacitated';
       if (emit) emit({ type: 'turn.skipped', payload: { actorId, reason: 'incapacitated' }, cinemaGroup: null });
+      endOfTurnConditions(actor, roster, rng, engineCtx);
     } else {
       if (emit) emit({ type: 'turn.started', payload: { actorId }, cinemaGroup: null });
       const { enemies, allies } = sidesFor(ts, actor);
-      const engineCtx = engineCtxFor(ts, ctx, turnId);
       if (typeof ctx.runActorTurn === 'function') {
         await ctx.runActorTurn(actor, { enemies, allies, ctx: engineCtx, ts });
       } else {
         await runOneAttack(actor, enemies, allies, ts.scene, rng, ctx.prompts || {}, engineCtx);
       }
       result.ran = true;
+      // M64 R7 — end-of-turn lifecycle (repeat saves, turn-end and
+      // source-turn-end conditions). runActorTurn may have replaced the
+      // wrappers (browser), so look the actor up again.
+      const live = ts.entities[actorId] || actor;
+      endOfTurnConditions(live, Object.values(ts.entities), rng, engineCtx);
       // MM legendary actions: at the end of an opposing creature's turn.
       const actorSide = ts.sides[actorId];
       for (const [id, w] of Object.entries(ts.entities)) {
@@ -330,6 +346,9 @@ export async function runTurn(ts, ctx = {}) {
     }
   }
 
+  // M64 R7 — conditions held by a concentration that dropped where the
+  // engine could not see the whole roster (legendary actions) end now.
+  sweepConcentrationConditions(Object.values(ts.entities), engineCtx);
   // Safe point: edits queued during the turn (outside a prompt) land now.
   if (ts.dmQueue?.length) applyDmCommands(ts, ctx);
   const outcome = victoryCheck(ts, ctx.victoryRule || 'hp');
@@ -467,13 +486,12 @@ export function applyDmCommands(ts, ctx = {}) {
       after = setHpRaw(w, cmd.value);
     } else {
       before = [...(w.conditions || [])];
-      const seen = new Set();
-      after = [];
-      for (const c of cmd.value || []) {
-        const id = typeof c === 'string' ? c : c?.id;
-        if (id && !seen.has(id)) { seen.add(id); after.push(id); }
-      }
+      // Strings or R7 lifecycle objects; a string keeps the lifecycle the
+      // creature already had for that id.
+      const next = wrapperConditions(cmd.value || [], w._conditionMeta || {});
+      after = next.conditions;
       w.conditions = after;
+      if (Object.keys(next.meta).length || w._conditionMeta) w._conditionMeta = next.meta;
     }
     const ov = { kind: cmd.kind, entityId: cmd.entityId, before, after };
     applied.push(ov);

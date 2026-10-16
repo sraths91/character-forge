@@ -124,10 +124,11 @@ const LIVE_PC_FIELDS = [
   '_reactionUsed', '_shieldActive', '_actionSurgeUsed', '_secondWindUsed',
   '_sneakAttackUsedThisTurn', '_cunningActionUsedThisTurn', '_recklessUsedThisTurn',
   '_recklessUntilNextTurn', '_smiteSlotUsed', '_surgeFiredThisTurn', '_extraActionThisTurn',
-  '_concentrating'
+  '_concentrating', '_conditionMeta'
 ];
 const LIVE_MONSTER_FIELDS = [
-  '_reactionUsed', '_legendaryBudget', '_recklessUntilNextTurn', '_innate', '_concentrating'
+  '_reactionUsed', '_legendaryBudget', '_recklessUntilNextTurn', '_innate', '_concentrating',
+  '_conditionMeta'
 ];
 
 const intOr = (v, d) => (Number.isFinite(v) ? Math.trunc(v) : d);

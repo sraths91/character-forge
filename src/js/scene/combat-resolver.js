@@ -91,12 +91,13 @@ export function resolveAttack(ctx) {
       blockers.push(`Attacker is ${c} (incapacitated — cannot attack)`);
     }
   }
-  // Charmed can't attack the charmer. We model "charmer" as any entity —
-  // since per-pair charm relationships aren't tracked, we fall back to:
-  // if attacker is charmed, refuse all attacks (conservative). A future
-  // version with per-target charm links can lift this.
-  if (attackerConditions.has('charmed')) {
-    blockers.push('Attacker is charmed (cannot attack)');
+  // Charmed can't attack the charmer (PHB p290). M64 R7 — the engine
+  // passes the charm sources (`ctx.charmerIds`, from the condition's
+  // lifecycle) and `ctx.targetId`; only an attack on a charmer is
+  // refused. A charm with no known source blocks nothing.
+  if (attackerConditions.has('charmed') && ctx.targetId != null &&
+      Array.isArray(ctx.charmerIds) && ctx.charmerIds.some(id => String(id) === String(ctx.targetId))) {
+    blockers.push('Attacker is charmed by the target (cannot attack the charmer)');
   }
 
   // --- Attack bonus breakdown ---
@@ -263,7 +264,8 @@ export function resolveAttack(ctx) {
 // ---------- Helpers ----------
 
 function conditionsOf(entity) {
-  return new Set(Array.isArray(entity?.conditions) ? entity.conditions : []);
+  // Strings or R7 lifecycle objects ({id, …}).
+  return new Set((Array.isArray(entity?.conditions) ? entity.conditions : []).map(c => (typeof c === 'string' ? c : c?.id)));
 }
 
 // M12 — Determine what scope tag matches the current attack so combat

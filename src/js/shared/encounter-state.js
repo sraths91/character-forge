@@ -22,7 +22,11 @@
  *     validators work. Remaining = max - spent.
  *   - `conditions[]` accepts plain strings (today's engine) or the R7
  *     lifecycle objects `{id, sourceId, endsOn, save}` so E4's R7 lands
- *     without a version bump.
+ *     without a version bump. v1 additive (M64 R7, E1): the object may
+ *     carry `appliedRound` (int|null); `endsOn` is one of
+ *     'turn-end' | 'turn-start' | 'source-turn-end' | 'concentration' |
+ *     'encounter' (src/js/scene/conditions.js). The engine wrapper keeps
+ *     string ids in `conditions` and the objects in `_conditionMeta`.
  *   - `legendaryBudget` is the REMAINING budget this round (engine
  *     semantics), not a spent counter.
  */
@@ -71,6 +75,8 @@ export const WRAPPER_FIELD_MAP = Object.freeze({
   hpMax: 'hpMax',
   ac: 'ac',
   conditions: 'conditions',
+  // v1 additive (M64 R7, E1): lifecycle objects of the wrapper's string ids.
+  _conditionMeta: 'conditions',
   position: 'pos',
   _position: 'pos',
   presetSlug: 'statBlock.slug',
@@ -142,7 +148,7 @@ export const WRAPPER_FIELD_MAP = Object.freeze({
  */
 
 /**
- * @typedef {string|{id: string, sourceId?: string|null, endsOn?: string|null, save?: {stat: string, dc: number}|null}} Condition
+ * @typedef {string|{id: string, sourceId?: string|null, endsOn?: string|null, save?: {stat: string, dc: number}|null, appliedRound?: number|null}} Condition
  */
 
 /**
@@ -193,7 +199,8 @@ const CONDITION = union(
     id: str({ maxLength: 64 }),
     sourceId: optional(nullable(ID)),
     endsOn: optional(nullable(str())),
-    save: optional(nullable(shape({ stat: oneOf(ABILITIES), dc: int(0) })))
+    save: optional(nullable(shape({ stat: oneOf(ABILITIES), dc: int(0) }))),
+    appliedRound: optional(nullable(int(0)))
   })
 );
 
