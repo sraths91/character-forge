@@ -11,13 +11,20 @@
 // stateHash against a resync snapshot, the goblin's HP story, and the
 // health endpoint's connection count. Teardown leaves no handles.
 //
+// Restart variant: the same table against `node api/server.js` as a child
+// process; SIGTERM mid-encounter (1012 to every client, exit 0 < 5 s),
+// then a restart on the same DB brings the DM back to a paused table
+// whose stateHash is the last `turn.ended` the clients saw.
+//
 // Re-bless the golden:  UPDATE_GOLDEN=1 node --test api/tests/smoke.test.js
 // (only in a commit that says why).
 
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { performance } from 'node:perf_hooks';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { spawn } from 'node:child_process';
+import { createServer as createNetServer } from 'node:net';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import WebSocket from 'ws';
@@ -71,7 +78,7 @@ function tableClient(name, wsUrl, token, WebSocketCtor) {
 }
 
 /** The first frame (already received or future) matching `pred`. */
-function until(c, pred, { timeoutMs = 4000, since = 0 } = {}) {
+function until(c, pred, { timeoutMs = 10_000, since = 0 } = {}) {
   const hit = c.frames.slice(since).find(pred);
   if (hit) return Promise.resolve(hit);
   return new Promise((resolve, reject) => {
@@ -236,4 +243,118 @@ test('S1 smoke: DM + player play one turn on the real engine, in-process, under 
   const ms = performance.now() - t0;
   assert.ok(ms < SMOKE_BUDGET_MS, `smoke took ${ms.toFixed(0)} ms`);
   if (process.env.SMOKE_TIMING) console.log(`smoke: ${ms.toFixed(0)} ms`);
+});
+
+// ------------------------------------------------------------ restart
+
+function freePort() {
+  return new Promise((resolve, reject) => {
+    const s = createNetServer();
+    s.once('error', reject);
+    s.listen(0, '127.0.0.1', () => { const { port } = s.address(); s.close(() => resolve(port)); });
+  });
+}
+
+/**
+ * Spawn `node api/server.js` (multiplayer, real engine) on `dataDir` and
+ * resolve once its startup log line names the bound port.
+ *
+ * api/server.js maps PORT=0 to its 3101 default (`Number(env.PORT) || 3101`),
+ * so the child gets a free port picked here; the port is still read back
+ * from the "API listening" log line.
+ */
+async function spawnServer(dataDir) {
+  const port = await freePort();
+  const child = spawn(process.execPath, [join(HERE, '..', 'server.js')], {
+    env: {
+      ...process.env, NODE_ENV: 'test', CF_MULTIPLAYER: '1', CF_ENGINE: 'real',
+      CF_DATA_DIR: dataDir, CF_DB_PATH: '', PORT: String(port)
+    },
+    stdio: ['ignore', 'pipe', 'pipe']
+  });
+  const exited = new Promise((resolve) => child.once('exit', (code, signal) => resolve({ code, signal, at: performance.now() })));
+  let out = '';
+  const bound = await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`server did not start: ${out}`)), 20_000);
+    child.stdout.on('data', (d) => {
+      out += d;
+      for (const line of out.split('\n')) {
+        if (!line.includes('API listening')) continue;
+        clearTimeout(timer);
+        resolve(JSON.parse(line).port);
+        return;
+      }
+    });
+    child.stderr.on('data', (d) => { out += d; });
+    child.once('exit', (code) => { clearTimeout(timer); reject(new Error(`server exited ${code}: ${out}`)); });
+  });
+  assert.equal(bound, port, 'the startup log names the bound port');
+  return { child, url: `http://127.0.0.1:${bound}`, exited };
+}
+
+async function stopChild(srv) {
+  if (srv.child.exitCode === null && srv.child.signalCode === null) srv.child.kill('SIGKILL');
+  await srv.exited;
+}
+
+test('S1 restart: SIGTERM mid-encounter closes 1012 and exits; a restart on the same DB restores a paused table with the same stateHash', async () => {
+  const dataDir = mkdtempSync(join(root, 'child-'));
+  const sockets = new Set();
+  const a = await spawnServer(dataDir);
+  let b = null;
+  let table = null;
+  let dm2 = null;
+  try {
+    table = await playFirstPlayerTurn(a.url, sockets);
+    // Same table, same seed, another process: the same story.
+    assert.deepEqual(assertTable(table), JSON.parse(readFileSync(GOLDEN, 'utf8')).types);
+    const { dm, player, room } = table;
+
+    // Mid-encounter: resume; the goblin's AI turn runs and pc-1's next
+    // turn starts and waits for its intent.
+    const before = dm.frames.length;
+    await send(dm, 'dm.resume');
+    await until(player, isEvent('turn.started', p => p.payload.actorId === 'pc-1'), { since: player.frames.length });
+    const durable = sequenced(dm, 0).filter(f => f.t === 'turn.ended').at(-1).p.payload.stateHash;
+    assert.ok(dm.frames.slice(before).some(f => f.t === 'turn.ended' && f.p.payload.actorId === 'gob'), 'the goblin took its turn');
+    assert.equal((await (await fetch(`${a.url}/api/health`)).json()).connections, 2);
+
+    // SIGTERM: every client gets 1012 and the process exits 0 within 5 s.
+    const t0 = performance.now();
+    a.child.kill('SIGTERM');
+    const exit = await a.exited;
+    const ms = exit.at - t0;
+    assert.equal(exit.code, 0, `exit code ${exit.code} (${exit.signal})`);
+    assert.ok(ms < 5000, `exited in ${ms.toFixed(0)} ms`);
+    if (process.env.SMOKE_TIMING) console.log(`restart: SIGTERM → exit ${ms.toFixed(0)} ms`);
+    for (const c of [dm, player]) {
+      for (let i = 0; i < 200 && c.closes.length === 0; i++) await new Promise(r => setTimeout(r, 5));
+      assert.equal(c.closes[0], 1012, `${c.name} closed 1012`);
+      assert.ok(c.frames.some(f => f.t === 'room.closing'), `${c.name} saw room.closing`);
+      c.session.close();   // stop the client's reconnect backoff
+    }
+
+    // Restart on the same DB: the DM reconnects to a recovered, paused
+    // table whose state is the last turn end the clients saw.
+    b = await spawnServer(dataDir);
+    dm2 = tableClient('dm2', `${b.url.replace(/^http/, 'ws')}/ws`, room.dmToken, trackedWebSocket(sockets));
+    await dm2.session.connect();
+    const snap = await until(dm2, m => m.t === 'room.snapshot');
+    assert.equal(snap.p.room.status, 'paused');
+    assert.equal(snap.p.room.paused, true);
+    assert.equal(snap.p.stateHash, durable, 'the restored snapshot carries the last turn.ended stateHash');
+    assert.equal(stateHash(snap.p.encounter), durable);
+    assert.equal(snap.p.encounter.phase, 'running');
+    assert.ok(snap.p.history.length > 0, 'history restored');
+  } finally {
+    if (table) for (const c of [table.dm, table.player]) c.session.close();
+    dm2?.session.close();
+    for (const ws of sockets) ws.terminate();
+    if (b) {
+      b.child.kill('SIGTERM');
+      await b.exited;
+    }
+    await stopChild(a);
+    if (b) await stopChild(b);
+  }
 });
