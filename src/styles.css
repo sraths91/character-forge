@@ -1452,28 +1452,20 @@ body.party-view-mode .sprite-stage {
      they want a closer look at a sprite. */
   overflow: visible;
   max-width: 100%;
-  /* Wrap the canvas in this container so we can apply a CSS zoom on
-     top of the auto-fit without breaking the layout. */
-  --bf-zoom: 1;
 }
 body.party-view-mode #sprite-canvas {
-  /* Scale the canvas's display size to fit the parent's width while
-     preserving its intrinsic aspect ratio. The drawing buffer stays at
-     scene.cols * scene.cellSize * scene.scale; canvasEventToPixels
-     already accounts for the CSS-vs-buffer ratio so clicks resolve
-     correctly. The --bf-zoom multiplier lets users zoom past 100% via
-     the in-app zoom buttons (clamps in JS). */
+  /* M64 M8 — the canvas fills the stage width; its drawing buffer is
+     that CSS box × devicePixelRatio (E5's camera sizes it), so the
+     aspect ratio — and the CSS height — follow the grid. Zoom and pan
+     are the camera's transform, not a CSS scale; canvasEventToPixels
+     maps pointers back through the camera. */
   display: block;
-  width: calc(min(100%, 100vw - 40px) * var(--bf-zoom, 1));
+  width: min(100%, 100vw - 40px);
   height: auto;
-  max-width: calc(100% * var(--bf-zoom, 1));
+  max-width: 100%;
   /* Keep pixel-art crisp at any scale */
   image-rendering: pixelated;
   image-rendering: crisp-edges;
-}
-/* When zoomed in past 100%, let the sprite stage scroll to navigate */
-body.party-view-mode .sprite-stage:has(#sprite-canvas) {
-  overflow: auto;
 }
 
 /* Battlefield zoom controls — only visible in party-view-mode. */

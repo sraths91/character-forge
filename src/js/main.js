@@ -49,6 +49,10 @@ import {
 } from './scene/reactions.js';
 import { promptReaction } from './scene/reaction-prompt.js';
 import { reactionCostLabel } from './client/reaction-labels.js';
+import { previewMove, moveIntent } from './client/intents.js';
+import {
+  createCamera, attachCameraControls, screenToWorld, zoomAt, fitToGrid, clampCamera, WORLD_CELL_PX
+} from './map/camera.js';
 import { createCinema, phaseAt } from './anim/cinema.js';
 import { motionForWeapon } from './anim/weapon-motions.js';
 import {
@@ -79,7 +83,8 @@ import {
   prepareLivePcForPlanning as bridgePrepareLivePcForPlanning,
   planForLivePc as bridgePlanForLivePc,
   resolvePlanTarget as bridgeResolvePlanTarget,
-  runTurn as bridgeRunTurn
+  runTurn as bridgeRunTurn,
+  liveEncounterState
 } from './scene/live-bridge.js';
 import { buildWeaponPlan, buildCastPlan } from './scene/manual-plan.js';
 import { createVersusEncounter } from './scene/encounter-setup.js';
@@ -179,9 +184,22 @@ document.addEventListener('input', (e) => {
   rerender();
 });
 
+// M64 M8 — battlefield camera state (see syncBfCamera) and the versus
+// drag preview; declared before rerender so no call can hit the TDZ.
+const BF_ZOOM_MIN = 0.5;   // relative to "fit the whole grid"
+const BF_ZOOM_MAX = 3.0;
+const BF_ZOOM_STEP = 1.25;
+const bfCamera = createCamera({ zoom: 1, minZoom: 0.05, maxZoom: 8 });
+let bfCameraDetach = null;
+let bfFitKey = '';
+
+let versusDragPreview = null;   // previewMove result while dragging in versus
+
 function rerender() {
   if (viewMode === 'party') {
+    syncBfCamera();
     renderBattleScene(canvas, partyComposedCharacters, currentScene, {
+      camera: bfCamera,
       direction: currentDirection, frameIdx: animFrame, positionOf,
       monsterCharacters: buildMonsterCharactersForRender(),
       // M4 — combat overlays
@@ -190,7 +208,9 @@ function rerender() {
       animations: entityAnimations,
       popups: damagePopups,
       // M8 — AoE template (placed + previewed shapes)
-      aoeTemplate: currentAoeTemplate,
+      // M64 M8 — a versus drag previews its path (green / red) in the
+      // AoE outline pass; legacySceneToView does not forward pathPreview.
+      aoeTemplate: versusDragPreview ? pathPreviewOutline(versusDragPreview) : currentAoeTemplate,
       // M27 — Per-action effect descriptors
       effects: effectQueue
     });
@@ -285,6 +305,7 @@ async function enterPartyView() {
   viewMode = 'party';
   result.classList.remove('hidden');     // ensure stage is visible even without a focused character
   document.body.classList.add('party-view-mode');
+  attachBfCamera();
   syncTopnav();
   syncBattlefieldControls();
   renderScenePresetList();
@@ -298,6 +319,7 @@ function exitPartyView() {
   viewMode = 'solo';
   partyComposedCharacters = [];
   document.body.classList.remove('party-view-mode');
+  detachBfCamera();
   syncTopnav();
   setStatus('Single character view.', 'ok');
   // If a character was loaded before party view, re-render them.
@@ -312,28 +334,74 @@ function syncTopnav() {
     b.classList.toggle('active', b.dataset.view === name));
 }
 
-// Battlefield zoom (party-view only). The CSS variable --bf-zoom on
-// .sprite-stage scales the displayed canvas; the drawing buffer stays
-// at full resolution and canvasEventToPixels already converts clicks
-// from CSS pixels back to buffer coords, so hit-testing keeps working
-// at any zoom.
-let bfZoom = 1.0;
-const BF_ZOOM_MIN = 0.5;
-const BF_ZOOM_MAX = 3.0;
-const BF_ZOOM_STEP = 0.25;
+// M64 M8 — Battlefield camera (party-view only). E5's map/camera.js
+// replaces the old --bf-zoom CSS scale: the canvas is sized to its CSS
+// box (viewport × devicePixelRatio) and the camera's pan/zoom transform
+// is applied while drawing, so a zoomed-in grid stays crisp and pointer
+// hit-testing goes through the camera's inverse (canvasEventToPixels).
+// Wheel zooms about the cursor; middle/right drag, Alt+drag or
+// Space+drag pans; the − / + / Fit buttons drive the same camera.
+function bfWorldSize() {
+  return { w: currentScene.cols * WORLD_CELL_PX, h: currentScene.rows * WORLD_CELL_PX };
+}
 
-function applyBfZoom(next) {
-  bfZoom = Math.max(BF_ZOOM_MIN, Math.min(BF_ZOOM_MAX, next));
-  const stage = document.querySelector('.sprite-stage');
-  if (stage) stage.style.setProperty('--bf-zoom', String(bfZoom));
+/** Zoom that fits the whole grid across the canvas width. */
+function bfFitZoom() {
+  return (bfCamera.viewW || 1) / (currentScene.cols * WORLD_CELL_PX);
+}
+
+function syncBfZoomLabel() {
   const pct = document.getElementById('bf-zoom-pct');
-  if (pct) pct.textContent = `${Math.round(bfZoom * 100)}%`;
+  if (pct) pct.textContent = `${Math.round((bfCamera.zoom / bfFitZoom()) * 100)}%`;
+}
+
+/** Size the camera viewport to the canvas's CSS box; refit when the box or grid changes. */
+function syncBfCamera() {
+  const cols = currentScene.cols;
+  const rows = currentScene.rows;
+  const cssW = Math.max(1, Math.round(canvas.clientWidth || cols * currentScene.cellSize * currentScene.scale));
+  const cssH = Math.max(1, Math.round(cssW * rows / cols));
+  const key = `${cssW}x${cssH}:${cols}x${rows}`;
+  if (key === bfFitKey) return;
+  const factor = bfFitKey ? bfCamera.zoom / bfFitZoom() : 1;
+  bfFitKey = key;
+  Object.assign(bfCamera, { viewW: cssW, viewH: cssH, dpr: globalThis.devicePixelRatio || 1 });
+  const fit = bfFitZoom();
+  Object.assign(bfCamera, { minZoom: fit * BF_ZOOM_MIN, maxZoom: fit * BF_ZOOM_MAX });
+  Object.assign(bfCamera, fitToGrid(bfCamera, cols, rows, WORLD_CELL_PX));
+  if (factor !== 1) setBfZoom(factor, { render: false });
+  syncBfZoomLabel();
+}
+
+/** Zoom to `factor` × fit about the viewport centre. */
+function setBfZoom(factor, { render = true } = {}) {
+  const target = bfFitZoom() * Math.max(BF_ZOOM_MIN, Math.min(BF_ZOOM_MAX, factor));
+  const { w, h } = bfWorldSize();
+  Object.assign(bfCamera, clampCamera(zoomAt(bfCamera, bfCamera.viewW / 2, bfCamera.viewH / 2, target / bfCamera.zoom), w, h));
+  syncBfZoomLabel();
+  if (render) rerender();
+}
+
+function attachBfCamera() {
+  if (bfCameraDetach) return;
+  bfCameraDetach = attachCameraControls(canvas, bfCamera, () => { syncBfZoomLabel(); rerender(); }, { worldSize: bfWorldSize });
+}
+
+function detachBfCamera() {
+  if (bfCameraDetach) { bfCameraDetach(); bfCameraDetach = null; }
+  bfFitKey = '';
 }
 
 document.addEventListener('click', (e) => {
-  if (e.target?.id === 'bf-zoom-in')  applyBfZoom(bfZoom + BF_ZOOM_STEP);
-  else if (e.target?.id === 'bf-zoom-out') applyBfZoom(bfZoom - BF_ZOOM_STEP);
-  else if (e.target?.id === 'bf-zoom-fit') applyBfZoom(1.0);
+  if (viewMode !== 'party') return;
+  const factor = bfCamera.zoom / bfFitZoom();
+  if (e.target?.id === 'bf-zoom-in') setBfZoom(factor * BF_ZOOM_STEP);
+  else if (e.target?.id === 'bf-zoom-out') setBfZoom(factor / BF_ZOOM_STEP);
+  else if (e.target?.id === 'bf-zoom-fit') {
+    Object.assign(bfCamera, fitToGrid(bfCamera, currentScene.cols, currentScene.rows, WORLD_CELL_PX));
+    syncBfZoomLabel();
+    rerender();
+  }
 });
 
 // M9 — Top-level nav. Three views: Character (single-sprite view, the
@@ -1461,6 +1529,15 @@ let dragState = null;   // { id, snap, offsetCol, offsetRow }
 
 function canvasEventToPixels(event) {
   const rect = canvas.getBoundingClientRect();
+  if (viewMode === 'party' && bfCamera.viewW > 0 && rect.width > 0) {
+    // M64 M8 — screen → world through the camera, then world → the
+    // legacy scene pixel space (cellSize × scale per cell) the hit tests use.
+    const sx = (event.clientX - rect.left) * (bfCamera.viewW / rect.width);
+    const sy = (event.clientY - rect.top) * (bfCamera.viewH / rect.height);
+    const w = screenToWorld(bfCamera, sx, sy);
+    const k = (currentScene.cellSize * currentScene.scale) / WORLD_CELL_PX;
+    return { px: w.x * k, py: w.y * k };
+  }
   // Canvas internal coords account for CSS scaling (canvas.width might
   // be larger than its rendered width). Convert event coords to internal.
   const scaleX = canvas.width  / rect.width;
@@ -1471,8 +1548,53 @@ function canvasEventToPixels(event) {
   };
 }
 
+/** Pointer → grid cell (legacy scene pixel space). */
+function canvasEventToCell(event) {
+  const { px, py } = canvasEventToPixels(event);
+  const cellPx = currentScene.cellSize * currentScene.scale;
+  return { col: Math.floor(px / cellPx), row: Math.floor(py / cellPx) };
+}
+
+// M64 M8 — versus drags go through the intent adapters: the pointer only
+// previews (client/intents.js previewMove, green within speed, red over
+// budget or blocked); on release a legal move becomes a turn.act-shaped
+// move intent that applyVersusIntent applies. An illegal drag changes
+// nothing. Outside a fight (sandbox) tokens still move freely.
+
+function versusStateForDrag() {
+  const { state, sheets } = liveEncounterState({ party: partyComposedCharacters, scene: currentScene, includeDown: true });
+  state.grid.terrain = currentScene.terrain && typeof currentScene.terrain.flags === 'string' ? currentScene.terrain : null;
+  return { state, sheets };
+}
+
+function pathPreviewOutline(preview) {
+  const ok = preview.legal;
+  return {
+    cells: preview.cells,
+    color: ok ? 'rgba(74,222,128,0.22)' : 'rgba(248,113,113,0.25)',
+    strokeColor: ok ? 'rgba(74,222,128,0.95)' : 'rgba(248,113,113,0.95)'
+  };
+}
+
+/**
+ * The forge's local intent sink (the online table sends the same intent
+ * to the server instead). Applies a validated move intent to the scene.
+ * @param {'pc'|'monster'} kind
+ * @param {string} id
+ * @param {{t: string, p: {plan: {kind: string, moveTo: {col: number, row: number}}}}} intent
+ */
+function applyVersusIntent(kind, id, intent) {
+  const to = intent?.p?.plan?.moveTo;
+  if (intent?.t !== 'turn.act' || intent.p.plan.kind !== 'move' || !to) return;
+  if (kind === 'pc') setPosition(currentScene, id, to.col, to.row);
+  else updateMonsterPosition(currentScene, id, to.col, to.row);
+  saveScene(currentScene);
+}
+
 canvas.addEventListener('pointerdown', (e) => {
   if (viewMode !== 'party') return;
+  // M64 M8 — middle/right button and Alt+drag belong to the camera (pan).
+  if (e.button !== 0 || e.altKey) return;
   // M26 — Read-only mode (recipient of a shared scene snapshot)
   // disables all canvas interactions; the page is for viewing only.
   if (document.body.classList.contains('readonly-mode')) return;
@@ -1592,12 +1714,16 @@ canvas.addEventListener('pointermove', (e) => {
     }
     return;
   }
-  const { px, py } = canvasEventToPixels(e);
-  const cellPx = currentScene.cellSize * currentScene.scale;
-  const target = clampPosition(currentScene, {
-    col: Math.floor(px / cellPx),
-    row: Math.floor(py / cellPx)
-  });
+  const target = clampPosition(currentScene, canvasEventToCell(e));
+  if (versusActive) {
+    // M64 M8 — preview only; the scene changes on release, if legal.
+    const last = dragState.target;
+    if (last && last.col === target.col && last.row === target.row) return;
+    dragState.target = target;
+    versusDragPreview = previewMove(versusStateForDrag().state, String(dragState.id), target);
+    rerender();
+    return;
+  }
   if (dragState.kind === 'pc') {
     setPosition(currentScene, dragState.id, target.col, target.row);
   } else {
@@ -1610,7 +1736,27 @@ canvas.addEventListener('pointerup', (e) => {
   if (!dragState || dragState.pointerId !== e.pointerId) return;
   canvas.releasePointerCapture(e.pointerId);
   canvas.style.cursor = 'default';
+  const drag = dragState;
   dragState = null;
+  if (versusActive) {
+    versusDragPreview = null;
+    if (drag.target) {
+      const { state, sheets } = versusStateForDrag();
+      const r = moveIntent(state, { actorId: String(drag.id), turnId: 'versus-local', dest: drag.target, sheets });
+      if (r.ok) {
+        applyVersusIntent(drag.kind, drag.id, r.intent);
+        const oas = r.preview.oaTriggers.length;
+        setCombatStatus(`Moved ${r.preview.costFt} ft${oas ? ` — provokes ${oas} opportunity attack${oas === 1 ? '' : 's'}` : ''}.`);
+      } else if (r.preview.reason !== 'no-move') {
+        const why = r.preview.reason === 'over-budget'
+          ? `${r.preview.costFt} ft is beyond ${r.preview.budgetFt} ft of movement`
+          : (r.reason || r.preview.reason);
+        setCombatStatus(`Can't move there: ${why}.`);
+      }
+    }
+    rerender();
+    return;
+  }
   saveScene(currentScene);
 });
 
@@ -1618,6 +1764,7 @@ canvas.addEventListener('pointercancel', () => {
   if (dragState) {
     canvas.style.cursor = 'default';
     dragState = null;
+    if (versusDragPreview) { versusDragPreview = null; rerender(); }
   }
 });
 

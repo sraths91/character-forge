@@ -29,6 +29,12 @@
  * resolve. E2 adds the same intent on its branch; one copy survives the
  * merge.
  *
+ * v1 additive revisions (no PROTOCOL_VERSION bump; old clients never
+ * send the new fields, old servers ignore nothing they validate):
+ *   v1.1 (2026-10-15, E2 M8) — `dm.entity.patch.override` (bool): the
+ *        DM's free move; the server applies `position` as a teleport
+ *        (no speed budget, no opportunity attacks).
+ *
  * Client payloads are strict (unknown fields rejected); server payloads
  * enforce required fields and allow additive ones.
  *
@@ -45,6 +51,8 @@ import { EVENT_TYPES, REACTION_KINDS, ENCOUNTER_OUTCOMES, validateEvent } from '
 
 /** Wire protocol version; every message's `v` must equal this. */
 export const PROTOCOL_VERSION = 1;
+/** Additive minor revision of protocol v1 (see the header). */
+export const PROTOCOL_MINOR = 1;
 /** Longest accepted client message id. */
 export const MAX_CID_LENGTH = 64;
 
@@ -189,7 +197,8 @@ const INTENT_PAYLOADS = {
     hpTemp: optional(int(0)),
     addConditions: optional(arrayOf(str({ maxLength: 64 }))),
     removeConditions: optional(arrayOf(str({ maxLength: 64 }))),
-    position: optional(POS)
+    position: optional(POS),
+    override: optional(bool())   // v1.1 — DM free move (teleport)
   }),
   'dm.entity.add': shape({ entity: shape({}, LOOSE), initiativeScore: optional(num()) }),
   'dm.entity.remove': shape({ entityId: ID }),
