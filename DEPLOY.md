@@ -13,10 +13,15 @@ Single Express server that:
   `<data dir>/maps/`
 
 Rooms live in process memory and the volume forbids replicas, so this is
-**one instance** (`numReplicas: 1` in `railway.json`). Every deploy
-disconnects every table for the few seconds the swap takes; clients
-reconnect with backoff. Avoid deploying while a session is running
-(`GET /api/health` shows `sockets`).
+**one instance** (`numReplicas: 1` in `railway.json`).
+
+> **Deploy window.** Every deploy disconnects every table for the few
+> seconds the swap takes; clients reconnect with backoff, and any running
+> encounter comes back **paused** until its DM resumes it (see Recovery
+> below). A deploy that changes the engine version (e.g. switching
+> `CF_ENGINE`, or the stub → real engine upgrade) **abandons** every live
+> encounter instead. Deploy between sessions: check `GET /api/health`
+> first and wait for `sockets: 0` (and `connections: 0`).
 
 ## Railway Deployment
 
@@ -32,6 +37,7 @@ Set in the Railway service → Variables:
 |---|---|---|---|
 | `NODE_ENV` | yes | — | `production` — enables `dist/` static serving and the volume guard |
 | `CF_MULTIPLAYER` | no | unset | `1` enables online tables: the ws gateway at `/ws`, room recovery on boot, the janitor; also disables the global `GET /api/characters` list and requires a room token to write the shared item-sprite cache |
+| `CF_ENGINE` | no | `real` | Which engine runs online encounters: `real` (the combat engine through the turn manager — production) or `stub` (a tiny deterministic rules stand-in for tests and tooling). Any other value fails startup. Each engine stamps its version on the encounters it builds (real = 2, stub = 1); on boot an encounter built by the other one is marked `abandoned`, so only change this between sessions |
 | `ALLOWED_ORIGINS` | prod | — | Comma-separated origins, e.g. `https://character-forge-gh-production.up.railway.app,https://cf.example.com`. Used for CORS **and** for the WebSocket `Origin` check (403 otherwise). A socket from the page's own host is always allowed, so list custom domains and any other front-ends |
 | `CF_DATA_DIR` | no | `RAILWAY_VOLUME_MOUNT_PATH`, else `dirname(CF_DB_PATH)` | Directory for persistent data: the DB when `CF_DB_PATH` is unset, and uploaded maps (`maps/<roomId>/`). Must be on the volume in production |
 | `CF_DB_PATH` | no | `<data dir>/character-forge.db`, else `<repo>/character-forge.db` | Explicit SQLite file path. Leave unset on Railway to derive it from the volume, or set it under the mount, e.g. `/app/data/character-forge.db` |
@@ -61,23 +67,35 @@ rollback to an older build after a schema change needs the matching backup.
 Railway uses `GET /api/health` (configured in `railway.json`). It runs
 `SELECT 1` against the database and returns:
 ```json
-{ "ok": true, "time": 1715432100000, "migrationVersion": 2, "dataDir": "/app/data", "sockets": 0, "rooms": 0 }
+{ "ok": true, "time": 1715432100000, "migrationVersion": 2, "dataDir": "/app/data", "sockets": 0, "connections": 0, "rooms": 0 }
 ```
-(`sockets` / `rooms` only with `CF_MULTIPLAYER=1`.)
+(`sockets` / `connections` / `rooms` only with `CF_MULTIPLAYER=1`.)
+`sockets` counts authenticated table members online; `connections` counts
+every open WebSocket, including ones that have not sent `hello` yet;
+`rooms` is the number of rooms loaded in memory.
 If the database is unusable it returns `503 { "ok": false, "error": "database unavailable" }`.
 Railway auto-restarts the service if this stops responding.
 
 ### Multiplayer operations (`CF_MULTIPLAYER=1`)
 - **WebSocket**: `wss://<host>/ws`, same port as HTTP (Railway supports
   it natively). Auth is the first message (`hello {token}`), never the URL.
-  Limits: 16 KiB frames, 20 msg/s (burst 40), 30 s heartbeat.
+  Limits: 16 KiB frames, 20 msg/s (burst 40), 30 s heartbeat, at most
+  20 open sockets per client IP (the 21st upgrade gets HTTP 429). In
+  production the client IP is the last `X-Forwarded-For` hop (Railway's
+  edge), the same reading as Express's `trust proxy: 1`.
 - **Shutdown** (SIGTERM, `drainingSeconds: 30`): rooms stop taking intents
   and persist, sockets close with 1012, then HTTP drains and the DB closes
   (WAL checkpoint). A turn in flight is replayed on the next boot.
-- **Recovery**: on boot every live encounter is reloaded; a running one
-  comes back **paused** and continues when the DM presses resume
-  (`dm.resume`) once the players have reconnected. An encounter saved by
-  an incompatible engine build is marked `abandoned`.
+- **Recovery**: on boot every live encounter is reloaded. One still in
+  setup comes back in setup. A running one always comes back **paused**
+  (room status `paused`), whatever its state before the restart, and
+  nothing happens until the DM sends resume (`dm.resume`), so the table
+  has time to reconnect first. On resume, a turn that was interrupted
+  mid-resolution is replayed from the event log with its recorded
+  prompt answers, then play continues live. Character sheets for the
+  encounter are reloaded from the room's seats (or the character cache).
+  An encounter saved by a different engine version (`CF_ENGINE`) is
+  marked `abandoned` and the room returns to the lobby.
 - **Janitor** (hourly): deletes event logs of encounters ended > 7 days
   ago, rooms idle 30 days (with their maps), and checkpoints the WAL
   above 64 MB.
