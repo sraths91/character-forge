@@ -7,7 +7,8 @@ import assert from 'node:assert/strict';
 
 import { startMultiplayerServer } from '../multiplayer.js';
 import { createRoomService } from '../rooms/service.js';
-import { originAllowed } from '../ws/gateway.js';
+import { originAllowed, clientIp } from '../ws/gateway.js';
+import WebSocket from 'ws';
 import { createStubEngine } from '../rooms/engine-port.js';
 import { viewFor, stateHash } from '../rooms/view.js';
 import { stateHash as sharedStateHash } from '../../src/js/shared/state-hash.js';
@@ -191,6 +192,44 @@ test('bufferedAmount over the cap terminates the socket', async () => {
     const done = closed(ws);
     ws.send(JSON.stringify({ v: 1, t: 'hello', cid: 'h', p: { token: t.players[0].token, protocol: 1 } }));
     assert.equal((await done).code, 1006);
+  } finally { await srv.close(); }
+});
+
+test('per-IP socket cap: the next upgrade from that IP gets 429; a closed socket frees its slot', async () => {
+  const srv = await boot({ gatewayOpts: { maxPerIp: 2 } });
+  try {
+    const a = await rawSocket(srv.url);
+    const b = await rawSocket(srv.url);
+    assert.deepEqual([a.status, b.status], [101, 101]);
+    const health = (await api(srv.url, '/api/health')).body;
+    assert.deepEqual([health.connections, health.sockets], [2, 0], 'pre-hello sockets count as connections, not members');
+    const c = await rawSocket(srv.url);
+    assert.equal(c.status, 429);
+    const gone = closed(a.ws);
+    a.ws.terminate();
+    await gone;
+    await new Promise(r => setTimeout(r, 20));
+    const d = await rawSocket(srv.url);
+    assert.equal(d.status, 101);
+    for (const x of [b, d]) x.ws.terminate();
+  } finally { await srv.close(); }
+});
+
+test('per-IP socket cap behind the proxy counts the last X-Forwarded-For hop', async () => {
+  const srv = await boot({ gatewayOpts: { maxPerIp: 1, trustProxy: true } });
+  const open = (xff) => new Promise((resolve) => {
+    const ws = new WebSocket(srv.url.replace(/^http/, 'ws') + '/ws', { origin: 'http://localhost:3100', headers: { 'x-forwarded-for': xff } });
+    ws.once('open', () => resolve({ ws, status: 101 }));
+    ws.once('unexpected-response', (_q, res) => { resolve({ ws, status: res.statusCode }); res.resume(); });
+    ws.once('error', () => resolve({ ws, status: 0 }));
+  });
+  try {
+    const a = await open('1.1.1.1, 10.0.0.1');
+    const b = await open('2.2.2.2, 10.0.0.2');
+    const c = await open('9.9.9.9, 10.0.0.1');
+    assert.deepEqual([a.status, b.status, c.status], [101, 101, 429]);
+    assert.equal(clientIp({ headers: { 'x-forwarded-for': 'a, b' }, socket: { remoteAddress: 'peer' } }, false), 'peer');
+    for (const x of [a, b, c]) x.ws.terminate();
   } finally { await srv.close(); }
 });
 

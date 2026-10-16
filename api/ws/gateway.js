@@ -7,7 +7,10 @@
 //             close 4401. The token is never in the URL. A second socket for
 //             the same member supersedes the first (4409, done by the room).
 //   limits    maxPayload 16 KiB (ws closes 1009); token bucket 20 msg/s with
-//             a burst of 40 (close 1008); bufferedAmount > 1 MiB → terminate.
+//             a burst of 40 (close 1008); bufferedAmount > 1 MiB → terminate;
+//             at most 20 open sockets per client IP (HTTP 429 at upgrade).
+//             Behind Railway's edge (production) the client IP is the last
+//             X-Forwarded-For hop, as Express's `trust proxy: 1` reads it.
 //   heartbeat ping every 30 s, terminate on a missed pong (README pattern).
 //   messages  every frame parsed and validated with shared/protocol.js, then
 //             routed to the member's room; per-message try/catch.
@@ -23,6 +26,20 @@ export const HELLO_TIMEOUT_MS = 5000;
 export const HEARTBEAT_MS = 30_000;
 export const MAX_BUFFERED = 1024 * 1024;
 export const RATE = Object.freeze({ perSec: 20, burst: 40 });
+export const MAX_SOCKETS_PER_IP = 20;
+
+/**
+ * The client IP for per-IP limits: with `trustProxy` the hop the edge
+ * appended to X-Forwarded-For (the last entry), else the socket peer.
+ * @param {import('node:http').IncomingMessage} req
+ * @param {boolean} trustProxy
+ * @returns {string}
+ */
+export function clientIp(req, trustProxy) {
+  const xff = req.headers['x-forwarded-for'];
+  if (trustProxy && typeof xff === 'string' && xff.trim()) return xff.split(',').at(-1).trim();
+  return req.socket.remoteAddress || 'unknown';
+}
 
 /**
  * Is this Origin allowed to open a socket?
@@ -53,15 +70,20 @@ export function originAllowed(origin, { allowed, host, production }) {
  * @param {number} [o.maxPayload=MAX_PAYLOAD]
  * @param {number} [o.maxBuffered=MAX_BUFFERED]
  * @param {{perSec: number, burst: number}} [o.rate=RATE]
+ * @param {number} [o.maxPerIp=MAX_SOCKETS_PER_IP]  open sockets per client IP
+ * @param {boolean} [o.trustProxy]  read the client IP from X-Forwarded-For (default: production)
  * @param {() => number} [o.now=Date.now]
  * @returns {{wss: WebSocketServer, connections: () => number, close: (code?: number) => Promise<void>}}
  */
 export function attachGateway({
   httpServer, registry, service, env = process.env, log = () => {},
   heartbeatMs = HEARTBEAT_MS, helloTimeoutMs = HELLO_TIMEOUT_MS, maxPayload = MAX_PAYLOAD,
-  maxBuffered = MAX_BUFFERED, rate = RATE, now = Date.now
+  maxBuffered = MAX_BUFFERED, rate = RATE, maxPerIp = MAX_SOCKETS_PER_IP, trustProxy, now = Date.now
 }) {
   const production = env.NODE_ENV === 'production';
+  const behindProxy = trustProxy ?? production;
+  /** client IP → sockets open or upgrading (released when the TCP socket closes). */
+  const perIp = new Map();
   const allowed = (env.ALLOWED_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean);
   const wss = new WebSocketServer({ noServer: true, maxPayload, clientTracking: true, perMessageDeflate: false });
   /** ws → conn, for the heartbeat. */
@@ -85,6 +107,19 @@ export function attachGateway({
       socket.destroy();
       return;
     }
+    const ip = clientIp(req, behindProxy);
+    const open = perIp.get(ip) || 0;
+    if (open >= maxPerIp) {
+      log('warn', 'ws: per-IP socket cap reached', { ip, open, maxPerIp });
+      socket.write('HTTP/1.1 429 Too Many Requests\r\nConnection: close\r\n\r\n');
+      socket.destroy();
+      return;
+    }
+    perIp.set(ip, open + 1);
+    socket.once('close', () => {
+      const n = (perIp.get(ip) || 1) - 1;
+      if (n > 0) perIp.set(ip, n); else perIp.delete(ip);
+    });
     socket.removeListener('error', onSocketError);
     wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req));
   }
@@ -94,7 +129,7 @@ export function attachGateway({
     const conn = {
       id: newId('c_'),
       ws,
-      ip: req.socket.remoteAddress,
+      ip: clientIp(req, behindProxy),
       member: null,      // {participantId, roomId, role}
       room: null,
       alive: true,

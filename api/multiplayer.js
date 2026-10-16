@@ -41,12 +41,14 @@ export async function startMultiplayerServer({
   // (active ones paused, resuming on the DM's dm.resume).
   const recovered = registry.recover();
   if (recovered) log('info', 'rooms recovered', { rooms: recovered });
+  let gateway = null;
   const app = createApp({ db, env, dataDir, log, rooms: service, ...appOpts });
-  app.locals.health = () => ({ sockets: registry.socketCount(), rooms: registry.size });
+  // sockets: authenticated room members online; connections: every open
+  // ws, including ones that have not said hello yet.
+  app.locals.health = () => ({ sockets: registry.socketCount(), connections: gateway ? gateway.connections() : 0, rooms: registry.size });
   const janitor = janitorOpts === false ? null
     : createJanitor({ db, dataDir: dataDir ?? (db.path && db.path !== ':memory:' ? dirname(resolve(db.path)) : null), registry, log, ...janitorOpts });
   janitor?.start();
-  let gateway = null;
   const srv = await startServer({
     db, env, dataDir, port, host, log, app, ...serverOpts,
     // Graceful shutdown v2 (B9, P0-12), in plan order: rooms stop taking
