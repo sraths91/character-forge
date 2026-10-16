@@ -26,6 +26,44 @@ goldens). Found during the build:
 - The T10 import ban is scoped around `live-bridge.js` until T5 splits
   `scene-state.js` into a pure model + storage adapter.
 
+**2026-10-16 — Phase 1 built: Waves 2, 3 and 4 merged to main**
+(d9d143e; 92 commits since the plan; 2,008 tests, 1 todo; lint 3/3;
+CI frozen-3d gate green). E6's acceptance pass: 57 of 63 task IDs
+landed, 6 partial, 0 missing (R9–R11 are phase 1.5 by design). The
+end-to-end smoke test boots the real server with the real engine,
+drives a DM and a player over real sockets through create → join →
+import → claim → setup → start → attack → cinema → `turn.ended`, and
+asserts identical `seq` and `stateHash` on both clients; the restart
+variant SIGTERMs mid-encounter and restores a `paused` snapshot with
+the same hash on the same DB.
+
+Partial / known gaps carried into phase 1.5 (owners in brackets):
+- **Simulator hot loop regressed ~20x** (27–52 ms → 720–875 ms for
+  200×4v4; >6 s under the parallel runner). The timing test is a
+  `todo` with the bound unchanged. [E1, bisecting]
+- **CI Node 24 job red on Linux only** since efcb9a0: `migration-0002`
+  and `rooms-http` test files die before reporting; both pass on
+  macOS under 24.21/24.22. [E3, reproducing via CI on `p1/e3-server`]
+- Fog: `entity.updated` and engine events are not yet fog-filtered,
+  and players under fog get a `stateHash` of the unfiltered state. Fog
+  is a phase 2 feature; the hooks exist. [E3]
+- The client's `stateHash` check is off because the event stream does
+  not carry resource ledgers; the client resyncs from snapshots. [E2/E1]
+- PC sheets are re-read from seats / the character cache after a
+  restart rather than persisted with the encounter. [E3]
+- Open5e monsters still fight with preset AC/attacks (R11, phase 1.5);
+  the encounter builder labels it "fights as: <preset>". [E4]
+- Large creatures are 1×1; 5-ft diagonals only. (Owner defaults.)
+- iOS tint check (Safari `ctx.filter` fix, M7) is manual and pending
+  a real device. [owner]
+- The `?fake=1` demo is single-tab (DM + AI seats); multi-browser
+  play needs the real server. Initiative reorder is ↑/↓, not drag.
+- `api/server.js` turned `PORT=0` into 3101 (fix in flight). [E3]
+- Warlock pact-slot shape and per-weapon proficiency ids are
+  unverified until real exports arrive. [owner → E4]
+- The AI casts feat-granted spells (Misty Step) from a slot instead of
+  the feat's uses; `validateIntent` already checks uses. [E1]
+
 **Re-partition for Waves 2–4** (file ownership wins over the original
 task owner): E1 takes R1, R2, R3, R12, R13 (engine/roll files) in
 Wave 2; E4 does R5, R6, R14 now and R4, R7, R8 after E1b merges;
