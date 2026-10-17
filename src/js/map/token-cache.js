@@ -7,7 +7,8 @@
  * distinct look is baked ONCE into a 64×64 offscreen canvas and a frame
  * costs one drawImage per token.
  *
- * Key: (appearanceKey, direction, anim, frame, status) where status is
+ * Key: (appearanceKey, direction, anim, frame, status) where direction is
+ * the token's own `facing` when it has one (`directionFor`), and status is
  * `tokenStatusKey(token)` — HP bucket, worst condition and the condition
  * set (glyphs), temp-HP and concentration auras. `frame` is reduced
  * modulo the look's animation cycle (learned from the first bake), so an
@@ -22,6 +23,17 @@
 import { tokenStatusKey } from './view.js';
 
 const DEFAULT_MAX_ENTRIES = 512;
+
+/**
+ * The sprite row a token is baked and drawn with: its own `facing`, else
+ * the frame-wide default (`local.direction`), else south.
+ * @param {{facing?: string}} token
+ * @param {{direction?: string}} [opts]
+ * @returns {string}
+ */
+export function directionFor(token, opts = {}) {
+  return token?.facing || opts?.direction || 'south';
+}
 const FALLBACK_CYCLE = 72;   // lcm of the LPC strip lengths (2, 4, 6, 8, 9) until a bake reports the real one
 
 /**
@@ -35,7 +47,9 @@ export function createTokenCache({ bake, maxEntries = DEFAULT_MAX_ENTRIES } = {}
   const lastByEntity = new Map(); // entity id → last canvas drawn (avoids placeholder flicker)
   const stats = { bakes: 0, hits: 0, misses: 0, failures: 0 };
 
-  function keyFor(token, { direction = 'south', anim = null, frameIdx = 0 } = {}) {
+  function keyFor(token, opts = {}) {
+    const { anim = null, frameIdx = 0 } = opts;
+    const direction = directionFor(token, opts);
     const base = `${token.appearanceKey}|${direction}|${anim || 'idle'}`;
     const cycle = cycles.get(base) || FALLBACK_CYCLE;
     const frame = ((Math.floor(frameIdx) % cycle) + cycle) % cycle;

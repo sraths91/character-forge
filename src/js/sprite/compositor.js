@@ -6,7 +6,7 @@ import { asTerrain } from '../map/terrain.js';
 import { WORLD_CELL_PX, MAX_CANVAS_PIXELS, createCamera, cameraTransform, sizeCanvasToViewport, visibleCellRange } from '../map/camera.js';
 import { legacySceneToView, characterForToken } from '../map/view.js';
 import { MONSTER_PRESETS, buildMonsterCharacter } from '../scene/monster-presets.js';
-import { createTokenCache } from '../map/token-cache.js';
+import { createTokenCache, directionFor } from '../map/token-cache.js';
 import { isRevealed } from '../map/fog.js';
 import { applyFilterMatrix, parseCssFilter } from './filter-matrix.js';
 
@@ -66,7 +66,7 @@ export async function renderSprite(canvas, character, { scale = 6, direction = '
  *         dm: {showTerrain, showHidden, showFogMask},
  *         showTerrain,   // players: blocked/difficult overlay
  *         grid: {visible, color},
- *         direction, frameIdx,                 // sprite facing + animation frame
+ *         direction, frameIdx,                 // default sprite facing (token.facing wins) + animation frame
  *         appearances,   // Map<appearanceKey, character record>
  *         resolveAppearance(key, token),       // optional; default handles monster:<slug>
  *         requestRedraw(),                     // called when an async asset becomes ready
@@ -105,9 +105,9 @@ export async function prepareBattleView(view, local = {}) {
   const src = view.map?.kind === 'image' ? (view.map.url || view.map.image) : null;
   if (src) jobs.push(loadCachedImage(src).catch(() => null));
   const cache = local.tokenCache || defaultTokenCache;
-  const frameOpts = tokenFrameOpts(local);
   for (const token of view.tokens) {
     if (token.hidden && !local.dm?.showHidden) continue;
+    const frameOpts = tokenFrameOpts(local, token);
     const base = resolveTokenCharacter(token, local);
     if (!base) continue;
     const key = cache.keyFor(token, frameOpts);
@@ -122,8 +122,9 @@ export async function prepareBattleView(view, local = {}) {
   await Promise.all(jobs);
 }
 
-function tokenFrameOpts(local) {
-  return { direction: local.direction || 'south', anim: local.anim || null, frameIdx: local.frameIdx || 0 };
+/** Bake/draw options for one token: its facing wins over local.direction. */
+function tokenFrameOpts(local, token) {
+  return { direction: directionFor(token, local), anim: local.anim || null, frameIdx: local.frameIdx || 0 };
 }
 
 const W = WORLD_CELL_PX;
@@ -197,7 +198,6 @@ function renderBattleView(canvas, view, local) {
   const showHidden = !!local.dm?.showHidden;
   const drawnPos = new Map();
   const cache = local.tokenCache || defaultTokenCache;
-  const frameOpts = tokenFrameOpts(local);
   const bakesBefore = cache.stats.bakes;
   let pendingBakes = 0;
   let drawn = 0;
@@ -209,7 +209,9 @@ function renderBattleView(canvas, view, local) {
     drawnPos.set(token.id, { col: token.col, row: token.row });
     if (local.ownEntityId != null && String(local.ownEntityId) === token.id) drawOwnMarker(ctx, x, y, px);
     // M64 M7 — one drawImage of a baked 64×64 bitmap per token. A miss
-    // bakes in the background and keeps showing the previous bitmap.
+    // bakes in the background and keeps showing the previous bitmap
+    // (so a facing change never flashes a placeholder).
+    const frameOpts = tokenFrameOpts(local, token);
     const key = cache.keyFor(token, frameOpts);
     let bmp = cache.get(key);
     if (bmp) {

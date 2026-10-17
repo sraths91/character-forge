@@ -28,13 +28,21 @@
  *     conditions: string[],             // condition ids
  *     worstCondition: string|null,      // the one that tints the body
  *     concentration: string|null,       // spell id / name
- *     hidden: boolean
+ *     hidden: boolean,
+ *     facing?: 'north'|'east'|'south'|'west'   // sprite row (see below)
  *   }]                                  // sorted by row, then col, then id (draw order)
  * }
  *
  * The local (per-viewer) half is NOT in the view; see `renderBattleScene`.
  * Pure, Node-safe, no DOM.
+ *
+ * v1 additive fields (phase 1.5, E5 — optional, no version bump):
+ *   tokens[].facing  'north'|'east'|'south'|'west' — from the client's
+ *                    `local.facings` (map/facing.js) or a persisted
+ *                    `entity.facing`; absent ⇒ the renderer's default.
  */
+
+import { facingFor } from './facing.js';
 
 /** RenderView version. */
 export const RENDER_VIEW_VERSION = 1;
@@ -203,9 +211,11 @@ function compareTokens(a, b) {
  * @param {object} [appearanceCache] — createAppearanceCache(), a Map or a
  *   plain object of characterId → appearanceKey; PCs not in it get the
  *   placeholder key `pc:<characterId>`
+ * @param {{facings?: Record<string, string>|Map<string, string>}} [opts] —
+ *   `facings` is the client-held entity id → direction map (map/facing.js)
  * @returns {object} RenderView
  */
-export function projectBattleView(state, appearanceCache = null) {
+export function projectBattleView(state, appearanceCache = null, opts = {}) {
   const grid = state?.grid || {};
   const entities = state?.entities && typeof state.entities === 'object' ? Object.values(state.entities) : [];
   const running = state?.phase === 'running' || state?.phase === 'awaiting-prompt';
@@ -234,6 +244,8 @@ export function projectBattleView(state, appearanceCache = null) {
     };
     if (Number.isFinite(e.hp)) token.hp = e.hp;
     if (Number.isFinite(e.hpMax)) token.hpMax = e.hpMax;
+    const facing = facingFor(opts?.facings, e);
+    if (facing) token.facing = facing;
     tokens.push(token);
   }
   tokens.sort(compareTokens);

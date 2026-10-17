@@ -29,6 +29,10 @@
  *     string ids in `conditions` and the objects in `_conditionMeta`.
  *   - `legendaryBudget` is the REMAINING budget this round (engine
  *     semantics), not a spent counter.
+ *   - v1 additive (M64 phase 1.5, E5 — presentation only, all optional,
+ *     no version bump; the engine ignores them):
+ *       `facing`   'north'|'east'|'south'|'west' — persisted sprite row; the
+ *                  live client derives it from events (map/facing.js)
  */
 
 import {
@@ -48,6 +52,8 @@ export const ENTITY_KINDS = Object.freeze(['pc', 'monster']);
 export const SIDES = Object.freeze(['party', 'hostile']);
 /** Who drives an entity's turn. */
 export const CONTROLLER_TYPES = Object.freeze(['player', 'ai', 'dm']);
+/** Sprite facings (v1 additive, E5 phase 1.5). */
+export const ENTITY_FACINGS = Object.freeze(['north', 'east', 'south', 'west']);
 /** Ability keys used by saves and conditions. */
 export const ABILITIES = Object.freeze(['STR', 'DEX', 'CON', 'INT', 'WIS', 'CHA']);
 /** RNG algorithms the state may name. */
@@ -170,6 +176,7 @@ export const WRAPPER_FIELD_MAP = Object.freeze({
  * @property {Record<string, boolean|number|null>} turnFlags
  * @property {{characterId: string, rev: number|string}|null} [sheetRef]  — PCs
  * @property {{slug: string}|null} [statBlock]                           — monsters (other fields opaque in v1)
+ * @property {'north'|'east'|'south'|'west'} [facing]                    — v1 additive (E5): sprite row
  */
 
 /**
@@ -247,7 +254,9 @@ const ENTITY = shape({
   resources: RESOURCES,
   turnFlags: TURN_FLAGS,
   sheetRef: optional(nullable(shape({ characterId: ID, rev: union(int(0), str()) }))),
-  statBlock: optional(nullable(shape({ slug: str({ maxLength: 128 }) }, { strict: false })))
+  statBlock: optional(nullable(shape({ slug: str({ maxLength: 128 }) }, { strict: false }))),
+  // v1 additive (E5, M64 phase 1.5): presentation-only, optional.
+  facing: optional(oneOf(ENTITY_FACINGS))
 });
 
 const TERRAIN = shape({
