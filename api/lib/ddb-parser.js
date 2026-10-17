@@ -7,6 +7,7 @@
  */
 
 import { primaryWeaponForCharacter } from '../../src/js/anim/primary-weapon.js';
+import { DAMAGE_TYPES, CONDITION_NAMES } from '../../src/js/scene/open5e-normalize.js';
 
 const STAT_NAMES = { 1: 'STR', 2: 'DEX', 3: 'CON', 4: 'INT', 5: 'WIS', 6: 'CHA' };
 
@@ -74,6 +75,7 @@ export function parseCharacter(raw) {
   const spells = parseSpells(raw);
   const savingThrowProficiencies = parseSavingThrowProficiencies(raw);
   const weaponProficiencies = parseWeaponProficiencies(raw);
+  const defenses = parseDamageDefenses(raw);
   const hp = parseHitPoints(raw, abilityScores, level);
   const deathSaves = parseDeathSaves(raw);
   const ddbConditions = parseDdbConditions(raw);
@@ -104,6 +106,14 @@ export function parseCharacter(raw) {
     savingThrowProficiencies,
     // R6 — weapon proficiency slugs from DDB `proficiency` modifiers.
     weaponProficiencies,
+    // M64 phase 1.5 — damage-type defenses from DDB `resistance` /
+    // `immunity` / `vulnerability` modifiers (applyDamage reads the three
+    // lists), condition immunities, and where each came from.
+    resistances: defenses.resistances,
+    immunities: defenses.immunities,
+    vulnerabilities: defenses.vulnerabilities,
+    conditionImmunities: defenses.conditionImmunities,
+    defenseSources: defenses.sources,
     // Note: skinTone is intentionally NOT set here. The renderer's
     // inferSkinTone() consults character.appearance.skin first (via the
     // E1 appearance-parser) and falls back to a race default — setting
@@ -1276,6 +1286,84 @@ export function parseWeaponProficiencies(raw) {
       || m.entityTypeId === WEAPON_ENTITY_TYPE_ID || SRD_WEAPON_SLUGS.has(sub);
     if (isWeapon && !out.includes(sub)) out.push(sub);
   }
+  return out;
+}
+
+const DEFENSE_KIND = { resistance: 'resistances', immunity: 'immunities', vulnerability: 'vulnerabilities' };
+const DEFENSE_BUCKETS = ['race', 'class', 'feat', 'background', 'item'];
+
+/**
+ * The damage / condition types a DDB defense modifier names. `subType` is
+ * usually one type ('fire', 'poisoned'); compound slugs
+ * ('bludgeoning-piercing-and-slashing-...') yield every type they name.
+ * @param {string} subType
+ * @returns {{damage: string[], conditions: string[]}}
+ */
+function defenseTypesOf(subType) {
+  const words = String(subType || '').toLowerCase().split(/[^a-z]+/).filter(Boolean);
+  return {
+    damage: DAMAGE_TYPES.filter(t => words.includes(t)),
+    conditions: CONDITION_NAMES.filter(c => words.includes(c))
+  };
+}
+
+/**
+ * Damage resistances / immunities / vulnerabilities and condition
+ * immunities from DDB `modifiers.{race,class,feat,background,item}` rows
+ * of type `resistance` / `immunity` / `vulnerability`. Item rows count
+ * only while the item is equipped (and attuned, when it needs it). A row
+ * with a `restriction` ("while raging", "from nonmagical attacks") is
+ * conditional: it is listed in `sources` with `conditional: true` but
+ * kept out of the always-on lists.
+ * @param {object} raw — DDB character
+ * @returns {{resistances: string[], immunities: string[], vulnerabilities: string[],
+ *   conditionImmunities: string[], sources: {kind: string, type: string, source: string, bucket: string, conditional: boolean, restriction: string|null}[]}}
+ */
+export function parseDamageDefenses(raw) {
+  const out = { resistances: [], immunities: [], vulnerabilities: [], conditionImmunities: [], sources: [] };
+  const items = new Map();
+  for (const it of (Array.isArray(raw?.inventory) ? raw.inventory : [])) {
+    const id = it?.definition?.id;
+    if (id == null) continue;
+    const active = !!it.equipped && (!it.definition.canAttune || !!it.isAttuned);
+    // Several copies of one item: active if any copy is.
+    const prev = items.get(id);
+    items.set(id, { name: it.definition.name || 'Item', active: active || !!prev?.active });
+  }
+  const feats = indexById(raw?.feats, f => f?.definition?.id, f => f?.definition?.name);
+  const classFeatures = indexClassFeatureNames(raw?.classes);
+  const raceName = raw?.race?.fullName || raw?.race?.baseName || 'Race';
+  const racialTraits = indexById(raw?.race?.racialTraits, t => t?.definition?.id, t => t?.definition?.name);
+
+  for (const bucket of DEFENSE_BUCKETS) {
+    const mods = raw?.modifiers?.[bucket];
+    if (!Array.isArray(mods)) continue;
+    for (const m of mods) {
+      const field = DEFENSE_KIND[m?.type];
+      if (!field) continue;
+      let source;
+      if (bucket === 'item') {
+        const item = items.get(m.componentId);
+        if (!item || !item.active) continue;
+        source = item.name;
+      } else if (bucket === 'feat') source = feats.get(m.componentId) || 'Feat';
+      else if (bucket === 'class') source = classFeatures.get(m.componentId) || 'Class';
+      else if (bucket === 'race') source = racialTraits.get(m.componentId) || raceName;
+      else source = 'Background';
+      const restriction = String(m.restriction || '').trim() || null;
+      const conditional = !!restriction;
+      const { damage, conditions } = defenseTypesOf(m.subType);
+      const list = [
+        ...damage.map(t => [field, t]),
+        ...(m.type === 'immunity' ? conditions.map(c => ['conditionImmunities', c]) : [])
+      ];
+      for (const [key, type] of list) {
+        out.sources.push({ kind: m.type, type, source, bucket, conditional, restriction });
+        if (!conditional && !out[key].includes(type)) out[key].push(type);
+      }
+    }
+  }
+  for (const k of ['resistances', 'immunities', 'vulnerabilities', 'conditionImmunities']) out[k].sort();
   return out;
 }
 

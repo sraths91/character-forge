@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert';
-import { parseCharacter, parseSpellSlotTable, scrubRawCharacter, formatUsesWithUsed } from '../lib/ddb-parser.js';
+import { parseCharacter, parseSpellSlotTable, scrubRawCharacter, formatUsesWithUsed, parseDamageDefenses } from '../lib/ddb-parser.js';
+import { applyDamage } from '../../src/js/scene/combat-engine.js';
 import { parsedDdbFixture, loadDdbFixture } from '../../src/tests/helpers/entities.js';
 
 // Minimum viable D&DB v5 raw character shape — fields the parser reads.
@@ -1107,4 +1108,71 @@ test('R14: scrubRawCharacter drops campaign.characters without mutating the inpu
   assert.strictEqual(scrubRawCharacter(none), none);
   assert.strictEqual(scrubRawCharacter(null), null);
   assert.deepStrictEqual(parseCharacter(clean).name, parseCharacter(raw).name);
+});
+
+// ── M64 phase 1.5: damage-type defenses from DDB modifiers ──
+
+function defenseFixture() {
+  return rawFixture({
+    race: { fullName: 'Tiefling', baseRaceName: 'Tiefling', racialTraits: [
+      { definition: { id: 801, name: 'Hellish Resistance' } }
+    ] },
+    feats: [{ definition: { id: 901, name: 'Infernal Constitution' } }],
+    inventory: [
+      { equipped: true, isAttuned: true, definition: { id: 701, name: 'Ring of Resistance (Cold)', canAttune: true } },
+      { equipped: true, isAttuned: false, definition: { id: 702, name: 'Armor of Resistance (Acid)', canAttune: true } },
+      { equipped: false, isAttuned: false, definition: { id: 703, name: 'Periapt of Proof against Poison', canAttune: false } }
+    ],
+    modifiers: {
+      race: [{ type: 'resistance', subType: 'fire', componentId: 801 }],
+      feat: [
+        { type: 'resistance', subType: 'cold', componentId: 901 },
+        { type: 'immunity', subType: 'poisoned', componentId: 901 }
+      ],
+      class: [{ type: 'resistance', subType: 'bludgeoning-piercing-and-slashing', restriction: 'while raging', componentId: 1 }],
+      item: [
+        { type: 'resistance', subType: 'cold', componentId: 701 },
+        { type: 'resistance', subType: 'acid', componentId: 702 },
+        { type: 'immunity', subType: 'poison', componentId: 703 }
+      ],
+      background: [{ type: 'vulnerability', subType: 'psychic', componentId: 5 }],
+      condition: [{ type: 'resistance', subType: 'thunder', componentId: 6 }]
+    }
+  });
+}
+
+test('M64 1.5: resistance / immunity / vulnerability modifiers from race, feat, class, background and items', () => {
+  const p = parseCharacter(defenseFixture());
+  assert.deepStrictEqual(p.resistances, ['cold', 'fire']);
+  assert.deepStrictEqual(p.immunities, []);
+  assert.deepStrictEqual(p.vulnerabilities, ['psychic']);
+  assert.deepStrictEqual(p.conditionImmunities, ['poisoned']);
+  const src = (type) => p.defenseSources.filter(s => s.type === type).map(s => s.source);
+  assert.deepStrictEqual(src('fire'), ['Hellish Resistance']);
+  assert.deepStrictEqual(src('cold'), ['Infernal Constitution', 'Ring of Resistance (Cold)']);
+  assert.deepStrictEqual(src('acid'), [], 'unattuned attunement item does not count');
+  assert.deepStrictEqual(src('poison'), [], 'unequipped item does not count');
+  assert.deepStrictEqual(src('thunder'), [], 'modifiers.condition rows are not character defenses');
+});
+
+test('M64 1.5: a restricted row ("while raging") is listed as conditional, not always-on', () => {
+  const d = parseDamageDefenses(defenseFixture());
+  const raging = d.sources.filter(s => s.restriction === 'while raging');
+  assert.deepStrictEqual(raging.map(s => s.type), ['bludgeoning', 'piercing', 'slashing']);
+  assert.ok(raging.every(s => s.conditional && s.kind === 'resistance' && s.bucket === 'class'));
+  assert.ok(!d.resistances.includes('slashing'));
+});
+
+test('M64 1.5: no defense modifiers → empty lists; the synthetic fixtures parse clean', () => {
+  const p = parseCharacter(rawFixture());
+  assert.deepStrictEqual([p.resistances, p.immunities, p.vulnerabilities, p.conditionImmunities, p.defenseSources], [[], [], [], [], []]);
+  assert.deepStrictEqual(parsedDdbFixture('fighter-l5').resistances, []);
+  assert.deepStrictEqual(parseDamageDefenses({}).resistances, []);
+});
+
+test('M64 1.5: applyDamage halves fire against a parsed Tiefling sheet', () => {
+  const sheet = parseCharacter(defenseFixture());
+  const pc = { id: 'pc', kind: 'pc', name: 'T', hp: 30, hpMax: 30, hpTemp: 0, conditions: [], ref: sheet };
+  applyDamage(pc, 10, 'fire', {});
+  assert.strictEqual(pc.hp, 25);
 });
