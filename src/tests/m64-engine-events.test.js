@@ -114,7 +114,8 @@ test('T4: a killing blow emits damage then entity.downed; failed concentration e
   assert.deepEqual(types(), ['damage', 'save.rolled', 'concentration.broken']);
   assert.equal(events[1].payload.reason, 'concentration');
   applyDamageToEntity(target, 9, () => 0, ctx);
-  assert.deepEqual(types().slice(3), ['damage', 'entity.downed']);
+  // M64 R9 — monsters die at 0 HP.
+  assert.deepEqual(types().slice(3), ['damage', 'entity.downed', 'entity.died']);
   assert.equal(events[3].payload.hpAfter, 0);
 });
 

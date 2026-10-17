@@ -426,6 +426,18 @@
     },
     {
       "seq": 16,
+      "type": "entity.died",
+      "round": 1,
+      "turnId": "t1",
+      "cinemaGroup": "t1.x2",
+      "payload": {
+        "entityId": "m-bugbear",
+        "byId": "pc-fighter",
+        "cause": "monster"
+      }
+    },
+    {
+      "seq": 17,
       "type": "exchange",
       "round": 1,
       "turnId": "t1",
@@ -491,14 +503,14 @@
       }
     },
     {
-      "seq": 17,
+      "seq": 18,
       "type": "turn.ended",
       "round": 1,
       "turnId": "t1",
       "cinemaGroup": null,
       "payload": {
         "actorId": "pc-fighter",
-        "stateHash": "098b7d0317468a",
+        "stateHash": "0b41dfe0ae873a",
         "rngDraws": 9
       }
     }

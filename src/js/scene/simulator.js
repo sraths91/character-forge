@@ -76,7 +76,9 @@ export function seedRng(seed) {
  *     avgRounds,
  *     entities: [{
  *       id, name, kind,
- *       deathRate,         // 0..1 — fraction of runs this entity hit 0 HP
+ *       deathRate,         // 0..1 — fraction of runs this entity ended at 0 HP
+ *       deadRate,          // 0..1 — fraction of runs it died (M64 R9: a PC
+ *                          //   at 0 HP is dying, not dead, until 3 failures)
  *       avgFinalHp,
  *       avgDamageDealt
  *     }]
@@ -98,6 +100,7 @@ export async function simulateEncounter({ party = [], monsters = [], scene = {},
       const s = stats.byId.get(e.id);
       if (!s) continue;
       if (e.hp <= 0) s.deaths++;
+      if (e.status === 'dead') s.dead++;
       s.hpSum += e.hp;
       s.damageSum += e.damageDealt;
     }
@@ -134,7 +137,10 @@ async function runOneIteration({ party, monsters, scene, maxRounds, rng, index =
     _actionSurgeUsed: 0,
     _secondWindUsed: false,
     _sneakAttackUsedThisTurn: false,
-    _cunningActionUsedThisTurn: false
+    _cunningActionUsedThisTurn: false,
+    // M64 R9 — dying: PCs at 0 HP make death saves instead of vanishing.
+    status: 'active',
+    deathSaves: { successes: 0, failures: 0, stable: false }
   }));
   const mons = monsters.map(m => {
     const preset = MONSTER_PRESETS[m.presetSlug] || {};
@@ -155,7 +161,9 @@ async function runOneIteration({ party, monsters, scene, maxRounds, rng, index =
         ? freshInnateState(m.presetSlug) : null,
       _legendaryBudget: isLegendary(m.presetSlug)    // M41
         ? freshLegendaryBudget(m.presetSlug) : 0,
-      _concentrating: null
+      _concentrating: null,
+      status: 'active',
+      deathSaves: null
     };
   });
 
@@ -179,8 +187,8 @@ async function runOneIteration({ party, monsters, scene, maxRounds, rng, index =
 
   // Build a flat snapshot of every entity's end state for aggregation
   const endState = [
-    ...pcs.map(p => ({ id: p.id, hp: p.hp, damageDealt: p.damageDealt })),
-    ...mons.map(m => ({ id: m.id, hp: m.hp, damageDealt: m.damageDealt }))
+    ...pcs.map(p => ({ id: p.id, hp: p.hp, damageDealt: p.damageDealt, status: p.status })),
+    ...mons.map(m => ({ id: m.id, hp: m.hp, damageDealt: m.damageDealt, status: m.status }))
   ];
 
   return {
@@ -247,11 +255,11 @@ function newStats(party, monsters, iterations) {
   const byId = new Map();
   const entities = [];
   for (const p of party) {
-    byId.set(p.id, { id: p.id, name: p.name || 'PC', kind: 'pc', deaths: 0, hpSum: 0, damageSum: 0, hpMax: p.hp?.max ?? 10 });
+    byId.set(p.id, { id: p.id, name: p.name || 'PC', kind: 'pc', deaths: 0, dead: 0, hpSum: 0, damageSum: 0, hpMax: p.hp?.max ?? 10 });
     entities.push(p.id);
   }
   for (const m of monsters) {
-    byId.set(m.id, { id: m.id, name: m.name || 'Monster', kind: 'monster', deaths: 0, hpSum: 0, damageSum: 0, hpMax: m.hp?.max ?? 1 });
+    byId.set(m.id, { id: m.id, name: m.name || 'Monster', kind: 'monster', deaths: 0, dead: 0, hpSum: 0, damageSum: 0, hpMax: m.hp?.max ?? 1 });
     entities.push(m.id);
   }
   return {
@@ -274,6 +282,7 @@ function finalizeStats(stats) {
     entities: [...stats.byId.values()].map(e => ({
       id: e.id, name: e.name, kind: e.kind, hpMax: e.hpMax,
       deathRate: e.deaths / n,
+      deadRate: e.dead / n,
       avgFinalHp: e.hpSum / n,
       avgDamageDealt: e.damageSum / n
     }))

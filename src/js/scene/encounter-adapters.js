@@ -54,6 +54,18 @@ const FLAG_FIELDS = Object.freeze([
 /** PC slot pools always expose levels 1-5 (the planner's upcast range). */
 const PC_BASE_SLOT_LEVELS = [1, 2, 3, 4, 5];
 
+const ENTITY_STATUS_SET = new Set(['active', 'downed', 'stable', 'dead']);
+
+/**
+ * Death-save tallies in the contract shape (ints clamped 0-3).
+ * @param {object|null|undefined} ds
+ * @returns {{successes: number, failures: number, stable: boolean}}
+ */
+export function normalizeDeathSaves(ds) {
+  const n = (v) => Math.max(0, Math.min(3, Math.trunc(Number(v) || 0)));
+  return { successes: n(ds?.successes), failures: n(ds?.failures), stable: !!(ds?.stable ?? ds?.isStabilized) };
+}
+
 const clone = (v) => (v === undefined ? undefined : JSON.parse(JSON.stringify(v)));
 const conditionId = (c) => (typeof c === 'string' ? c : c?.id);
 
@@ -132,7 +144,10 @@ export function wrapperFromEntity(entity, sheet = null) {
     ...(Object.keys(wc.meta).length ? { _conditionMeta: wc.meta } : {}),
     damageDealt: 0,
     _reactionUsed: !!res.reactionUsed,
-    _concentrating: conc
+    _concentrating: conc,
+    // M64 R9 — absent status = active; PCs always carry death-save tallies.
+    status: ENTITY_STATUS_SET.has(e.status) ? e.status : 'active',
+    deathSaves: e.kind === 'pc' ? normalizeDeathSaves(e.deathSaves) : null
   };
   for (const [field, key] of FLAG_FIELDS) {
     base[field] = key === 'smiteSlotUsed' ? (flags[key] ?? null) : !!flags[key];
@@ -229,6 +244,18 @@ export function applyWrapperToEntity(entity, w) {
       }
       else if (w._conditionMeta && typeof prior.get(id) === 'object') e.conditions.push(id);
       else e.conditions.push(clone(prior.get(id) ?? id));
+    }
+  }
+  // M64 R9 — status / deathSaves are stored only while not 'active'
+  // (monsters never carry deathSaves).
+  if (w.status !== undefined) {
+    if (ENTITY_STATUS_SET.has(w.status) && w.status !== 'active') {
+      e.status = w.status;
+      if (e.kind === 'pc') e.deathSaves = normalizeDeathSaves(w.deathSaves);
+      else delete e.deathSaves;
+    } else {
+      delete e.status;
+      delete e.deathSaves;
     }
   }
   if (w._concentrating !== undefined) {
@@ -490,6 +517,20 @@ export function setEntityHp(state, entityId, hp) {
   if (!e) return { state, entity: null, before: null, after: null };
   const after = Math.max(0, Math.min(e.hpMax, Math.trunc(Number(hp) || 0)));
   const entity = { ...clone(e), hp: after };
+  // M64 R9 — a DM HP edit flips the life status silently (setHpRaw rules).
+  if (after > 0 && e.status && e.status !== 'active') {
+    delete entity.status;
+    delete entity.deathSaves;
+    entity.conditions = (entity.conditions || []).filter(c => conditionId(c) !== 'unconscious');
+  } else if (after <= 0 && e.hp > 0 && (!e.status || e.status === 'active')) {
+    if (e.kind === 'pc') {
+      entity.status = 'downed';
+      entity.deathSaves = { successes: 0, failures: 0, stable: false };
+      if (!(entity.conditions || []).some(c => conditionId(c) === 'unconscious')) entity.conditions = [...(entity.conditions || []), 'unconscious'];
+    } else {
+      entity.status = 'dead';
+    }
+  }
   return { state: { ...state, entities: { ...state.entities, [e.id]: entity } }, entity, before: e.hp, after };
 }
 

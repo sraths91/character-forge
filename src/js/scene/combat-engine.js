@@ -189,7 +189,7 @@ async function resolveTurn(attacker, enemies, allies, scene, rng, prompts, ctx) 
       enemies: targetable.filter(isAlive),
       allies: allies.filter(isAlive),
       // M64 R8 — downed PCs (0 HP) can be healed back up.
-      downedAllies: allies.filter(a => a.kind === 'pc' && !isAlive(a)),
+      downedAllies: allies.filter(a => a.kind === 'pc' && !isAlive(a) && !isDead(a)),
       rng
     });
   }
@@ -256,7 +256,9 @@ async function resolveTurn(attacker, enemies, allies, scene, rng, prompts, ctx) 
       : { actorId, reason: 'charmed' });
     return;
   }
-  if (explicit && !isAlive(target) && !healsAlly && !NON_ATTACK_KINDS.has(plan.kind)) {
+  // M64 R9 — a player / DM may attack a dying PC (each hit is a failed
+  // death save); the dead and the fallen monsters are off the table.
+  if (explicit && !isAlive(target) && !isDying(target) && !healsAlly && !NON_ATTACK_KINDS.has(plan.kind)) {
     emitEvent(ctx, 'turn.rejected', { actorId, code: 'target-down', reason: `${target.name || idOf(target)} is down` });
     return;
   }
@@ -382,7 +384,7 @@ async function resolveTurn(attacker, enemies, allies, scene, rng, prompts, ctx) 
   // Fleeing creatures Dash instead of attacking
   if (plan && plan.kind === 'flee') return;
   // M64 T6 — the target may have dropped while we awaited reactions.
-  if (!isAlive(target) && !healsAlly && !(plan && NON_ATTACK_KINDS.has(plan.kind))) {
+  if (!isAlive(target) && !(explicit && isDying(target)) && !healsAlly && !(plan && NON_ATTACK_KINDS.has(plan.kind))) {
     emitEvent(ctx, 'turn.skipped', { actorId, reason: 'target-down' });
     return;
   }
@@ -415,7 +417,10 @@ async function resolveTurn(attacker, enemies, allies, scene, rng, prompts, ctx) 
   // recurse through runOneAttack, which moved the fighter again).
   const turn = {
     attacker, enemies, allies, targetable, scene, rng, prompts, ctx, plan, explicit,
-    charmers, actorId, sneakDone: false, recklessDone: false
+    charmers, actorId, sneakDone: false, recklessDone: false,
+    // M64 R9 — an explicit plan against a dying PC keeps swinging at it;
+    // otherwise later swings move on from a creature that drops.
+    dyingTarget: explicit && isDying(target) ? target : null
   };
   const first = await runAttackAction(turn, target, true);
   if (first.status === 'rejected') return;
@@ -515,9 +520,20 @@ function swingReachFt(attacker, weaponRef) {
   return isRangedWeapon({ name: weaponRef?.name }) ? 80 : meleeReachFt({ name: weaponRef?.name });
 }
 
-/** Does the swing stay on `target`? Standing creatures always. */
+/** Does the swing stay on `target`? Standing creatures always; a dying PC
+ *  only when an explicit plan chose it while it was already down (R9). */
 function keepsTarget(turn, target) {
-  return !!target && isAlive(target);
+  if (!target) return false;
+  if (isAlive(target)) return true;
+  return target === turn.dyingTarget && isDying(target);
+}
+
+/** M64 R9 — can an attack or spell still land on `t`? Standing creatures,
+ *  or a PC that was already dying when the attack began (`wasDying`): a
+ *  creature that drops mid-resolution (an earlier hit, a DM edit during a
+ *  prompt) is not hit again by the same attack. */
+function canHit(t, wasDying = true) {
+  return isAlive(t) || (wasDying && isDying(t));
 }
 
 /**
@@ -575,6 +591,7 @@ async function runAttackAction(turn, firstTarget, firstAction) {
  */
 async function runWeaponSwing(turn, target, weaponRef, index, shared, firstAction) {
   const { attacker, enemies, allies, scene, rng, prompts, ctx, plan, explicit, charmers, actorId } = turn;
+  const wasDying = isDying(target);
   // Build the resolver context. PCs use deriveWeaponAttack; monsters
   // use the swing's attack record. M42 weapon-switch is honored via
   // attacker._chosenWeapon (set by the planner).
@@ -696,7 +713,7 @@ async function runWeaponSwing(turn, target, weaponRef, index, shared, firstActio
   }
   emitAttackRolled(ctx, group, attacker, target, atk, { weapon: weaponUsed?.name ?? null, isReaction: false, mode: verdict.d20.mode, bonus: finalBonus });
   // M64 T6 — re-check after the Shield await (a DM edit can land there).
-  if (!isAlive(attacker) || !isAlive(target)) return 'blocked';
+  if (!isAlive(attacker) || !canHit(target, wasDying)) return 'blocked';
   const modifiers = {
     sneak: sneakDice > 0,
     reckless: !!plan?.featuresFired?.includes('reckless-attack'),
@@ -715,7 +732,7 @@ async function runWeaponSwing(turn, target, weaponRef, index, shared, firstActio
   let dmg = rollDamage(finalDmgDice, { crit: atk.crit }, rng);
   if (prompts.onRoll) {
     dmg = await reviewRoll(prompts, ctx, group, 'damage', attacker, target, dmg);
-    if (!isAlive(attacker) || !isAlive(target)) return 'blocked';
+    if (!isAlive(attacker) || !canHit(target, wasDying)) return 'blocked';
   }
   // M64 R8 — one damage path. With a smite following, the concentration
   // save waits for the smite so the hit forces ONE save on its total.
@@ -778,6 +795,7 @@ export async function runMonsterSpell({ attacker, target, plan, scene, rng, witn
   if (!effectiveBook) return;
   const casterId = idOf(attacker);
   const group = nextCinemaGroup(ctx);
+  const wasDying = isDying(target);
 
   const roster = [...allies, ...allEnemies];
   if (spell.concentration && isConcentrating(attacker)) {
@@ -812,7 +830,7 @@ export async function runMonsterSpell({ attacker, target, plan, scene, rng, witn
     // M64 T6 — re-check after the await: a dead caster's spell is lost;
     // a dropped single target wastes it (heals may still land on 0 HP).
     if (!isAlive(attacker)) return;
-    if (!spell.aoe && spell.kind !== 'heal' && !isAlive(target)) return;
+    if (!spell.aoe && spell.kind !== 'heal' && !canHit(target, wasDying)) return;
   }
 
   // M34.1 — Counterspell witness loop.
@@ -874,7 +892,7 @@ export async function runMonsterSpell({ attacker, target, plan, scene, rng, witn
       emitEvent(ctx, 'spell.fizzled', { casterId, reason: 'shield', spellId: String(plan.spellId), targetId: idOf(target) }, group);
       return;
     }
-    if (!isAlive(attacker) || !isAlive(target)) return;
+    if (!isAlive(attacker) || !canHit(target, wasDying)) return;
     const darts = spell.darts || 1;
     let totalDmg = 0;
     for (let i = 0; i < darts; i++) {
@@ -883,7 +901,7 @@ export async function runMonsterSpell({ attacker, target, plan, scene, rng, witn
     }
     if (prompts.onRoll) {
       totalDmg = (await reviewRoll(prompts, ctx, group, 'damage', attacker, target, { total: totalDmg, spec: `${darts}x${spell.perDart}`, crit: false })).total;
-      if (!isAlive(attacker) || !isAlive(target)) return;
+      if (!isAlive(attacker) || !canHit(target, wasDying)) return;
     }
     const before = target.hp;
     applyDamage(target, totalDmg, spell.damageType ?? null, { attacker, ctx, rng, group, parts: { darts }, roster });
@@ -938,7 +956,7 @@ export async function runMonsterSpell({ attacker, target, plan, scene, rng, witn
       return;
     }
     emitAttackRolled(ctx, group, attacker, target, atk, { weapon: null, isReaction: false, mode, bonus: verdict.attackBonus.total, spellId: String(plan.spellId) });
-    if (!isAlive(attacker) || !isAlive(target)) return;
+    if (!isAlive(attacker) || !canHit(target, wasDying)) return;
     if (!atk.hit) {
       await castCinema(target, { dmg: 0, miss: true });
       return;
@@ -946,7 +964,7 @@ export async function runMonsterSpell({ attacker, target, plan, scene, rng, witn
     let dmg = rollDamage(verdict.damage.dice || spell.dice, { crit: atk.crit }, rng);
     if (prompts.onRoll) {
       dmg = await reviewRoll(prompts, ctx, group, 'damage', attacker, target, dmg);
-      if (!isAlive(attacker) || !isAlive(target)) return;
+      if (!isAlive(attacker) || !canHit(target, wasDying)) return;
     }
     const before = target.hp;
     applyDamage(target, dmg.total, spell.damageType ?? null, { crit: !!atk.crit, attacker, ctx, rng, group, roster });
@@ -961,7 +979,8 @@ export async function runMonsterSpell({ attacker, target, plan, scene, rng, witn
       let totalDmg = 0;
       const aoeResults = [];
       for (const e of allEnemies) {
-        if (!isAlive(e)) continue;
+        // M64 R9 — an AoE also catches dying PCs (a failed death save each).
+        if (!canHit(e)) continue;
         const ep = e._position || e.position;
         if (!ep) continue;
         if (chebyshevFeet(center, ep) > (spell.range || 15)) continue;
@@ -1564,12 +1583,40 @@ export function applyDamage(target, amount, type = null, opts = {}) {
   const hpBefore = target?.hp ?? 0;
   const out = { rolled: n, amount: 0, absorbed: 0, hpLost: 0, hpBefore, hpAfter: hpBefore, modifier: null, downed: false };
   if (!target || n <= 0) return out;
+  // M64 R9 — the dead take no more damage.
+  if (target.status === 'dead') return out;
   if (raw) {
     target.hp = Math.max(0, hpBefore - n);
     out.amount = n;
     out.hpLost = hpBefore - target.hp;
     out.hpAfter = target.hp;
     out.downed = hpBefore > 0 && target.hp <= 0;
+    // DM edits flip the status silently (no events).
+    if (out.downed) dropToZero(target, 0, { ctx: NO_CTX, raw: true });
+    return out;
+  }
+  // M64 R9 — a dying PC (0 HP) takes no HP loss: each hit is a failed
+  // death save (two on a crit), and damage >= its HP maximum kills it.
+  if (hpBefore <= 0 && isDying(target)) {
+    const mod0 = applyDamageModifiers(target, n, type);
+    out.amount = mod0.amount;
+    out.modifier = mod0.modifier;
+    const temp0 = Math.max(0, Math.trunc(Number(target.hpTemp) || 0));
+    out.absorbed = Math.min(temp0, out.amount);
+    if (out.absorbed > 0) target.hpTemp = temp0 - out.absorbed;
+    const taken = out.amount - out.absorbed;
+    if (canEmit(ctx)) {
+      emitEvent(ctx, 'damage', {
+        sourceId: idOf(attacker), targetId: idOf(target), amount: 0, type: type ?? null,
+        hpBefore: 0, hpAfter: 0, rolled: n,
+        ...(parts ? { parts } : {}),
+        ...(out.absorbed > 0 ? { absorbed: out.absorbed } : {}),
+        ...(out.modifier ? { modifier: out.modifier } : {})
+      }, group);
+    }
+    if (taken > 0) {
+      deathSaveFailureFromDamage(target, taken, !!opts.crit, attacker, ctx, group);
+    }
     return out;
   }
   // 1. R/I/V
@@ -1604,9 +1651,138 @@ export function applyDamage(target, amount, type = null, opts = {}) {
   } else if (checkConcentration) {
     concentrationCheck(target, out.amount, rng, ctx, group, roster);
   }
-  // 5. downed
-  if (out.downed) emitEvent(ctx, 'entity.downed', { entityId: idOf(target), byId: idOf(attacker) }, group);
+  // 5. downed — M64 R9: a PC starts dying (or dies outright from massive
+  // damage); a monster dies.
+  if (out.downed) {
+    emitEvent(ctx, 'entity.downed', { entityId: idOf(target), byId: idOf(attacker) }, group);
+    dropToZero(target, (out.amount - out.absorbed) - hpBefore, { ctx, group, attacker, roster });
+  }
   return out;
+}
+
+// =====================================================================
+// M64 R9 — dying, death saves, stabilising, reviving
+// =====================================================================
+
+/**
+ * A PC at 0 HP that is still in the fight: making death saves (`downed`)
+ * or `stable`. Dead creatures and anyone above 0 HP are not dying.
+ * @param {object} e — wrapper
+ * @returns {boolean}
+ */
+export function isDying(e) {
+  return !!e && e.kind === 'pc' && (e.hp ?? 0) <= 0 && (e.status === 'downed' || e.status === 'stable');
+}
+
+/**
+ * Has this creature died (status 'dead')?
+ * @param {object} e — wrapper
+ * @returns {boolean}
+ */
+export function isDead(e) {
+  return !!e && e.status === 'dead';
+}
+
+/** Fresh death-save tallies. */
+export function freshDeathSaves() {
+  return { successes: 0, failures: 0, stable: false };
+}
+
+function ensureDeathSaves(e) {
+  if (!e.deathSaves || typeof e.deathSaves !== 'object') e.deathSaves = freshDeathSaves();
+  return e.deathSaves;
+}
+
+/** A creature just reached 0 HP (`overflow` = damage left after its HP ran out). */
+function dropToZero(target, overflow, { ctx = NO_CTX, group = null, attacker = null, roster = null, raw = false }) {
+  if (target.kind !== 'pc') {
+    target.status = 'dead';
+    if (!raw) emitEvent(ctx, 'entity.died', { entityId: idOf(target), byId: idOf(attacker), cause: 'monster' }, group);
+    return;
+  }
+  if (target.status === 'dead') return;
+  const ds = ensureDeathSaves(target);
+  ds.successes = 0; ds.failures = 0; ds.stable = false;
+  // Rage ends when the barbarian is knocked out.
+  if (hasCondition(target, 'raging')) {
+    if (raw) removeConditionFrom(target, 'raging');
+    else removeCondition(target, 'raging', { ctx, group, reason: 'downed' });
+  }
+  if (!raw && Number.isFinite(target.hpMax) && overflow >= target.hpMax) {
+    target.status = 'dead';
+    emitEvent(ctx, 'entity.died', { entityId: idOf(target), byId: idOf(attacker), cause: 'massive' }, group);
+    return;
+  }
+  target.status = 'downed';
+  if (raw) addConditionTo(target, 'unconscious');
+  else applyCondition(target, 'unconscious', { ctx, group, roster });
+}
+
+function die(target, cause, attacker, ctx, group) {
+  target.status = 'dead';
+  if (target.deathSaves) target.deathSaves.stable = false;
+  emitEvent(ctx, 'entity.died', { entityId: idOf(target), byId: idOf(attacker), cause }, group);
+}
+
+function emitDeathSave(ctx, group, target, d20, success, crit, cause) {
+  const ds = target.deathSaves || freshDeathSaves();
+  emitEvent(ctx, 'death.save', {
+    entityId: idOf(target), d20, success, crit,
+    successes: ds.successes, failures: ds.failures, cause
+  }, group);
+}
+
+/** Damage to a dying PC: one failure (two on a crit); damage >= hpMax kills. */
+function deathSaveFailureFromDamage(target, taken, crit, attacker, ctx, group) {
+  const ds = ensureDeathSaves(target);
+  if (Number.isFinite(target.hpMax) && taken >= target.hpMax) {
+    emitDeathSave(ctx, group, target, null, false, crit, 'damage');
+    die(target, 'massive', attacker, ctx, group);
+    return;
+  }
+  if (target.status === 'stable') { target.status = 'downed'; ds.stable = false; ds.successes = 0; }
+  ds.failures = Math.min(3, ds.failures + (crit ? 2 : 1));
+  emitDeathSave(ctx, group, target, null, false, crit, 'damage');
+  if (ds.failures >= 3) die(target, 'failures', attacker, ctx, group);
+}
+
+/**
+ * The death saving throw a downed PC makes at the start of its turn (PHB
+ * p197): d20 ≥ 10 succeeds; a natural 1 is two failures; a natural 20
+ * brings it back with 1 HP (it then takes its turn). Three successes →
+ * `stable`; three failures → `dead`. Seeded rng; one d20 draw. No-op for
+ * anyone not `downed`.
+ * @param {object} actor — wrapper
+ * @param {function} rng
+ * @param {object} [ctx]
+ * @returns {{rolled: boolean, d20: number|null, revived: boolean, status: string}}
+ */
+export function rollDeathSave(actor, rng, ctx = NO_CTX) {
+  if (!actor || actor.kind !== 'pc' || actor.status !== 'downed' || (actor.hp ?? 0) > 0) {
+    return { rolled: false, d20: null, revived: false, status: actor?.status ?? 'active' };
+  }
+  const d20 = 1 + Math.floor(rng() * 20);
+  const ds = ensureDeathSaves(actor);
+  if (d20 === 20) {
+    ds.successes = 0; ds.failures = 0; ds.stable = false;
+    emitDeathSave(ctx, null, actor, d20, true, true, 'roll');
+    applyHealing(actor, 1, { ctx });
+    return { rolled: true, d20, revived: true, status: actor.status };
+  }
+  if (d20 >= 10) {
+    ds.successes = Math.min(3, ds.successes + 1);
+    emitDeathSave(ctx, null, actor, d20, true, false, 'roll');
+    if (ds.successes >= 3) {
+      ds.stable = true;
+      actor.status = 'stable';
+      emitEvent(ctx, 'entity.stabilized', { entityId: idOf(actor) });
+    }
+  } else {
+    ds.failures = Math.min(3, ds.failures + (d20 === 1 ? 2 : 1));
+    emitDeathSave(ctx, null, actor, d20, false, d20 === 1, 'roll');
+    if (ds.failures >= 3) die(actor, 'failures', null, ctx, null);
+  }
+  return { rolled: true, d20, revived: false, status: actor.status };
 }
 
 /**
@@ -1811,11 +1987,24 @@ export function applyHealing(target, amount, opts = {}) {
   const n = Math.max(0, Math.trunc(Number(amount) || 0));
   const hpBefore = target?.hp ?? 0;
   if (!target || n <= 0) return { rolled: n, amount: 0, hpBefore, hpAfter: hpBefore };
+  // M64 R9 — no healing brings back the dead (a DM edit can: raw).
+  if (target.status === 'dead' && !raw) return { rolled: n, amount: 0, hpBefore, hpAfter: hpBefore };
   const max = Number.isFinite(target.hpMax) ? target.hpMax : Infinity;
   target.hp = Math.max(hpBefore, Math.min(max, hpBefore + n));
   const healed = target.hp - hpBefore;
   if (!raw) {
     emitEvent(ctx, 'heal', { sourceId: idOf(source), targetId: idOf(target), amount: healed, hpBefore, hpAfter: target.hp, rolled: n }, group);
+  }
+  // M64 R9 — any healing wakes a dying PC: active again, tallies reset.
+  if (hpBefore <= 0 && target.hp > 0 && target.status && target.status !== 'active') {
+    target.status = 'active';
+    if (target.kind === 'pc') target.deathSaves = freshDeathSaves();
+    if (raw) {
+      removeConditionFrom(target, 'unconscious');
+    } else {
+      removeCondition(target, 'unconscious', { ctx, group, reason: 'healed' });
+      emitEvent(ctx, 'entity.revived', { entityId: idOf(target), hp: target.hp, byId: idOf(source) }, group);
+    }
   }
   return { rolled: n, amount: healed, hpBefore, hpAfter: target.hp };
 }
