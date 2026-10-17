@@ -71,6 +71,8 @@ export function parseCharacter(raw) {
   promotePrimaryWeapon({ classes, equipment, carried });
   const feats = parseFeats(raw);
   const classFeatures = parseClassFeatures(raw);
+  const fightingStyles = parseFightingStyles(raw);
+  const featureUses = parseFeatureUses(classFeatures, classes);
   const combatMods = parseCombatModifiers(raw);
   const spells = parseSpells(raw);
   const savingThrowProficiencies = parseSavingThrowProficiencies(raw);
@@ -101,6 +103,10 @@ export function parseCharacter(raw) {
     carried,
     feats,
     classFeatures,
+    // M64 1.5 — Fighting Style picks (DDB option names) and limited-use
+    // class features keyed by the engine ledger id ('second-wind', 'rage').
+    fightingStyles,
+    featureUses,
     combatMods,
     spells,
     savingThrowProficiencies,
@@ -320,7 +326,8 @@ export function parseClassFeatures(raw) {
       const action = classActionFor(actionsByComponent, def.id, featureName);
       const description = pickDescription(def, action);
       const dice = action ? formatDDBDice(action.dice) : null;
-      const uses = action ? formatUses(action.limitedUse) : null;
+      // M64 1.5 — `used` (DDB numberUsed) is additive; max/reset unchanged.
+      const uses = action ? formatUsesWithUsed(action.limitedUse) : null;
 
       const isSub = baseClassId != null && def.classId != null && def.classId !== baseClassId;
       out.push({
@@ -341,6 +348,79 @@ export function parseClassFeatures(raw) {
     a.level - b.level ||
     a.source.localeCompare(b.source) ||
     a.name.localeCompare(b.name));
+  return out;
+}
+
+/** The PHB/SRD Fighting Style names (plus Tasha's), as DDB spells them. */
+const FIGHTING_STYLE_NAMES = new Set([
+  'Archery', 'Defense', 'Dueling', 'Great Weapon Fighting', 'Protection',
+  'Two-Weapon Fighting', 'Blind Fighting', 'Interception', 'Superior Technique',
+  'Thrown Weapon Fighting', 'Unarmed Fighting', 'Blessed Warrior', 'Druidic Warrior'
+]);
+
+/**
+ * Fighting Style picks from DDB `options.class`: rows whose `componentId`
+ * is a class feature named like "Fighting Style" (Fighter, Paladin,
+ * Ranger, Champion's "Additional Fighting Style"), or whose option name is
+ * a known style. Shape unverified against a real export.
+ * @param {object} raw — DDB character
+ * @returns {string[]} e.g. ['Defense']
+ */
+export function parseFightingStyles(raw) {
+  const styleFeatureIds = new Set();
+  for (const cls of (Array.isArray(raw?.classes) ? raw.classes : [])) {
+    for (const f of (cls?.classFeatures || [])) {
+      if (/fighting style/i.test(String(f?.definition?.name || '')) && f.definition.id != null) styleFeatureIds.add(f.definition.id);
+    }
+  }
+  const out = [];
+  for (const o of (Array.isArray(raw?.options?.class) ? raw.options.class : [])) {
+    const name = String(o?.definition?.name || '').trim();
+    if (!name) continue;
+    if ((styleFeatureIds.has(o.componentId) || FIGHTING_STYLE_NAMES.has(name)) && !out.includes(name)) out.push(name);
+  }
+  return out;
+}
+
+/** 'Channel Divinity: Turn Undead' → 'channel-divinity-turn-undead'. */
+function featureSlug(name) {
+  return String(name || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+}
+
+// SRD 5.1 Barbarian table: rages per long rest by level (20 = unlimited).
+function rageUsesForLevel(level) {
+  if (level >= 20) return 99;
+  if (level >= 17) return 6;
+  if (level >= 12) return 5;
+  if (level >= 6) return 4;
+  if (level >= 3) return 3;
+  return 2;
+}
+
+/**
+ * Limited-use class features keyed by slug ('second-wind', 'action-surge',
+ * 'rage', 'channel-divinity', ...) → `{max, used, reset}` from DDB's
+ * limitedUse. Rage, Second Wind and Action Surge fall back to the SRD
+ * class tables (`derived: true`, `used: 0`) when the feature is present
+ * but DDB gives no limitedUse.
+ * @param {object[]} classFeatures — parseClassFeatures output
+ * @param {{name: string, level: number}[]} classes — parseClasses output
+ * @returns {Record<string, {max: number, used: number, reset: string|null, derived?: boolean}>}
+ */
+export function parseFeatureUses(classFeatures, classes) {
+  const out = {};
+  for (const f of (classFeatures || [])) {
+    const slug = featureSlug(f?.name);
+    if (!slug || !f.uses || out[slug]) continue;
+    out[slug] = { max: f.uses.max, used: f.uses.used ?? 0, reset: f.uses.reset ?? null };
+  }
+  const levelOf = (re) => (classes || []).filter(c => re.test(String(c?.name || ''))).reduce((n, c) => n + (Number(c.level) || 0), 0);
+  const has = (name) => (classFeatures || []).some(f => f?.name === name);
+  const barb = levelOf(/barbarian/i);
+  const fighter = levelOf(/fighter/i);
+  if (barb > 0 && has('Rage') && !out.rage) out.rage = { max: rageUsesForLevel(barb), used: 0, reset: 'long rest', derived: true };
+  if (fighter > 0 && has('Second Wind') && !out['second-wind']) out['second-wind'] = { max: 1, used: 0, reset: 'short rest', derived: true };
+  if (fighter > 0 && has('Action Surge') && !out['action-surge']) out['action-surge'] = { max: fighter >= 17 ? 2 : 1, used: 0, reset: 'short rest', derived: true };
   return out;
 }
 

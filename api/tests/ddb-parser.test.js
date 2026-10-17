@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert';
-import { parseCharacter, parseSpellSlotTable, scrubRawCharacter, formatUsesWithUsed, parseDamageDefenses } from '../lib/ddb-parser.js';
+import { parseCharacter, parseSpellSlotTable, scrubRawCharacter, formatUsesWithUsed, parseDamageDefenses, parseFightingStyles, parseFeatureUses } from '../lib/ddb-parser.js';
 import { applyDamage } from '../../src/js/scene/combat-engine.js';
 import { parsedDdbFixture, loadDdbFixture } from '../../src/tests/helpers/entities.js';
 
@@ -349,7 +349,7 @@ test('M10: parseClassFeatures cross-references actions.class for dice + uses', (
   });
   const parsed = parseCharacter(raw);
   assert.strictEqual(parsed.classFeatures[0].dice, '3d6');
-  assert.deepStrictEqual(parsed.classFeatures[0].uses, { max: 1, reset: 'turn' });
+  assert.deepStrictEqual(parsed.classFeatures[0].uses, { max: 1, used: 0, reset: 'turn' });
 });
 
 test('M10: parseClassFeatures prefers snippet over HTML description', () => {
@@ -430,7 +430,7 @@ test('M10: limitedUse with numeric resetType maps to a label', () => {
     }
   });
   const parsed = parseCharacter(raw);
-  assert.deepStrictEqual(parsed.classFeatures[0].uses, { max: 1, reset: 'short rest' });
+  assert.deepStrictEqual(parsed.classFeatures[0].uses, { max: 1, used: 0, reset: 'short rest' });
 });
 
 test('M10: stripHtml removes D&DB templating tokens like {{modifier:wis@min:1}}', () => {
@@ -991,11 +991,11 @@ test('R14: real-shape damage modifiers ({type:"damage", subType:"radiant"}) give
 
 test('R14: Channel Divinity keeps its uses when Turn Undead shares its componentId', () => {
   const p = parsedDdbFixture('cleric-l5');
-  assert.deepStrictEqual(p.classFeatures.find(f => f.name === 'Channel Divinity').uses, { max: 1, reset: 'short rest' });
+  assert.deepStrictEqual(p.classFeatures.find(f => f.name === 'Channel Divinity').uses, { max: 1, used: 0, reset: 'short rest' });
   // Order does not matter: the sub-action listed first must not win either.
   const raw = loadDdbFixture('cleric-l5');
   raw.actions.class.reverse();
-  assert.deepStrictEqual(parseCharacter(raw).classFeatures.find(f => f.name === 'Channel Divinity').uses, { max: 1, reset: 'short rest' });
+  assert.deepStrictEqual(parseCharacter(raw).classFeatures.find(f => f.name === 'Channel Divinity').uses, { max: 1, used: 0, reset: 'short rest' });
 });
 
 test('R14: hp.temp carries DDB temporaryHitPoints', () => {
@@ -1175,4 +1175,48 @@ test('M64 1.5: applyDamage halves fire against a parsed Tiefling sheet', () => {
   const pc = { id: 'pc', kind: 'pc', name: 'T', hp: 30, hpMax: 30, hpTemp: 0, conditions: [], ref: sheet };
   applyDamage(pc, 10, 'fire', {});
   assert.strictEqual(pc.hp, 25);
+});
+
+// ── M64 phase 1.5: feature `used` counts, Fighting Styles, Rage ──
+
+test('M64 1.5: classFeatures[].uses gains `used` from limitedUse.numberUsed; max/reset unchanged', () => {
+  const raw = loadDdbFixture('fighter-l5');
+  raw.actions.class.find(a => a.name === 'Second Wind').limitedUse.numberUsed = 1;
+  const p = parseCharacter(raw);
+  assert.deepStrictEqual(p.classFeatures.find(f => f.name === 'Second Wind').uses, { max: 1, used: 1, reset: 'short rest' });
+  assert.deepStrictEqual(p.classFeatures.find(f => f.name === 'Action Surge').uses, { max: 1, used: 0, reset: 'short rest' });
+  assert.deepStrictEqual(p.featureUses['second-wind'], { max: 1, used: 1, reset: 'short rest' });
+  assert.deepStrictEqual(p.featureUses['action-surge'], { max: 1, used: 0, reset: 'short rest' });
+});
+
+test('M64 1.5: featureUses keys every limited-use feature by slug (Channel Divinity, Arcane Recovery)', () => {
+  assert.deepStrictEqual(parsedDdbFixture('cleric-l5').featureUses['channel-divinity'], { max: 1, used: 0, reset: 'short rest' });
+  assert.deepStrictEqual(parsedDdbFixture('wizard-l5').featureUses['arcane-recovery'], { max: 1, used: 0, reset: 'long rest' });
+  assert.deepStrictEqual(parseCharacter(rawFixture()).featureUses, {});
+});
+
+test('M64 1.5: Rage uses from DDB when present, else the SRD Barbarian table', () => {
+  const rage = (level, action) => parseCharacter(rawFixture({
+    classes: [{ definition: { name: 'Barbarian' }, level, classFeatures: [classFeature({ id: 77, name: 'Rage', level: 1 })] }],
+    actions: { class: action ? [action] : [] }
+  })).featureUses.rage;
+  assert.deepStrictEqual(rage(5, { componentId: 77, name: 'Rage', limitedUse: { maxUses: 3, numberUsed: 2, resetType: 2 } }),
+    { max: 3, used: 2, reset: 'long rest' });
+  assert.deepStrictEqual(rage(6), { max: 4, used: 0, reset: 'long rest', derived: true });
+  assert.deepStrictEqual([1, 3, 12, 17, 20].map(l => rage(l).max), [2, 3, 5, 6, 99]);
+  assert.deepStrictEqual(parseFeatureUses([{ name: 'Action Surge', uses: null }], [{ name: 'Fighter', level: 17 }])['action-surge'],
+    { max: 2, used: 0, reset: 'short rest', derived: true });
+});
+
+test('M64 1.5: fightingStyles from options.class picks under a Fighting Style feature', () => {
+  const raw = loadDdbFixture('fighter-l5');
+  const styleId = raw.classes[0].classFeatures.find(f => f.definition.name === 'Fighting Style').definition.id;
+  raw.options = { class: [
+    { componentId: styleId, definition: { id: 1, name: 'Defense' } },
+    { componentId: 99999, definition: { id: 2, name: 'Great Weapon Fighting' } },
+    { componentId: 99999, definition: { id: 3, name: 'Agonizing Blast' } }
+  ] };
+  assert.deepStrictEqual(parseCharacter(raw).fightingStyles, ['Defense', 'Great Weapon Fighting']);
+  assert.deepStrictEqual(parsedDdbFixture('fighter-l5').fightingStyles, []);
+  assert.deepStrictEqual(parseFightingStyles({}), []);
 });

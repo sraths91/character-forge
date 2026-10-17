@@ -34,7 +34,7 @@ test('DDB fixtures: fighter-l5 parses as a sword-and-board Champion', () => {
   assert.deepEqual(p.savingThrowProficiencies.sort(), ['CON', 'STR']);
   assert.deepEqual(p.spells, []);
   const surge = p.classFeatures.find(f => f.name === 'Action Surge');
-  assert.deepEqual(surge.uses, { max: 1, reset: 'short rest' });
+  assert.deepEqual(surge.uses, { max: 1, used: 0, reset: 'short rest' });
 });
 
 test('DDB fixtures: wizard-l5 parses with Shield, Counterspell and a crossbow', () => {
@@ -65,7 +65,7 @@ test('DDB fixtures: cleric-l5 parses with heals, concentration and Channel Divin
   assert.equal(kinds['Spiritual Weapon'], 'spell-attack');
   assert.equal(kinds['Spirit Guardians'], 'spell-save');
   assert.equal(p.spells.find(s => s.name === 'Spirit Guardians').spellCastingAbility, 'WIS');
-  assert.deepEqual(p.classFeatures.find(f => f.name === 'Channel Divinity').uses, { max: 1, reset: 'short rest' });
+  assert.deepEqual(p.classFeatures.find(f => f.name === 'Channel Divinity').uses, { max: 1, used: 0, reset: 'short rest' });
 });
 
 test('buildPc / buildMonster / buildScene: defaults and overrides', () => {
