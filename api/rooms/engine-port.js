@@ -18,8 +18,11 @@
 //     `seq`, `round` and `turnId`, and returns the stamped event. The
 //     resolved `{events}` is that same stamped list (for callers that pass
 //     a collecting emit, e.g. a simulator). Payloads carry ids only.
-//  4. The ROOM emits `reaction.offered` / `reaction.resolved` (from its
-//     PromptBroker) and `dm.override` (from DM gates). The port must not.
+//  4. The ROOM emits `reaction.offered` (from its PromptBroker, with the
+//     deadline) and `dm.override` (from DM gates); the port must not. The
+//     PORT emits `reaction.resolved {reactorId, kind, used, by}` after
+//     re-checking eligibility against the answer (M64 W5): `used` is the
+//     engine's verdict, `by` the answer's source from `reaction()`.
 //  5. `turn.ended` is the last event of `runTurn`; the room fills its
 //     `payload.stateHash` from the returned state. On victory the port
 //     emits `encounter.ended {outcome}` after `turn.ended` and returns
@@ -37,9 +40,11 @@
 //     Asked when the actor's controller is 'player' or 'dm'. This is the
 //     turn's safe point: DM edits made while waiting are applied to `state`
 //     and the engine MUST continue from the returned `state`.
-//   reaction({kind:'oa'|'shield'|'counterspell', reactorId, autoAnswer, eligible, payload}) → Promise<boolean>
-//     The room checks `eligible` first (false → resolves false, no prompt).
-//     The engine re-checks eligibility after any `true`.
+//   reaction({kind:'oa'|'shield'|'counterspell', reactorId, autoAnswer, eligible, payload})
+//       → Promise<{answer: boolean, by: 'player'|'auto'|'timeout'|'dm'}>
+//     The room checks `eligible` first (false → {answer: false, by: 'auto'},
+//     no prompt, no events). The engine re-checks eligibility after any
+//     `true` and emits `reaction.resolved` itself.
 //   planReady({actorId, plan, breakdown}) → Promise<plan|null>   (null = skip the action)
 //   roll({rollKind:'attack'|'damage'|'save', actorId, targetId, result}) → Promise<number>
 //     Called after the rng draw so the stream stays aligned.
@@ -60,7 +65,7 @@ export const ENGINE_PORT_VERSION = 1;
  *
  * @typedef {object} TurnPrompts
  * @property {(a: {actorId: string, turnId: string, controller: object, state: EncounterState}) => Promise<{intent: {kind: 'plan'|'delegate'|'skip', plan?: object}, state: EncounterState}>} intent
- * @property {(a: {kind: string, reactorId: string, autoAnswer: boolean, eligible: boolean, payload?: object}) => Promise<boolean>} reaction
+ * @property {(a: {kind: string, reactorId: string, autoAnswer: boolean, eligible: boolean, payload?: object}) => Promise<{answer: boolean, by: string}>} reaction
  * @property {(a: {actorId: string, plan: object, breakdown?: unknown[]}) => Promise<object|null>} planReady
  * @property {(a: {rollKind: string, actorId: string, targetId?: string|null, result: number}) => Promise<number>} roll
  * @property {(exchange: EncounterEvent) => Promise<void>} cinema
@@ -244,8 +249,10 @@ export function createStubEngine({ version = ENGINE_PORT_VERSION, cinemaMs = 600
         if (wouldHit && kept !== 20 && target.controller.type === 'player') {
           ctx.progress(s);
           const eligible = !target.resources.reactionUsed && !!slot && slot.spent < slot.max && kept + bonus < ac + 5;
-          const used = await ctx.prompts.reaction({ kind: 'shield', reactorId: target.id, autoAnswer: false, eligible, payload: { attackTotal: kept + bonus, ac } });
-          if (used && eligible) {
+          const r = await ctx.prompts.reaction({ kind: 'shield', reactorId: target.id, autoAnswer: false, eligible, payload: { attackTotal: kept + bonus, ac } });
+          const used = r.answer === true && eligible;
+          if (eligible) emit({ type: 'reaction.resolved', payload: { reactorId: target.id, kind: 'shield', used, by: r.by } });
+          if (used) {
             shielded = true;
             ac += 5;
             target.resources.reactionUsed = true;

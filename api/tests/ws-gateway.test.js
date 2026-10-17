@@ -415,7 +415,7 @@ for (const engineKind of ENGINES) {
       assert.ok(open.p.deadlineAt > open.p.serverNow);
       const offered = await dm.find(m => m.t === 'reaction.offered');
       assert.equal(offered.p.payload.deadlineMs, 20000);
-      assert.equal(dm.of('reaction.offered').length, 1, 'one offer per window (the room owns reaction events)');
+      assert.equal(dm.of('reaction.offered').length, 1, 'one offer per window (the room owns reaction.offered)');
       // Reconnect: the snapshot re-sends the prompt with its original deadline.
       const again = srv.track(await TestClient.connect(srv.url, t.players[0].token, { name: 'p1-again' }));
       assert.equal(again.snapshot.p.openPrompt.promptId, open.p.promptId);
@@ -425,7 +425,9 @@ for (const engineKind of ENGINES) {
       assert.equal((await again.send('prompt.answer', { promptId: open.p.promptId, answer: 'yes' })).p.code, 'E_INVALID_INTENT');
       assert.equal((await dm.send('dm.prompt.force', { promptId: open.p.promptId, answer: false })).t, 'ack');
       const resolved = await dm.find(m => m.t === 'reaction.resolved');
-      assert.deepEqual([resolved.p.payload.used, resolved.p.payload.by], [false, 'dm']);
+      assert.deepEqual([resolved.p.payload.used, resolved.p.payload.by], [false, 'dm'], 'the engine keeps the broker\'s source');
+      assert.equal(dm.of('reaction.resolved').length, 1, 'one resolution per window (the engine\'s; the room no longer adds one)');
+      assert.ok(resolved.seq > offered.seq);
       await again.find(m => m.t === 'prompt.closed' && m.p.promptId === open.p.promptId);
       assert.equal((await again.send('prompt.answer', { promptId: open.p.promptId, answer: true })).p.code, 'E_STALE');
       // The armed roll shows as a DM override.

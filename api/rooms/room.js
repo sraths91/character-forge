@@ -636,13 +636,16 @@ export class Room {
         return { intent, state: aw.state };
       },
 
+      // The room emits `reaction.offered` (only it knows the broker's
+      // deadline); the engine emits `reaction.resolved` after re-checking
+      // eligibility, so its `used` is authoritative. The room returns the
+      // raw answer and who gave it.
       reaction: async ({ kind, reactorId, autoAnswer, eligible, payload = {} }) => {
-        if (!eligible) return false;
+        if (!eligible) return { answer: false, by: 'auto' };
         const logged = this.#replayAnswer('reaction');
         if (logged) {
           this.#emit({ type: 'reaction.offered', payload: logged.offered });
-          this.#emit({ type: 'reaction.resolved', payload: { reactorId, kind, used: logged.used, by: logged.by } });
-          return logged.used;
+          return { answer: logged.used === true, by: logged.by };
         }
         const st = this.#currentState();
         const owner = this.#ownerOf(reactorId, st);
@@ -655,11 +658,10 @@ export class Room {
         this.#flush();
         const { answer, by } = await this.broker.ask({ kind, addressee, autoAnswer: !!autoAnswer, payload: { ...clone(payload), reactorId }, timeoutMs });
         if (this.closing) return new Promise(() => {});   // shutting down: the turn re-runs on recovery
-        const used = answer === true;
+        const used = answer === true;   // the answer; the engine's re-check decides reaction.resolved.used
         this.#record({ kind: 'reaction', used, by, offered });
-        this.#emit({ type: 'reaction.resolved', payload: { reactorId, kind, used, by } });
         this.#flush();
-        return used;
+        return { answer: used, by };
       },
 
       planReady: async ({ actorId, plan, breakdown = [] }) => {

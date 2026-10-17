@@ -12,9 +12,11 @@
 //   room ctx.prompts.cinema    → onCinemaRound (after each `exchange`)
 //
 // Event ownership (engine-port.js rule 4): the room emits
-// `reaction.offered` / `reaction.resolved` (PromptBroker) and the gate
-// `dm.override`s, so the engine's own copies of those three types are
-// dropped here. Everything else the engine emits is forwarded in order.
+// `reaction.offered` (with the PromptBroker's deadline) and the gate
+// `dm.override`s, so the engine's own copies of those two are dropped
+// here. `reaction.resolved` is the engine's: it re-checks eligibility
+// after the answer, so its `used` is authoritative. Everything else the
+// engine emits is forwarded in order.
 //
 // Sheets: PC wrappers need the parsed character. They are not part of
 // EncounterState, so the port caches them per encounter at build time and
@@ -53,7 +55,7 @@ const SHEET_CACHE_SIZE = 64;
  */
 const ADAPTER_BACKSTOP_MS = 10 * 60_000;
 /** Engine event types the room owns (engine-port.js rule 4). */
-const ROOM_OWNED_EVENTS = new Set(['reaction.offered', 'reaction.resolved', 'dm.override']);
+const ROOM_OWNED_EVENTS = new Set(['reaction.offered', 'dm.override']);
 
 const clone = (v) => (v === undefined ? undefined : JSON.parse(JSON.stringify(v)));
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
@@ -293,8 +295,8 @@ export function createRealEngine({ resolveSheets = () => null, monsterLookup = (
         ask: async (req) => {
           const { kind, reactorId, autoAnswer, ...ids } = req;
           progress();
-          const used = await ctx.prompts.reaction({ kind, reactorId, autoAnswer, eligible: true, payload: clone(ids) });
-          return { answer: used === true, by: 'player' };
+          const r = await ctx.prompts.reaction({ kind, reactorId, autoAnswer, eligible: true, payload: clone(ids) });
+          return { answer: r?.answer === true, by: r?.by || 'player' };
         }
       }),
       onCinemaRound: async () => {
