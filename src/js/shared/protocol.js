@@ -67,7 +67,7 @@
  *        'reveal'|'hide'}` — the DM's fog brush (map/fog.js); a server
  *        without it answers E_UNKNOWN_TYPE until E3 wires it.
  *
- *   v1.4 (2026-10-16, E1 M64 phase 1.5) — `turn.act.plan.featureId`
+ *   v1.5 (2026-10-16, E1 M64 phase 1.5) — `turn.act.plan.featureId`
  *        (optional): `{kind: 'feature', featureId: 'second-wind'|'rage'|…}`
  *        uses a class feature as the turn (no move, no attack);
  *        `features: [...]` on an attack plan still names bonus-action
@@ -90,7 +90,7 @@ import { EVENT_TYPES, REACTION_KINDS, ENCOUNTER_OUTCOMES, ENTITY_STATUSES, valid
 /** Wire protocol version; every message's `v` must equal this. */
 export const PROTOCOL_VERSION = 1;
 /** Additive minor revision of protocol v1 (see the header). */
-export const PROTOCOL_MINOR = 4;
+export const PROTOCOL_MINOR = 5;
 /** Longest accepted client message id. */
 export const MAX_CID_LENGTH = 64;
 
