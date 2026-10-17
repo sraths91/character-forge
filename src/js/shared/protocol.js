@@ -58,7 +58,7 @@
  *        on the next dm.encounter.setup) and its broadcast
  *        `room.settings {settings}` carrying all four keys.
  *
- *   v1.4 (2026-10-16, E1 M64 phase 1.5) — `turn.act.plan.featureId`
+ *   v1.5 (2026-10-16, E1 M64 phase 1.5) — `turn.act.plan.featureId`
  *        (optional): `{kind: 'feature', featureId: 'second-wind'|'rage'|…}`
  *        uses a class feature as the turn (no move, no attack);
  *        `features: [...]` on an attack plan still names bonus-action
@@ -81,7 +81,7 @@ import { EVENT_TYPES, REACTION_KINDS, ENCOUNTER_OUTCOMES, validateEvent } from '
 /** Wire protocol version; every message's `v` must equal this. */
 export const PROTOCOL_VERSION = 1;
 /** Additive minor revision of protocol v1 (see the header). */
-export const PROTOCOL_MINOR = 4;
+export const PROTOCOL_MINOR = 5;
 /** Longest accepted client message id. */
 export const MAX_CID_LENGTH = 64;
 
@@ -199,7 +199,7 @@ const PLAN = shape({
   moveTo: optional(POS),
   path: optional(arrayOf(POS, { max: 64 })),
   features: optional(arrayOf(str({ maxLength: 64 }), { max: 8, unique: true })),
-  // v1.4 (additive, E1): the feature a `kind: 'feature'` plan uses.
+  // v1.5 (additive, E1): the feature a `kind: 'feature'` plan uses.
   featureId: optional(str({ maxLength: 64 }))
 });
 

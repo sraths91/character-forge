@@ -162,7 +162,7 @@ test('Rage ends: lapsed (no attack, no damage since its last turn), expired (10 
 });
 
 test('feature intents: protocol featureId, validateIntent (fresh fighter-l5), planFromIntent, adapters round-trip', () => {
-  assert.ok(PROTOCOL_MINOR >= 4);
+  assert.ok(PROTOCOL_MINOR >= 5);
   const msg = { v: 1, t: 'turn.act', cid: 'c1', p: { turnId: 't1', plan: { kind: 'feature', featureId: 'second-wind' } } };
   assert.deepEqual(validateClientMessage(msg).errors, []);
   const sheet = parsedDdbFixture('fighter-l5');
