@@ -209,9 +209,10 @@ function rerender() {
       animations: entityAnimations,
       popups: damagePopups,
       // M8 — AoE template (placed + previewed shapes)
-      // M64 M8 — a versus drag previews its path (green / red) in the
-      // AoE outline pass; legacySceneToView does not forward pathPreview.
-      aoeTemplate: versusDragPreview ? pathPreviewOutline(versusDragPreview) : currentAoeTemplate,
+      aoeTemplate: currentAoeTemplate,
+      // M64 M8 — a versus drag previews its path (green / red, with the
+      // foot cost) through the renderer's own path pass.
+      pathPreview: versusDragPreview ? { cells: versusDragPreview.cells, legal: versusDragPreview.legal, costFt: versusDragPreview.costFt } : null,
       // M27 — Per-action effect descriptors
       effects: effectQueue
     });
@@ -1569,15 +1570,6 @@ function versusStateForDrag() {
   const { state, sheets } = liveEncounterState({ party: partyComposedCharacters, scene: currentScene, includeDown: true });
   state.grid.terrain = currentScene.terrain && typeof currentScene.terrain.flags === 'string' ? currentScene.terrain : null;
   return { state, sheets };
-}
-
-function pathPreviewOutline(preview) {
-  const ok = preview.legal;
-  return {
-    cells: preview.cells,
-    color: ok ? 'rgba(74,222,128,0.22)' : 'rgba(248,113,113,0.25)',
-    strokeColor: ok ? 'rgba(74,222,128,0.95)' : 'rgba(248,113,113,0.95)'
-  };
 }
 
 /**
