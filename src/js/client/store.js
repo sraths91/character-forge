@@ -13,7 +13,10 @@
  * older `seq` is ignored; a gap, an unexpected encounter, or a
  * `turn.ended.stateHash` that does not match this model asks for a
  * resync (`onResyncNeeded`) and drops broadcasts until the next
- * `room.snapshot` replaces both copies. Late joiners get the snapshot and
+ * `room.snapshot` replaces both copies. The mirror (mirror.js) replays
+ * the engine's bookkeeping, so the shared `stateHash` check is ON by
+ * default (M64 phase 1.5); a mismatch is a bug report, the resync the
+ * safety net. Late joiners get the snapshot and
  * no cinema backlog. Every inbound message is validated with the shared
  * protocol contract; invalid ones are ignored and counted.
  *
@@ -24,11 +27,11 @@
 import { validateServerMessage, SERVER_MESSAGE_SCOPE } from '../shared/protocol.js';
 import { EVENT_TYPES } from '../shared/events.js';
 import { validateEncounterState } from '../shared/encounter-state.js';
+import { stateHash } from '../shared/state-hash.js';
+import { applyEventToEncounter, applyEntityPatch } from './mirror.js';
 
 const EVENT_SET = new Set(EVENT_TYPES);
 const HISTORY_LIMIT = 50;
-/** Entity fields an `entity.updated` patch may replace. */
-const PATCHABLE = new Set(['name', 'controller', 'pos', 'hp', 'hpMax', 'hpTemp', 'ac', 'speedFt', 'conditions', 'concentration']);
 
 /**
  * @typedef {object} ClientState
@@ -64,98 +67,7 @@ export function initialClientState() {
 
 const clone = (v) => (v === undefined ? undefined : JSON.parse(JSON.stringify(v)));
 
-/** 32-bit FNV-1a over a string, as 8 lowercase hex chars. */
-function fnv1a(s) {
-  let h = 0x811c9dc5;
-  for (let i = 0; i < s.length; i++) {
-    h ^= s.charCodeAt(i);
-    h = Math.imul(h, 0x01000193);
-  }
-  return (h >>> 0).toString(16).padStart(8, '0');
-}
-
-const conditionId = (c) => (typeof c === 'string' ? c : c?.id);
-
-/**
- * Hash of the client-visible encounter: per entity (sorted by id) its
- * hp, position and condition ids (sorted). Everything a client can track
- * from events alone. The server must emit the same function over the
- * projected state in `turn.ended.stateHash` for the check to hold.
- * @param {object|null} encounter — projected EncounterState
- * @returns {string} 8 hex chars
- */
-export function viewStateHash(encounter) {
-  const ents = Object.values(encounter?.entities || {})
-    .map(e => [e.id, e.hp, e.pos?.col ?? null, e.pos?.row ?? null,
-      (e.conditions || []).map(conditionId).sort()])
-    .sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
-  return fnv1a(JSON.stringify(ents));
-}
-
-function patchEntity(enc, id, patch) {
-  const e = enc?.entities?.[id];
-  if (!e) return enc;
-  return { ...enc, entities: { ...enc.entities, [id]: { ...e, ...patch } } };
-}
-
-/**
- * Apply one engine event to a projected EncounterState. Pure. Covers the
- * client-visible fields (hp, position, conditions, concentration, round,
- * turn, phase); resource ledgers refresh with the next snapshot.
- * @param {object|null} enc
- * @param {object} ev — events.js event
- * @returns {object|null}
- */
-export function applyEventToEncounter(enc, ev) {
-  if (!enc) return enc;
-  const p = ev.payload || {};
-  let next = enc;
-  switch (ev.type) {
-    case 'turn.started': {
-      const idx = (next.initiative || []).findIndex(r => r.entityId === p.actorId);
-      next = { ...next, phase: 'running', ...(idx >= 0 ? { turnIndex: idx } : {}) };
-      break;
-    }
-    case 'move':
-      next = patchEntity(next, p.actorId, { pos: { col: p.to.col, row: p.to.row } });
-      break;
-    case 'damage':
-    case 'heal':
-      next = patchEntity(next, p.targetId, { hp: p.hpAfter });
-      break;
-    case 'exchange':
-      for (const eff of p.effects || []) next = patchEntity(next, eff.entityId, { hp: eff.hp.after });
-      break;
-    case 'condition.applied': {
-      const e = next.entities?.[p.entityId];
-      if (e && !(e.conditions || []).some(c => conditionId(c) === p.condition)) {
-        next = patchEntity(next, p.entityId, { conditions: [...(e.conditions || []), p.condition] });
-      }
-      break;
-    }
-    case 'condition.removed': {
-      const e = next.entities?.[p.entityId];
-      if (e) next = patchEntity(next, p.entityId, { conditions: (e.conditions || []).filter(c => conditionId(c) !== p.condition) });
-      break;
-    }
-    case 'concentration.started':
-      next = patchEntity(next, p.casterId, {
-        concentration: { spellId: p.spellId, targetIds: Array.isArray(p.targetIds) ? [...p.targetIds] : [] }
-      });
-      break;
-    case 'concentration.broken':
-      next = patchEntity(next, p.casterId, { concentration: null });
-      break;
-    case 'encounter.ended':
-      next = { ...next, phase: 'ended' };
-      break;
-    default:
-      break;
-  }
-  const round = ev.round > next.round ? ev.round : next.round;
-  return { ...next, round, lastEventSeq: ev.seq };
-}
-
+export { applyEventToEncounter };
 /**
  * Apply one validated sequenced broadcast to a ClientState. Pure.
  * @param {ClientState} s
@@ -168,7 +80,8 @@ function reduceBroadcast(s, msg) {
   if (EVENT_SET.has(msg.t)) {
     const history = [...s.history, p];
     if (history.length > HISTORY_LIMIT) history.splice(0, history.length - HISTORY_LIMIT);
-    next = { ...next, history, encounter: applyEventToEncounter(s.encounter, p) };
+    const prev = s.history.length ? s.history[s.history.length - 1] : null;
+    next = { ...next, history, encounter: applyEventToEncounter(s.encounter, p, { prev }) };
     if (msg.t === 'exchange') next.lastExchange = p;
     return next;
   }
@@ -209,13 +122,15 @@ function reduceBroadcast(s, msg) {
       return { ...next, encounter: { ...s.encounter, initiative: p.order.map(r => ({ entityId: r.entityId, score: r.score })) } };
     case 'round.started':
       if (!s.encounter) return next;
-      return { ...next, encounter: { ...s.encounter, round: p.round } };
-    case 'entity.updated': {
-      const raw = { ...p.patch };
-      if (raw.position && !raw.pos) raw.pos = raw.position;
-      const patch = Object.fromEntries(Object.entries(raw).filter(([k]) => PATCHABLE.has(k)));
-      return { ...next, encounter: patchEntity(s.encounter, p.entityId, patch) };
-    }
+      // dm.encounter.start: round 1, first initiative slot, running.
+      return {
+        ...next,
+        encounter: s.encounter.phase === 'setup'
+          ? { ...s.encounter, round: p.round, turnIndex: 0, phase: 'running' }
+          : { ...s.encounter, round: p.round }
+      };
+    case 'entity.updated':
+      return { ...next, encounter: applyEntityPatch(s.encounter, p.entityId, p.patch) };
     case 'room.status':
       return { ...next, room: { ...(s.room || {}), status: p.status } };
     case 'room.closing':
@@ -259,7 +174,8 @@ function stateFromSnapshot(base, p) {
  *
  * @param {{hashState?: ((encounter: object) => string)|null}} [opts]
  *   — `hashState` computes this model's hash for the `turn.ended`
- *     check (default viewStateHash; null disables the check).
+ *     check (default: the shared `stateHash`, the function the server
+ *     stamps; null disables the check).
  * @returns {{
  *   getState: () => ClientState,
  *   getPresented: () => ClientState,
@@ -272,7 +188,7 @@ function stateFromSnapshot(base, p) {
  * }}
  */
 export function createStore(opts = {}) {
-  const hashState = opts.hashState === undefined ? viewStateHash : opts.hashState;
+  const hashState = opts.hashState === undefined ? stateHash : opts.hashState;
   let auth = initialClientState();
   let presented = auth;
   let pending = [];          // broadcasts applied to auth but not yet presented

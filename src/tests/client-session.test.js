@@ -146,3 +146,51 @@ test('C9 session: a player sending dm.* gets an error; a stale turn.act is refus
   t.dm.close();
   t.player.close();
 });
+
+test('M64 1.5 session: the smoke script with the shared stateHash check on — every turn.ended matches, zero resyncs', async () => {
+  const t = await table();
+  const { dm, player, created } = t;
+  const FIGHTER = demoCharacter('c-bram', 'Bram', { cls: 'Wizard', level: 5, hp: 40, weapon: 'Longsword', dice: '1d8', armor: 16, spellSlots: { 1: 2 } });
+  const imp = await t.playerApi.importCharacter(created.roomId, { json: FIGHTER });
+  await player.send({ t: 'seat.claim', p: { characterId: imp.character.id } });
+  // The smoke table (preset goblin at 30 HP) plus a second goblin, so
+  // reactions, Shield, downs and round wraps all happen.
+  await dm.send({ t: 'dm.encounter.setup', p: {
+    map: null, grid: { cols: 6, rows: 4 },
+    monsters: [{ id: 'gob', slug: 'goblin', name: 'Goblin', hp: 30 }, { id: 'gob2', slug: 'goblin', name: 'Goblin 2', hp: 12 }],
+    placements: { 'pc-1': { col: 1, row: 1 }, gob: { col: 2, row: 1 }, gob2: { col: 2, row: 2 } }
+  } });
+  await until(() => player.store.getState().encounter?.phase === 'setup', 'encounter.created');
+  await dm.send({ t: 'dm.encounter.start', p: { seed: 42 } });
+  // Play: shields are taken when offered; the player swings at the first
+  // standing goblin, then dodges once, then delegates.
+  let acted = 0;
+  for (let i = 0; i < 400 && player.store.getState().encounter?.phase !== 'ended'; i++) {
+    const s = player.store.getState();
+    if (s.openPrompt) await player.send({ t: 'prompt.answer', p: { promptId: s.openPrompt.promptId, answer: true } }).catch(() => {});
+    const ti = turnInfo(s);
+    if (ti.mine && ti.turnId && ti.awaitingIntent !== false && !t.sentFor?.has(ti.turnId)) {
+      t.sentFor ||= new Set();
+      t.sentFor.add(ti.turnId);
+      acted++;
+      const target = ['gob', 'gob2'].find(id => s.encounter.entities[id]?.hp > 0);
+      const plan = acted === 2 ? { kind: 'dodge' } : { kind: 'melee', targetId: target };
+      await player.send({ t: 'turn.act', p: { turnId: ti.turnId, plan } }).catch(() => player.send({ t: 'turn.delegate', p: { turnId: ti.turnId } }).catch(() => {}));
+    }
+    t.timers.fire?.();
+    await flush(2);
+  }
+  await until(() => dm.store.getState().seq === player.store.getState().seq, 'equal seq');
+  const ended = player.store.getState().history.filter(e => e.type === 'turn.ended');
+  assert.ok(acted >= 2, 'the player acted at least twice');
+  assert.ok(ended.length >= 4, `several turns were hash-checked (${ended.length})`);
+  for (const c of [dm, player]) {
+    const st = c.store.getStats();
+    assert.equal(st.hashMismatch, 0, 'no turn.ended hash mismatch');
+    assert.equal(st.resyncs, 0, 'no resync');
+    assert.equal(st.gap, 0);
+  }
+  assert.equal(t.server.invalid.length, 0);
+  dm.close();
+  player.close();
+});

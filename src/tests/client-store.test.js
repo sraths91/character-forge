@@ -5,7 +5,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { createStore, viewStateHash, applyEventToEncounter, initialClientState } from '../js/client/store.js';
+import { createStore, applyEventToEncounter, initialClientState } from '../js/client/store.js';
+import { stateHash } from '../js/shared/state-hash.js';
 import { validateServerMessage } from '../js/shared/protocol.js';
 
 const read = (f) => JSON.parse(readFileSync(new URL(`./fixtures/contracts/${f}`, import.meta.url), 'utf8'));
@@ -100,7 +101,7 @@ test('C6: turn.ended stateHash mismatch triggers resync; a match does not', () =
   store.onResyncNeeded(info => calls.push(info.reason));
   store.apply(snapshot());
   store.apply(damage(11, 'pc-fighter', 30, 25));
-  const good = viewStateHash(store.getState().encounter);
+  const good = stateHash(store.getState().encounter);
   store.apply(ev(12, 'turn.ended', { actorId: 'pc-fighter', stateHash: good }));
   assert.deepEqual(calls, []);
   store.apply(ev(13, 'turn.ended', { actorId: 'pc-fighter', stateHash: 'deadbeef' }));
@@ -223,19 +224,16 @@ test('C6: applyEventToEncounter covers exchange effects, conditions, concentrati
   assert.equal(STATE.entities['m-goblin'].hp, projected().entities['m-goblin'].hp);
 });
 
-test('C6: viewStateHash is order-independent and sensitive to hp/pos/conditions', () => {
-  const a = projected();
-  const b = projected();
-  b.entities = Object.fromEntries(Object.entries(b.entities).reverse());
-  assert.equal(viewStateHash(a), viewStateHash(b));
-  assert.match(viewStateHash(a), /^[0-9a-f]{8}$/);
-  b.entities['pc-fighter'].hp -= 1;
-  assert.notEqual(viewStateHash(a), viewStateHash(b));
-  const c = projected();
-  c.entities['pc-fighter'].pos = { col: 9, row: 0 };
-  assert.notEqual(viewStateHash(a), viewStateHash(c));
-  // resources and turn flags are not part of the view hash
-  const d = projected();
-  d.entities['pc-fighter'].resources.reactionUsed = true;
-  assert.equal(viewStateHash(a), viewStateHash(d));
+test('C6: the default turn.ended check is the shared stateHash (resources and turn flags included)', () => {
+  const store = createStore();
+  const calls = [];
+  store.onResyncNeeded(info => calls.push(info.reason));
+  store.apply(snapshot());
+  // A hash that ignores resources (the old view hash) no longer passes:
+  const enc = clone(store.getState().encounter);
+  enc.entities['pc-fighter'].resources.reactionUsed = !enc.entities['pc-fighter'].resources.reactionUsed;
+  assert.notEqual(stateHash(enc), stateHash(store.getState().encounter));
+  store.apply(ev(11, 'turn.ended', { actorId: 'pc-fighter', stateHash: stateHash(enc) }));
+  assert.deepEqual(calls, ['state-hash']);
+  assert.match(stateHash(store.getState().encounter), /^[0-9a-f]{14}$/);
 });

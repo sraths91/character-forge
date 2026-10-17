@@ -23,5 +23,9 @@
   { "seq": 22, "type": "turn.rejected", "round": 1, "turnId": "t2", "cinemaGroup": null, "payload": { "actorId": "pc-wizard", "reason": "no 3rd-level slot left", "code": "no-slot" } },
   { "seq": 23, "type": "turn.ended", "round": 1, "turnId": "t1", "cinemaGroup": null, "payload": { "actorId": "pc-fighter", "stateHash": "9f2c11aa" } },
   { "seq": 24, "type": "turn.skipped", "round": 1, "turnId": "t3", "cinemaGroup": null, "payload": { "actorId": "m-fanatic", "reason": "incapacitated" } },
-  { "seq": 25, "type": "encounter.ended", "round": 1, "turnId": null, "cinemaGroup": null, "payload": { "outcome": "party-victory" } }
+  { "seq": 25, "type": "encounter.ended", "round": 1, "turnId": null, "cinemaGroup": null, "payload": { "outcome": "party-victory" } },
+  { "seq": 26, "type": "death.save", "round": 2, "turnId": "t4", "cinemaGroup": null, "payload": { "entityId": "pc-wizard", "d20": 8, "success": false, "crit": false, "successes": 0, "failures": 1, "cause": "roll" } },
+  { "seq": 27, "type": "entity.stabilized", "round": 2, "turnId": "t4", "cinemaGroup": null, "payload": { "entityId": "pc-wizard" } },
+  { "seq": 28, "type": "entity.revived", "round": 2, "turnId": "t4", "cinemaGroup": null, "payload": { "entityId": "pc-wizard", "hp": 5, "byId": "pc-fighter" } },
+  { "seq": 29, "type": "entity.died", "round": 2, "turnId": "t4", "cinemaGroup": null, "payload": { "entityId": "m-goblin", "byId": "pc-fighter", "cause": "monster" } }
 ]
