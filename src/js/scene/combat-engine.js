@@ -62,7 +62,8 @@ import {
 } from './concentration.js';
 import { rollSave } from './save-rolls.js';
 import { swingStyleMods, offhandWeaponFor, offhandDice } from './fighting-styles.js';
-import { grantedSpellEntry, spellUseKey, featureLedgerFor, usesLeft, spendUse } from './feature-uses.js';
+import { grantedSpellEntry, spellUseKey, featureLedgerFor, usesLeft, spendUse, spellSlug } from './feature-uses.js';
+import { scaleCantrip } from './cantrip-scaling.js';
 import { MONSTER_DEFAULT_SAVES } from './monster-presets.js';
 import { chooseLegendaryAction, spendLegendaryAction } from './monster-legendary.js';
 import {
@@ -850,7 +851,11 @@ export async function runMonsterSpell({ attacker, target, plan, scene, rng, witn
       return;
     }
   }
-  const spell = grant ? baseSpell : applyUpcast(baseSpell, plan.castAtLevel);
+  let spell = grant ? baseSpell : applyUpcast(baseSpell, plan.castAtLevel);
+  // M64 phase 1.5 — PC cantrips scale with character level (5 / 11 / 17).
+  if (attacker.kind === 'pc' && baseSpell.level === 0 && !plan.isInnate) {
+    spell = scaleCantrip(spell, totalLevel(attacker.ref || attacker), ownSpellEntry(attacker.ref, String(plan.spellId)));
+  }
   const book = attacker.kind === 'monster' ? spellbookFor(attacker.presetSlug) : null;
   const innateBook = !book && attacker._innate
     ? { dc: 12, attackBonus: 4, abilityMod: 3 }
@@ -939,7 +944,7 @@ export async function runMonsterSpell({ attacker, target, plan, scene, rng, witn
   // (M64 T4: they emit spell.fizzled instead).
   const castCinema = (defender, outcome, extra = {}) => dispatchCinema(prompts, ctx, group, {
     attacker, defender, plan, spell, cast: true, outcome
-  }, { reaction: false, cast: true, targetHpBefore: extra.hpBefore ?? defender?.hp, spell, outcome, effects: extra.effects });
+  }, { reaction: false, cast: true, targetHpBefore: extra.hpBefore ?? defender?.hp, spell, outcome, effects: extra.effects, exchangeId: extra.exchangeId });
 
   if (spell.kind === 'heal') {
     const dmgRoll = rollDamage(spell.dice, { crit: false }, rng);
@@ -979,65 +984,81 @@ export async function runMonsterSpell({ attacker, target, plan, scene, rng, witn
   }
 
   if (spell.kind === 'spell-attack') {
-    // M64 R12 — spell attacks go through resolveAttack: conditions,
-    // prone (melee vs ranged spell attack), a ranged caster next to a
-    // hostile, auto-crits. The book's bonus already folds the 'spell'
-    // attack combatMods, so only damage mods reach the resolver.
-    const verdict = resolveAttack({
-      attacker: {
-        ...attacker.ref,
-        conditions: attacker.conditions,
-        _position: attacker._position || attacker.position,
-        combatMods: combatModsOf(attacker).filter(m => m?.kind === 'damage')
-      },
-      target: { ...target.ref, conditions: target.conditions, _position: target._position || target.position },
-      weapon: null,
-      spell,
-      scene,
-      attackerKind: attacker.kind,
-      targetKind: target.kind,
-      targetAC: target.ac,
-      advantageOverride: 'auto',
-      allies: allies.filter(a => a !== attacker && isAlive(a)).map(a => ({ ...a.ref, _position: a._position || a.position, conditions: a.conditions, id: a.id, name: a.name })),
-      hostiles: allEnemies.filter(isAlive).map(e => ({ ...e.ref, _position: e._position || e.position, conditions: e.conditions, id: e.id, name: e.name })),
-      attackStats: {
-        bonus: effectiveBook.attackBonus, dice: spell.dice, damageType: spell.damageType ?? null,
-        parts: [{ source: spell.name, value: effectiveBook.attackBonus }], damageParts: []
-      },
-      charmerIds: charmerIds(attacker),
-      targetId: target.id
-    });
-    if (verdict.autoMiss) {
-      await castCinema(target, { dmg: 0, miss: true });
-      return;
+    // M64 phase 1.5 — Eldritch Blast style cantrips fire `spell.beams`
+    // attacks (cantrip-scaling.js); each beam is its own roll, sharing the
+    // cast's cinema group (beam k >= 2: exchangeId `<group>.s<k>`).
+    const beam = async (t, k) => {
+      const exchangeId = k === 0 || group === null ? group : `${group}.s${k + 1}`;
+      // M64 R12 — spell attacks go through resolveAttack: conditions,
+      // prone (melee vs ranged spell attack), a ranged caster next to a
+      // hostile, auto-crits. The book's bonus already folds the 'spell'
+      // attack combatMods, so only damage mods reach the resolver.
+      const verdict = resolveAttack({
+        attacker: {
+          ...attacker.ref,
+          conditions: attacker.conditions,
+          _position: attacker._position || attacker.position,
+          combatMods: combatModsOf(attacker).filter(m => m?.kind === 'damage')
+        },
+        target: { ...t.ref, conditions: t.conditions, _position: t._position || t.position },
+        weapon: null,
+        spell,
+        scene,
+        attackerKind: attacker.kind,
+        targetKind: t.kind,
+        targetAC: t.ac,
+        advantageOverride: 'auto',
+        allies: allies.filter(a => a !== attacker && isAlive(a)).map(a => ({ ...a.ref, _position: a._position || a.position, conditions: a.conditions, id: a.id, name: a.name })),
+        hostiles: allEnemies.filter(isAlive).map(e => ({ ...e.ref, _position: e._position || e.position, conditions: e.conditions, id: e.id, name: e.name })),
+        attackStats: {
+          bonus: effectiveBook.attackBonus, dice: spell.dice, damageType: spell.damageType ?? null,
+          parts: [{ source: spell.name, value: effectiveBook.attackBonus }], damageParts: []
+        },
+        charmerIds: charmerIds(attacker),
+        targetId: t.id
+      });
+      if (verdict.autoMiss) {
+        await castCinema(t, { dmg: 0, miss: true }, { exchangeId });
+        return true;
+      }
+      const mode = verdict.d20.mode;
+      let atk = verdict.autoCrit
+        ? { hit: true, crit: true, total: 20 + verdict.attackBonus.total }
+        : rollAttack({ bonus: verdict.attackBonus.total, advantage: dodgeMode(mode, t), targetAC: t.ac }, rng);
+      if (prompts.onRoll) atk = await reviewRoll(prompts, ctx, group, 'attack', attacker, t, atk);
+      if (await askShield(t, atk, { weapon: null, spell }, prompts, ctx, group)) {
+        spendShield(t, ctx, group);
+        atk.hit = false;
+        atk.shielded = true;
+        emitAttackRolled(ctx, group, attacker, t, atk, { weapon: null, isReaction: false, mode, bonus: verdict.attackBonus.total, spellId: String(plan.spellId) });
+        emitEvent(ctx, 'spell.fizzled', { casterId, reason: 'shield', spellId: String(plan.spellId), targetId: idOf(t) }, group);
+        return true;
+      }
+      emitAttackRolled(ctx, group, attacker, t, atk, { weapon: null, isReaction: false, mode, bonus: verdict.attackBonus.total, spellId: String(plan.spellId) });
+      if (!isAlive(attacker) || !canHit(t, wasDying)) return false;
+      if (!atk.hit) {
+        await castCinema(t, { dmg: 0, miss: true }, { exchangeId });
+        return true;
+      }
+      let dmg = rollDamage(verdict.damage.dice || spell.dice, { crit: atk.crit }, rng);
+      if (prompts.onRoll) {
+        dmg = await reviewRoll(prompts, ctx, group, 'damage', attacker, t, dmg);
+        if (!isAlive(attacker) || !canHit(t, wasDying)) return false;
+      }
+      const before = t.hp;
+      applyDamage(t, dmg.total, spell.damageType ?? null, { crit: !!atk.crit, attacker, ctx, rng, group, roster });
+      await castCinema(t, { dmg: dmg.total, crit: !!atk.crit }, { hpBefore: before, exchangeId });
+      return true;
+    };
+    const beams = Math.max(1, Math.min(4, Math.trunc(Number(spell.beams) || 1)));
+    let t = target;
+    for (let k = 0; k < beams; k++) {
+      if (k > 0 && !isAlive(t)) {
+        t = nearestInRange(attacker, allEnemies, spell.range || 5);
+        if (!t) break;
+      }
+      if (!(await beam(t, k))) break;
     }
-    const mode = verdict.d20.mode;
-    let atk = verdict.autoCrit
-      ? { hit: true, crit: true, total: 20 + verdict.attackBonus.total }
-      : rollAttack({ bonus: verdict.attackBonus.total, advantage: dodgeMode(mode, target), targetAC: target.ac }, rng);
-    if (prompts.onRoll) atk = await reviewRoll(prompts, ctx, group, 'attack', attacker, target, atk);
-    if (await askShield(target, atk, { weapon: null, spell }, prompts, ctx, group)) {
-      spendShield(target, ctx, group);
-      atk.hit = false;
-      atk.shielded = true;
-      emitAttackRolled(ctx, group, attacker, target, atk, { weapon: null, isReaction: false, mode, bonus: verdict.attackBonus.total, spellId: String(plan.spellId) });
-      emitEvent(ctx, 'spell.fizzled', { casterId, reason: 'shield', spellId: String(plan.spellId), targetId: idOf(target) }, group);
-      return;
-    }
-    emitAttackRolled(ctx, group, attacker, target, atk, { weapon: null, isReaction: false, mode, bonus: verdict.attackBonus.total, spellId: String(plan.spellId) });
-    if (!isAlive(attacker) || !canHit(target, wasDying)) return;
-    if (!atk.hit) {
-      await castCinema(target, { dmg: 0, miss: true });
-      return;
-    }
-    let dmg = rollDamage(verdict.damage.dice || spell.dice, { crit: atk.crit }, rng);
-    if (prompts.onRoll) {
-      dmg = await reviewRoll(prompts, ctx, group, 'damage', attacker, target, dmg);
-      if (!isAlive(attacker) || !canHit(target, wasDying)) return;
-    }
-    const before = target.hp;
-    applyDamage(target, dmg.total, spell.damageType ?? null, { crit: !!atk.crit, attacker, ctx, rng, group, roster });
-    await castCinema(target, { dmg: dmg.total, crit: !!atk.crit }, { hpBefore: before });
     return;
   }
 
@@ -2290,6 +2311,30 @@ export function abilityModFor(entity, stat) {
     return ref.abilityModifiers?.[stat] ?? 0;
   }
   return saveBonusFor(entity, stat);
+}
+
+/** The sheet's own spell entry (parsed spells[]) for a registry id, or null. */
+function ownSpellEntry(ref, spellId) {
+  for (const sp of Array.isArray(ref?.spells) ? ref.spells : []) {
+    if (sp && typeof sp === 'object' && spellSlug(sp.name) === spellId) return sp;
+  }
+  return null;
+}
+
+/** Nearest standing creature in `list` within `rangeFt` of `from`'s wrapper. */
+function nearestInRange(from, list, rangeFt) {
+  const p0 = from._position || from.position;
+  if (!p0) return null;
+  let best = null;
+  let bestD = Infinity;
+  for (const e of list) {
+    if (!isAlive(e)) continue;
+    const p = e._position || e.position;
+    if (!p) continue;
+    const d = chebyshevFeet(p0, p);
+    if (d <= rangeFt && d < bestD) { best = e; bestD = d; }
+  }
+  return best;
 }
 
 /** A wrapper's ledger entry for a granted spell, created fully rested on first use. */
