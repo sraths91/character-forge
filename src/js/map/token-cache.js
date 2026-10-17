@@ -15,6 +15,12 @@
  * idle 2-frame body costs two bakes no matter how far the frame counter
  * runs.
  *
+ * A token with a DM `imageUrl` uses the same cache under the key
+ * `img:<url>|-|-|0|<hpState>`: one bake per image and HP bucket (facing,
+ * animation and conditions do not change a static image). If that bake
+ * fails (404, decode error) the key is remembered and `keyFor` falls back
+ * to the token's LPC key, so a broken upload still shows the sprite.
+ *
  * Baking is async and injected (`bake(character, {direction, frameIdx,
  * animation}) → Promise<{canvas, frameCycle?}>`); the default baker lives
  * in sprite/compositor.js. Lookups are synchronous so a frame never waits.
@@ -37,6 +43,15 @@ export function directionFor(token, opts = {}) {
 const FALLBACK_CYCLE = 72;   // lcm of the LPC strip lengths (2, 4, 6, 8, 9) until a bake reports the real one
 
 /**
+ * Cache key of a DM token image bake.
+ * @param {{imageUrl: string, hpState?: string}} token
+ * @returns {string}
+ */
+export function imageKeyFor(token) {
+  return `img:${token.imageUrl}|-|-|0|${token.hpState || 'healthy'}`;
+}
+
+/**
  * @param {{bake: (character: object, opts: {direction: string, frameIdx: number, animation: string|null}) => Promise<{canvas: any, frameCycle?: number}>,
  *          maxEntries?: number}} deps
  */
@@ -47,9 +62,14 @@ export function createTokenCache({ bake, maxEntries = DEFAULT_MAX_ENTRIES } = {}
   const lastByEntity = new Map(); // entity id → last canvas drawn (avoids placeholder flicker)
   const deadSince = new Map();    // entity id → time its death fade started (-Infinity = no fade)
   const seenAlive = new Set();    // entity ids drawn while not dead
+  const failed = new Set();      // keys whose bake failed (image tokens fall back on them)
   const stats = { bakes: 0, hits: 0, misses: 0, failures: 0 };
 
   function keyFor(token, opts = {}) {
+    if (token?.imageUrl) {
+      const imgKey = imageKeyFor(token);
+      if (!failed.has(imgKey)) return imgKey;
+    }
     const { anim = null, frameIdx = 0 } = opts;
     const direction = directionFor(token, opts);
     const base = `${token.appearanceKey}|${direction}|${anim || 'idle'}`;
@@ -88,12 +108,15 @@ export function createTokenCache({ bake, maxEntries = DEFAULT_MAX_ENTRIES } = {}
       try {
         stats.bakes++;
         const res = await bake(character, { direction, frameIdx, animation: anim });
-        if (!res?.canvas) return null;
+        if (!res?.canvas) { failed.add(key); return null; }
         if (res.frameCycle > 0 && !cycles.has(base)) cycles.set(base, res.frameCycle);
+        failed.delete(key);
         store(key, res.canvas);
         return res.canvas;
       } catch (err) {
         stats.failures++;
+        failed.add(key);
+        if (failed.size > maxEntries) failed.delete(failed.values().next().value);
         console.error(JSON.stringify({ event: 'battle.token.bake_failed', key, error: String(err?.message || err) }));
         return null;
       } finally {
@@ -108,6 +131,8 @@ export function createTokenCache({ bake, maxEntries = DEFAULT_MAX_ENTRIES } = {}
     keyFor,
     get,
     ensure,
+    /** True once a bake of `key` has failed. */
+    hasFailed: (key) => failed.has(key),
     /** True while `key` is baking. */
     isPending: (key) => pending.has(key),
     /** Last canvas drawn for an entity (shown while its new look bakes). */
@@ -133,7 +158,7 @@ export function createTokenCache({ bake, maxEntries = DEFAULT_MAX_ENTRIES } = {}
       for (const k of [...entries.keys()]) if (k.startsWith(`${appearanceKey}|`)) entries.delete(k);
       for (const k of [...cycles.keys()]) if (k.startsWith(`${appearanceKey}|`)) cycles.delete(k);
     },
-    clear() { entries.clear(); cycles.clear(); lastByEntity.clear(); deadSince.clear(); seenAlive.clear(); },
+    clear() { entries.clear(); cycles.clear(); lastByEntity.clear(); deadSince.clear(); seenAlive.clear(); failed.clear(); },
     get size() { return entries.size; },
     stats
   };

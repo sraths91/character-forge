@@ -17,6 +17,9 @@
  *     faint marker under the living. A token first seen already dead
  *     (reconnect, late join) skips the fade.
  *
+ * DM token images (`isTokenImageUrl`) are validated here too, so the
+ * projection and the renderer agree on what may be drawn.
+ *
  * Pure, Node-safe.
  */
 
@@ -59,4 +62,17 @@ export function deathFadeAlpha(elapsedMs) {
   const t = Math.min(1, elapsedMs / DEATH_FADE_MS);
   const eased = 1 - (1 - t) * (1 - t);
   return 1 - (1 - DEAD_MARKER_ALPHA) * eased;
+}
+
+/**
+ * Whether a DM token image URL may be drawn: a same-origin absolute path
+ * (the server's `/api/maps/<room>/<sha>.<ext>`), never another host, a
+ * protocol-relative URL or a data/blob URL. Same-origin keeps the bake
+ * canvas untainted (its greyscale pass reads pixels back) and stops a
+ * token from pinging third-party hosts from every client.
+ * @param {unknown} url
+ * @returns {boolean}
+ */
+export function isTokenImageUrl(url) {
+  return typeof url === 'string' && url.length <= 2048 && /^\/(?![/\\])[^\s]*$/.test(url);
 }

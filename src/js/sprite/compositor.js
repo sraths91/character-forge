@@ -109,15 +109,17 @@ export async function prepareBattleView(view, local = {}) {
   for (const token of view.tokens) {
     if (token.hidden && !local.dm?.showHidden) continue;
     const frameOpts = tokenFrameOpts(local, token);
-    const base = resolveTokenCharacter(token, local);
-    if (!base) continue;
     const key = cache.keyFor(token, frameOpts);
     if (cache.get(key)) continue;
-    jobs.push(cache.ensure(key, characterForToken(base, token), frameOpts).then(async (canvas) => {
-      // The first bake teaches the cache the look's frame cycle, which can
-      // change the key; make sure the frame we will draw is baked too.
+    const input = bakeInputFor(token, key, local);
+    if (!input) continue;
+    jobs.push(cache.ensure(key, input, frameOpts).then(async () => {
+      // The first bake teaches the cache the look's frame cycle, and a
+      // failed image bake falls back to the LPC look; either can change
+      // the key, so make sure the frame we will draw is baked too.
       const k2 = cache.keyFor(token, frameOpts);
-      if (canvas && k2 !== key && !cache.get(k2)) await cache.ensure(k2, characterForToken(base, token), frameOpts);
+      const input2 = k2 !== key && !cache.get(k2) ? bakeInputFor(token, k2, local) : null;
+      if (input2) await cache.ensure(k2, input2, frameOpts);
     }));
   }
   await Promise.all(jobs);
@@ -141,6 +143,18 @@ function sizeBattleCanvas(canvas, camera, worldW, worldH) {
   if (canvas.height !== h) canvas.height = h;
   return 1;
 }
+
+/**
+ * What to bake for `key`: a DM image spec for `img:` keys, else the
+ * render-ready character record (null when the look is unknown yet).
+ */
+function bakeInputFor(token, key, local) {
+  if (isImageKey(key)) return { kind: 'token-image', url: token.imageUrl, side: token.side, hpState: token.hpState || 'healthy' };
+  const base = resolveTokenCharacter(token, local);
+  return base ? characterForToken(base, token) : null;
+}
+
+function isImageKey(key) { return typeof key === 'string' && key.startsWith('img:'); }
 
 /** Resolve a token's character record (look) for drawing. */
 function resolveTokenCharacter(token, local) {
@@ -231,18 +245,20 @@ function renderBattleView(canvas, view, local) {
     if (bmp) {
       cache.setLast(token.id, bmp);
     } else {
-      const base = resolveTokenCharacter(token, local);
-      if (base) {
+      const input = bakeInputFor(token, key, local);
+      if (input) {
         pendingBakes++;
         if (!cache.isPending(key)) {
-          cache.ensure(key, characterForToken(base, token), frameOpts)
-            .then(c => { if (c) local.requestRedraw?.(); });
+          // A failed image bake also redraws: the next frame falls back to the LPC look.
+          cache.ensure(key, input, frameOpts)
+            .then(c => { if (c || isImageKey(key)) local.requestRedraw?.(); });
         }
       }
       bmp = cache.lastFor(token.id);
     }
     if (alpha !== 1) { ctx.save(); ctx.globalAlpha = alpha; }
-    if (bmp) drawTokenBitmap(ctx, bmp, x, y, W, isDownStatus(status));
+    // DM image discs stay upright (greyed by the bake); LPC bodies lie down.
+    if (bmp) drawTokenBitmap(ctx, bmp, x, y, W, isDownStatus(status) && !isImageKey(key));
     else drawTokenPlaceholder(ctx, token, x, y, px);
     if (alpha !== 1) ctx.restore();
     if (status === 'stable') drawStableBadge(ctx, x, y, W, px);
@@ -940,18 +956,71 @@ function memoItemSprite(item, src, slot) {
 }
 
 /**
- * Default token baker: one 64×64 composite of `character`.
- * @param {object} character — render-ready (characterForToken)
+ * Default token baker: one 64×64 composite of `character`, or — for a
+ * `{kind: 'token-image'}` spec — a DM token image (bakeImageToken).
+ * @param {object} character — render-ready (characterForToken) or an image spec
  * @param {{direction?: string, frameIdx?: number, animation?: string|null}} opts
  * @returns {Promise<{canvas: any, frameCycle: number}>}
  */
 export async function bakeTokenCanvas(character, { direction = 'south', frameIdx = 0, animation = null } = {}) {
+  if (character?.kind === 'token-image') return bakeImageToken(character);
   const canvas = makeCanvas(FRAME, FRAME);
   const ctx = canvas?.getContext('2d');
   if (!ctx) return { canvas: null, frameCycle: 1 };
   ctx.imageSmoothingEnabled = false;
   const r = await drawCharacterAt(ctx, character, { x: 0, y: 0, scale: 1, direction, frameIdx, animation });
   return { canvas, frameCycle: r.frameCycle || 1 };
+}
+
+// HP tints for DM image tokens (the LPC path's HP_STATE_FILTERS in
+// lpc-config.js; keep in step).
+const IMAGE_TOKEN_FILTERS = {
+  wounded: 'saturate(1.4) brightness(0.85) sepia(0.15) hue-rotate(-15deg)',
+  down: 'saturate(0) brightness(0.55)'
+};
+const IMAGE_TOKEN_PX = FRAME * 2;   // baked at 128² so a 2×2 token stays sharp
+
+/**
+ * Phase 1.5 (R2 R7) — bake a DM-uploaded token image: centre-cropped to
+ * a square, masked to a circle, tinted for its HP bucket with the
+ * Safari-safe filter matrix, ringed in its side colour.
+ * @param {{url: string, side?: string, hpState?: string}} spec
+ * @returns {Promise<{canvas: any, frameCycle: number}>}
+ */
+export async function bakeImageToken(spec) {
+  const S = IMAGE_TOKEN_PX;
+  const canvas = makeCanvas(S, S);
+  const ctx = canvas?.getContext('2d');
+  if (!ctx) return { canvas: null, frameCycle: 1 };
+  const img = await loadImage(spec.url);
+  const iw = img.naturalWidth || img.width;
+  const ih = img.naturalHeight || img.height;
+  if (!(iw > 0 && ih > 0)) throw new Error(`token image ${spec.url} has no size`);
+  const side = Math.min(iw, ih);
+  const ring = Math.max(3, Math.round(S * 0.045));
+  ctx.imageSmoothingEnabled = true;
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(S / 2, S / 2, S / 2 - ring / 2, 0, Math.PI * 2);
+  ctx.clip();
+  ctx.drawImage(img, (iw - side) / 2, (ih - side) / 2, side, side, 0, 0, S, S);
+  ctx.restore();
+  const filter = IMAGE_TOKEN_FILTERS[spec.hpState];
+  if (filter) {
+    try {
+      const data = ctx.getImageData(0, 0, S, S);
+      data.data.set(applyFilterMatrix(data.data, parseCssFilter(filter)));
+      ctx.putImageData(data, 0, 0);
+    } catch (err) {
+      console.error(JSON.stringify({ event: 'battle.token.image_tint_failed', url: spec.url, error: String(err?.message || err) }));
+    }
+  }
+  ctx.strokeStyle = spec.side === 'hostile' ? '#b91c1c' : '#2563eb';
+  ctx.lineWidth = ring;
+  ctx.beginPath();
+  ctx.arc(S / 2, S / 2, S / 2 - ring / 2, 0, Math.PI * 2);
+  ctx.stroke();
+  return { canvas, frameCycle: 1 };
 }
 
 /** The shared token bake cache used when local.tokenCache is not given. */

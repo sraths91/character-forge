@@ -30,7 +30,8 @@
  *     worstCondition: string|null,      // the one that tints the body
  *     concentration: string|null,       // spell id / name
  *     hidden: boolean,
- *     facing?: 'north'|'east'|'south'|'west'   // sprite row (see below)
+ *     facing?: 'north'|'east'|'south'|'west',  // sprite row (see below)
+ *     imageUrl?: string                 // DM token image (see below)
  *   }]                                  // sorted by row, then col, then id (draw order)
  * }
  *
@@ -45,10 +46,13 @@
  *                    (E1), else derived from hp (map/token-fx.js). Any
  *                    non-active status forces hpState 'down'. Absent on
  *                    legacy-adapter tokens (treated as 'active').
+ *   tokens[].imageUrl  DM-uploaded token image (same-origin path, see
+ *                    isTokenImageUrl) drawn instead of the LPC composite
+ *                    (circular mask + side ring, same bake-cache slot).
  */
 
 import { facingFor } from './facing.js';
-import { statusOf, isDownStatus } from './token-fx.js';
+import { statusOf, isDownStatus, isTokenImageUrl } from './token-fx.js';
 
 /** RenderView version. */
 export const RENDER_VIEW_VERSION = 1;
@@ -254,6 +258,7 @@ export function projectBattleView(state, appearanceCache = null, opts = {}) {
     if (Number.isFinite(e.hpMax)) token.hpMax = e.hpMax;
     const facing = facingFor(opts?.facings, e);
     if (facing) token.facing = facing;
+    if (isTokenImageUrl(e.imageUrl)) token.imageUrl = e.imageUrl;
     tokens.push(token);
   }
   tokens.sort(compareTokens);
