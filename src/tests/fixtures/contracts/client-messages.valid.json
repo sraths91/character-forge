@@ -26,5 +26,6 @@
   { "v": 1, "t": "dm.prompt.force", "cid": "c25", "p": { "promptId": "pr_1", "answer": false } },
   { "v": 1, "t": "dm.member.revoke", "cid": "c26", "p": { "memberId": "mem_3" } },
   { "v": 1, "t": "dm.spell.adjudicate", "cid": "c27", "p": { "casterId": "pc-wizard", "spellId": "tashas-hideous-laughter", "slotLevel": 1, "targets": [{ "entityId": "m-goblin", "damage": 0, "type": null, "conditions": ["prone", "incapacitated"] }] } },
-  { "v": 1, "t": "dm.room.settings", "cid": "c28", "p": { "reactionTimeoutMs": 15000, "fudgeVisibility": "dm-only" } }
+  { "v": 1, "t": "dm.room.settings", "cid": "c28", "p": { "reactionTimeoutMs": 15000, "fudgeVisibility": "dm-only" } },
+  { "v": 1, "t": "dm.fog.paint", "cid": "c29", "p": { "cells": [{ "col": 1, "row": 2 }, { "col": 2, "row": 2 }], "op": "reveal" } }
 ]
