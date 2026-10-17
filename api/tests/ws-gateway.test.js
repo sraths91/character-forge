@@ -717,6 +717,25 @@ test('[real] dm.encounter.setup stores the PC sheets with the encounter and no f
   } finally { await srv.close(); }
 });
 
+test('[real] turn.act with Action Surge is accepted at the safe point and reaches the engine', async () => {
+  const srv = await boot({ engineKind: 'real' });
+  try {
+    const t = await table(srv, 1, ['fighter-l5']);
+    const { dm, ps } = await connectAll(srv, t);
+    autoTable(ps, [dm, ...ps]);
+    await dm.send('dm.encounter.setup', { ...SETUP, monsters: [{ id: 'gob', name: 'Goblin', hp: 60, ac: 10 }], placements: { 'pc-1': { col: 3, row: 2 }, gob: { col: 3, row: 3 } } });
+    await dm.send('dm.initiative.set', { order: ['pc-1', 'gob'] });
+    await dm.send('dm.encounter.start', { seed: 4 });
+    const ts = await ps[0].find(m => m.t === 'turn.started' && m.p.payload.actorId === 'pc-1');
+    const r = await ps[0].send('turn.act', { turnId: ts.p.turnId, plan: { kind: 'melee', targetId: 'gob', features: ['action-surge'] } });
+    assert.equal(r.t, 'ack', JSON.stringify(r.p));
+    const plan = await dm.find(m => m.t === 'plan.chosen' && m.p.payload.actorId === 'pc-1');
+    assert.deepEqual([plan.p.payload.source, plan.p.payload.featuresFired], ['player', ['action-surge']]);
+    assert.equal(dm.of('turn.rejected').length, 0);
+    assertClean(dm, ...ps);
+  } finally { await srv.close(); }
+});
+
 test('[real] dm.spell.adjudicate: DM-only; slot from the ledger, damage / heal / conditions as events plus dm.override', async () => {
   const srv = await boot({ engineKind: 'real' });
   try {

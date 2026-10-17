@@ -300,6 +300,24 @@ test('validateIntent: turn, side, range bands and line of sight', async () => {
   assert.equal(engine.validateIntent(walled, { actorId: 'pc-1', plan: { kind: 'cast', spellId: 'nope', targetId: 'gob' } }).code, 'unknown-spell');
 });
 
+test('validateIntent: class features at the turn\'s safe point (a legal Action Surge passes; spent / wrong class / unknown fail)', async () => {
+  const engine = createRealEngine();
+  const st = running(engine, [{ id: 'gob', hp: 20 }], [seat(1, 'fighter-l5'), seat(2, 'wizard-l5')]);
+  const set = engine.applyDmCommand(st, { type: 'dm.initiative.set', payload: { order: ['pc-1', 'pc-2', 'gob'] } }, { rng: createRng({ s: 1 }), emit: () => {} }).state;
+  const s = (await engine.startEncounter(set, { rng: createRng({ s: 1 }), emit: () => {} })).state;
+  const surge = { kind: 'attack', targetId: 'gob', features: ['action-surge'] };
+  assert.deepEqual(engine.validateIntent(s, { actorId: 'pc-1', plan: surge }), { ok: true });
+  assert.deepEqual(engine.validateIntent(s, { actorId: 'pc-1', plan: { kind: 'feature', features: ['second-wind'] } }), { ok: true });
+  const spent = clone(s);
+  spent.entities['pc-1'].resources.features['action-surge'].spent = spent.entities['pc-1'].resources.features['action-surge'].max;
+  assert.equal(engine.validateIntent(spent, { actorId: 'pc-1', plan: surge }).code, 'bad-feature', 'no use left this rest');
+  assert.equal(engine.validateIntent(s, { actorId: 'pc-1', plan: { ...surge, features: ['nope'] } }).code, 'bad-feature');
+  const wiz = { ...s, turnIndex: 1 };
+  assert.match(engine.validateIntent(wiz, { actorId: 'pc-2', plan: { kind: 'attack', targetId: 'gob', features: ['action-surge'] } }).reason, /Action Surge is not available/);
+  // The other rules still run first: a surge on the wrong turn is not-your-turn.
+  assert.equal(engine.validateIntent(s, { actorId: 'pc-2', plan: { kind: 'attack', targetId: 'gob', features: ['action-surge'] } }).code, 'not-your-turn');
+});
+
 test('applyDmCommand: patch via the adapters, add/remove through the initiative helpers, initiative roll', async () => {
   const engine = createRealEngine();
   const rng = createRng({ s: 3 });

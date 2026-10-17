@@ -25,6 +25,7 @@
 
 import { MONSTER_PRESETS } from '../../src/js/scene/monster-presets.js';
 import { PC_PROFILES } from '../../src/js/scene/ai/pc-profiles.js';
+import { PC_FEATURES } from '../../src/js/scene/ai/pc-features.js';
 import { inferProfile } from '../../src/js/scene/ai/infer.js';
 import { runOneAttack, applyDamageToEntity } from '../../src/js/scene/combat-engine.js';
 import {
@@ -413,7 +414,35 @@ export function createRealEngine({ resolveSheets = () => null, monsterLookup = (
     try { sheets = sheetsFor(state); } catch (err) { return { ok: false, code: 'no-sheet', reason: err.message }; }
     const { innate: _i, ...clean } = plan || {};
     const v = validateTurnIntent(state, { actorId, plan: clean }, { sheets, rangeBand: rangeBandFor(state) });
-    return v.ok ? { ok: true } : { ok: false, code: v.code, reason: v.reason };
+    if (v.ok) return { ok: true };
+    // intent-validation's features[] check (its LAST check, so every other
+    // rule already passed) asks pc-features `available()` with the bare
+    // wrapper, which has no `classes`: every class feature reads level 0
+    // and a legal Action Surge is rejected at the turn's safe point.
+    // Re-check features the way the planner does (pc-action
+    // mergeSelfForFeatures: wrapper fields over the sheet).
+    if (v.code === 'bad-feature' && clean.features?.length) return featuresAvailable(state, actorId, clean.features, sheets);
+    return { ok: false, code: v.code, reason: v.reason };
+  }
+
+  /**
+   * features[] against the actor's state at the safe point: the turn has
+   * started, so per-turn flags (turnFlags) are already reset and the
+   * per-rest ledgers (resources.features) are current.
+   */
+  function featuresAvailable(state, actorId, features, sheets) {
+    const id = actorId ?? state.initiative?.[state.turnIndex]?.entityId;
+    const actor = state.entities[id];
+    if (!actor || actor.kind !== 'pc') return { ok: false, code: 'bad-feature', reason: 'only PCs use class features' };
+    const sheet = sheets[actor.sheetRef?.characterId] ?? null;
+    const w = wrapperFromEntity(actor, sheet);
+    const self = { ...(sheet || {}), ...w, classes: w.classes || sheet?.classes, equipment: w.equipment || sheet?.equipment, spells: w.spells || sheet?.spells };
+    for (const f of features) {
+      const def = PC_FEATURES[f];
+      if (!def) return { ok: false, code: 'bad-feature', reason: `unknown feature ${f}` };
+      if (!def.available(self)) return { ok: false, code: 'bad-feature', reason: `${def.label} is not available now` };
+    }
+    return { ok: true };
   }
 
   /** grid-legality range bands (+ line of sight when the actor does not move first). */
