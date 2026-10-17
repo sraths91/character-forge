@@ -125,9 +125,13 @@ export async function runOneAttack(attacker, enemies, allies, scene, rng, prompt
   } finally {
     // M64 T5 — the planner's MCTS context (`_mctsTargetCtx`, a copy of the
     // target entity) is transient: it never outlives the turn, so wrappers
-    // stay pure JSON for snapshots.
-    if (attacker && Object.prototype.hasOwnProperty.call(attacker, '_mctsTargetCtx')) {
-      delete attacker._mctsTargetCtx;
+    // stay pure JSON for snapshots. Cleared to null, never `delete`d:
+    // deleting a property drops the wrapper into V8 dictionary mode and
+    // slows every later property read on it (the M64 round-4 simulator
+    // regression). null round-trips through JSON; the adapters never
+    // persist the field.
+    if (attacker && attacker._mctsTargetCtx != null) {
+      attacker._mctsTargetCtx = null;
     }
   }
 }

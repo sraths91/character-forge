@@ -68,6 +68,24 @@ export function parseDiceExpr(spec) {
   return { terms, mod };
 }
 
+// Hot path: every damage roll parses its spec, and the simulator rolls the
+// same handful of specs thousands of times. Parsed specs are cached (the
+// cached objects are frozen and only read by rollDice / rollDamage);
+// parseDiceExpr itself still returns a fresh object to its callers.
+const PARSED_DICE = new Map();
+const PARSED_DICE_MAX = 512;
+
+function parsedDice(spec) {
+  if (typeof spec !== 'string') return null;
+  let parsed = PARSED_DICE.get(spec);
+  if (parsed !== undefined) return parsed;
+  const fresh = parseDiceExpr(spec);
+  parsed = fresh ? Object.freeze({ terms: Object.freeze(fresh.terms.map(t => Object.freeze(t))), mod: fresh.mod }) : null;
+  if (PARSED_DICE.size >= PARSED_DICE_MAX) PARSED_DICE.clear();
+  PARSED_DICE.set(spec, parsed);
+  return parsed;
+}
+
 /**
  * Roll a dice spec. Returns { total, rolls, mod, spec } where `rolls` is
  * the array of raw face values in term order. The total includes mod.
@@ -75,7 +93,7 @@ export function parseDiceExpr(spec) {
  */
 export function rollDice(spec, rng) {
   requireRng(rng, 'rollDice');
-  const parsed = parseDiceExpr(spec);
+  const parsed = parsedDice(spec);
   if (!parsed) return { total: 0, rolls: [], mod: 0, spec };
   const { rolls, sum } = rollTerms(parsed.terms, 1, rng);
   return { total: sum + parsed.mod, rolls, mod: parsed.mod, spec };
@@ -135,7 +153,7 @@ export function rollAttack({ bonus = 0, advantage = 'normal', targetAC = 10 }, r
  */
 export function rollDamage(spec, { crit = false } = {}, rng) {
   requireRng(rng, 'rollDamage');
-  const parsed = parseDiceExpr(spec);
+  const parsed = parsedDice(spec);
   if (!parsed) return { total: 0, rolls: [], mod: 0, spec, crit };
   const { rolls, sum } = rollTerms(parsed.terms, crit ? 2 : 1, rng);
   // Floor at 1 — D&D damage is never less than 1 even with big negative mods

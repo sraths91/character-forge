@@ -108,5 +108,9 @@ test('M64 T1: 200 iterations of a 4v4 fight stay fast (budget 100 ms; asserted <
   // The plan's budget is 100 ms on a dev laptop; the assertion is
   // generous so a loaded CI runner doesn't flake. A regression to
   // pathological (e.g. per-turn setTimeout) scheduling would blow it.
+  // Measured 2026-10-16 (M64 round 4, idle M-series Mac, isolation):
+  // ~32 ms (Wave 1: ~27 ms; round 3 before the hot-path fix: ~50 ms).
+  // Readings of 700+ ms came from a throttled / heavily loaded machine,
+  // not the code; m64-sim-hotpath.test.js pins the fix deterministically.
   assert.ok(ms < 1000, `200×4v4 took ${ms.toFixed(1)} ms`);
 });

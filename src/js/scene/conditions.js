@@ -84,8 +84,17 @@ export function hasLifecycle(c) {
  * @returns {string[]}
  */
 export function conditionIds(entity) {
-  const list = Array.isArray(entity?.conditions) ? entity.conditions : [];
-  return list.map(conditionId).filter(Boolean);
+  // Hot path (every turn, every creature): a plain loop, no closures. The
+  // result is always a fresh array, so callers may remove conditions while
+  // iterating it.
+  const list = entity?.conditions;
+  const ids = [];
+  if (!Array.isArray(list)) return ids;
+  for (let i = 0; i < list.length; i++) {
+    const id = conditionId(list[i]);
+    if (id) ids.push(id);
+  }
+  return ids;
 }
 
 /**
@@ -95,7 +104,13 @@ export function conditionIds(entity) {
  * @returns {boolean}
  */
 export function hasCondition(entity, id) {
-  return conditionIds(entity).includes(id);
+  const list = entity?.conditions;
+  if (!Array.isArray(list)) return false;
+  for (let i = 0; i < list.length; i++) {
+    const cid = conditionId(list[i]);
+    if (cid && cid === id) return true;
+  }
+  return false;
 }
 
 /**
@@ -104,8 +119,14 @@ export function hasCondition(entity, id) {
  * @returns {boolean}
  */
 export function isIncapacitatedBy(entity) {
-  const ids = conditionIds(entity);
-  return INCAPACITATING.some(c => ids.includes(c));
+  // Hot path (victory checks scan the roster after every turn).
+  const list = entity?.conditions;
+  if (!Array.isArray(list)) return false;
+  for (let i = 0; i < list.length; i++) {
+    const id = conditionId(list[i]);
+    if (id && INCAPACITATING.includes(id)) return true;
+  }
+  return false;
 }
 
 /**
