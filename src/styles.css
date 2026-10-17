@@ -2960,3 +2960,6 @@ body.party-view-mode .combat-panel { display: block !important; }
 .play-room-settings label { display: block; margin: 4px 0; }
 .play-room-settings input[type="number"] { width: 4.5em; }
 .play-seeding { margin-top: -4px; }
+/* M64 phase 1.5 — fog: hidden-event log lines, DM fog brush */
+.play-log .roll-hidden { color: var(--text-dim); font-style: italic; }
+.play-fog-brush { width: auto; }

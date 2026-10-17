@@ -25,6 +25,12 @@ import { stateHash } from '../shared/state-hash.js';
 import { entityFromSheet, entityFromPreset } from '../scene/encounter-adapters.js';
 import { MONSTER_PRESETS } from '../scene/monster-presets.js';
 import { applyTerrainPaint, encodeTerrain, asTerrain } from '../map/terrain.js';
+import { filterViewForFog, isRevealed, revealCells } from '../map/fog.js';
+
+/** The id a player sees for a creature under fog (E3's HIDDEN_ENTITY_ID). */
+export const HIDDEN_ENTITY_ID = 'Something';
+/** Event payload fields that name a creature. */
+const ID_FIELDS = ['actorId', 'targetId', 'attackerId', 'defenderId', 'entityId', 'casterId', 'reactorId', 'sourceId', 'counterId', 'byId', 'moverId'];
 
 const clone = (v) => (v === undefined ? undefined : JSON.parse(JSON.stringify(v)));
 const MAX_SEATS = 6;
@@ -261,7 +267,20 @@ export function createFakeServer({
   function emit(room, type, payload, cinemaGroup = null, round = null) {
     const enc = room.enc;
     const ev = { seq: room.seq + 1, type, round: round ?? enc?.state.round ?? 0, turnId: room.turn?.turnId ?? null, cinemaGroup, payload };
-    if (type === 'dm.override' && room.settings.fudgeVisibility === 'dm-only') {
+    if (enc?.state.fog && enc.state.phase !== 'setup') {
+      // Fog: the DM gets every event; players get theirs masked or redacted.
+      room.seq += 1;
+      const full = message(type, ev, room.seq);
+      const hidden = message('redacted', { type }, room.seq);
+      let resnap = false;
+      for (const m of room.members.values()) {
+        if (m.role === 'dm') { push(m, canSee(room, m, ev) ? full : hidden); continue; }
+        const copy = canSee(room, m, ev) ? fogCopy(room, ev, m) : null;
+        push(m, copy === ev ? full : copy ? message(type, copy, room.seq) : hidden);
+        if (!copy && type === 'move') resnap = true;
+      }
+      if (resnap) for (const m of room.members.values()) if (m.role !== 'dm' && m.sock) privateTo(room, m, 'room.snapshot', snapshotFor(room, m));
+    } else if (type === 'dm.override' && room.settings.fudgeVisibility === 'dm-only') {
       // Hidden from players: a `redacted {type}` with the same seq keeps theirs gap-free.
       room.seq += 1;
       const full = message(type, ev, room.seq);
@@ -278,11 +297,38 @@ export function createFakeServer({
     return ev;
   }
 
-  function projected(room) {
+  /** The projected state a member receives: players under fog get filterViewForFog (like E3's viewFor). */
+  function projected(room, m = null) {
     if (!room.enc) return null;
     const s = clone(room.enc.state);
     delete s.rng;
-    return s;
+    return m && m.role !== 'dm' && s.fog ? filterViewForFog(s) : s;
+  }
+
+  const visibleIn = (state, id) => {
+    const e = state.entities[id];
+    return !!e && (!state.fog || isRevealed(state.fog, state.grid.cols, e.pos.col, e.pos.row));
+  };
+
+  /**
+   * A player's copy of an engine event under fog (E3 wave 5): the full
+   * event, a copy with hidden creatures masked as 'Something', or null
+   * (send `redacted`). turn.ended always goes out, with the seat's hash.
+   */
+  function fogCopy(room, ev, m) {
+    const state = room.enc.state;
+    const p = ev.payload || {};
+    if (ev.type === 'turn.ended') {
+      return { ...ev, payload: { ...p, actorId: visibleIn(state, p.actorId) ? p.actorId : HIDDEN_ENTITY_ID, stateHash: stateHash(projected(room, m)) } };
+    }
+    if (ev.type === 'move' && room.fogMoveFrom && !isRevealed(state.fog, state.grid.cols, room.fogMoveFrom.col, room.fogMoveFrom.row) !== !visibleIn(state, p.actorId)) return null;
+    const named = ID_FIELDS.filter(k => typeof p[k] === 'string');
+    const hidden = named.filter(k => !visibleIn(state, p[k]));
+    if (!hidden.length) return ev;
+    if (ev.type === 'exchange' || hidden.length === named.length) return null;
+    const masked = clone(p);
+    for (const k of hidden) masked[k] = HIDDEN_ENTITY_ID;
+    return { ...ev, payload: masked };
   }
 
   function snapshotFor(room, m) {
@@ -298,10 +344,10 @@ export function createFakeServer({
         turn: room.turn ? { turnId: room.turn.turnId, actorId: room.turn.actorId, awaitingIntent: !!room.turn.awaiting } : null,
         ...(m.role === 'dm' ? { review: { ...room.review }, armedRolls: room.armed.length } : {})
       },
-      encounter: projected(room),
+      encounter: projected(room, m),
       openPrompt: prompt ? openPayload(prompt) : null,
       history: room.history.filter(ev => canSee(room, m, ev)).slice(-50),
-      stateHash: room.enc ? stateHash(room.enc.state) : null
+      stateHash: room.enc ? stateHash(projected(room, m)) : null
     };
   }
 
@@ -381,6 +427,7 @@ export function createFakeServer({
         statBlock: { ...(Number.isInteger(m.hp) && m.hp > 0 ? { hpMax: m.hp } : {}), ...(Number.isInteger(m.ac) ? { ac: m.ac } : {}), ...(m.cr != null ? { cr: m.cr } : {}) }
       });
     });
+    if (setup.fog && typeof setup.fog.revealed === 'string') state.fog = { revealed: setup.fog.revealed };
     const v = validateEncounterState(state);
     if (!v.ok) throw new IntentFail('E_INVALID_INTENT', `setup produced an invalid state: ${v.errors[0].path} ${v.errors[0].message}`);
     return state;
@@ -434,6 +481,7 @@ export function createFakeServer({
   async function doMove(room, actor, to, path) {
     if (to.col === actor.pos.col && to.row === actor.pos.row) return;
     const from = { ...actor.pos };
+    room.fogMoveFrom = from;
     actor.pos = { col: to.col, row: to.row };
     emit(room, 'move', { actorId: actor.id, from, to: { ...actor.pos }, path: (path || [from, to]).map(c => ({ col: c.col, row: c.row })) });
   }
@@ -755,7 +803,10 @@ export function createFakeServer({
         room.enc = { id: state.encounterId, state };
         room.initiativeMode = p.initiativeMode || 'individual';
         room.history = [];
-        broadcast(room, 'encounter.created', { encounterId: state.encounterId, encounter: projected(room) });
+        // One broadcast carries the player projection; under fog the DM
+        // also gets its unfiltered snapshot (like E3).
+        broadcast(room, 'encounter.created', { encounterId: state.encounterId, encounter: projected(room, { role: 'player' }) });
+        if (state.fog) for (const m of room.members.values()) if (m.role === 'dm' && m.sock) privateTo(room, m, 'room.snapshot', snapshotFor(room, m));
         setStatus(room, 'setup');
         return { encounterId: state.encounterId };
       }
@@ -816,6 +867,14 @@ export function createFakeServer({
         const aw = room.turn?.awaiting;
         if (!aw) throw new IntentFail('E_STALE', 'only a turn waiting for an action can be skipped');
         aw.resolve({ kind: 'skip' });
+        return {};
+      }
+      case 'dm.fog.paint': {
+        requireEnc(room);
+        const st = room.enc.state;
+        if (!st.fog) throw new IntentFail('E_INVALID_INTENT', 'this encounter has no fog');
+        st.fog = revealCells(st.fog, st.grid.cols, st.grid.rows, p.cells, p.op === 'reveal');
+        snapshotAll(room);
         return {};
       }
       case 'dm.room.settings': {

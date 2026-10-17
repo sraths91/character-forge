@@ -25,6 +25,11 @@
  *     death.save, entity.stabilized, entity.revived, entity.died, and the
  *     Rage `rageSustained` flag.
  *
+ * Fog (E3 wave 5): a player's view is filterViewForFog'd and events
+ * naming a hidden creature arrive masked ('Something', a no-op here) or
+ * `redacted`; the turn order then has several consistent outcomes, so
+ * `turnEndedCandidates` lists them and the store keeps the hashed one.
+ *
  * What it cannot see (and the resync safety net covers): an innate
  * spell's recharge roll at the start of a monster's turn emits no event,
  * so a recharge that is not spent the same turn drifts.
@@ -147,16 +152,52 @@ function victoryOf(enc) {
   return null;
 }
 
-/** turn.ended: the server hashes the state after `advance` (or `finish`). */
-function endTurn(enc, actorId) {
+/**
+ * turn.ended: the server hashes the state after `advance` (or `finish`).
+ *
+ * Under fog (a player's filtered view, map/fog.js filterViewForFog) the
+ * hidden creatures' initiative rows are gone and the filtered turnIndex
+ * is "visible rows before the full index", clamped. The mirror cannot
+ * see the hidden rows, so it offers every outcome the filter allows
+ * (`turnEndedCandidates`) and the store keeps the one whose hash the
+ * server stamped. `variant`: 0 = the default, 1 = the alternative wrap /
+ * clamp, 2 = the encounter ended.
+ */
+function endTurn(enc, actorId, variant = 0) {
   if (enc.phase === 'ended') return enc;
-  if (victoryOf(enc)) return { ...enc, phase: 'ended' };
+  if (variant === 2) return { ...enc, phase: 'ended' };
+  const fog = !!enc.fog;
+  const outcome = victoryOf(enc);
+  // Hidden hostiles may still stand: under fog only a party wipe is certain.
+  if (variant === 0 && outcome && (!fog || outcome === 'hostile-victory')) return { ...enc, phase: 'ended' };
   const n = (enc.initiative || []).length;
   if (!n) return enc;
   const idx = indexOf(enc, actorId);
-  const next = (idx >= 0 ? idx : enc.turnIndex) + 1;
+  const wrap = { ...enc, turnIndex: 0, round: (enc.round || 0) + 1 };
+  if (idx < 0) {
+    // A creature this view does not hold: its row is hidden. The index
+    // already points past it; it moves only if the round wrapped.
+    if (!fog) return (enc.turnIndex || 0) + 1 < n ? { ...enc, turnIndex: (enc.turnIndex || 0) + 1 } : wrap;
+    return variant === 1 ? wrap : enc;
+  }
+  const next = idx + 1;
   if (next < n) return { ...enc, turnIndex: next };
-  return { ...enc, turnIndex: 0, round: (enc.round || 0) + 1 };
+  // Last visible row: the round wraps, or (fog) hidden rows still follow.
+  return fog && variant === 1 ? { ...enc, turnIndex: n - 1 } : wrap;
+}
+
+/**
+ * Every encounter a `turn.ended` may leave in this view, the default
+ * first (no fog: just the default). Pure.
+ * @param {object|null} enc — the mirror before the event
+ * @param {object} ev — the turn.ended event
+ * @param {{prev?: object|null}} [opts]
+ * @returns {object[]}
+ */
+export function turnEndedCandidates(enc, ev, opts = {}) {
+  if (!enc || ev?.type !== 'turn.ended') return [applyEventToEncounter(enc, ev, opts)];
+  const variants = enc.fog ? [0, 1, 2] : [0];
+  return variants.map(v => applyEventToEncounter(enc, ev, { ...opts, turnEndVariant: v }));
 }
 
 /** One spell slot of `level` (regular pool first, then the pact slot). */
@@ -255,8 +296,9 @@ function applyPatch(enc, id, raw) {
  * Apply one engine event to a projected EncounterState. Pure.
  * @param {object|null} enc — projected EncounterState
  * @param {object} ev — events.js event
- * @param {{prev?: object|null}} [opts] — the previous engine event (Divine
- *   Smite's slot and a DM-reviewed plan read it)
+ * @param {{prev?: object|null, turnEndVariant?: number}} [opts] — the previous
+ *   engine event (Divine Smite's slot and a DM-reviewed plan read it);
+ *   the fog turn-order variant (see endTurn)
  * @returns {object|null}
  */
 export function applyEventToEncounter(enc, ev, opts = {}) {
@@ -281,7 +323,7 @@ export function applyEventToEncounter(enc, ev, opts = {}) {
       break;
     case 'turn.ended':
       // Rage's "sustained this turn" flag clears at the end of its turn.
-      next = endTurn(editEntity(next, p.actorId, (e) => { delete e.turnFlags.rageSustained; }), p.actorId);
+      next = endTurn(editEntity(next, p.actorId, (e) => { delete e.turnFlags.rageSustained; }), p.actorId, opts.turnEndVariant || 0);
       break;
     case 'attack.rolled':
       next = editEntity(next, p.attackerId, (e) => { if (isRaging(e)) setFlag(e, 'rageSustained', true); });
