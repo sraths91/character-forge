@@ -158,6 +158,34 @@ export function screenFor(s, local = {}) {
   return 'lobby';
 }
 
+/**
+ * The room's settings (E3 v1.4 names), with the defaults a server that
+ * predates them implies: 20 s reactions, characters start rested, fudges
+ * public.
+ * @param {object} s — ClientState
+ * @returns {{reactionTimeoutMs: number, importLiveState: boolean, fudgeVisibility: 'public'|'dm-only', diagonalRule: string}}
+ */
+export function roomSettingsOf(s) {
+  const st = s?.room?.settings || {};
+  return {
+    reactionTimeoutMs: Number.isInteger(st.reactionTimeoutMs) ? st.reactionTimeoutMs : 20000,
+    importLiveState: st.importLiveState === true || st.importDdbState === true,
+    fudgeVisibility: st.fudgeVisibility === 'dm-only' || (!st.fudgeVisibility && st.dmOverrideVisibility === 'dm-only') ? 'dm-only' : 'public',
+    diagonalRule: typeof st.diagonalRule === 'string' ? st.diagonalRule : '5ft'
+  };
+}
+
+/**
+ * The claim screen's line on how characters arrive.
+ * @param {object} s — ClientState
+ * @returns {string}
+ */
+export function seedingCopy(s) {
+  return roomSettingsOf(s).importLiveState
+    ? 'Characters import their current D&D Beyond HP, spell slots and used features.'
+    : 'Characters start fully rested (full HP, every slot and feature).';
+}
+
 /** Badge copy per life state (initiative strip, tokens, cards). */
 const STATUS_BADGES = Object.freeze({
   down: { label: 'Down', short: 'DOWN', cls: 'is-down' },

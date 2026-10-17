@@ -145,7 +145,9 @@ export function createFakeServer({
       members: new Map(), seats: new Map(), chars: new Set(), enc: null, history: [], turn: null,
       review: { plans: false, rolls: false, monsterReactions: false, aiParty: false },
       prompts: new Map(), armed: [], waiters: new Map(), turnN: 0, groupN: 0, promptN: 0, endRequested: null,
-      rng: mulberry32(seed), loop: null, initiativeMode: 'individual'
+      rng: mulberry32(seed), loop: null, initiativeMode: 'individual',
+      // E3 v1.4 room settings (dm.room.settings).
+      settings: { reactionTimeoutMs, importLiveState: false, fudgeVisibility: 'public', diagonalRule: '5ft' }
     };
     rooms.set(room.id, room);
     if (shareLibrary) for (const id of library.keys()) room.chars.add(id);
@@ -251,10 +253,23 @@ export function createFakeServer({
     return msg;
   }
 
+  /** Whether a member may see an engine event (fudgeVisibility, like E3's canSeeEvent). */
+  function canSee(room, m, ev) {
+    return !(ev.type === 'dm.override' && room.settings.fudgeVisibility === 'dm-only' && m.role !== 'dm');
+  }
+
   function emit(room, type, payload, cinemaGroup = null, round = null) {
     const enc = room.enc;
     const ev = { seq: room.seq + 1, type, round: round ?? enc?.state.round ?? 0, turnId: room.turn?.turnId ?? null, cinemaGroup, payload };
-    broadcast(room, type, ev);
+    if (type === 'dm.override' && room.settings.fudgeVisibility === 'dm-only') {
+      // Hidden from players: a `redacted {type}` with the same seq keeps theirs gap-free.
+      room.seq += 1;
+      const full = message(type, ev, room.seq);
+      const hidden = message('redacted', { type }, room.seq);
+      for (const m of room.members.values()) push(m, canSee(room, m, ev) ? full : hidden);
+    } else {
+      broadcast(room, type, ev);
+    }
     if (enc) {
       enc.state.lastEventSeq = ev.seq;
       room.history.push(ev);
@@ -276,7 +291,7 @@ export function createFakeServer({
       seq: room.seq,
       room: {
         id: room.id, code: room.code, name: room.name, status: room.status, paused: room.paused,
-        settings: { reactionTimeoutMs },
+        settings: { ...room.settings, dmOverrideVisibility: room.settings.fudgeVisibility },
         members: [...room.members.values()].map(x => ({ id: x.id, displayName: x.displayName, role: x.role, online: !!x.sock })),
         seats: [...room.seats.values()].sort((a, b) => a.seat - b.seat).map(publicSeat),
         encounterId: room.enc?.id ?? null,
@@ -285,7 +300,7 @@ export function createFakeServer({
       },
       encounter: projected(room),
       openPrompt: prompt ? openPayload(prompt) : null,
-      history: room.history.slice(-50),
+      history: room.history.filter(ev => canSee(room, m, ev)).slice(-50),
       stateHash: room.enc ? stateHash(room.enc.state) : null
     };
   }
@@ -306,7 +321,7 @@ export function createFakeServer({
     return { promptId: p.promptId, kind: p.kind, payload: clone(p.payload), autoAnswer: clone(p.autoAnswer), deadlineAt: p.deadlineAt, serverNow: now() };
   }
 
-  function ask(room, { kind, addressee, autoAnswer, payload, timeoutMs = reactionTimeoutMs }) {
+  function ask(room, { kind, addressee, autoAnswer, payload, timeoutMs = room.settings.reactionTimeoutMs }) {
     const member = addressee ? room.members.get(addressee) : null;
     if (!member || !member.sock) return Promise.resolve({ answer: clone(autoAnswer), by: 'auto' });
     const promptId = `pr_${++room.promptN}`;
@@ -352,6 +367,9 @@ export function createFakeServer({
         pos: clampPos(placements[id], { col: Math.min(i, cols - 1), row: 0 }),
         controller: s.memberId ? { type: 'player', seatId: s.slotId } : { type: 'ai', seatId: null }
       });
+      // importLiveState: the sheet's current HP instead of starting rested.
+      const e = state.entities[id];
+      if (room.settings.importLiveState && Number.isInteger(sheet.hp?.current)) e.hp = Math.max(0, Math.min(e.hpMax, sheet.hp.current));
     });
     (setup.monsters || []).forEach((m, i) => {
       const slug = MONSTER_PRESETS[m.slug] ? m.slug : 'goblin';
@@ -475,7 +493,7 @@ export function createFakeServer({
     const owner = ownerMember(room, target);
     const slot = Object.entries(target.resources.slots || {}).find(([, l]) => l.max - l.spent > 0);
     if (hit && !crit && owner && owner.role === 'player' && !target.resources.reactionUsed && slot && total < target.ac + 5) {
-      emit(room, 'reaction.offered', { reactorId: target.id, kind: 'shield', autoAnswer: true, deadlineMs: reactionTimeoutMs }, group);
+      emit(room, 'reaction.offered', { reactorId: target.id, kind: 'shield', autoAnswer: true, deadlineMs: room.settings.reactionTimeoutMs }, group);
       const r = await ask(room, { kind: 'shield', addressee: owner.id, autoAnswer: true, payload: { reactorId: target.id, attackerId: actor.id, total, ac: target.ac } });
       const used = r.answer === true;
       emit(room, 'reaction.resolved', { reactorId: target.id, kind: 'shield', used, by: r.by }, group);
@@ -799,6 +817,13 @@ export function createFakeServer({
         if (!aw) throw new IntentFail('E_STALE', 'only a turn waiting for an action can be skipped');
         aw.resolve({ kind: 'skip' });
         return {};
+      }
+      case 'dm.room.settings': {
+        const keys = ['reactionTimeoutMs', 'importLiveState', 'fudgeVisibility', 'diagonalRule'].filter(k => p[k] !== undefined);
+        if (!keys.length) throw new IntentFail('E_INVALID_INTENT', 'name at least one setting');
+        for (const k of keys) room.settings[k] = p[k];
+        broadcast(room, 'room.settings', { settings: { ...room.settings } });
+        return { settings: { ...room.settings } };
       }
       case 'dm.review.set':
         for (const k of ['plans', 'rolls', 'monsterReactions', 'aiParty']) if (typeof p[k] === 'boolean') room.review[k] = p[k];

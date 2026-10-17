@@ -135,6 +135,8 @@ function reduceBroadcast(s, msg) {
       return { ...next, room: { ...(s.room || {}), status: p.status } };
     case 'room.closing':
       return { ...next, room: { ...(s.room || {}), closing: p.reason } };
+    case 'room.settings':
+      return { ...next, room: { ...(s.room || {}), settings: { ...(s.room?.settings || {}), ...p.settings } } };
     default:   // redacted and anything else: seq only
       return next;
   }

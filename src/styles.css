@@ -2956,3 +2956,7 @@ body.party-view-mode .combat-panel { display: block !important; }
 .play-pip.bad.on { color: #f87171; }
 .play-log .roll-death { color: #fca5a5; }
 .play-dying { gap: 6px; align-items: center; }
+/* M64 phase 1.5 — room settings card, claim seeding line */
+.play-room-settings label { display: block; margin: 4px 0; }
+.play-room-settings input[type="number"] { width: 4.5em; }
+.play-seeding { margin-top: -4px; }

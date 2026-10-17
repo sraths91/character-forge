@@ -22,6 +22,8 @@
  *     caster, spell (the sheet's off-registry spells are suggested), slot,
  *     and per target damage / type / healing / condition →
  *     `dm.spell.adjudicate`.
+ *   - Room settings (M64 1.5): reaction timeout, import-live-state, fudge
+ *     visibility → `dm.room.settings` (views/room-settings.js).
  *   - Monster reaction prompts addressed to the DM are answered in the
  *     battle view's dialog.
  *
@@ -31,6 +33,7 @@
 import { h, replace, createScope, delegate, attempt, select } from './dom.js';
 import { nameOf, conditionIds, statusBadge } from '../selectors.js';
 import { ENTITY_STATUSES } from '../../shared/events.js';
+import { mount as mountRoomSettings } from './room-settings.js';
 import { formatBreakdown } from '../../scene/ai/profile.js';
 import { entityFromPreset } from '../../scene/encounter-adapters.js';
 import { MONSTER_PRESETS } from '../../scene/monster-presets.js';
@@ -168,6 +171,7 @@ export function mount(root, ctx) {
   view.appendChild(status);
   for (const c of [statusCard, pendingCard, initCard, rollCard, inspector, monsterCard, adjCard, endCard]) view.appendChild(c);
   root.appendChild(view);
+  scope.add(mountRoomSettings(view, { store: ctx.store, send }));
 
   // Static controls (built once so selections survive re-renders).
   const pauseSel = select(doc, { dataset: { action: 'pause-mode' }, attrs: { 'aria-label': 'Pause mode' } }, [

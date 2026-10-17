@@ -11,16 +11,19 @@
  * The DM sees every seat with the derived AC / HP / level, can unassign
  * a seat (`DELETE /api/rooms/:id/seats/:n`) or fill an empty one with an
  * AI-run character and archetype (`POST …/seats/:n/ai`), and moves on to
- * encounter setup once at least one seat is filled.
+ * encounter setup once at least one seat is filled. A line tells everyone
+ * whether characters start rested or import their current HP / slots
+ * (the DM's room setting, M64 1.5).
  *
  * mount(root, ctx) → unmount. ctx: {store, api, send, room: {roomId, role},
  * loadSheet(characterId) → Promise<sheet>, actions: {openSetup()}, archetypes?: string[]}
  */
 
 import { h, replace, createScope, delegate, attempt, select } from './dom.js';
-import { seatsOf, membersOf, isDm, myMemberId } from '../selectors.js';
+import { seatsOf, membersOf, isDm, myMemberId, seedingCopy } from '../selectors.js';
 import { deriveAC } from '../../scene/pc-stats.js';
 import { PC_PROFILES } from '../../scene/ai/pc-profiles.js';
+import { mount as mountRoomSettings } from './room-settings.js';
 
 /**
  * AC / HP / level for the DM's seat table.
@@ -62,12 +65,15 @@ export function mount(root, ctx) {
   ]);
   const charList = h(doc, 'ul', { class: 'play-char-list' });
   const seatTable = h(doc, 'div', { class: 'play-seat-table' });
+  const seeding = h(doc, 'p', { class: 'play-seeding hint-line' });
   view.appendChild(h(doc, 'h2', { text: 'Characters & seats' }));
+  view.appendChild(seeding);
   view.appendChild(status);
   view.appendChild(importCard);
   view.appendChild(h(doc, 'div', { class: 'play-card' }, [h(doc, 'h3', { text: 'In this room' }), charList]));
   view.appendChild(seatTable);
   root.appendChild(view);
+  if (ctx.send) scope.add(mountRoomSettings(view, { store: ctx.store, send: ctx.send }));
 
   async function refreshCharacters() {
     if (!roomId || !ctx.api) return;
@@ -120,6 +126,7 @@ export function mount(root, ctx) {
 
   function render() {
     const s = ctx.store.getState();
+    seeding.textContent = seedingCopy(s);
     const me = myMemberId(s);
     const dm = isDm(s);
     const seats = seatsOf(s);

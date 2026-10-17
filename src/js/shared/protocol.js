@@ -63,7 +63,9 @@
  *        clears its death saves (E1 wave 5's entity fields; the server
  *        wires them). `turn.act.plan.featureId` (E1 wave 5): the class
  *        feature a `kind: 'feature'` plan uses; clients also send it in
- *        `features` for validators that predate it.
+ *        `features` for validators that predate it. `dm.fog.paint {cells, op:
+ *        'reveal'|'hide'}` — the DM's fog brush (map/fog.js); a server
+ *        without it answers E_UNKNOWN_TYPE until E3 wires it.
  *
  * Client payloads are strict (unknown fields rejected); server payloads
  * enforce required fields and allow additive ones.
@@ -116,6 +118,7 @@ export const INTENT_ROLES = Object.freeze({
   'dm.prompt.force': 'dm',
   'dm.member.revoke': 'dm',
   'dm.room.settings': 'dm',   // v1.4
+  'dm.fog.paint': 'dm'        // v1.4
 });
 
 /** v1.4 room settings: who sees DM fudges (dm.override), and the grid's diagonal rule. */
@@ -183,6 +186,9 @@ export const ROOM_STATUSES = Object.freeze(['lobby', 'setup', 'in-encounter', 'p
 export const PROMPT_KINDS = Object.freeze([...REACTION_KINDS, 'plan', 'roll']);
 /** Rolls the DM may arm or edit in phase 1 (monster / AI rolls only). */
 export const ROLL_KINDS = Object.freeze(['attack', 'damage', 'save']);
+/** Fog brush operations (`dm.fog.paint`), v1.4. */
+export const FOG_PAINT_OPS = Object.freeze(['reveal', 'hide']);
+
 /** Plan kinds a client may submit in `turn.act`. */
 export const INTENT_PLAN_KINDS = Object.freeze(['melee', 'ranged', 'attack', 'cast', 'dash', 'dodge', 'disengage', 'move', 'feature']);
 
@@ -257,6 +263,8 @@ const INTENT_PAYLOADS = {
     fudgeVisibility: optional(oneOf(FUDGE_VISIBILITY)),
     diagonalRule: optional(oneOf(DIAGONAL_RULES))
   }),
+  // v1.4 — the DM's fog reveal / hide brush.
+  'dm.fog.paint': shape({ cells: arrayOf(POS, { min: 1, max: 4096 }), op: oneOf(FOG_PAINT_OPS) }),
   // v1.3 — the DM resolves a spell outside the engine's registry.
   'dm.spell.adjudicate': shape({
     casterId: ID,
