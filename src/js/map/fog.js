@@ -10,8 +10,9 @@
  * drops entities/tokens standing in unrevealed cells and clears terrain
  * flags there. It accepts a RenderView or an EncounterState projection
  * (the server calls it inside `viewFor` for player seats; the DM's view
- * is never filtered). Phase 1 ships the data path; the DM reveal brush
- * and LOS auto-reveal come later.
+ * is never filtered). Phase 1.5 adds the DM reveal brush
+ * (map/fog-brush.js → `{cells, op: 'reveal'|'hide'}`, applied on the
+ * server with `applyFogPaint`); LOS auto-reveal comes later.
  *
  * Pure, Node-safe.
  */
@@ -82,6 +83,26 @@ export function revealCells(fog, cols, rows, cells, reveal = true) {
     else bytes[i >> 3] &= ~(1 << (i & 7));
   }
   return { revealed: bytesToBase64(bytes) };
+}
+
+/** Fog brush ops. */
+export const FOG_PAINT_OPS = Object.freeze(['reveal', 'hide']);
+
+/**
+ * Apply one fog-brush payload (the `dm.fog.paint` intent). Pure: returns a
+ * new fog; an unknown op or a malformed payload returns `fog` unchanged,
+ * and out-of-grid cells are skipped. A null fog starts fully hidden.
+ * @param {{revealed: string}|null} fog
+ * @param {{cells: {col: number, row: number}[], op: 'reveal'|'hide'}} payload
+ * @param {{cols: number, rows: number}} grid
+ * @returns {{revealed: string}|null}
+ */
+export function applyFogPaint(fog, payload, grid) {
+  if (!FOG_PAINT_OPS.includes(payload?.op) || !Array.isArray(payload.cells)) return fog;
+  const cols = grid?.cols | 0;
+  const rows = grid?.rows | 0;
+  if (cols < 1 || rows < 1) return fog;
+  return revealCells(fog, cols, rows, payload.cells, payload.op === 'reveal');
 }
 
 /** Count revealed cells (for tests and the DM panel). */
