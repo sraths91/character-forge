@@ -98,6 +98,10 @@ import {
  * dialog, a socket, a bug — can grant a reaction the creature lacks.
  * M64 T4 — an answer may be `{ answer, by }` (the prompt adapter) so the
  * reaction.resolved event records who answered.
+ * M64 phase 1.5 (agreed with E3) — the engine's `reaction.offered` /
+ * `reaction.resolved` pair is authoritative: `used` is the re-checked
+ * result, not the raw answer. Hosts (the room) forward the engine's
+ * events and must not emit their own copies.
  * @property {function} [onCinemaRound]     — async ({ attacker, defender, plan, atk, dmg, crit, … }) → void
  * @property {function} [onCastBegin]       — async ({ attacker, target, plan, spell }) → void
  *
