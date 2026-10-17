@@ -23,6 +23,7 @@
  *     id, kind: 'pc'|'monster', side: 'party'|'hostile', name, col, row,
  *     appearanceKey,                    // bake-cache key for the look (sheet / preset)
  *     hpState: 'healthy'|'wounded'|'down',
+ *     status?: 'active'|'downed'|'stable'|'dead',
  *     hp?: number, hpMax?: number,      // omitted when the projection redacts them
  *     tempHp: boolean,
  *     conditions: string[],             // condition ids
@@ -40,9 +41,14 @@
  *   tokens[].facing  'north'|'east'|'south'|'west' — from the client's
  *                    `local.facings` (map/facing.js) or a persisted
  *                    `entity.facing`; absent ⇒ the renderer's default.
+ *   tokens[].status  'active'|'downed'|'stable'|'dead' — `entity.status`
+ *                    (E1), else derived from hp (map/token-fx.js). Any
+ *                    non-active status forces hpState 'down'. Absent on
+ *                    legacy-adapter tokens (treated as 'active').
  */
 
 import { facingFor } from './facing.js';
+import { statusOf, isDownStatus } from './token-fx.js';
 
 /** RenderView version. */
 export const RENDER_VIEW_VERSION = 1;
@@ -224,6 +230,7 @@ export function projectBattleView(state, appearanceCache = null, opts = {}) {
     if (!e || !e.pos) continue;
     const conditions = conditionIdsOf(e.conditions);
     const characterId = e.sheetRef?.characterId ?? null;
+    const status = statusOf(e);
     const appearanceKey = e.kind === 'monster'
       ? monsterAppearanceKey(e.statBlock?.slug)
       : (cacheKeyFor(appearanceCache, characterId) || `pc:${characterId ?? e.id}`);
@@ -235,7 +242,8 @@ export function projectBattleView(state, appearanceCache = null, opts = {}) {
       col: e.pos.col,
       row: e.pos.row,
       appearanceKey,
-      hpState: e.hpState || hpStateOf(e.hp, e.hpMax),
+      hpState: isDownStatus(status) ? 'down' : (e.hpState || hpStateOf(e.hp, e.hpMax)),
+      status,
       tempHp: (e.hpTemp || 0) > 0,
       conditions,
       worstCondition: worstConditionOf(conditions),

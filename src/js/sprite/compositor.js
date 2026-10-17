@@ -8,6 +8,7 @@ import { legacySceneToView, characterForToken } from '../map/view.js';
 import { MONSTER_PRESETS, buildMonsterCharacter } from '../scene/monster-presets.js';
 import { createTokenCache, directionFor } from '../map/token-cache.js';
 import { isRevealed } from '../map/fog.js';
+import { DEATH_FADE_MS, deathFadeAlpha, isDownStatus } from '../map/token-fx.js';
 import { applyFilterMatrix, parseCssFilter } from './filter-matrix.js';
 
 // Tier ranks: higher beats lower. Used to pick the single character-level aura.
@@ -193,7 +194,8 @@ function renderBattleView(canvas, view, local) {
   if (local.aoePreview?.cells?.length) drawCellSetOutline(ctx, local.aoePreview, px);
   if (local.pathPreview?.cells?.length) drawPathPreview(ctx, local.pathPreview, px);
 
-  // 4. Tokens. Lunge / recoil displacement first.
+  // 4. Tokens. Lunge / recoil displacement first. Dead tokens draw first
+  //    so the faint markers sit under the living.
   const displacementById = effectDisplacements(local.effects, now);
   const showHidden = !!local.dm?.showHidden;
   const drawnPos = new Map();
@@ -201,12 +203,24 @@ function renderBattleView(canvas, view, local) {
   const bakesBefore = cache.stats.bakes;
   let pendingBakes = 0;
   let drawn = 0;
-  for (const token of view.tokens) {
+  let live = false;
+  const order = view.tokens.some(t => t.status === 'dead')
+    ? [...view.tokens.filter(t => t.status === 'dead'), ...view.tokens.filter(t => t.status !== 'dead')]
+    : view.tokens;
+  for (const token of order) {
     if (token.hidden && !showHidden) continue;
     const disp = displacementById.get(token.id) || { x: 0, y: 0 };
     const x = token.col * W + disp.x;
     const y = token.row * W + disp.y;
     drawnPos.set(token.id, { col: token.col, row: token.row });
+    const status = token.status || 'active';
+    // Phase 1.5 — death fade: per-viewer clock in the token cache.
+    let alpha = token.hidden ? 0.5 : 1;
+    const deadAt = cache.deathStart ? cache.deathStart(token.id, status === 'dead', now) : null;
+    if (deadAt !== null && deadAt !== undefined) {
+      alpha *= deathFadeAlpha(now - deadAt);
+      if (now - deadAt < DEATH_FADE_MS) live = true;
+    }
     if (local.ownEntityId != null && String(local.ownEntityId) === token.id) drawOwnMarker(ctx, x, y, px);
     // M64 M7 — one drawImage of a baked 64×64 bitmap per token. A miss
     // bakes in the background and keeps showing the previous bitmap
@@ -227,10 +241,11 @@ function renderBattleView(canvas, view, local) {
       }
       bmp = cache.lastFor(token.id);
     }
-    if (token.hidden) { ctx.save(); ctx.globalAlpha = 0.5; }
-    if (bmp) ctx.drawImage(bmp, x, y, W, W);
+    if (alpha !== 1) { ctx.save(); ctx.globalAlpha = alpha; }
+    if (bmp) drawTokenBitmap(ctx, bmp, x, y, W, isDownStatus(status));
     else drawTokenPlaceholder(ctx, token, x, y, px);
-    if (token.hidden) ctx.restore();
+    if (alpha !== 1) ctx.restore();
+    if (status === 'stable') drawStableBadge(ctx, x, y, W, px);
     drawn++;
   }
 
@@ -254,7 +269,6 @@ function renderBattleView(canvas, view, local) {
   if (local.hover && Number.isFinite(local.hover.col)) {
     drawCellOutline(ctx, local.hover.col * W, local.hover.row * W, W, 'rgba(255,255,255,0.6)', 2 * px);
   }
-  let live = false;
   if (local.animations) {
     for (const [id, anim] of local.animations) {
       const elapsed = now - anim.startedAt;
@@ -391,6 +405,40 @@ function drawOwnMarker(ctx, x, y, px) {
   ctx.beginPath();
   ctx.ellipse(x + W / 2, y + W * 0.86, W * 0.32, W * 0.1, 0, 0, Math.PI * 2);
   ctx.stroke();
+  ctx.restore();
+}
+
+/**
+ * A baked token bitmap in an S×S box. Downed / stable / dead bodies lie
+ * on their side (a quarter turn, settled toward the bottom of the cell);
+ * the bake is already greyed by the `down` filter matrix.
+ */
+function drawTokenBitmap(ctx, bmp, x, y, S, prone) {
+  if (!prone) { ctx.drawImage(bmp, x, y, S, S); return; }
+  ctx.save();
+  ctx.translate(x + S / 2, y + S * 0.62);
+  ctx.rotate(-Math.PI / 2);
+  ctx.drawImage(bmp, -S / 2, -S / 2, S, S);
+  ctx.restore();
+}
+
+/** Small green "stable" badge (white cross) at a token's top-right. */
+function drawStableBadge(ctx, x, y, S, px) {
+  const r = S * 0.13;
+  const cx = x + S - r - 2 * px;
+  const cy = y + r + 2 * px;
+  ctx.save();
+  ctx.fillStyle = '#16a34a';
+  ctx.strokeStyle = '#052e16';
+  ctx.lineWidth = 1.5 * px;
+  ctx.beginPath();
+  ctx.arc(cx, cy, r, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+  ctx.fillStyle = '#fff';
+  const a = r * 0.62, b = r * 0.2;
+  ctx.fillRect(cx - a, cy - b, a * 2, b * 2);
+  ctx.fillRect(cx - b, cy - a, b * 2, a * 2);
   ctx.restore();
 }
 

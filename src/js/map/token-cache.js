@@ -45,6 +45,8 @@ export function createTokenCache({ bake, maxEntries = DEFAULT_MAX_ENTRIES } = {}
   const pending = new Map();     // key → Promise<canvas|null>
   const cycles = new Map();      // `${appearanceKey}|${direction}|${anim}` → frame cycle
   const lastByEntity = new Map(); // entity id → last canvas drawn (avoids placeholder flicker)
+  const deadSince = new Map();    // entity id → time its death fade started (-Infinity = no fade)
+  const seenAlive = new Set();    // entity ids drawn while not dead
   const stats = { bakes: 0, hits: 0, misses: 0, failures: 0 };
 
   function keyFor(token, opts = {}) {
@@ -111,12 +113,27 @@ export function createTokenCache({ bake, maxEntries = DEFAULT_MAX_ENTRIES } = {}
     /** Last canvas drawn for an entity (shown while its new look bakes). */
     lastFor: (entityId) => lastByEntity.get(String(entityId)) || null,
     setLast: (entityId, canvas) => { lastByEntity.set(String(entityId), canvas); },
+    /**
+     * Per-viewer death clock: when did `entityId`'s death fade start?
+     * Call every frame with whether it is dead. A token first seen
+     * already dead returns -Infinity (no fade); a revive resets it.
+     * @param {string} entityId
+     * @param {boolean} dead
+     * @param {number} now
+     * @returns {number|null} the fade start, or null when alive
+     */
+    deathStart(entityId, dead, now) {
+      const id = String(entityId);
+      if (!dead) { deadSince.delete(id); seenAlive.add(id); return null; }
+      if (!deadSince.has(id)) deadSince.set(id, seenAlive.has(id) ? now : -Infinity);
+      return deadSince.get(id);
+    },
     /** Drop every bake of one look (equipment changed). */
     invalidate(appearanceKey) {
       for (const k of [...entries.keys()]) if (k.startsWith(`${appearanceKey}|`)) entries.delete(k);
       for (const k of [...cycles.keys()]) if (k.startsWith(`${appearanceKey}|`)) cycles.delete(k);
     },
-    clear() { entries.clear(); cycles.clear(); lastByEntity.clear(); },
+    clear() { entries.clear(); cycles.clear(); lastByEntity.clear(); deadSince.clear(); seenAlive.clear(); },
     get size() { return entries.size; },
     stats
   };
