@@ -124,7 +124,7 @@ const LIVE_PC_FIELDS = [
   '_reactionUsed', '_shieldActive', '_actionSurgeUsed', '_secondWindUsed',
   '_sneakAttackUsedThisTurn', '_cunningActionUsedThisTurn', '_recklessUsedThisTurn',
   '_recklessUntilNextTurn', '_smiteSlotUsed', '_surgeFiredThisTurn', '_extraActionThisTurn',
-  '_concentrating', '_conditionMeta', 'status', 'deathSaves'
+  '_concentrating', '_conditionMeta', 'status', 'deathSaves', '_features'
 ];
 const LIVE_MONSTER_FIELDS = [
   '_reactionUsed', '_legendaryBudget', '_recklessUntilNextTurn', '_innate', '_concentrating',

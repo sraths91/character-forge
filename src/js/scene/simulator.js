@@ -31,6 +31,7 @@ import {
 } from './monster-spells.js';
 import { isLegendary, freshLegendaryBudget } from './monster-legendary.js';
 import { createRng } from './rng.js';
+import { featureLedgerFor } from './feature-uses.js';
 import { createTurnState, startEncounter, runEncounter } from './turn-manager.js';
 // M45 Phase 4 — Combat resolution moved to a shared engine module so
 // the live runner can dispatch through the same spine without
@@ -136,6 +137,7 @@ async function runOneIteration({ party, monsters, scene, maxRounds, rng, index =
     // M42 — Per-encounter feature usage flags (Action Surge, Second Wind)
     _actionSurgeUsed: 0,
     _secondWindUsed: false,
+    _features: featureLedgerFor(p),
     _sneakAttackUsedThisTurn: false,
     _cunningActionUsedThisTurn: false,
     // M64 R9 — dying: PCs at 0 HP make death saves instead of vanishing.

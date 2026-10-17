@@ -27,6 +27,7 @@ import { chebyshevFeet } from '../grid-rules.js';
 import { spellById, canCastSpell, applyUpcast } from '../monster-spells.js';
 import { mctsEvaluate, shallowRolloutForResource } from './mcts.js';
 import { requireRng } from '../rng.js';
+import { spellSlug, grantedSpellEntry, spellUseKey, usesLeft } from '../feature-uses.js';
 
 function posOf(e) { return e?._position || e?.position || null; }
 function hpOf(e)  { return typeof e?.hp === 'number' ? e.hp : (e?.hp?.current ?? 0); }
@@ -230,6 +231,26 @@ function scoreActionsAgainst({ self, target, allies, enemies, profile, rng }) {
       continue;
     }
 
+    // Feat / race spells: their own uses, cast at the base level.
+    const granted = grantedUsable(self, id);
+    if (granted !== null) {
+      if (!granted) continue;
+      const score = perTargetBase + w + kindWeight;
+      if (!bestOption || score > bestOption.score) {
+        bestOption = {
+          kind: 'cast', weapon: null,
+          spellId: id, castAtLevel: spell.level,
+          score, featuresFired: [],
+          breakdown: [
+            ...baseBreakdown,
+            { name: 'action:cast', raw: 1, weighted: kindWeight },
+            { name: `spell:${spell.name}`, raw: 1, weighted: w },
+            { name: 'uses:granted', raw: 1, weighted: 0 }
+          ]
+        };
+      }
+      continue;
+    }
     if (!slots) continue;
     const upcastChoice = pickUpcastTier({ spell, baseScore: perTargetBase + w + kindWeight, slots, target, rng });
     if (!upcastChoice) continue;
@@ -358,7 +379,9 @@ function considerPcHeal({ self, profile, allies }) {
     if (w == null) continue;
     const spell = spellById(id);
     if (!spell || spell.targetSide !== 'ally') continue;
-    if (spell.level > 0 && (!slots || !canCastSpell(spell, slots))) continue;
+    const granted = spell.level > 0 ? grantedUsable(self, id) : null;
+    if (granted === false) continue;
+    if (granted === null && spell.level > 0 && (!slots || !canCastSpell(spell, slots))) continue;
     const sp = posOf(self), tp = posOf(mostHurt);
     if (sp && tp) {
       const d = chebyshevFeet(sp, tp);
@@ -430,8 +453,20 @@ function collectSpells(ref) {
  *  live runner's manual-cast path can resolve registry entries
  *  consistently with the AI planner. */
 export function nameToSpellId(name) {
-  return String(name || '').toLowerCase()
-    .replace(/['']/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  return spellSlug(name);
+}
+
+/**
+ * M64 phase 1.5 — can `self` cast a feat / race granted spell from its
+ * own uses? null when the spell is not granted (slots apply); else
+ * whether a use is left (an untracked ledger counts as fully rested).
+ */
+function grantedUsable(self, id) {
+  const grant = grantedSpellEntry(self.ref || self, id);
+  if (!grant) return null;
+  const key = spellUseKey(id);
+  if (!self._features?.[key]) return true;
+  return usesLeft(self, key) > 0;
 }
 
 // Re-export common helpers so callers can compose with the monster path

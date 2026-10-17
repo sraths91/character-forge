@@ -59,6 +59,7 @@ import {
   handleDamageOnConcentration
 } from './concentration.js';
 import { rollSave } from './save-rolls.js';
+import { grantedSpellEntry, spellUseKey, featureLedgerFor, usesLeft, spendUse } from './feature-uses.js';
 import { MONSTER_DEFAULT_SAVES } from './monster-presets.js';
 import { chooseLegendaryAction, spendLegendaryAction } from './monster-legendary.js';
 import {
@@ -784,7 +785,20 @@ async function runWeaponSwing(turn, target, weaponRef, index, shared, firstActio
 export async function runMonsterSpell({ attacker, target, plan, scene, rng, witnesses = [], allEnemies = [], allies = [], prompts = {}, ctx = NO_CTX }) {
   const baseSpell = spellById(plan.spellId);
   if (!baseSpell) return;
-  const spell = applyUpcast(baseSpell, plan.castAtLevel);
+  // M64 phase 1.5 — a feat / race / item spell with its own uses (Fey
+  // Touched Misty Step) spends `resources.features['spell:<id>']`, not a
+  // slot, and is cast at its own level.
+  const grant = attacker.kind === 'pc' && baseSpell.level > 0 && !plan.isInnate
+    ? grantedSpellEntry(attacker.ref, String(plan.spellId)) : null;
+  const useKey = grant ? spellUseKey(String(plan.spellId)) : null;
+  if (grant) {
+    ensureUseLedger(attacker, useKey, grant);
+    if (usesLeft(attacker, useKey) <= 0) {
+      emitEvent(ctx, 'turn.rejected', { actorId: idOf(attacker), code: 'no-uses', reason: `${baseSpell.name} has no uses left` });
+      return;
+    }
+  }
+  const spell = grant ? baseSpell : applyUpcast(baseSpell, plan.castAtLevel);
   const book = attacker.kind === 'monster' ? spellbookFor(attacker.presetSlug) : null;
   const innateBook = !book && attacker._innate
     ? { dc: 12, attackBonus: 4, abilityMod: 3 }
@@ -803,7 +817,10 @@ export async function runMonsterSpell({ attacker, target, plan, scene, rng, witn
   }
 
   let slotSpent = null;
-  if (plan.isInnate) {
+  if (grant) {
+    spendUse(attacker, useKey);
+    emitEvent(ctx, 'resource.spent', { entityId: casterId, resource: `feature:${useKey}`, level: null }, group);
+  } else if (plan.isInnate) {
     if (!attacker._innate) attacker._innate = freshInnateState(attacker.presetSlug);
     consumeInnate(attacker, plan.spellId);
     emitEvent(ctx, 'resource.spent', { entityId: casterId, resource: `innate:${plan.spellId}`, level: null }, group);
@@ -818,7 +835,7 @@ export async function runMonsterSpell({ attacker, target, plan, scene, rng, witn
   }
   emitEvent(ctx, 'spell.cast', {
     casterId, spellId: String(plan.spellId),
-    castAtLevel: Math.max(spell.level || 0, plan.castAtLevel || 0),
+    castAtLevel: grant ? baseSpell.level : Math.max(spell.level || 0, plan.castAtLevel || 0),
     slotSpent, innate: !!plan.isInnate,
     targetIds: target ? [idOf(target)] : []
   }, group);
@@ -2151,6 +2168,12 @@ export function abilityModFor(entity, stat) {
     return ref.abilityModifiers?.[stat] ?? 0;
   }
   return saveBonusFor(entity, stat);
+}
+
+/** A wrapper's ledger entry for a granted spell, created fully rested on first use. */
+function ensureUseLedger(w, key, grant) {
+  if (!w._features || typeof w._features !== 'object') w._features = featureLedgerFor(w.ref || {});
+  if (!w._features[key]) w._features[key] = { max: Math.max(1, Math.trunc(Number(grant?.uses?.max) || 1)), spent: 0 };
 }
 
 function combatModsOf(entity) {
