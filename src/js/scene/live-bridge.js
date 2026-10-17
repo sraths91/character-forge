@@ -30,7 +30,7 @@
 
 import { positionOf } from './scene-model.js';
 import { MONSTER_PRESETS } from './monster-presets.js';
-import { deriveAC } from './pc-stats.js';
+import { acFor } from './fighting-styles.js';
 import { slotsForPc, pactForPc } from './reactions.js';
 import { freshSlots } from './monster-spells.js';
 import { choosePcAction } from './ai/pc-action.js';
@@ -178,7 +178,7 @@ export function entityFromLivePc(pc, idx, scene) {
     id: pc.id, kind: 'pc', side: 'party', name: pc.name,
     pos: positionOf(scene, pc.id, idx),
     hpCur: pc.hp?.current ?? pc.hp?.max ?? 1, hpMax: pc.hp?.max ?? 1, hpTemp: pc.hp?.temp,
-    ac: deriveAC(pc)
+    ac: acFor(pc)
   });
   const fresh = slotsForPc(pc);
   e.resources.slots = ledgerFromPool(fullLedger(fresh), pc._slots || fresh);
