@@ -77,6 +77,8 @@ export const PLAN_SOURCES = Object.freeze(['ai', 'player', 'dm']);
 export const ADVANTAGE_MODES = Object.freeze(['normal', 'advantage', 'disadvantage']);
 /** Why a spell produced no effect. */
 export const FIZZLE_REASONS = Object.freeze(['shield', 'counterspell']);
+/** A creature's dying state, `entity.status` (v1.2; absent = 'active'). */
+export const ENTITY_STATUSES = Object.freeze(['active', 'downed', 'stable', 'dead']);
 /** What forced a death saving throw (v1.2). */
 export const DEATH_SAVE_CAUSES = Object.freeze(['roll', 'damage']);
 /** How an encounter ended. */
