@@ -18,6 +18,13 @@
  *     at the Sequence's impact keyframe (the hit-pause), so HP bars move
  *     when the blow lands, not when the packet arrives. With cinema off
  *     it presents instantly.
+ *   - Extra Attack / Multiattack (E1 wave 5): every swing of one Attack
+ *     action shares a `cinemaGroup` and carries its own `exchange`
+ *     (swing k >= 2 is `${group}.s${k}`). The swings play back to back
+ *     as one cinema: the canvas stays up between them (a short linger
+ *     waits for the next swing, which the server sends after this
+ *     swing's cinema.done), the actors are kept unless the swing
+ *     re-targets, and each swing presents its own HP at its impact.
  *   - `skip()` drops the backlog and jumps `presented` to `authoritative`.
  *
  * The battle map is drawn with E5's read-only `renderBattleScene(canvas,
@@ -137,6 +144,8 @@ function drawTokenBadges(canvas, badges, camera) {
  *   — called once per exchange (played, instant or skipped); the play
  *     client sends `cinema.done` from here
  * @param {(state: {playing: boolean, exchange: object|null}) => void} [opts.onCinemaState]
+ * @param {number} [opts.swingLingerMs=700] — how long the cinema stays up after a
+ *   swing, waiting for the next swing of the same cinemaGroup
  * @param {{warn: Function}} [opts.logger]
  * @returns {{
  *   play: (events: object[]) => Promise<void>,
@@ -166,6 +175,7 @@ export function createRenderAdapter({
   timers = DEFAULT_TIMERS,
   onExchangeDone = null,
   onCinemaState = null,
+  swingLingerMs = 700,
   logger = { warn: (...a) => globalThis.console?.warn?.(...a) }
 } = {}) {
   if (!store || typeof store.presentUpTo !== 'function') throw new TypeError('createRenderAdapter: store is required');
@@ -180,6 +190,8 @@ export function createRenderAdapter({
   let skipWake = null;   // resolves the in-flight cinema race on skip()
   let lastRound = Promise.resolve();
   let currentExchange = null;
+  let cinemaShown = false;
+  let linger = null;     // {group, attackerId, defenderId, timer} — between swings of one group
 
   const cinemaCtl = cinema || (cinemaCanvas ? createCinema({ canvas: cinemaCanvas, ...cinemaOptions }) : null);
 
@@ -237,11 +249,21 @@ export function createRenderAdapter({
   }
 
   function setCinemaVisible(on, exchange) {
-    if (cinemaCanvas) cinemaCanvas.hidden = !on;
     currentExchange = on ? exchange : null;
+    if (on === cinemaShown) return;   // a follow-up swing keeps the cinema up
+    cinemaShown = on;
+    if (cinemaCanvas) cinemaCanvas.hidden = !on;
     try { onCinemaState?.({ playing: on, exchange: on ? exchange : null }); } catch (error) {
       logger.warn(JSON.stringify({ event: 'render_adapter.cinema_state_listener_failed', error: String(error?.message || error) }));
     }
+  }
+
+  /** Close the cinema left up between swings. */
+  function endLinger() {
+    if (!linger) return;
+    if (linger.timer !== null) timers.clearTimeout(linger.timer);
+    linger = null;
+    setCinemaVisible(false, null);
   }
 
   function exchangeDone(ev, skipped) {
@@ -278,12 +300,21 @@ export function createRenderAdapter({
     const att = enc?.entities?.[p.attackerId] || null;
     const def = p.defenderId ? (enc?.entities?.[p.defenderId] || null) : null;
     const defEffect = (p.effects || []).find(e => e.entityId === p.defenderId);
+    // The next swing of the lingering group: same actors unless re-targeted.
+    const followUp = linger && ev.cinemaGroup && linger.group === ev.cinemaGroup ? linger : null;
+    if (linger) {
+      if (linger.timer !== null) timers.clearTimeout(linger.timer);
+      linger = null;
+      if (!followUp) setCinemaVisible(false, null);
+    }
     setCinemaVisible(true, ev);
     try {
-      await cinemaCtl.setActors?.({
-        attacker: cinemaActorFor(att, appearanceCache),
-        defender: cinemaActorFor(def || att, appearanceCache)
-      });
+      if (!followUp || followUp.attackerId !== p.attackerId || followUp.defenderId !== (p.defenderId ?? null)) {
+        await cinemaCtl.setActors?.({
+          attacker: cinemaActorFor(att, appearanceCache),
+          defender: cinemaActorFor(def || att, appearanceCache)
+        });
+      }
       if (gen !== skipGen || disposed) return;
       cinemaCtl.resetHp?.({
         attHp: att?.hp ?? 1,
@@ -305,7 +336,15 @@ export function createRenderAdapter({
     } finally {
       if (gen === skipGen && !disposed) {
         present(ev.seq);
-        setCinemaVisible(false, null);
+        if (ev.cinemaGroup) {
+          // More swings of this Attack action may follow.
+          currentExchange = null;
+          linger = { group: ev.cinemaGroup, attackerId: p.attackerId, defenderId: p.defenderId ?? null, timer: null };
+          const mine = linger;
+          linger.timer = timers.setTimeout(() => { if (linger === mine) { linger.timer = null; endLinger(); } }, swingLingerMs);
+        } else {
+          setCinemaVisible(false, null);
+        }
         exchangeDone(ev, false);
       }
     }
@@ -322,6 +361,8 @@ export function createRenderAdapter({
       while (queue.length && !disposed) {
         const item = queue[0];
         const ev = item.ev;
+        // Anything outside the swinging group ends the multi-swing cinema.
+        if (linger && ev.cinemaGroup !== linger.group) endLinger();
         if (ev.type === 'exchange') {
           const gen = skipGen;
           await playExchange(ev);
@@ -358,6 +399,7 @@ export function createRenderAdapter({
       .filter(e => e && e.type === 'exchange' && !seen.has(e.seq) && seen.add(e.seq));
     const items = [...deferred.splice(0), ...queue.splice(0)];
     if (skipWake) { skipWake(); skipWake = null; }
+    if (linger) { if (linger.timer !== null) timers.clearTimeout(linger.timer); linger = null; }
     store.presentUpTo(store.getState().seq);
     lastQueuedSeq = Math.max(lastQueuedSeq, store.getState().seq);
     setCinemaVisible(false, null);
@@ -399,6 +441,8 @@ export function createRenderAdapter({
     view: currentView,
 
     get busy() { return queue.length > 0 || deferred.length > 0 || currentExchange !== null; },
+    /** The cinema is up (playing, or lingering between swings). */
+    get cinemaShown() { return cinemaShown; },
     get queued() { return queue.length + deferred.length; },
 
     dispose() {

@@ -26,8 +26,9 @@ const FIGHTER = {
   spells: []
 };
 
-function roomFor(role, { myTurn = false } = {}) {
+function roomFor(role, { myTurn = false, mutate = null } = {}) {
   const enc = projectedState();
+  if (mutate) mutate(enc);
   if (myTurn) {
     enc.turnIndex = 0;   // pc-fighter
     enc.entities['pc-fighter'].conditions = [];   // the contract fixture has them paralyzed
@@ -303,6 +304,29 @@ test('C9 views: DM panel — plan review, inspector edits, + monster, end with c
   un();
   battleUn();
   assertClean(hh, 'dm panel');
+});
+
+test('M64 1.5 views: feature actions — Second Wind is offered from the sheet and sends a feature turn.act; swings are numbered in the log', async () => {
+  const hh = harness('player', { myTurn: true, mutate: (enc) => { enc.entities['pc-fighter'].resources.features['second-wind'].spent = 0; } });
+  const un = mountBattle(hh.root, hh.ctx);
+  const btn = hh.dom.byAction(hh.root, 'feature')[0];
+  assert.ok(btn, 'Second Wind button');
+  assert.equal(btn.dataset.feature, 'second-wind');
+  assert.ok(hh.dom.byText(hh.root, '1/1 left').length);
+  btn.click();
+  await flush();
+  assert.deepEqual(hh.sent.at(-1), { t: 'turn.act', p: { turnId: 't9', plan: { kind: 'feature', featureId: 'second-wind', features: ['second-wind'] } } });
+  const rolled = (seq, targetId) => ({ v: 1, t: 'attack.rolled', seq, ts: 1, p: { seq, type: 'attack.rolled', round: 2, turnId: 't9', cinemaGroup: 'g7', payload: {
+    attackerId: 'pc-fighter', targetId, weapon: 'Longsword', isReaction: false, advantage: 'normal', d20: [12], kept: 12, bonus: 6, total: 18, ac: 13, hit: true, crit: false, shielded: false } } });
+  hh.store.apply(rolled(11, 'm-goblin'));
+  hh.store.apply(rolled(12, 'm-fanatic'));
+  hh.store.presentUpTo(12);
+  await flush();
+  const lines = hh.dom.findAll(hh.root, n => n.tagName === 'LI' && /roll-log-entry/.test(n.className)).map(n => n.textContent);
+  assert.ok(lines.some(t => /^Swing 2 \(new target\): Fixture Fighter → Cult Fanatic|^Swing 2 \(new target\): /.test(t)), lines.join(' | '));
+  assert.ok(lines.some(t => /^Fixture Fighter → |^[^S].* → Goblin/.test(t)));
+  un();
+  assertClean(hh, 'battle (features)');
 });
 
 const evMsg = (seq, type, payload) => ({ v: 1, t: type, seq, ts: 1, p: { seq, type, round: 2, turnId: 't9', cinemaGroup: null, payload } });

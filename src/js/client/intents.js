@@ -121,6 +121,61 @@ export function checkPlan(state, actorId, plan, opts = {}) {
   }
 }
 
+/**
+ * Class features a PC can spend its action on (E1 wave 5 `feature`
+ * plans): the class that grants it and uses per encounter by level.
+ */
+export const FEATURE_ACTIONS = Object.freeze([
+  { id: 'second-wind', label: 'Second Wind', className: 'Fighter', uses: () => 1, hint: 'heal 1d10 + level' },
+  {
+    id: 'rage', label: 'Rage', className: 'Barbarian', blockedBy: 'raging', hint: 'resist weapon damage, bonus melee damage',
+    uses: (lvl) => (lvl >= 20 ? 99 : lvl >= 17 ? 6 : lvl >= 12 ? 5 : lvl >= 6 ? 4 : lvl >= 3 ? 3 : 2)
+  }
+]);
+
+/**
+ * The feature actions an entity's sheet grants, with uses left (the
+ * encounter ledger when it tracks the feature, else the class table).
+ * @param {object|null} entity — EncounterState entity
+ * @param {object|null} sheet — parsed character sheet
+ * @returns {{id: string, label: string, hint: string, left: number, max: number, available: boolean, reason: string|null}[]}
+ */
+export function featureActionsFor(entity, sheet) {
+  if (!entity || entity.kind !== 'pc') return [];
+  const out = [];
+  for (const f of FEATURE_ACTIONS) {
+    const cls = (sheet?.classes || []).find(c => new RegExp(`^${f.className}$`, 'i').test(String(c?.name || '')));
+    if (!cls) continue;
+    const ledger = entity.resources?.features?.[f.id];
+    const max = Number.isInteger(ledger?.max) && ledger.max > 0 ? Math.max(ledger.max, f.uses(cls.level || 1)) : f.uses(cls.level || 1);
+    const left = Math.max(0, max - (ledger?.spent ?? 0));
+    const active = f.blockedBy && (entity.conditions || []).some(c => (typeof c === 'string' ? c : c?.id) === f.blockedBy);
+    const reason = active ? `already ${f.blockedBy}` : left <= 0 ? 'no uses left' : null;
+    out.push({ id: f.id, label: f.label, hint: f.hint, left, max, available: !reason, reason });
+  }
+  return out;
+}
+
+/**
+ * Feature action → `turn.act {plan: {kind: 'feature', featureId, features: [featureId]}}`.
+ * @param {object} state
+ * @param {{actorId: string, turnId: string|null, featureId: string, sheets?: Record<string, object>}} args
+ * @returns {{ok: boolean, intent: object|null, reason: string|null, code: string|null}}
+ */
+export function featureIntent(state, { actorId, turnId, featureId, sheets }) {
+  const plan = { kind: 'feature', featureId: String(featureId), features: [String(featureId)] };
+  const r = finish(state, actorId, turnId, plan, sheets);
+  if (r.ok || r.code !== 'bad-feature') return r;
+  // main's validateIntent asks pc-features `available()` with a wrapper
+  // whose classes sit under `ref`, so it refuses every feature (reported
+  // to E1). Our own sheet check decides; the server stays the judge.
+  const e = state?.entities?.[actorId];
+  const sheet = e?.sheetRef ? (sheets || {})[e.sheetRef.characterId] : null;
+  const mine = featureActionsFor(e, sheet).find(f => f.id === plan.featureId);
+  if (mine?.available) return { ok: true, intent: turnAct(turnId, plan), reason: null, code: null };
+  return mine ? { ...r, reason: `${mine.label}: ${mine.reason}` } : r;
+}
+
 function turnAct(turnId, plan) {
   return { t: 'turn.act', p: { turnId: String(turnId), plan } };
 }

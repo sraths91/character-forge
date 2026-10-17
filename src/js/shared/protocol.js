@@ -61,7 +61,9 @@
  *        ENTITY_STATUSES) and `dm.entity.patch.deathSaves {successes,
  *        failures, stable?}`: the DM sets a creature's dying state or
  *        clears its death saves (E1 wave 5's entity fields; the server
- *        wires them).
+ *        wires them). `turn.act.plan.featureId` (E1 wave 5): the class
+ *        feature a `kind: 'feature'` plan uses; clients also send it in
+ *        `features` for validators that predate it.
  *
  * Client payloads are strict (unknown fields rejected); server payloads
  * enforce required fields and allow additive ones.
@@ -197,7 +199,8 @@ const PLAN = shape({
   castAtLevel: optional(int(0, 9)),
   moveTo: optional(POS),
   path: optional(arrayOf(POS, { max: 64 })),
-  features: optional(arrayOf(str({ maxLength: 64 }), { max: 8, unique: true }))
+  features: optional(arrayOf(str({ maxLength: 64 }), { max: 8, unique: true })),
+  featureId: optional(str({ maxLength: 64 }))   // v1.4 — a `feature` action (Second Wind, Rage)
 });
 
 /** Client payload specs (strict). */

@@ -16,6 +16,10 @@
  *   - Reaction dialogs (Shield, Counterspell, opportunity attack) reuse
  *     `promptReaction` in this view's container, with the countdown taken
  *     from the server's `deadlineAt`.
+ *   - Feature actions (E1 wave 5): Second Wind / Rage when the sheet has
+ *     them, as `turn.act {plan: {kind: 'feature', featureId}}`. Extra
+ *     Attack swings log as "Swing 2 (new target): …" (the server picks a
+ *     new target when the first one drops).
  *   - Waiting states: "Goblin is acting…", "DM is reviewing…", "Paused".
  *   - Dying (E1 wave 5): a death-save banner on your downed creature's
  *     card (the server rolls it at the start of your turn; the result and
@@ -34,7 +38,7 @@ import { createRenderAdapter } from '../render-adapter.js';
 import {
   myEntityIds, turnInfo, nameOf, conditionIds, slotsLeft, isDm, statusBadge, deathSaveInfo
 } from '../selectors.js';
-import { previewMove, moveIntent, dmMoveIntent, attackIntent, castIntent, actionIntent } from '../intents.js';
+import { previewMove, moveIntent, dmMoveIntent, attackIntent, castIntent, actionIntent, featureIntent, featureActionsFor } from '../intents.js';
 import { formatEvent } from '../log-format.js';
 import { reactionCostLabel } from '../reaction-labels.js';
 import { attachCameraControls, pickCell, fitToGrid, WORLD_CELL_PX } from '../../map/camera.js';
@@ -257,6 +261,11 @@ export function mount(root, ctx) {
       const t = turnInfo(s);
       sendTurn(actionIntent(s.encounter, { actorId: t.actorId, turnId: t.turnId, kind: el.dataset.kind, sheets: sheets() }));
     },
+    feature: (el) => {
+      const s = ctx.store.getState();
+      const t = turnInfo(s);
+      sendTurn(featureIntent(s.encounter, { actorId: t.actorId, turnId: t.turnId, featureId: el.dataset.feature, sheets: sheets() }));
+    },
     delegate: () => {
       const t = turnInfo(ctx.store.getState());
       if (t.turnId) attempt(() => send({ t: 'turn.delegate', p: { turnId: t.turnId } }), fail);
@@ -374,6 +383,17 @@ export function mount(root, ctx) {
     return out;
   }
 
+  function featureButtons(actor) {
+    const sheet = actor.kind === 'pc' ? sheets()[actor.sheetRef?.characterId] : null;
+    return featureActionsFor(actor, sheet).map(f => h(doc, 'div', { class: `play-action play-feature${f.available ? '' : ' blocked'}` }, [
+      h(doc, 'strong', { text: f.label }),
+      h(doc, 'span', { class: 'dim', text: ` ${f.hint} · ${f.max >= 99 ? 'unlimited' : `${f.left}/${f.max} left`} ` }),
+      f.available
+        ? h(doc, 'button', { type: 'button', class: 'play-btn small', dataset: { action: 'feature', feature: f.id }, text: `Use ${f.label}` })
+        : h(doc, 'span', { class: 'play-blocked', text: f.reason })
+    ]));
+  }
+
   function spellButtons(list, shapes) {
     return list.map((sp) => {
       const id = nameToSpellId(sp.name);
@@ -415,6 +435,7 @@ export function mount(root, ctx) {
       ...(built.blockers || []).map(b => h(doc, 'p', { class: 'play-blocked', text: b })),
       ...attackButtons(built.attacks || [], t),
       ...spellButtons(built.spells || [], shapes),
+      ...featureButtons(t.actor),
       h(doc, 'div', { class: 'play-row play-common' }, [
         ...['dash', 'dodge', 'disengage'].map(k => h(doc, 'button', { type: 'button', class: 'play-btn', dataset: { action: 'action', kind: k }, text: k[0].toUpperCase() + k.slice(1) })),
         t.actor.kind === 'pc' ? h(doc, 'button', { type: 'button', class: 'play-btn', dataset: { action: 'delegate' }, text: 'Let the AI play this turn' }) : null
@@ -425,6 +446,15 @@ export function mount(root, ctx) {
   }
 
   let lastLogSeq = 0;
+  const swings = new Map();   // cinemaGroup → {n, targetId}: Extra Attack swing numbering
+  function swingOf(ev) {
+    if (ev.type !== 'attack.rolled' || !ev.cinemaGroup || ev.payload?.isReaction) return {};
+    const prev = swings.get(ev.cinemaGroup);
+    const n = (prev?.n ?? 0) + 1;
+    swings.set(ev.cinemaGroup, { n, targetId: ev.payload.targetId });
+    if (swings.size > 64) swings.delete(swings.keys().next().value);
+    return { swing: n, retarget: !!prev && prev.targetId !== ev.payload.targetId };
+  }
   function renderLog() {
     const s = ctx.store.getPresented();
     const enc = s.encounter;
@@ -432,7 +462,7 @@ export function mount(root, ctx) {
     if (!fresh.length) return;
     lastLogSeq = fresh[fresh.length - 1].seq;
     for (const ev of fresh) {
-      const line = formatEvent(ev, (id) => nameOf(enc, id));
+      const line = formatEvent(ev, (id) => nameOf(enc, id), swingOf(ev));
       if (!line) continue;
       const li = h(doc, 'li', { class: `roll-log-entry ${line.cls}${line.dm ? ' roll-dm' : ''}`, dataset: { seq: ev.seq }, text: line.text });
       log.insertBefore(li, log.firstChild || null);
