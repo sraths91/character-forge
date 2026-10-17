@@ -129,6 +129,11 @@ export const WRAPPER_FIELD_MAP = Object.freeze({
   resistances: 'statBlock.resistances',
   immunities: 'statBlock.immunities',
   vulnerabilities: 'statBlock.vulnerabilities',
+  // v1 additive (M64 R10, E1): Multiattack — the stat block's attack
+  // records and its routine (`[{action, count, kind?, limits?}]`, E4's
+  // R11 normaliser). Static: read, never written back.
+  attacks: 'statBlock.attacks',
+  multiattack: 'statBlock.multiattack',
   // Transient — never persisted.
   weapon: null,
   _chosenWeapon: null,

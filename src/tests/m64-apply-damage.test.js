@@ -114,7 +114,8 @@ test('R8: a weapon hit on a concentrating creature forces the CON save (was skip
 test('R8: a smite hit forces ONE concentration save on weapon + smite damage', async () => {
   const pal = buildPc({
     id: 'pal', _position: { col: 1, row: 1 },
-    ref: { ...buildPc().ref, classes: [{ name: 'Paladin', level: 5 }] },
+    // Level 4: one swing per Attack action (Extra Attack arrives at 5, R10).
+    ref: { ...buildPc().ref, classes: [{ name: 'Paladin', level: 4 }] },
     _slots: { 1: 4, 2: 2 }
   });
   const m = buildMonster({ id: 'm', hp: 200, hpMax: 200, ac: 1, position: { col: 2, row: 1 }, _concentrating: { spellId: 'hold-person', targetIds: [] } });

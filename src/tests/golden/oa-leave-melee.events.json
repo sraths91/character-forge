@@ -334,18 +334,136 @@
     },
     {
       "seq": 13,
+      "type": "attack.rolled",
+      "round": 1,
+      "turnId": "t1",
+      "cinemaGroup": "t1.x2",
+      "payload": {
+        "attackerId": "pc-fighter",
+        "targetId": "m-gob-b",
+        "weapon": "Longsword",
+        "isReaction": false,
+        "advantage": "normal",
+        "d20": [
+          16
+        ],
+        "kept": 16,
+        "bonus": 6,
+        "total": 22,
+        "ac": 15,
+        "hit": true,
+        "crit": false,
+        "shielded": false
+      }
+    },
+    {
+      "seq": 14,
+      "type": "damage",
+      "round": 1,
+      "turnId": "t1",
+      "cinemaGroup": "t1.x2",
+      "payload": {
+        "sourceId": "pc-fighter",
+        "targetId": "m-gob-b",
+        "amount": 3,
+        "type": "Slashing",
+        "hpBefore": 3,
+        "hpAfter": 0,
+        "rolled": 7,
+        "parts": {
+          "weapon": 7
+        }
+      }
+    },
+    {
+      "seq": 15,
+      "type": "entity.downed",
+      "round": 1,
+      "turnId": "t1",
+      "cinemaGroup": "t1.x2",
+      "payload": {
+        "entityId": "m-gob-b",
+        "byId": "pc-fighter"
+      }
+    },
+    {
+      "seq": 16,
+      "type": "exchange",
+      "round": 1,
+      "turnId": "t1",
+      "cinemaGroup": "t1.x2",
+      "payload": {
+        "exchangeId": "t1.x2.s2",
+        "attackerId": "pc-fighter",
+        "defenderId": "m-gob-b",
+        "reaction": false,
+        "cast": false,
+        "roll": {
+          "d20": {
+            "dice": [
+              16
+            ],
+            "kept": 16,
+            "mode": "normal"
+          },
+          "bonus": 6,
+          "total": 22,
+          "ac": 15,
+          "hit": true,
+          "crit": false,
+          "shielded": false
+        },
+        "damage": {
+          "total": 7,
+          "smite": 0,
+          "heal": 0,
+          "type": "Slashing",
+          "crit": false
+        },
+        "effects": [
+          {
+            "entityId": "m-gob-b",
+            "hp": {
+              "before": 3,
+              "after": 0,
+              "max": 7
+            }
+          }
+        ],
+        "miss": false,
+        "cinema": {
+          "weapon": {
+            "name": "Longsword",
+            "damageType": "Slashing",
+            "magical": false
+          },
+          "style": null,
+          "swing": null,
+          "modifiers": [],
+          "smiteSlot": null,
+          "attackerLevel": 5,
+          "killing": true,
+          "spell": null,
+          "outcome": null,
+          "fxSeed": 1851140601,
+          "durationMs": 0
+        }
+      }
+    },
+    {
+      "seq": 17,
       "type": "turn.ended",
       "round": 1,
       "turnId": "t1",
       "cinemaGroup": null,
       "payload": {
         "actorId": "pc-fighter",
-        "stateHash": "1bbda8bd24278d",
-        "rngDraws": 4
+        "stateHash": "1742148c6bc4df",
+        "rngDraws": 6
       }
     },
     {
-      "seq": 14,
+      "seq": 18,
       "type": "turn.started",
       "round": 1,
       "turnId": "t2",
@@ -355,7 +473,7 @@
       }
     },
     {
-      "seq": 15,
+      "seq": 19,
       "type": "plan.chosen",
       "round": 1,
       "turnId": "t2",
@@ -373,7 +491,7 @@
       }
     },
     {
-      "seq": 16,
+      "seq": 20,
       "type": "move",
       "round": 1,
       "turnId": "t2",
@@ -413,7 +531,7 @@
       }
     },
     {
-      "seq": 17,
+      "seq": 21,
       "type": "attack.rolled",
       "round": 1,
       "turnId": "t2",
@@ -425,38 +543,19 @@
         "isReaction": false,
         "advantage": "normal",
         "d20": [
-          16
+          10
         ],
-        "kept": 16,
+        "kept": 10,
         "bonus": 4,
-        "total": 20,
+        "total": 14,
         "ac": 18,
-        "hit": true,
+        "hit": false,
         "crit": false,
         "shielded": false
       }
     },
     {
-      "seq": 18,
-      "type": "damage",
-      "round": 1,
-      "turnId": "t2",
-      "cinemaGroup": "t2.x1",
-      "payload": {
-        "sourceId": "m-gob-a",
-        "targetId": "pc-fighter",
-        "amount": 5,
-        "type": null,
-        "hpBefore": 41,
-        "hpAfter": 36,
-        "rolled": 5,
-        "parts": {
-          "weapon": 5
-        }
-      }
-    },
-    {
-      "seq": 19,
+      "seq": 22,
       "type": "exchange",
       "round": 1,
       "turnId": "t2",
@@ -470,20 +569,20 @@
         "roll": {
           "d20": {
             "dice": [
-              16
+              10
             ],
-            "kept": 16,
+            "kept": 10,
             "mode": "normal"
           },
           "bonus": 4,
-          "total": 20,
+          "total": 14,
           "ac": 18,
-          "hit": true,
+          "hit": false,
           "crit": false,
           "shielded": false
         },
         "damage": {
-          "total": 5,
+          "total": 0,
           "smite": 0,
           "heal": 0,
           "type": null,
@@ -494,12 +593,12 @@
             "entityId": "pc-fighter",
             "hp": {
               "before": 41,
-              "after": 36,
+              "after": 41,
               "max": 44
             }
           }
         ],
-        "miss": false,
+        "miss": true,
         "cinema": {
           "weapon": {
             "name": "Scimitar",
@@ -520,15 +619,15 @@
       }
     },
     {
-      "seq": 20,
+      "seq": 23,
       "type": "turn.ended",
       "round": 1,
       "turnId": "t2",
       "cinemaGroup": null,
       "payload": {
         "actorId": "m-gob-a",
-        "stateHash": "00cab4d9e04405",
-        "rngDraws": 2
+        "stateHash": "0c4c999c25233e",
+        "rngDraws": 1
       }
     }
   ],
@@ -548,10 +647,10 @@
       "actionSurgeUsed": 0,
       "secondWindUsed": false,
       "shieldActive": false,
-      "damageDealt": 8
+      "damageDealt": 3
     },
     "m-gob-b": {
-      "hp": 3,
+      "hp": 0,
       "pos": {
         "col": 8,
         "row": 2
@@ -568,7 +667,7 @@
       "damageDealt": 0
     },
     "pc-fighter": {
-      "hp": 36,
+      "hp": 41,
       "pos": {
         "col": 7,
         "row": 2
@@ -588,7 +687,7 @@
       "actionSurgeUsed": 0,
       "secondWindUsed": false,
       "shieldActive": false,
-      "damageDealt": 4
+      "damageDealt": 11
     }
   }
 }

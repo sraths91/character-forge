@@ -143,41 +143,10 @@
     },
     {
       "seq": 6,
-      "type": "feature.used",
-      "round": 1,
-      "turnId": "t1",
-      "cinemaGroup": null,
-      "payload": {
-        "entityId": "pc-fighter",
-        "featureId": "action-surge"
-      }
-    },
-    {
-      "seq": 7,
-      "type": "plan.chosen",
-      "round": 1,
-      "turnId": "t1",
-      "cinemaGroup": null,
-      "payload": {
-        "actorId": "pc-fighter",
-        "kind": "melee",
-        "targetId": "m-bugbear",
-        "source": "player",
-        "weapon": "Longsword",
-        "spellId": null,
-        "castAtLevel": null,
-        "featuresFired": [
-          "action-surge"
-        ],
-        "archetype": "manual"
-      }
-    },
-    {
-      "seq": 8,
       "type": "attack.rolled",
       "round": 1,
       "turnId": "t1",
-      "cinemaGroup": "t1.x2",
+      "cinemaGroup": "t1.x1",
       "payload": {
         "attackerId": "pc-fighter",
         "targetId": "m-bugbear",
@@ -197,11 +166,11 @@
       }
     },
     {
-      "seq": 9,
+      "seq": 7,
       "type": "damage",
       "round": 1,
       "turnId": "t1",
-      "cinemaGroup": "t1.x2",
+      "cinemaGroup": "t1.x1",
       "payload": {
         "sourceId": "pc-fighter",
         "targetId": "m-bugbear",
@@ -216,13 +185,13 @@
       }
     },
     {
-      "seq": 10,
+      "seq": 8,
       "type": "exchange",
       "round": 1,
       "turnId": "t1",
-      "cinemaGroup": "t1.x2",
+      "cinemaGroup": "t1.x1",
       "payload": {
-        "exchangeId": "t1.x2",
+        "exchangeId": "t1.x1.s2",
         "attackerId": "pc-fighter",
         "defenderId": "m-bugbear",
         "reaction": false,
@@ -276,27 +245,267 @@
           "killing": false,
           "spell": null,
           "outcome": null,
+          "fxSeed": 3947703146,
+          "durationMs": 0
+        }
+      }
+    },
+    {
+      "seq": 9,
+      "type": "feature.used",
+      "round": 1,
+      "turnId": "t1",
+      "cinemaGroup": null,
+      "payload": {
+        "entityId": "pc-fighter",
+        "featureId": "action-surge"
+      }
+    },
+    {
+      "seq": 10,
+      "type": "attack.rolled",
+      "round": 1,
+      "turnId": "t1",
+      "cinemaGroup": "t1.x2",
+      "payload": {
+        "attackerId": "pc-fighter",
+        "targetId": "m-bugbear",
+        "weapon": "Longsword",
+        "isReaction": false,
+        "advantage": "normal",
+        "d20": [
+          20
+        ],
+        "kept": 20,
+        "bonus": 6,
+        "total": 26,
+        "ac": 16,
+        "hit": true,
+        "crit": true,
+        "shielded": false
+      }
+    },
+    {
+      "seq": 11,
+      "type": "damage",
+      "round": 1,
+      "turnId": "t1",
+      "cinemaGroup": "t1.x2",
+      "payload": {
+        "sourceId": "pc-fighter",
+        "targetId": "m-bugbear",
+        "amount": 11,
+        "type": "Slashing",
+        "hpBefore": 12,
+        "hpAfter": 1,
+        "rolled": 11,
+        "parts": {
+          "weapon": 11
+        }
+      }
+    },
+    {
+      "seq": 12,
+      "type": "exchange",
+      "round": 1,
+      "turnId": "t1",
+      "cinemaGroup": "t1.x2",
+      "payload": {
+        "exchangeId": "t1.x2",
+        "attackerId": "pc-fighter",
+        "defenderId": "m-bugbear",
+        "reaction": false,
+        "cast": false,
+        "roll": {
+          "d20": {
+            "dice": [
+              20
+            ],
+            "kept": 20,
+            "mode": "normal"
+          },
+          "bonus": 6,
+          "total": 26,
+          "ac": 16,
+          "hit": true,
+          "crit": true,
+          "shielded": false
+        },
+        "damage": {
+          "total": 11,
+          "smite": 0,
+          "heal": 0,
+          "type": "Slashing",
+          "crit": true
+        },
+        "effects": [
+          {
+            "entityId": "m-bugbear",
+            "hp": {
+              "before": 12,
+              "after": 1,
+              "max": 27
+            }
+          }
+        ],
+        "miss": false,
+        "cinema": {
+          "weapon": {
+            "name": "Longsword",
+            "damageType": "Slashing",
+            "magical": false
+          },
+          "style": null,
+          "swing": null,
+          "modifiers": [
+            "action-surge"
+          ],
+          "smiteSlot": null,
+          "attackerLevel": 5,
+          "killing": false,
+          "spell": null,
+          "outcome": null,
           "fxSeed": 1440249894,
           "durationMs": 0
         }
       }
     },
     {
-      "seq": 11,
+      "seq": 13,
+      "type": "attack.rolled",
+      "round": 1,
+      "turnId": "t1",
+      "cinemaGroup": "t1.x2",
+      "payload": {
+        "attackerId": "pc-fighter",
+        "targetId": "m-bugbear",
+        "weapon": "Longsword",
+        "isReaction": false,
+        "advantage": "normal",
+        "d20": [
+          15
+        ],
+        "kept": 15,
+        "bonus": 6,
+        "total": 21,
+        "ac": 16,
+        "hit": true,
+        "crit": false,
+        "shielded": false
+      }
+    },
+    {
+      "seq": 14,
+      "type": "damage",
+      "round": 1,
+      "turnId": "t1",
+      "cinemaGroup": "t1.x2",
+      "payload": {
+        "sourceId": "pc-fighter",
+        "targetId": "m-bugbear",
+        "amount": 1,
+        "type": "Slashing",
+        "hpBefore": 1,
+        "hpAfter": 0,
+        "rolled": 7,
+        "parts": {
+          "weapon": 7
+        }
+      }
+    },
+    {
+      "seq": 15,
+      "type": "entity.downed",
+      "round": 1,
+      "turnId": "t1",
+      "cinemaGroup": "t1.x2",
+      "payload": {
+        "entityId": "m-bugbear",
+        "byId": "pc-fighter"
+      }
+    },
+    {
+      "seq": 16,
+      "type": "exchange",
+      "round": 1,
+      "turnId": "t1",
+      "cinemaGroup": "t1.x2",
+      "payload": {
+        "exchangeId": "t1.x2.s2",
+        "attackerId": "pc-fighter",
+        "defenderId": "m-bugbear",
+        "reaction": false,
+        "cast": false,
+        "roll": {
+          "d20": {
+            "dice": [
+              15
+            ],
+            "kept": 15,
+            "mode": "normal"
+          },
+          "bonus": 6,
+          "total": 21,
+          "ac": 16,
+          "hit": true,
+          "crit": false,
+          "shielded": false
+        },
+        "damage": {
+          "total": 7,
+          "smite": 0,
+          "heal": 0,
+          "type": "Slashing",
+          "crit": false
+        },
+        "effects": [
+          {
+            "entityId": "m-bugbear",
+            "hp": {
+              "before": 1,
+              "after": 0,
+              "max": 27
+            }
+          }
+        ],
+        "miss": false,
+        "cinema": {
+          "weapon": {
+            "name": "Longsword",
+            "damageType": "Slashing",
+            "magical": false
+          },
+          "style": null,
+          "swing": null,
+          "modifiers": [
+            "action-surge"
+          ],
+          "smiteSlot": null,
+          "attackerLevel": 5,
+          "killing": true,
+          "spell": null,
+          "outcome": null,
+          "fxSeed": 1851140601,
+          "durationMs": 0
+        }
+      }
+    },
+    {
+      "seq": 17,
       "type": "turn.ended",
       "round": 1,
       "turnId": "t1",
       "cinemaGroup": null,
       "payload": {
         "actorId": "pc-fighter",
-        "stateHash": "1717139a3efefb",
-        "rngDraws": 4
+        "stateHash": "098b7d0317468a",
+        "rngDraws": 9
       }
     }
   ],
   "final": {
     "m-bugbear": {
-      "hp": 12,
+      "hp": 0,
       "pos": {
         "col": 3,
         "row": 2
@@ -333,7 +542,7 @@
       "actionSurgeUsed": 1,
       "secondWindUsed": false,
       "shieldActive": false,
-      "damageDealt": 15
+      "damageDealt": 33
     }
   }
 }

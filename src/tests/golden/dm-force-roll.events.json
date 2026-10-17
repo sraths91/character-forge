@@ -168,14 +168,14 @@
       "cinemaGroup": null,
       "payload": {
         "actorId": "m-gob",
-        "stateHash": "0e3b6cfaf74314",
+        "stateHash": "015cd80d0c0253",
         "rngDraws": 3
       }
     }
   ],
   "final": {
     "m-gob": {
-      "hp": 7,
+      "hp": 20,
       "pos": {
         "col": 3,
         "row": 2
