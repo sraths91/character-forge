@@ -12,6 +12,18 @@
  * Pure: no DOM.
  */
 
+/**
+ * The log line for a `redacted {type}` broadcast: an event this seat may
+ * not see (fog of war, or a DM fudge hidden from players).
+ * @param {string} type — the hidden event's type
+ * @returns {{text: string, cls: string, dm: boolean}}
+ */
+export function formatRedacted(type) {
+  if (type === 'dm.override') return { text: 'The DM adjusts something behind the screen.', cls: 'roll-hidden', dm: false };
+  if (type === 'turn.started' || type === 'turn.skipped') return { text: 'Something takes a turn out of sight…', cls: 'roll-hidden', dm: false };
+  return { text: 'Something happens out of sight…', cls: 'roll-hidden', dm: false };
+}
+
 const sign = (n) => (n >= 0 ? `+${n}` : String(n));
 
 /**

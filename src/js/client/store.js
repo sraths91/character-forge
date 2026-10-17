@@ -28,7 +28,7 @@ import { validateServerMessage, SERVER_MESSAGE_SCOPE } from '../shared/protocol.
 import { EVENT_TYPES } from '../shared/events.js';
 import { validateEncounterState } from '../shared/encounter-state.js';
 import { stateHash } from '../shared/state-hash.js';
-import { applyEventToEncounter, applyEntityPatch } from './mirror.js';
+import { applyEventToEncounter, applyEntityPatch, turnEndedCandidates } from './mirror.js';
 
 const EVENT_SET = new Set(EVENT_TYPES);
 const HISTORY_LIMIT = 50;
@@ -46,6 +46,8 @@ const HISTORY_LIMIT = 50;
  * @property {object|null} planProposed — DM: the last turn.planProposed payload
  * @property {object|null} lastExchange — the last `exchange` event
  * @property {object[]} history        — recent engine events (capped)
+ * @property {{seq: number, type: string}[]} hidden — recent `redacted` broadcasts (fog,
+ *   dm-only fudges): the log says "something happens" (capped)
  */
 
 /** @returns {ClientState} */
@@ -61,7 +63,8 @@ export function initialClientState() {
     openPrompt: null,
     planProposed: null,
     lastExchange: null,
-    history: []
+    history: [],
+    hidden: []
   };
 }
 
@@ -80,8 +83,12 @@ function reduceBroadcast(s, msg) {
   if (EVENT_SET.has(msg.t)) {
     const history = [...s.history, p];
     if (history.length > HISTORY_LIMIT) history.splice(0, history.length - HISTORY_LIMIT);
-    const prev = s.history.length ? s.history[s.history.length - 1] : null;
-    next = { ...next, history, encounter: applyEventToEncounter(s.encounter, p, { prev }) };
+    // The previous engine event, only when nothing (a redacted event, a
+    // room broadcast) came between.
+    const last = s.history.length ? s.history[s.history.length - 1] : null;
+    const prev = last && last.seq === msg.seq - 1 ? last : null;
+    const turnEndVariant = Number.isInteger(msg.turnEndVariant) ? msg.turnEndVariant : 0;
+    next = { ...next, history, encounter: applyEventToEncounter(s.encounter, p, { prev, turnEndVariant }) };
     if (msg.t === 'exchange') next.lastExchange = p;
     return next;
   }
@@ -137,7 +144,12 @@ function reduceBroadcast(s, msg) {
       return { ...next, room: { ...(s.room || {}), closing: p.reason } };
     case 'room.settings':
       return { ...next, room: { ...(s.room || {}), settings: { ...(s.room?.settings || {}), ...p.settings } } };
-    default:   // redacted and anything else: seq only
+    case 'redacted': {
+      const hidden = [...(s.hidden || []), { seq: msg.seq, type: p.type }];
+      if (hidden.length > HISTORY_LIMIT) hidden.splice(0, hidden.length - HISTORY_LIMIT);
+      return { ...next, hidden };
+    }
+    default:   // anything else: seq only
       return next;
   }
 }
@@ -167,7 +179,8 @@ function stateFromSnapshot(base, p) {
     encounter: p.encounter ?? null,
     openPrompt: p.openPrompt ?? null,
     lastExchange: null,
-    history: p.history.slice(-HISTORY_LIMIT)
+    history: p.history.slice(-HISTORY_LIMIT),
+    hidden: []
   };
 }
 
@@ -182,7 +195,7 @@ function stateFromSnapshot(base, p) {
  *   getState: () => ClientState,
  *   getPresented: () => ClientState,
  *   getPending: () => object[],
- *   getStats: () => {applied: number, invalid: number, duplicate: number, gap: number, dropped: number, hashMismatch: number, resyncs: number},
+ *   getStats: () => {applied: number, invalid: number, duplicate: number, gap: number, dropped: number, hashMismatch: number, resyncs: number, fogResolved: number},
  *   apply: (serverMessage: object|string) => ('applied'|'ignored'|'invalid'|'duplicate'|'gap'|'dropped'),
  *   presentUpTo: (seq: number) => number,
  *   subscribe: (selector: (auth: ClientState, presented: ClientState) => unknown, fn: (next: unknown, prev: unknown) => void, equals?: (a: unknown, b: unknown) => boolean) => () => void,
@@ -195,7 +208,7 @@ export function createStore(opts = {}) {
   let presented = auth;
   let pending = [];          // broadcasts applied to auth but not yet presented
   let awaitingResync = false;
-  const stats = { applied: 0, invalid: 0, duplicate: 0, gap: 0, dropped: 0, hashMismatch: 0, resyncs: 0 };
+  const stats = { applied: 0, invalid: 0, duplicate: 0, gap: 0, dropped: 0, hashMismatch: 0, resyncs: 0, fogResolved: 0 };
   const subs = new Set();
   const resyncListeners = new Set();
 
@@ -227,6 +240,7 @@ export function createStore(opts = {}) {
       needResync({ reason: 'gap', expected: auth.seq + 1, got: msg.seq });
       return 'gap';
     }
+    const before = auth;
     auth = reduceBroadcast(auth, msg);
     pending.push(msg);
     stats.applied++;
@@ -235,8 +249,22 @@ export function createStore(opts = {}) {
     } else if (msg.t === 'turn.ended' && hashState && auth.encounter &&
         typeof msg.p.payload.stateHash === 'string' &&
         hashState(auth.encounter) !== msg.p.payload.stateHash) {
-      stats.hashMismatch++;
-      needResync({ reason: 'state-hash' });
+      // Under fog the turn order has more than one consistent outcome
+      // (mirror.js turnEndedCandidates): keep the one the server hashed.
+      const want = msg.p.payload.stateHash;
+      const last = before.history.length ? before.history[before.history.length - 1] : null;
+      const cands = before.encounter?.fog
+        ? turnEndedCandidates(before.encounter, msg.p, { prev: last && last.seq === msg.seq - 1 ? last : null })
+        : [];
+      const k = cands.findIndex((c, i) => i > 0 && hashState(c) === want);
+      if (k > 0) {
+        msg.turnEndVariant = k;
+        auth = reduceBroadcast(before, msg);
+        stats.fogResolved++;
+      } else {
+        stats.hashMismatch++;
+        needResync({ reason: 'state-hash' });
+      }
     }
     return 'applied';
   }

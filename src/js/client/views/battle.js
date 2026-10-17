@@ -20,6 +20,11 @@
  *     them, as `turn.act {plan: {kind: 'feature', featureId}}`. Extra
  *     Attack swings log as "Swing 2 (new target): …" (the server picks a
  *     new target when the first one drops).
+ *   - Fog (M64 1.5): events this seat may not see arrive as `redacted
+ *     {type}` and log as "Something happens out of sight…"; masked events
+ *     name the hidden creature 'Something'. The DM gets a Reveal / Hide
+ *     fog brush (E5's terrain brush with a fog flag) that sends
+ *     `dm.fog.paint {cells, op}` (protocol v1.4).
  *   - Waiting states: "Goblin is acting…", "DM is reviewing…", "Paused".
  *   - Dying (E1 wave 5): a death-save banner on your downed creature's
  *     card (the server rolls it at the start of your turn; the result and
@@ -39,7 +44,8 @@ import {
   myEntityIds, turnInfo, nameOf, conditionIds, slotsLeft, isDm, statusBadge, deathSaveInfo
 } from '../selectors.js';
 import { previewMove, moveIntent, dmMoveIntent, attackIntent, castIntent, actionIntent, featureIntent, featureActionsFor } from '../intents.js';
-import { formatEvent } from '../log-format.js';
+import { formatEvent, formatRedacted } from '../log-format.js';
+import { attachTerrainBrush } from '../../map/terrain-brush.js';
 import { reactionCostLabel } from '../reaction-labels.js';
 import { attachCameraControls, pickCell, fitToGrid, WORLD_CELL_PX } from '../../map/camera.js';
 import { buildActionsFor } from '../../scene/actions-panel.js';
@@ -49,6 +55,17 @@ import { nameToSpellId } from '../../scene/ai/pc-action.js';
 import { REACTION_KINDS } from '../../shared/events.js';
 
 const LOG_LIMIT = 80;
+/** The brush flag that marks a fog stroke (outside TERRAIN_FLAG_MASK; never sent as terrain). */
+export const FOG_BRUSH_FLAG = 64;
+
+/**
+ * A fog brush stroke → `dm.fog.paint` (set = reveal, clear = hide).
+ * @param {{cells: {col: number, row: number}[], op: 'set'|'clear'}} paint
+ * @returns {{t: 'dm.fog.paint', p: {cells: {col: number, row: number}[], op: 'reveal'|'hide'}}}
+ */
+export function fogPaintIntent(paint) {
+  return { t: 'dm.fog.paint', p: { cells: paint.cells.map(c => ({ col: c.col, row: c.row })), op: paint.op === 'clear' ? 'hide' : 'reveal' } };
+}
 
 /**
  * Forge-shaped party / monsters / scene for the shared action builders.
@@ -108,8 +125,13 @@ export function mount(root, ctx) {
   const waiting = h(doc, 'p', { class: 'play-waiting', attrs: { 'aria-live': 'polite' } });
   const roundEl = h(doc, 'span', { class: 'play-round' });
   const cinemaToggle = h(doc, 'input', { type: 'checkbox', checked: true, dataset: { action: 'cinema-toggle' }, attrs: { 'aria-label': 'Play cinema' } });
+  const fogSel = h(doc, 'select', { class: 'play-fog-brush', hidden: true, dataset: { action: 'fog-mode' }, attrs: { 'aria-label': 'Fog brush' } }, [
+    h(doc, 'option', { value: 'off', text: 'Fog brush: off' }),
+    h(doc, 'option', { value: 'reveal', text: 'Fog brush: reveal' }),
+    h(doc, 'option', { value: 'hide', text: 'Fog brush: hide' })
+  ]);
   const header = h(doc, 'div', { class: 'play-battle-head' }, [
-    roundEl, waiting,
+    roundEl, waiting, fogSel,
     h(doc, 'label', { class: 'play-cinema-toggle' }, [cinemaToggle, ' Cinema']),
     h(doc, 'button', { type: 'button', class: 'play-btn', dataset: { action: 'skip' }, text: 'Skip' })
   ]);
@@ -176,7 +198,22 @@ export function mount(root, ctx) {
     attempt(() => send(result.intent), fail);
   }
 
+  // ---- DM fog brush: E5's stroke brush; a stroke = one dm.fog.paint ----
+  const fogBrush = {
+    flag: FOG_BRUSH_FLAG, op: 'set', enabled: false,
+    onPreview: (cells, op) => {
+      local.aoePreview = cells.length ? { cells, color: op === 'clear' ? 'rgba(15,23,42,0.45)' : 'rgba(255,255,255,0.25)', strokeColor: 'rgba(255,255,255,0.8)' } : null;
+      adapter.redraw();
+    }
+  };
+  scope.add(attachTerrainBrush(canvas, local.camera, () => ctx.store.getState().encounter?.grid || { cols: 0, rows: 0 }, (paint) => {
+    attempt(() => send(fogPaintIntent(paint)).then(() => say('')), (e) => {
+      say(e?.code === 'E_UNKNOWN_TYPE' ? 'This server does not support the fog brush yet.' : (e?.message || String(e)), 'error');
+    });
+  }, fogBrush));
+
   scope.on(canvas, 'pointerdown', (e) => {
+    if (fogBrush.enabled) return;
     if (e.button !== 0 || e.altKey) return;
     const s = ctx.store.getState();
     const enc = s.encounter;
@@ -272,7 +309,12 @@ export function mount(root, ctx) {
     }
   });
   delegate(scope, view, 'change', {
-    'cinema-toggle': (el) => adapter.setCinemaEnabled(!!el.checked)
+    'cinema-toggle': (el) => adapter.setCinemaEnabled(!!el.checked),
+    'fog-mode': (el) => {
+      fogBrush.enabled = el.value !== 'off';
+      fogBrush.op = el.value === 'hide' ? 'clear' : 'set';
+      say(fogBrush.enabled ? `Paint to ${el.value} cells (Shift or right button does the opposite).` : '');
+    }
   });
 
   // ---- panels ----
@@ -281,6 +323,7 @@ export function mount(root, ctx) {
     const auth = ctx.store.getState();
     const enc = s.encounter;
     roundEl.textContent = enc ? `Round ${Math.max(1, enc.round)}` : '';
+    fogSel.hidden = !(isDm(auth) && enc?.fog);
     const t = turnInfo(auth);
     let text = '';
     const st = auth.room?.status;
@@ -446,6 +489,7 @@ export function mount(root, ctx) {
   }
 
   let lastLogSeq = 0;
+  let lastHiddenSeq = 0;
   const swings = new Map();   // cinemaGroup → {n, targetId}: Extra Attack swing numbering
   function swingOf(ev) {
     if (ev.type !== 'attack.rolled' || !ev.cinemaGroup || ev.payload?.isReaction) return {};
@@ -459,10 +503,13 @@ export function mount(root, ctx) {
     const s = ctx.store.getPresented();
     const enc = s.encounter;
     const fresh = (s.history || []).filter(ev => ev.seq > lastLogSeq);
-    if (!fresh.length) return;
-    lastLogSeq = fresh[fresh.length - 1].seq;
-    for (const ev of fresh) {
-      const line = formatEvent(ev, (id) => nameOf(enc, id), swingOf(ev));
+    const hidden = (s.hidden || []).filter(x => x.seq > lastHiddenSeq);
+    if (!fresh.length && !hidden.length) return;
+    if (fresh.length) lastLogSeq = fresh[fresh.length - 1].seq;
+    if (hidden.length) lastHiddenSeq = hidden[hidden.length - 1].seq;
+    const items = [...fresh, ...hidden.map(x => ({ seq: x.seq, redacted: x.type }))].sort((a, b) => a.seq - b.seq);
+    for (const ev of items) {
+      const line = ev.redacted ? formatRedacted(ev.redacted) : formatEvent(ev, (id) => nameOf(enc, id), swingOf(ev));
       if (!line) continue;
       const li = h(doc, 'li', { class: `roll-log-entry ${line.cls}${line.dm ? ' roll-dm' : ''}`, dataset: { seq: ev.seq }, text: line.text });
       log.insertBefore(li, log.firstChild || null);
@@ -513,7 +560,7 @@ export function mount(root, ctx) {
   }
 
   const same = (x, y) => x.every((v, i) => v === y[i]);
-  scope.add(ctx.store.subscribe((a, p) => [p.encounter, p.history, a.room, a.seats, a.history, a.encounter, a.openPrompt], renderAll, same));
+  scope.add(ctx.store.subscribe((a, p) => [p.encounter, p.history, p.hidden, a.room, a.seats, a.history, a.encounter, a.openPrompt], renderAll, same));
   renderAll();
 
   return function unmount() {
