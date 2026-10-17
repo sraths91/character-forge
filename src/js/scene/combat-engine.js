@@ -61,6 +61,7 @@ import {
   handleDamageOnConcentration
 } from './concentration.js';
 import { rollSave } from './save-rolls.js';
+import { swingStyleMods, offhandWeaponFor, offhandDice } from './fighting-styles.js';
 import { grantedSpellEntry, spellUseKey, featureLedgerFor, usesLeft, spendUse } from './feature-uses.js';
 import { MONSTER_DEFAULT_SAVES } from './monster-presets.js';
 import { chooseLegendaryAction, spendLegendaryAction } from './monster-legendary.js';
@@ -427,9 +428,10 @@ async function resolveTurn(attacker, enemies, allies, scene, rng, prompts, ctx) 
 
   // M64 phase 1.5 — bonus-action features riding the plan (Rage, Second
   // Wind) resolve before the swings.
+  let bonusUsed = false;
   if (attacker.kind === 'pc' && plan?.featuresFired?.length) {
     for (const id of plan.featuresFired) {
-      if (PC_FEATURES[id]?.action === 'bonus') useFeature(attacker, id, { ctx, rng });
+      if (!bonusUsed && PC_FEATURES[id]?.action === 'bonus' && useFeature(attacker, id, { ctx, rng })) bonusUsed = true;
     }
     if (!isAlive(attacker)) return;
   }
@@ -440,13 +442,24 @@ async function resolveTurn(attacker, enemies, allies, scene, rng, prompts, ctx) 
   // recurse through runOneAttack, which moved the fighter again).
   const turn = {
     attacker, enemies, allies, targetable, scene, rng, prompts, ctx, plan, explicit,
-    charmers, actorId, sneakDone: false, recklessDone: false,
+    charmers, actorId, sneakDone: false, recklessDone: false, bonusUsed,
     // M64 R9 — an explicit plan against a dying PC keeps swinging at it;
     // otherwise later swings move on from a creature that drops.
     dyingTarget: explicit && isDying(target) ? target : null
   };
   const first = await runAttackAction(turn, target, true);
   if (first.status === 'rejected') return;
+  // M64 phase 1.5 — two-weapon fighting (PHB p195): a light melee weapon
+  // in each hand gives a bonus-action attack with the off hand, when the
+  // bonus action is still free (no Rage / Second Wind this turn).
+  if (attacker.kind === 'pc' && plan?.kind === 'melee' && !turn.bonusUsed && isAlive(attacker)) {
+    const off = offhandWeaponFor(attacker.ref, first.weaponRef);
+    const offTarget = off ? (keepsTarget(turn, first.target) ? first.target : retargetFor(turn, off)) : null;
+    if (off && offTarget) {
+      turn.bonusUsed = true;
+      await runWeaponSwing(turn, offTarget, off, Math.max(1, first.swings), first.shared, false, { offhand: true });
+    }
+  }
   if (attacker.kind === 'pc' && plan?.featuresFired?.includes('action-surge') && !attacker._surgeFiredThisTurn) {
     attacker._surgeFiredThisTurn = true;
     PC_FEATURES['action-surge'].consume(attacker);
@@ -602,17 +615,17 @@ async function runAttackAction(turn, firstTarget, firstAction) {
       if (!target) break;
     }
     const status = await runWeaponSwing(turn, target, weaponRef, i, shared, firstAction);
-    if (status === 'rejected') return { status, target, weaponRef };
+    if (status === 'rejected') return { status, target, weaponRef, shared, swings: i };
     if (status === 'blocked') break;
   }
-  return { status: 'done', target, weaponRef };
+  return { status: 'done', target, weaponRef, shared, swings: sequence.length };
 }
 
 /**
  * One weapon swing (resolver → roll → Shield → damage → riders → cinema).
  * @returns {Promise<'rejected'|'blocked'|'done'>}
  */
-async function runWeaponSwing(turn, target, weaponRef, index, shared, firstAction) {
+async function runWeaponSwing(turn, target, weaponRef, index, shared, firstAction, opts = {}) {
   const { attacker, enemies, allies, scene, rng, prompts, ctx, plan, explicit, charmers, actorId } = turn;
   const wasDying = isDying(target);
   // Build the resolver context. PCs use deriveWeaponAttack; monsters
@@ -621,6 +634,7 @@ async function runWeaponSwing(turn, target, weaponRef, index, shared, firstActio
   let attackStats;
   let sneakDice = 0;
   let monsterAttack = null;
+  let rerollBelow = 0;
   if (attacker.kind === 'pc') {
     const chosen = weaponRef;
     const a = deriveWeaponAttack(attacker.ref, chosen);
@@ -629,6 +643,16 @@ async function runWeaponSwing(turn, target, weaponRef, index, shared, firstActio
       parts: [{ source: chosen?.name || 'Attack', value: a.bonus }],
       damageParts: []
     };
+    // M64 phase 1.5 — Fighting Styles (Archery, Dueling, Great Weapon
+    // Fighting) and the off-hand attack's damage (Two-Weapon Fighting).
+    const style = swingStyleMods(attacker.ref, chosen, a);
+    if (style.attackBonus) {
+      attackStats.bonus += style.attackBonus;
+      attackStats.parts.push(...style.parts.filter(p => p.source === 'Archery'));
+    }
+    if (style.damageBonus) attackStats.damageParts.push(...style.parts.filter(p => p.source !== 'Archery'));
+    rerollBelow = style.rerollBelow;
+    if (opts.offhand) attackStats.dice = offhandDice(a.dice, attacker.ref?.abilityModifiers?.[a.ability] ?? 0, attacker.ref);
     // M64 phase 1.5 — Rage: +2/+3/+4 on STR melee weapon attacks.
     if (isRaging(attacker) && !a.ranged && a.ability === 'STR') {
       attackStats.damageParts.push({ source: 'Rage', value: rageDamageBonus(attacker) });
@@ -758,7 +782,7 @@ async function runWeaponSwing(turn, target, weaponRef, index, shared, firstActio
     }, cinemaInfo);
     return 'done';
   }
-  let dmg = rollDamage(finalDmgDice, { crit: atk.crit }, rng);
+  let dmg = rollDamage(finalDmgDice, rerollBelow ? { crit: atk.crit, rerollBelow } : { crit: atk.crit }, rng);
   if (prompts.onRoll) {
     dmg = await reviewRoll(prompts, ctx, group, 'damage', attacker, target, dmg);
     if (!isAlive(attacker) || !canHit(target, wasDying)) return 'blocked';

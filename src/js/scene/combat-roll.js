@@ -100,12 +100,18 @@ export function rollDice(spec, rng) {
 }
 
 // Roll every term `mult` times its count (mult 2 = crit), in term order.
-function rollTerms(terms, mult, rng) {
+// M64 phase 1.5 — `rerollBelow` > 0 rerolls (once, keeping the new face)
+// any die of the first `rerollTerms` terms that shows <= rerollBelow
+// (Great Weapon Fighting); 0 draws exactly as before.
+function rollTerms(terms, mult, rng, rerollBelow = 0, rerollTerms = 0) {
   const rolls = [];
   let sum = 0;
-  for (const t of terms) {
+  for (let ti = 0; ti < terms.length; ti++) {
+    const t = terms[ti];
+    const reroll = rerollBelow > 0 && ti < rerollTerms;
     for (let i = 0; i < t.count * mult; i++) {
-      const face = 1 + Math.floor(rng() * t.sides);
+      let face = 1 + Math.floor(rng() * t.sides);
+      if (reroll && face <= rerollBelow) face = 1 + Math.floor(rng() * t.sides);
       rolls.push(face);
       sum += t.sign * face;
     }
@@ -149,13 +155,15 @@ export function rollAttack({ bonus = 0, advantage = 'normal', targetAC = 10 }, r
  * rolled twice and summed (5e RAW, PHB p196: "roll all of the attack's
  * damage dice twice"); flat modifiers are NOT doubled. Multi-term specs
  * ('1d8+3+3d6') are supported (M64 R1). Returns the same shape as
- * rollDice plus a `crit` flag.
+ * rollDice plus a `crit` flag. `rerollBelow` (Great Weapon Fighting: 2)
+ * rerolls once each die of the first `rerollTerms` terms (default 1: the
+ * weapon dice) that lands at or below it.
  */
-export function rollDamage(spec, { crit = false } = {}, rng) {
+export function rollDamage(spec, { crit = false, rerollBelow = 0, rerollTerms = 1 } = {}, rng) {
   requireRng(rng, 'rollDamage');
   const parsed = parsedDice(spec);
   if (!parsed) return { total: 0, rolls: [], mod: 0, spec, crit };
-  const { rolls, sum } = rollTerms(parsed.terms, crit ? 2 : 1, rng);
+  const { rolls, sum } = rollTerms(parsed.terms, crit ? 2 : 1, rng, rerollBelow, rerollTerms);
   // Floor at 1 — D&D damage is never less than 1 even with big negative mods
   const total = Math.max(1, sum + parsed.mod);
   return { total, rolls, mod: parsed.mod, spec, crit };

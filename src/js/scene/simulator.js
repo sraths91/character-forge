@@ -23,7 +23,7 @@
  * Pure module. RNG injectable for tests.
  */
 
-import { deriveAC } from './pc-stats.js';
+import { acFor } from './fighting-styles.js';
 import { MONSTER_PRESETS } from './monster-presets.js';
 import { slotsForPc, pactForPc } from './reactions.js';
 import {
@@ -121,7 +121,7 @@ async function runOneIteration({ party, monsters, scene, maxRounds, rng, index =
     hp: p.hp?.current ?? p.hp?.max ?? 10,
     hpMax: p.hp?.max ?? 10,
     hpTemp: p.hp?.temp ?? 0,                     // M64 R8 — absorbed first
-    ac: deriveAC(p),
+    ac: acFor(p),   // M64 phase 1.5: + Defense style
     weapon: p.equipment?.mainhand || null,
     _chosenWeapon: p.equipment?.mainhand || null,   // M42 weapon-of-the-turn
     conditions: Array.isArray(p.conditions) ? [...p.conditions] : [],

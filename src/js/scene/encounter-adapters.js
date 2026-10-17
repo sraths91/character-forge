@@ -27,7 +27,7 @@
 import { MONSTER_PRESETS } from './monster-presets.js';
 import { spellById, freshSlots, freshInnateState } from './monster-spells.js';
 import { isLegendary, freshLegendaryBudget } from './monster-legendary.js';
-import { deriveAC } from './pc-stats.js';
+import { acFor } from './fighting-styles.js';
 import { slotsForPc, pactForPc } from './reactions.js';
 import { wrapperConditions, normalizeCondition, hasLifecycle } from './conditions.js';
 import { featureLedgerFor } from './feature-uses.js';
@@ -460,7 +460,7 @@ export function entityFromSheet(sheet, opts) {
     hp: max,
     hpMax: max,
     hpTemp: 0,
-    ac: deriveAC(sheet),
+    ac: acFor(sheet),
     speedFt: Math.trunc(opts?.speedFt ?? sheet?.speedFt ?? sheet?.speed ?? 30) || 30,
     conditions: [],
     concentration: null,
