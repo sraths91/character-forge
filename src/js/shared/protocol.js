@@ -46,6 +46,12 @@
  *        safe point, spends the slot when `slotLevel` is given, and emits
  *        spell.cast (payload.adjudicated: true) + damage / heal /
  *        condition.applied + dm.override like any DM edit.
+ *   v1.4 (2026-10-16, E3 W5) — fog of war on incremental traffic: under
+ *        fog a player seat gets each event in full, masked (hidden entity
+ *        ids replaced by 'Something') or as `redacted {type}`; `redacted`
+ *        may now also stand in for an `entity.updated`. Player seats'
+ *        `turn.ended.stateHash` / `room.snapshot.stateHash` cover the
+ *        fog-filtered projection.
  *
  * Client payloads are strict (unknown fields rejected); server payloads
  * enforce required fields and allow additive ones.
@@ -64,7 +70,7 @@ import { EVENT_TYPES, REACTION_KINDS, ENCOUNTER_OUTCOMES, validateEvent } from '
 /** Wire protocol version; every message's `v` must equal this. */
 export const PROTOCOL_VERSION = 1;
 /** Additive minor revision of protocol v1 (see the header). */
-export const PROTOCOL_MINOR = 3;
+export const PROTOCOL_MINOR = 4;
 /** Longest accepted client message id. */
 export const MAX_CID_LENGTH = 64;
 
@@ -235,6 +241,9 @@ const INTENT_PAYLOADS = {
   })
 };
 
+/** Broadcasts a `redacted {type}` may stand in for (v1.4: engine events + entity.updated). */
+export const REDACTABLE_TYPES = Object.freeze([...EVENT_TYPES, 'entity.updated']);
+
 /** Server room-message payload specs (required fields; extras allowed). */
 const SERVER_PAYLOADS = {
   'hello.ok': shape({ memberId: ID, role: oneOf(['dm', 'player']), seats: arrayOf(shape({}, LOOSE)), serverNow: num(0), cfg: shape({}, LOOSE) }, LOOSE),
@@ -262,7 +271,7 @@ const SERVER_PAYLOADS = {
   'entity.updated': shape({ entityId: ID, patch: shape({}, LOOSE), cause: str() }, LOOSE),
   'room.status': shape({ status: oneOf(ROOM_STATUSES) }, LOOSE),
   'room.closing': shape({ reason: str() }, LOOSE),
-  redacted: shape({ type: oneOf(EVENT_TYPES) }, LOOSE)
+  redacted: shape({ type: oneOf(REDACTABLE_TYPES) }, LOOSE)   // v1.4: + entity.updated
 };
 
 const CLIENT_ENVELOPE = shape({

@@ -13,6 +13,14 @@
 // journal in one transaction (with the snapshot at turn end), and only
 // then delivered. Every outbound message is validated with
 // shared/protocol.js and every broadcast passes through view.js.
+//
+// Fog (M64 W5): when the encounter has fog, every outbound event and
+// per-entity room message is classified for player seats at emit time
+// (view.js fogEventView: full, masked with HIDDEN_ENTITY_ID, or
+// `redacted {type}` with the same seq). Player seats' `turn.ended` and
+// snapshot hashes cover the fog-filtered projection; the DM's the full
+// state. A creature crossing the fog edge re-baselines player seats with
+// a fresh snapshot after the flush that delivered the crossing.
 
 import { randomInt } from 'node:crypto';
 import { createRng } from '../../src/js/scene/rng.js';
@@ -20,7 +28,7 @@ import { validateEvent } from '../../src/js/shared/events.js';
 import { validateEncounterState } from '../../src/js/shared/encounter-state.js';
 import { PROTOCOL_VERSION, INTENT_ROLES, CLOSE_CODES, validateServerMessage } from '../../src/js/shared/protocol.js';
 import { PromptBroker } from './prompt-broker.js';
-import { viewFor, publicView, canSeeEvent, stateHash } from './view.js';
+import { viewFor, publicView, canSeeEvent, stateHash, stateHashFor, fogEventView, fogVisibility } from './view.js';
 import { newId } from './tokens.js';
 import { publicSeat, RoomError, MAX_SEATS } from './service.js';
 
@@ -114,6 +122,12 @@ export class Room {
     this.endRequested = null;
     this.control = Promise.resolve();
     this.flushTimer = null;
+    /** stamped event → player-seat view under fog ({full} | {payload} | null = redacted). */
+    this.fogViews = new WeakMap();
+    /** A creature crossed the fog edge: snapshot player seats after the next flush. */
+    this.fogResnap = false;
+    /** DM edit in progress: {before, after} states the fog check reads instead of the turn's. */
+    this.fogBasis = null;
     this.broker = new PromptBroker({
       send: (memberId, t, p) => { const m = this.members.get(memberId); if (m) this.#sendPrivate(m, t, p); },
       isOnline: (memberId) => !!this.members.get(memberId)?.conn,
@@ -238,12 +252,20 @@ export class Room {
     }
   }
 
-  /** Queue a sequenced room message (not an engine event). */
-  #broadcastRoom(t, p) {
+  /**
+   * Queue a sequenced room message (not an engine event).
+   * @param {string} t
+   * @param {object} p
+   * @param {object|null} [player]  fog: what player seats get instead —
+   *   a payload variant, or null for `redacted {type}`; undefined = same
+   */
+  #broadcastRoom(t, p, player) {
     const seq = this.seq + 1;
     const msg = this.#message(t, p, seq);   // throws before the seq is consumed
+    const playerMsg = player === undefined ? undefined
+      : player === null ? this.#message('redacted', { type: t }, seq) : this.#message(t, player, seq);
     this.seq = seq;
-    this.outbox.push({ kind: 'room', msg });
+    this.outbox.push({ kind: 'room', msg, playerMsg });
     this.#scheduleFlush();
   }
 
@@ -280,29 +302,91 @@ export class Room {
     const out = this.outbox;
     this.outbox = [];
     for (const item of out) this.#deliver(item);
+    if (this.fogResnap) {
+      this.fogResnap = false;
+      for (const m of this.members.values()) if (m.conn && m.role === 'player') this.#sendSnapshot(m);
+    }
   }
 
   #deliver(item) {
     if (item.kind === 'room') {
       const text = JSON.stringify(item.msg);
-      for (const m of this.members.values()) if (m.conn) m.conn.sendRaw(text);
+      const playerText = item.playerMsg ? JSON.stringify(item.playerMsg) : text;
+      for (const m of this.members.values()) if (m.conn) m.conn.sendRaw(m.role === 'player' ? playerText : text);
       return;
     }
     const ev = item.ev;
     const full = this.#message(ev.type, ev, ev.seq);
     const fullText = JSON.stringify(full);
+    const fog = this.fogViews.get(ev);
     let redactedText = null;
+    let maskedText = null;
     for (const m of this.members.values()) {
       if (!m.conn) continue;
-      if (canSeeEvent(ev, m, this.settings)) { m.conn.sendRaw(fullText); continue; }
+      const seen = canSeeEvent(ev, m, this.settings);
+      if (seen && (m.role !== 'player' || fog === undefined || fog?.full)) { m.conn.sendRaw(fullText); continue; }
+      if (seen && fog) {
+        maskedText ||= JSON.stringify(this.#message(ev.type, { ...ev, payload: fog.payload }, ev.seq));
+        m.conn.sendRaw(maskedText);
+        continue;
+      }
       redactedText ||= JSON.stringify(this.#message('redacted', { type: ev.type }, ev.seq));
       m.conn.sendRaw(redactedText);
     }
   }
 
+  /**
+   * Classify a just-stamped event for player seats when the encounter has
+   * fog (view.js fogEventView) and track creatures that moved this turn.
+   */
+  #fogMark(ev) {
+    const basis = this.fogBasis;
+    const st = basis ? basis.after : this.#currentState();
+    if (!st?.fog) return;
+    let vis;
+    if (basis) {
+      const a = fogVisibility(basis.before);
+      const b = fogVisibility(basis.after);
+      vis = { cellRevealed: b.cellRevealed, isKnown: (id) => a.isKnown(id) || b.isKnown(id), isVisible: (id) => a.isVisible(id) || b.isVisible(id) };
+    } else {
+      vis = fogVisibility(st, this.turn?.fogMoves);
+    }
+    const { view, crossed } = fogEventView(ev, vis);
+    this.fogViews.set(ev, view);
+    if (crossed) this.fogResnap = true;
+    if (ev.type === 'move' && this.turn && !basis && ev.payload.to) this.turn.fogMoves.set(ev.payload.actorId, { col: ev.payload.to.col, row: ev.payload.to.row });
+  }
+
+  /** Player seats' turn.ended carries the hash of their fog-filtered projection. */
+  #fogTurnEnded(ev, state) {
+    if (!state.fog) return;
+    const fv = this.fogViews.get(ev);
+    const base = fv && !fv.full ? fv.payload : ev.payload;
+    this.fogViews.set(ev, { payload: { ...base, stateHash: stateHashFor(state, { role: 'player' }) } });
+  }
+
+  /** Player-seat entity filter for room messages under fog (null = no fog). */
+  #fogVisibleIn(state) {
+    if (!state?.fog) return null;
+    return fogVisibility(state).isVisible;
+  }
+
+  /** `encounter.initiative` for every seat; under fog players get the visible rows only. */
+  #broadcastInitiative(state) {
+    const order = state.initiative.map(r => ({ entityId: r.entityId, score: r.score }));
+    const visible = this.#fogVisibleIn(state);
+    this.#broadcastRoom('encounter.initiative', { order }, visible ? { order: order.filter(r => visible(r.entityId)) } : undefined);
+  }
+
   #snapshotPayload(m) {
     const st = this.enc ? (this.enc.liveState || this.enc.state) : null;
-    const history = (this.enc?.history || []).filter(ev => canSeeEvent(ev, m, this.settings));
+    const fogged = m.role === 'player' && !!st?.fog;
+    const history = (this.enc?.history || []).filter(ev => canSeeEvent(ev, m, this.settings)).flatMap((ev) => {
+      if (!fogged) return [ev];
+      const fv = this.fogViews.get(ev);   // undefined: restored from the journal, unclassified
+      if (!fv) return [];
+      return [fv.full ? ev : { ...ev, payload: fv.payload }];
+    });
     return {
       seq: this.seq,
       room: {
@@ -317,7 +401,7 @@ export class Room {
       encounter: st ? viewFor(st, m) : null,
       openPrompt: this.broker.openPromptFor(m.id),
       history: history.slice(-HISTORY_LIMIT),
-      stateHash: st ? stateHash(st) : null
+      stateHash: st ? stateHashFor(st, m) : null
     };
   }
 
@@ -360,6 +444,7 @@ export class Room {
     }
     this.seq = stamped.seq;
     this.lastEventSeq = stamped.seq;
+    this.#fogMark(stamped);
     this.pendingEvents.push(stamped);
     this.outbox.push({ kind: 'event', ev: stamped });
     if (this.enc) {
@@ -440,7 +525,8 @@ export class Room {
       answers: rec ? clone(rec.answers) : [],
       replay: rec ? { answers: clone(rec.answers), events: rec.events.slice(), headSeq: rec.events.at(-1)?.seq ?? 0 } : null,
       awaiting: null,
-      logDirty: true
+      logDirty: true,
+      fogMoves: new Map()
     };
     const ctx = {
       turnId: this.turn.turnId,
@@ -464,9 +550,10 @@ export class Room {
     const next = clone(res.state);
     next.rng = rng.state();
     const hash = stateHash(next);
-    const ended = this.pendingEvents.findLast(e => e.type === 'turn.ended');
+    let ended = this.pendingEvents.findLast(e => e.type === 'turn.ended');
     if (ended) ended.payload.stateHash = hash;
-    else this.#emit({ type: 'turn.ended', payload: { actorId: this.turn.actorId, stateHash: hash } });
+    else ended = this.#emit({ type: 'turn.ended', payload: { actorId: this.turn.actorId, stateHash: hash } });
+    this.#fogTurnEnded(ended, next);
     next.lastEventSeq = this.lastEventSeq;
     const over = next.phase === 'ended';
     const outcome = over ? (this.pendingEvents.find(e => e.type === 'encounter.ended')?.payload.outcome ?? null) : null;
@@ -628,7 +715,9 @@ export class Room {
         const r = this.turn?.replay;
         if (r && exchange.seq <= r.headSeq) return;
         this.#flush();
-        const waiting = new Set([...this.members.values()].filter(m => m.conn).map(m => m.id));
+        // Seats that got this exchange redacted (fog) have no cinema to finish.
+        const hidden = this.fogViews.get(exchange) === null;
+        const waiting = new Set([...this.members.values()].filter(m => m.conn && !(hidden && m.role === 'player')).map(m => m.id));
         if (waiting.size === 0) return;
         const d = Number(exchange.payload.cinema?.durationMs ?? exchange.payload.durationMs) || 0;
         const capMs = (d > 0 ? d : FALLBACK_CINEMA_MS) + CINEMA_SLACK_MS;
@@ -678,8 +767,17 @@ export class Room {
    * Apply one DM state command to `state` and broadcast what changed.
    * @returns {object} the new state
    */
-  #applyCommand(state, cmd, rng, { broadcast = true } = {}) {
+  #applyCommand(state, cmd, rng, opts = {}) {
+    try {
+      return this.#applyCommandInner(state, cmd, rng, opts);
+    } finally {
+      this.fogBasis = null;
+    }
+  }
+
+  #applyCommandInner(state, cmd, rng, { broadcast = true } = {}) {
     let next;
+    this.fogBasis = { before: state, after: state };
     if (cmd.type === 'dm.seat.setController') {
       const p = cmd.payload;
       const e = state.entities[p.entityId];
@@ -702,6 +800,9 @@ export class Room {
     }
     const v = validateEncounterState(next);
     if (!v.ok) throw new IntentError('E_INVALID_INTENT', `edit would leave an invalid state: ${v.errors[0].path} ${v.errors[0].message}`);
+    this.fogBasis = { before: state, after: next };
+    const seenBefore = this.#fogVisibleIn(state);
+    const seenAfter = this.#fogVisibleIn(next);
     let structural = false;
     for (const id of new Set([...Object.keys(state.entities), ...Object.keys(next.entities)])) {
       const a = state.entities[id];
@@ -711,13 +812,20 @@ export class Room {
       for (const f of PATCH_FIELDS) if (!same(a[f], b[f])) patch[f] = clone(b[f]);
       if (Object.keys(patch).length) {
         this.#emit({ type: 'dm.override', payload: { kind: cmd.type.slice(3), entityId: id, before: pick(a, Object.keys(patch)), after: patch } });
-        if (broadcast) this.#broadcastRoom('entity.updated', { entityId: id, patch, cause: 'dm' });
+        if (broadcast) {
+          let player;
+          if (seenAfter) {
+            const va = seenBefore(id);
+            const vb = seenAfter(id);
+            if (va !== vb) this.fogResnap = true;   // crossed the fog edge: re-baseline players
+            if (!va || !vb) player = null;
+          }
+          this.#broadcastRoom('entity.updated', { entityId: id, patch, cause: 'dm' }, player);
+        }
       }
     }
     if (structural) this.#emit({ type: 'dm.override', payload: { kind: cmd.type.slice(3), entityId: cmd.payload.entityId ?? null, before: null, after: null } });
-    if (!same(state.initiative, next.initiative) && broadcast) {
-      this.#broadcastRoom('encounter.initiative', { order: next.initiative.map(r => ({ entityId: r.entityId, score: r.score })) });
-    }
+    if (!same(state.initiative, next.initiative) && broadcast) this.#broadcastInitiative(next);
     if (!same(state.grid, next.grid)) structural = true;
     if (structural && broadcast) this.pushSnapshots = true;
     return next;
@@ -916,6 +1024,7 @@ export class Room {
     }
     if (aw && INTENT_SAFE.has(cmd.type)) {
       aw.state = this.#applyCommand(aw.state, cmd, this.turn.rng);
+      this.turn.fogMoves.clear();   // aw.state is current again
       aw.commands.push(clone(cmd));
       this.enc.liveState = clone(aw.state);
       this.#flush();
@@ -970,7 +1079,7 @@ export class Room {
     if (!v.ok) throw new IntentError('E_INTERNAL', `engine start produced an invalid state: ${v.errors[0].path} ${v.errors[0].message}`);
     enc.state = next;
     enc.status = 'active';
-    this.#broadcastRoom('encounter.initiative', { order: next.initiative.map(r => ({ entityId: r.entityId, score: r.score })) });
+    this.#broadcastInitiative(next);
     this.#broadcastRoom('round.started', { round: next.round });
     this.#flush({ snapshot: next, status: 'active' });
     this.paused = false;

@@ -10,12 +10,12 @@ import { createRoomService } from '../rooms/service.js';
 import { originAllowed, clientIp } from '../ws/gateway.js';
 import WebSocket from 'ws';
 import { createStubEngine } from '../rooms/engine-port.js';
-import { viewFor, stateHash } from '../rooms/view.js';
+import { viewFor, stateHash, fogEventView, fogVisibility, HIDDEN_ENTITY_ID } from '../rooms/view.js';
 import { stateHash as sharedStateHash } from '../../src/js/shared/state-hash.js';
 import { validateEncounterState } from '../../src/js/shared/encounter-state.js';
 import { tempRoot, tempDb, quiet, ddbFixture, api } from './helpers/server.js';
 import { TestClient, rawSocket, closed } from './helpers/ws.js';
-import { revealCells } from '../../src/js/map/fog.js';
+import { revealCells, filterViewForFog } from '../../src/js/map/fog.js';
 import { asTerrain } from '../../src/js/map/terrain.js';
 
 const { root, cleanup } = tempRoot('cf-ws-');
@@ -571,6 +571,125 @@ test('[real] fog: players get the filtered projection, the DM the full one; dm.t
     assert.equal(asTerrain(mine.grid.terrain).cells[1 * 8 + 0], 1);
     assertClean(dm, ...ps);
   } finally { await srv.close(); }
+});
+
+/**
+ * Fog table: one fighter seat, rows 0-2 revealed, the goblin acts first
+ * with an armed hit. Returns once the goblin's turn has ended and the
+ * fighter's turn waits for its intent.
+ */
+async function fogTable(srv, placements) {
+  const t = await table(srv, 1);
+  const { dm, ps } = await connectAll(srv, t);
+  const fog = revealCells(null, 8, 6, Array.from({ length: 24 }, (_, i) => ({ col: i % 8, row: Math.floor(i / 8) })));
+  assert.equal((await dm.send('dm.encounter.setup', { ...SETUP, monsters: [{ id: 'gob', name: 'Goblin', hp: 30, ac: 10, slug: 'goblin' }], fog, placements })).t, 'ack');
+  assert.equal((await dm.send('dm.initiative.set', { order: ['gob', 'pc-1'] })).t, 'ack');
+  assert.equal((await dm.send('dm.roll.arm', { entityId: 'gob', rollKind: 'attack', value: 18 })).t, 'ack');
+  autoTable(ps, [dm, ...ps]);
+  const since = { dm: dm.frames.length, p: ps[0].frames.length };
+  assert.equal((await dm.send('dm.encounter.start', { seed: 3 })).t, 'ack');
+  const ended = await dm.next(m => m.t === 'turn.ended', { since: since.dm, timeoutMs: 8000 });
+  await ps[0].next(m => m.seq === ended.seq, { since: since.p, timeoutMs: 8000 });
+  const room = srv.registry.get(t.room.roomId);
+  return { t, dm, ps, since, ended, room, state: room.enc.state };
+}
+
+test('[real] fog: a hidden goblin attacking a hidden PC reaches the DM in full and players as redacted; the player hash covers the filtered view', async () => {
+  const srv = await boot({ engineKind: 'real' });
+  try {
+    // Both stand in unrevealed cells (row 4 / row 5), adjacent.
+    const { dm, ps, since, ended, state } = await fogTable(srv, { gob: { col: 3, row: 5 }, 'pc-1': { col: 3, row: 4 } });
+    const dmTurn = dm.frames.slice(since.dm).filter(m => m.seq !== undefined && m.seq <= ended.seq);
+    const pTurn = ps[0].frames.slice(since.p).filter(m => m.seq !== undefined && m.seq <= ended.seq);
+    assert.deepEqual(pTurn.map(m => m.seq), dmTurn.map(m => m.seq), 'same gap-free seq on both seats');
+    const atk = dmTurn.find(m => m.t === 'attack.rolled');
+    assert.ok(atk, 'the goblin attacked');
+    assert.equal(atk.p.payload.attackerId, 'gob');
+    const mine = pTurn.find(m => m.seq === atk.seq);
+    assert.deepEqual([mine.t, mine.p], ['redacted', { type: 'attack.rolled' }]);
+    for (const t of ['turn.started', 'plan.chosen', 'exchange', 'damage']) {
+      for (const m of dmTurn.filter(x => x.t === t)) assert.equal(pTurn.find(x => x.seq === m.seq).t, 'redacted', `${t} is redacted`);
+    }
+    assert.equal(ps[0].of('attack.rolled').length, 0);
+    // turn.ended reaches the player with the hash of the fog-filtered state; the DM keeps the full hash.
+    const pEnded = pTurn.find(m => m.seq === ended.seq);
+    assert.equal(pEnded.t, 'turn.ended');
+    assert.equal(pEnded.p.payload.stateHash, sharedStateHash(filterViewForFog(state)));
+    assert.equal(ended.p.payload.stateHash, sharedStateHash(state));
+    assert.notEqual(pEnded.p.payload.stateHash, ended.p.payload.stateHash);
+    // The player's snapshot hash is its own projection's hash.
+    await ps[0].send('resync', {});
+    const snap = ps[0].of('room.snapshot').at(-1).p;
+    assert.equal(snap.stateHash, sharedStateHash(snap.encounter));
+    assert.equal(snap.encounter.entities.gob, undefined);
+    assert.ok(snap.history.every(ev => ev.type !== 'attack.rolled'), 'history keeps hidden events out');
+    assertClean(dm, ...ps);
+  } finally { await srv.close(); }
+});
+
+test('[real] fog: a hidden goblin attacking a visible PC reaches players masked ("Something"), the exchange redacted', async () => {
+  const srv = await boot({ engineKind: 'real' });
+  try {
+    // The fighter stands at the fog edge (row 2, revealed); the goblin just below it (row 3, hidden).
+    const { dm, ps, since, ended, state } = await fogTable(srv, { gob: { col: 3, row: 3 }, 'pc-1': { col: 3, row: 2 } });
+    const pTurn = ps[0].frames.slice(since.p).filter(m => m.seq !== undefined && m.seq <= ended.seq);
+    const atk = dm.frames.slice(since.dm).find(m => m.t === 'attack.rolled');
+    assert.ok(atk);
+    const mine = pTurn.find(m => m.seq === atk.seq);
+    assert.equal(mine.t, 'attack.rolled');
+    assert.deepEqual([mine.p.payload.attackerId, mine.p.payload.targetId], [HIDDEN_ENTITY_ID, 'pc-1']);
+    const dmg = dm.frames.slice(since.dm).find(m => m.t === 'damage' && m.p.payload.targetId === 'pc-1');
+    assert.ok(dmg, 'the armed roll hit');
+    const myDmg = pTurn.find(m => m.seq === dmg.seq);
+    assert.deepEqual([myDmg.t, myDmg.p.payload.sourceId, myDmg.p.payload.hpAfter], ['damage', HIDDEN_ENTITY_ID, dmg.p.payload.hpAfter]);
+    const ex = dm.frames.slice(since.dm).find(m => m.t === 'exchange');
+    assert.equal(pTurn.find(m => m.seq === ex.seq).t, 'redacted', 'no cinema of an unseen attacker');
+    assert.equal(JSON.stringify(pTurn).includes('"gob"'), false, 'the hidden id never reaches the player');
+    assert.equal(pTurn.find(m => m.seq === ended.seq).p.payload.stateHash, sharedStateHash(filterViewForFog(state)));
+    assertClean(dm, ...ps);
+  } finally { await srv.close(); }
+});
+
+test('[real] fog: DM edits to a hidden creature reach players redacted; a teleport into view re-baselines them', async () => {
+  const srv = await boot({ engineKind: 'real' });
+  try {
+    const t = await table(srv, 1);
+    const { dm, ps } = await connectAll(srv, t);
+    const fog = revealCells(null, 8, 6, Array.from({ length: 24 }, (_, i) => ({ col: i % 8, row: Math.floor(i / 8) })));
+    await dm.send('dm.encounter.setup', { ...SETUP, fog, placements: { gob: { col: 3, row: 5 } } });
+    let since = ps[0].frames.length;
+    assert.equal((await dm.send('dm.entity.patch', { entityId: 'gob', hp: 3 })).t, 'ack');
+    const upd = await dm.find(m => m.t === 'entity.updated' && m.p.entityId === 'gob');
+    const mine = await ps[0].next(m => m.seq === upd.seq, { since });
+    assert.deepEqual([mine.t, mine.p], ['redacted', { type: 'entity.updated' }]);
+    assert.equal(ps[0].frames.slice(since).some(m => m.t === 'dm.override'), false);
+    since = ps[0].frames.length;
+    assert.equal((await dm.send('dm.entity.patch', { entityId: 'gob', position: { col: 3, row: 1 } })).t, 'ack');
+    const snap = await ps[0].next(m => m.t === 'room.snapshot', { since });
+    assert.equal(snap.p.encounter.entities.gob.pos.row, 1, 'the goblin stepped into view');
+    assert.equal(snap.p.stateHash, sharedStateHash(snap.p.encounter));
+    assertClean(dm, ...ps);
+  } finally { await srv.close(); }
+});
+
+test('fogEventView: full / masked / redacted, moves across the fog edge, exchanges', () => {
+  const st = { grid: { cols: 4, rows: 2 }, fog: revealCells(null, 4, 2, [{ col: 0, row: 0 }, { col: 1, row: 0 }]), entities: { a: { pos: { col: 0, row: 0 } }, h: { pos: { col: 3, row: 1 } } } };
+  const vis = fogVisibility(st);
+  const ev = (type, payload) => ({ type, payload });
+  assert.deepEqual(fogEventView(ev('damage', { sourceId: 'a', targetId: 'a', amount: 1 }), vis).view, { full: true });
+  assert.deepEqual(fogEventView(ev('damage', { sourceId: 'h', targetId: 'a', amount: 1 }), vis).view, { payload: { sourceId: HIDDEN_ENTITY_ID, targetId: 'a', amount: 1 } });
+  assert.equal(fogEventView(ev('turn.started', { actorId: 'h' }), vis).view, null);
+  assert.deepEqual(fogEventView(ev('turn.ended', { actorId: 'h' }), vis).view, { payload: { actorId: HIDDEN_ENTITY_ID } });
+  assert.deepEqual(fogEventView(ev('encounter.ended', { outcome: 'draw' }), vis).view, { full: true });
+  assert.deepEqual(fogEventView(ev('move', { actorId: 'a', from: { col: 0, row: 0 }, to: { col: 1, row: 0 } }), vis), { view: { full: true }, crossed: false });
+  assert.deepEqual(fogEventView(ev('move', { actorId: 'a', from: { col: 1, row: 0 }, to: { col: 2, row: 0 } }), vis), { view: null, crossed: true });
+  assert.deepEqual(fogEventView(ev('move', { actorId: 'h', from: { col: 3, row: 1 }, to: { col: 2, row: 1 } }), vis), { view: null, crossed: false });
+  const ex = { exchangeId: 'x', attackerId: 'a', defenderId: null, effects: [{ entityId: 'a', hp: {} }, { entityId: 'h', hp: {} }], cinema: { outcome: { targets: ['h'] } } };
+  assert.deepEqual(fogEventView(ev('exchange', ex), vis).view.payload.effects.map(e => e.entityId), ['a']);
+  assert.deepEqual(fogEventView(ev('exchange', ex), vis).view.payload.cinema.outcome.targets, [HIDDEN_ENTITY_ID]);
+  assert.equal(fogEventView(ev('exchange', { ...ex, defenderId: 'h' }), vis).view, null);
+  // Positions moved this turn override the state's.
+  assert.equal(fogVisibility(st, new Map([['h', { col: 1, row: 0 }]])).isVisible('h'), true);
 });
 
 test('[real] dm.spell.adjudicate: DM-only; slot from the ledger, damage / heal / conditions as events plus dm.override', async () => {
