@@ -31,6 +31,7 @@ import { deriveAC } from './pc-stats.js';
 import { slotsForPc, pactForPc } from './reactions.js';
 import { wrapperConditions, normalizeCondition, hasLifecycle } from './conditions.js';
 import { withEngineFields } from './open5e-normalize.js';
+import { featureLedgerFor } from './feature-uses.js';
 
 /** Wrapper fields that are recomputed per turn and never persisted. */
 export const TRANSIENT_WRAPPER_FIELDS = Object.freeze([
@@ -170,7 +171,9 @@ export function wrapperFromEntity(entity, sheet = null) {
       _slots: poolFromLedger(res.slots, PC_BASE_SLOT_LEVELS),
       _pact: pact,
       _actionSurgeUsed: f['action-surge']?.spent ?? 0,
-      _secondWindUsed: (f['second-wind']?.spent ?? 0) > 0
+      _secondWindUsed: (f['second-wind']?.spent ?? 0) > 0,
+      // Every other limited-use ledger (Rage, granted spells' uses, …).
+      _features: featuresWithout(f, LEGACY_FEATURE_KEYS)
     };
   }
 
@@ -272,6 +275,13 @@ export function applyWrapperToEntity(entity, w) {
   }
   if (w._innate !== undefined) res.innate = w._innate ? clone(w._innate) : null;
   if (w._legendaryBudget !== undefined) res.legendaryBudget = Math.max(0, Math.trunc(w._legendaryBudget || 0));
+  if (w._features && typeof w._features === 'object') {
+    for (const [key, l] of Object.entries(w._features)) {
+      if (LEGACY_FEATURE_KEYS.includes(key) || !l) continue;
+      const max = Math.max(1, Math.trunc(Number(l.max) || 0));
+      (res.features || (res.features = {}))[key] = { max, spent: Math.max(0, Math.min(max, Math.trunc(Number(l.spent) || 0))) };
+    }
+  }
   if (w._actionSurgeUsed !== undefined) setFeature(res, 'action-surge', Math.trunc(w._actionSurgeUsed || 0));
   if (w._secondWindUsed !== undefined) setFeature(res, 'second-wind', w._secondWindUsed ? 1 : 0);
   // turnFlags are sparse: only set flags (true / a smite level) are stored.
@@ -288,6 +298,17 @@ export function applyWrapperToEntity(entity, w) {
     else delete e.statBlock.profile;
   }
   return e;
+}
+
+/** Feature ledgers owned by legacy wrapper fields (_actionSurgeUsed, _secondWindUsed). */
+const LEGACY_FEATURE_KEYS = Object.freeze(['action-surge', 'second-wind']);
+
+function featuresWithout(features, skip) {
+  const out = {};
+  for (const [k, l] of Object.entries(features || {})) {
+    if (!skip.includes(k) && l) out[k] = { max: l.max ?? 0, spent: l.spent ?? 0 };
+  }
+  return out;
 }
 
 function setFeature(res, id, spent) {
@@ -425,7 +446,8 @@ export function entityFromSheet(sheet, opts) {
   const max = Math.max(1, Math.trunc(sheet?.hp?.max ?? 1));
   const pact = pactForPc(sheet);
   const fl = fighterLevel(sheet);
-  const features = {};
+  // Granted spells' own uses and sheet featureUses (Rage, …), fully rested.
+  const features = featureLedgerFor(sheet);
   if (fl >= 2) features['action-surge'] = { max: fl >= 17 ? 2 : 1, spent: 0 };
   if (fl >= 1) features['second-wind'] = { max: 1, spent: 0 };
   return {

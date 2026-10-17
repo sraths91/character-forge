@@ -34,6 +34,7 @@ import { weaponRangeBand, findPath, buildOccupancy } from './grid-legality.js';
 import { PC_FEATURES } from './ai/pc-features.js';
 import { nameToSpellId } from './ai/pc-action.js';
 import { wrapperFromEntity } from './encounter-adapters.js';
+import { spellUseKey } from './feature-uses.js';
 
 const INCAPACITATED = ['incapacitated', 'paralyzed', 'stunned', 'unconscious', 'petrified'];
 const TARGETED = new Set(['melee', 'ranged', 'attack', 'cast']);
@@ -165,8 +166,13 @@ export function validateIntent(state, intent, opts = {}) {
     const level = Math.max(spell.level || 0, plan.castAtLevel ?? spell.level ?? 0);
     if (spell.level > 0 && !k.innate) {
       const own = k.own;
-      const usesLeft = own?.uses && own.source && own.source !== 'class'
-        ? (own.uses.max ?? 0) - (own.uses.used ?? 0) : null;
+      // M64 phase 1.5 — the encounter's own ledger (resources.features
+      // 'spell:<id>', spent by the engine) wins over the sheet's uses.
+      const ledger = actor.resources?.features?.[spellUseKey(plan.spellId)];
+      const granted = own?.uses && own.source && own.source !== 'class';
+      const usesLeft = !granted ? null
+        : ledger ? (ledger.max ?? 0) - (ledger.spent ?? 0)
+          : (own.uses.max ?? 0) - (own.uses.used ?? 0);
       if (usesLeft !== null) {
         if (usesLeft <= 0) return fail('no-slot', `${spell.name} has no uses left`);
       } else if (!slotAvailable(actor, level)) {
