@@ -52,6 +52,11 @@
  *        may now also stand in for an `entity.updated`. Player seats'
  *        `turn.ended.stateHash` / `room.snapshot.stateHash` cover the
  *        fog-filtered projection.
+ *        DM-only intent `dm.room.settings {reactionTimeoutMs?, importLiveState?,
+ *        fudgeVisibility?: 'public'|'dm-only', diagonalRule?: '5ft'}` (partial
+ *        update, at least one key; persisted per room, encounter rules apply
+ *        on the next dm.encounter.setup) and its broadcast
+ *        `room.settings {settings}` carrying all four keys.
  *
  * Client payloads are strict (unknown fields rejected); server payloads
  * enforce required fields and allow additive ones.
@@ -103,7 +108,14 @@ export const INTENT_ROLES = Object.freeze({
   'dm.review.set': 'dm',
   'dm.prompt.force': 'dm',
   'dm.member.revoke': 'dm',
+  'dm.room.settings': 'dm',   // v1.4
 });
+
+/** v1.4 room settings: who sees DM fudges (dm.override), and the grid's diagonal rule. */
+export const FUDGE_VISIBILITY = Object.freeze(['public', 'dm-only']);
+export const DIAGONAL_RULES = Object.freeze(['5ft']);
+/** Bounds on the per-room reaction prompt deadline (ms). */
+export const REACTION_TIMEOUT_RANGE = Object.freeze({ min: 1000, max: 120000 });
 
 /** Every client → server message type. */
 export const INTENT_TYPES = Object.freeze(Object.keys(INTENT_ROLES));
@@ -127,6 +139,7 @@ const ROOM_MESSAGE_SCOPES = {
   'entity.updated': 'broadcast',
   'room.status': 'broadcast',
   'room.closing': 'broadcast',
+  'room.settings': 'broadcast',   // v1.4
   redacted: 'broadcast'
 };
 
@@ -226,6 +239,13 @@ const INTENT_PAYLOADS = {
   'dm.review.set': shape({ plans: optional(bool()), rolls: optional(bool()), monsterReactions: optional(bool()), aiParty: optional(bool()) }),   // aiParty: v1.2
   'dm.prompt.force': shape({ promptId: ID, answer: anyJson() }),
   'dm.member.revoke': shape({ memberId: ID }),
+  // v1.4 — room settings (partial; the server requires at least one key).
+  'dm.room.settings': shape({
+    reactionTimeoutMs: optional(int(REACTION_TIMEOUT_RANGE.min, REACTION_TIMEOUT_RANGE.max)),
+    importLiveState: optional(bool()),
+    fudgeVisibility: optional(oneOf(FUDGE_VISIBILITY)),
+    diagonalRule: optional(oneOf(DIAGONAL_RULES))
+  }),
   // v1.3 — the DM resolves a spell outside the engine's registry.
   'dm.spell.adjudicate': shape({
     casterId: ID,
@@ -271,6 +291,9 @@ const SERVER_PAYLOADS = {
   'entity.updated': shape({ entityId: ID, patch: shape({}, LOOSE), cause: str() }, LOOSE),
   'room.status': shape({ status: oneOf(ROOM_STATUSES) }, LOOSE),
   'room.closing': shape({ reason: str() }, LOOSE),
+  'room.settings': shape({ settings: shape({
+    reactionTimeoutMs: int(0), importLiveState: bool(), fudgeVisibility: oneOf(FUDGE_VISIBILITY), diagonalRule: oneOf(DIAGONAL_RULES)
+  }, LOOSE) }, LOOSE),   // v1.4
   redacted: shape({ type: oneOf(REDACTABLE_TYPES) }, LOOSE)   // v1.4: + entity.updated
 };
 

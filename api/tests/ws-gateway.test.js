@@ -859,12 +859,55 @@ test('viewFor filters fog for player seats only, and the result is a valid proje
   assert.equal(stateHash(st), sharedStateHash(viewFor(st, null)), 'the hash covers the unfiltered state');
 });
 
+test('[real] dm.room.settings: DM-only, persisted, broadcast; encounter rules apply on the next build', async () => {
+  const { createRealEngine } = await import('../rooms/real-engine.js');
+  const real = createRealEngine();
+  const builds = [];
+  const engine = { ...real, buildEncounter: (a) => { builds.push(a.settings); return real.buildEncounter(a); } };
+  const srv = await boot({ engine });
+  try {
+    const t = await table(srv, 1);
+    const { dm, ps } = await connectAll(srv, t);
+    assert.equal((await ps[0].send('dm.room.settings', { reactionTimeoutMs: 5000 })).p.code, 'E_FORBIDDEN');
+    assert.equal((await dm.send('dm.room.settings', {})).p.code, 'E_INVALID_INTENT');
+    assert.equal((await dm.send('dm.room.settings', { diagonalRule: '5-10-5' })).p.code, 'E_BAD_MESSAGE');
+    assert.equal((await dm.send('dm.room.settings', { reactionTimeoutMs: 10 })).p.code, 'E_BAD_MESSAGE');
+    await dm.send('dm.encounter.setup', SETUP);
+    assert.deepEqual(builds[0], { importLiveState: false, diagonalRule: '5ft' });
+    const want = { reactionTimeoutMs: 5000, importLiveState: true, fudgeVisibility: 'dm-only', diagonalRule: '5ft' };
+    const r = await dm.send('dm.room.settings', { reactionTimeoutMs: 5000, importLiveState: true, fudgeVisibility: 'dm-only' });
+    assert.equal(r.t, 'ack', JSON.stringify(r.p));
+    assert.deepEqual(r.p.settings, want);
+    for (const c of [dm, ps[0]]) assert.deepEqual((await c.find(m => m.t === 'room.settings')).p.settings, want);
+    assert.deepEqual(srv.service.store.getRoom(t.room.roomId).settings, want, 'persisted in rooms.settings_json');
+    // fudgeVisibility applies at once: the DM's HP fudge is DM-only now.
+    const since = ps[0].frames.length;
+    await dm.send('dm.entity.patch', { entityId: 'gob', hp: 2 });
+    const ov = await dm.find(m => m.t === 'dm.override' && m.p.payload.entityId === 'gob');
+    assert.deepEqual((await ps[0].next(m => m.seq === ov.seq, { since })).p, { type: 'dm.override' });
+    // importLiveState applies to the next build, and a snapshot reports every key.
+    await dm.send('dm.encounter.setup', SETUP);
+    assert.deepEqual(builds[1], { importLiveState: true, diagonalRule: '5ft' });
+    await ps[0].send('resync', {});
+    const snap = ps[0].of('room.snapshot').at(-1).p.room.settings;
+    assert.deepEqual(snap, { ...want, dmOverrideVisibility: 'dm-only' });
+    assertClean(dm, ...ps);
+  } finally { await srv.close(); }
+});
+
+test('normalizeRoomSettings reads the pre-W5 names', async () => {
+  const { normalizeRoomSettings, DEFAULT_ROOM_SETTINGS } = await import('../rooms/service.js');
+  assert.deepEqual(normalizeRoomSettings(null), { ...DEFAULT_ROOM_SETTINGS });
+  assert.deepEqual(normalizeRoomSettings({ reactionTimeoutMs: 20000, importDdbState: true, dmOverrideVisibility: 'dm-only' }),
+    { reactionTimeoutMs: 20000, importLiveState: true, fudgeVisibility: 'dm-only', diagonalRule: '5ft' });
+});
+
 test('dm-only overrides reach players as redacted with the same seq', async () => {
   const srv = await boot();
   try {
     const t = await table(srv, 1);
     const { dm, ps } = await connectAll(srv, t);
-    srv.registry.get(t.room.roomId).settings.dmOverrideVisibility = 'dm-only';
+    assert.equal((await dm.send('dm.room.settings', { fudgeVisibility: 'dm-only' })).t, 'ack');
     await dm.send('dm.encounter.setup', SETUP);
     await dm.send('dm.entity.patch', { entityId: 'gob', hp: 2 });
     const ov = await dm.find(m => m.t === 'dm.override');

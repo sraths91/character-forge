@@ -171,6 +171,8 @@ export function createRealEngine({ resolveSheets = () => null, monsterLookup = (
   // ------------------------------------------------------------- setup
 
   function buildEncounter({ encounterId, seed, setup, party, settings = {} }) {
+    // Room setting (dm.room.settings): grid-rules measure Chebyshev 5-ft diagonals only.
+    if (settings.diagonalRule !== undefined && settings.diagonalRule !== '5ft') throw new Error(`diagonal rule ${settings.diagonalRule} is not supported`);
     const cols = setup.grid.cols;
     const rows = setup.grid.rows;
     const state = emptyEncounterState({ encounterId, cols, rows, seed, flankingEnabled: setup.grid.flankingEnabled === true });

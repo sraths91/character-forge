@@ -30,7 +30,7 @@ import { PROTOCOL_VERSION, INTENT_ROLES, CLOSE_CODES, validateServerMessage } fr
 import { PromptBroker } from './prompt-broker.js';
 import { viewFor, publicView, canSeeEvent, stateHash, stateHashFor, fogEventView, fogVisibility } from './view.js';
 import { newId } from './tokens.js';
-import { publicSeat, RoomError, MAX_SEATS } from './service.js';
+import { publicSeat, RoomError, MAX_SEATS, normalizeRoomSettings } from './service.js';
 
 /** Events kept in memory for `room.snapshot.history`. */
 export const HISTORY_LIMIT = 50;
@@ -95,7 +95,7 @@ export class Room {
     if (!row) throw new Error(`room ${id} not found`);
     this.code = row.code;
     this.name = row.name;
-    this.settings = { ...row.settings };
+    this.settings = normalizeRoomSettings(row.settings);
     this.seq = row.seq;
     this.status = 'lobby';
     /** @type {Map<string, {id: string, role: 'dm'|'player', displayName: string, conn: Conn|null, cids: Map<string, object>}>} */
@@ -391,7 +391,8 @@ export class Room {
       seq: this.seq,
       room: {
         id: this.id, code: this.code, name: this.name, status: this.status, paused: this.paused,
-        settings: { reactionTimeoutMs: this.settings.reactionTimeoutMs, dmOverrideVisibility: this.settings.dmOverrideVisibility },
+        // dmOverrideVisibility: the pre-W5 name of fudgeVisibility, kept for old clients.
+        settings: { ...this.settings, dmOverrideVisibility: this.settings.fudgeVisibility },
         members: [...this.members.values()].map(x => ({ id: x.id, displayName: x.displayName, role: x.role, online: !!x.conn })),
         seats: this.seats.map(publicSeat),
         encounterId: this.enc?.id ?? null,
@@ -1015,6 +1016,7 @@ export class Room {
       case 'dm.member.revoke':
         this.service.kick(auth, this.id, p.memberId);
         return {};
+      case 'dm.room.settings': return this.#updateSettings(p);
       default:
         throw new IntentError('E_UNKNOWN_TYPE', `unhandled ${msg.t}`);
     }
@@ -1041,6 +1043,21 @@ export class Room {
     return { queued: true };
   }
 
+  /**
+   * dm.room.settings: merge, persist (rooms.settings_json), broadcast
+   * `room.settings`. reactionTimeoutMs and fudgeVisibility apply at once;
+   * importLiveState and diagonalRule on the next dm.encounter.setup.
+   */
+  #updateSettings(p) {
+    if (Object.keys(p).length === 0) throw new IntentError('E_INVALID_INTENT', 'name at least one setting');
+    const next = normalizeRoomSettings({ ...this.settings, ...p });
+    this.store.setRoomSettings(this.id, next);
+    this.settings = next;
+    this.#broadcastRoom('room.settings', { settings: { ...next } });
+    this.log('info', 'room: settings changed', { roomId: this.id, keys: Object.keys(p) });
+    return { settings: { ...next } };
+  }
+
   #setup(p) {
     if (this.enc && this.enc.status === 'active') throw new IntentError('E_INVALID_INTENT', 'an encounter is running; end it first');
     if (this.enc && this.enc.status === 'setup') this.journal.setStatus(this.enc.id, 'abandoned', null);
@@ -1051,7 +1068,7 @@ export class Room {
     }));
     let state;
     try {
-      const settings = { importLiveState: this.settings.importDdbState === true || this.settings.importLiveState === true };
+      const settings = { importLiveState: this.settings.importLiveState === true, diagonalRule: this.settings.diagonalRule };
       state = this.engine.buildEncounter({ encounterId, seed: randomInt(0, 0x100000000), setup: clone(p), party, settings });
     } catch (err) {
       throw new IntentError('E_INVALID_INTENT', `setup rejected: ${err.message}`);

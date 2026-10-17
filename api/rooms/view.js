@@ -66,11 +66,13 @@ export function publicView(state) {
  * a `redacted {type}` broadcast with the same seq so seq stays gap-free.
  * @param {object} ev  stamped event
  * @param {{role: string}} viewer
- * @param {{dmOverrideVisibility?: 'public'|'dm-only'}} settings
+ * @param {{fudgeVisibility?: 'public'|'dm-only', dmOverrideVisibility?: 'public'|'dm-only'}} settings
+ *   room settings (`dmOverrideVisibility` is the pre-W5 name)
  * @returns {boolean}
  */
 export function canSeeEvent(ev, viewer, settings = {}) {
-  if (ev.type === 'dm.override' && settings.dmOverrideVisibility === 'dm-only') return viewer.role === 'dm';
+  const fudge = settings.fudgeVisibility ?? settings.dmOverrideVisibility;
+  if (ev.type === 'dm.override' && fudge === 'dm-only') return viewer.role === 'dm';
   return true;
 }
 

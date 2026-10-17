@@ -92,7 +92,7 @@ export const ENGINE_PORT_VERSION = 1;
  *
  * @typedef {object} EnginePort
  * @property {number} version
- * @property {(a: {encounterId: string, seed: number, setup: object, party: SeatInfo[], settings?: {importLiveState?: boolean}}) => EncounterState} buildEncounter
+ * @property {(a: {encounterId: string, seed: number, setup: object, party: SeatInfo[], settings?: {importLiveState?: boolean, diagonalRule?: '5ft'}}) => EncounterState} buildEncounter
  *   From `dm.encounter.setup {map, grid, monsters, placements}` and the seats; phase 'setup'.
  *   `settings.importLiveState`: PCs start with the sheet's current HP / spent slots, not rested.
  * @property {(state: EncounterState, ctx: {emit: TurnContext['emit'], rng: PortRng}) => Promise<{state: EncounterState, events: EncounterEvent[]}>} startEncounter

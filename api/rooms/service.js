@@ -11,12 +11,37 @@ import { createRoomStore } from './store.js';
 export const MAX_SEATS = 6;
 /** Most active players per room (spectators beyond the six seats included). */
 export const MAX_PLAYERS = 12;
-/** Room settings defaults; stored in rooms.settings_json. */
+/**
+ * Room settings defaults; stored in rooms.settings_json and edited with
+ * `dm.room.settings` (M64 W5). `fudgeVisibility` decides whether DM edits
+ * (dm.override) reach players or the DM only; `importLiveState` seeds PCs
+ * with D&D Beyond's current HP / used slots on the next encounter build;
+ * `diagonalRule` is the grid's diagonal cost (5 ft only in phase 1).
+ */
 export const DEFAULT_ROOM_SETTINGS = Object.freeze({
   reactionTimeoutMs: 20_000,
-  importDdbState: false,
-  dmOverrideVisibility: 'public'
+  importLiveState: false,
+  fudgeVisibility: 'public',
+  diagonalRule: '5ft'
 });
+
+/**
+ * The four room settings from a stored settings_json object, reading the
+ * pre-W5 names (`importDdbState`, `dmOverrideVisibility`) as aliases.
+ * @param {object|null|undefined} raw
+ * @returns {{reactionTimeoutMs: number, importLiveState: boolean, fudgeVisibility: 'public'|'dm-only', diagonalRule: '5ft'}}
+ */
+export function normalizeRoomSettings(raw) {
+  const r = raw && typeof raw === 'object' ? raw : {};
+  const ms = Number(r.reactionTimeoutMs);
+  const fudge = r.fudgeVisibility ?? r.dmOverrideVisibility;
+  return {
+    reactionTimeoutMs: Number.isInteger(ms) && ms > 0 ? ms : DEFAULT_ROOM_SETTINGS.reactionTimeoutMs,
+    importLiveState: r.importLiveState === true || r.importDdbState === true,
+    fudgeVisibility: fudge === 'dm-only' ? 'dm-only' : 'public',
+    diagonalRule: r.diagonalRule === '5ft' ? '5ft' : DEFAULT_ROOM_SETTINGS.diagonalRule
+  };
+}
 /** AI archetypes a DM may assign to an AI seat ('auto' infers from class). */
 export const AI_ARCHETYPES = Object.freeze(['auto', ...Object.keys(PC_PROFILES)]);
 
@@ -210,7 +235,7 @@ export function createRoomService({ db, now = Date.now, codeRand } = {}) {
     requireMember(auth, roomId);
     const room = store.getRoom(roomId);
     return {
-      room: { id: room.id, code: room.code, name: room.name, status: room.status, settings: room.settings },
+      room: { id: room.id, code: room.code, name: room.name, status: room.status, settings: normalizeRoomSettings(room.settings) },
       me: { participantId: auth.participantId, role: auth.role, displayName: auth.displayName },
       members: store.listParticipants(roomId).filter(p => p.status === 'active')
         .map(p => ({ id: p.id, displayName: p.displayName, role: p.role })),
