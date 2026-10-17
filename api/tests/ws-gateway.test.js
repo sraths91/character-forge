@@ -763,6 +763,13 @@ test('[real] dm.spell.adjudicate: DM-only; slot from the ledger, damage / heal /
     const overrides = ps[0].frames.slice(since).filter(m => m.t === 'dm.override').map(m => [m.p.payload.kind, m.p.payload.entityId]);
     assert.deepEqual(overrides.sort(), [['spell.adjudicate', 'gob'], ['spell.adjudicate', 'pc-1']]);
     await ps[0].next(m => m.t === 'entity.updated' && m.p.entityId === 'gob' && m.p.patch.hp === 15, { since });
+    // E2's client order: spell.cast first, then the slot, the effects, the DM overrides, entity.updated last.
+    const order = ps[0].frames.slice(since).filter(m => m.seq !== undefined).map(m => m.t);
+    assert.equal(order[0], 'spell.cast');
+    assert.equal(order[1], 'resource.spent');
+    const firstOverride = order.indexOf('dm.override');
+    for (const t of ['damage', 'heal', 'condition.applied']) assert.ok(order.indexOf(t) > 1 && order.indexOf(t) < firstOverride, `${t} sits between the cast and the overrides`);
+    assert.ok(order.lastIndexOf('dm.override') < order.indexOf('entity.updated'));
     await dm.send('resync', {});
     const after = dm.of('room.snapshot').at(-1).p.encounter.entities;
     assert.equal(after['pc-1'].resources.slots['1'].spent, before.spent + 1);

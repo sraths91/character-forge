@@ -806,6 +806,8 @@ export class Room {
     const seenBefore = this.#fogVisibleIn(state);
     const seenAfter = this.#fogVisibleIn(next);
     let structural = false;
+    // Every dm.override first, then every entity.updated (E2's client order).
+    const updates = [];
     for (const id of new Set([...Object.keys(state.entities), ...Object.keys(next.entities)])) {
       const a = state.entities[id];
       const b = next.entities[id];
@@ -814,17 +816,18 @@ export class Room {
       for (const f of PATCH_FIELDS) if (!same(a[f], b[f])) patch[f] = clone(b[f]);
       if (Object.keys(patch).length) {
         this.#emit({ type: 'dm.override', payload: { kind: cmd.type.slice(3), entityId: id, before: pick(a, Object.keys(patch)), after: patch } });
-        if (broadcast) {
-          let player;
-          if (seenAfter) {
-            const va = seenBefore(id);
-            const vb = seenAfter(id);
-            if (va !== vb) this.fogResnap = true;   // crossed the fog edge: re-baseline players
-            if (!va || !vb) player = null;
-          }
-          this.#broadcastRoom('entity.updated', { entityId: id, patch, cause: 'dm' }, player);
-        }
+        if (broadcast) updates.push({ id, patch });
       }
+    }
+    for (const { id, patch } of updates) {
+      let player;
+      if (seenAfter) {
+        const va = seenBefore(id);
+        const vb = seenAfter(id);
+        if (va !== vb) this.fogResnap = true;   // crossed the fog edge: re-baseline players
+        if (!va || !vb) player = null;
+      }
+      this.#broadcastRoom('entity.updated', { entityId: id, patch, cause: 'dm' }, player);
     }
     if (structural) this.#emit({ type: 'dm.override', payload: { kind: cmd.type.slice(3), entityId: cmd.payload.entityId ?? null, before: null, after: null } });
     if (!same(state.initiative, next.initiative) && broadcast) this.#broadcastInitiative(next);

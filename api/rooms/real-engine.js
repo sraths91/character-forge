@@ -578,14 +578,17 @@ export function createRealEngine({ resolveSheets = () => null, monsterLookup = (
         throw invalid(`${caster.name} has no level-${lvl} slot left`);
       }
       slotSpent = p.slotLevel;
-      out('resource.spent', { entityId: caster.id, resource: 'spell-slot', level: slotSpent });
     }
+    // Order (E2's client relies on it): spell.cast {adjudicated} heads the
+    // ruling, then the slot, then damage / heal / conditions; the room's
+    // dm.override + entity.updated follow.
     const known = spellById(p.spellId);
     out('spell.cast', {
       casterId: caster.id, spellId: p.spellId,
       castAtLevel: slotSpent ?? known?.level ?? 0,
       slotSpent, innate: false, targetIds: p.targets.map(t => t.entityId), adjudicated: true
     });
+    if (slotSpent !== null) out('resource.spent', { entityId: caster.id, resource: 'spell-slot', level: slotSpent });
     for (const t of p.targets) {
       if (t.damage > 0) {
         const w = wrapperFromEntity(s.entities[t.entityId], sheetsFor(s)[s.entities[t.entityId].sheetRef?.characterId] ?? null);
