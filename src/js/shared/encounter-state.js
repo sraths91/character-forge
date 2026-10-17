@@ -33,6 +33,8 @@
  *     no version bump; the engine ignores them):
  *       `facing`   'north'|'east'|'south'|'west' — persisted sprite row; the
  *                  live client derives it from events (map/facing.js)
+ *       `size`     SRD size ('Tiny' … 'Gargantuan'); the 2D grid draws a
+ *                  Large creature 2×2. Legality stays 1×1 this phase.
  *       `imageUrl` DM-uploaded token image, a same-origin path
  *                  (`/api/maps/<room>/<sha>.<ext>`); drawn instead of the
  *                  LPC sprite for non-humanoid monsters
@@ -57,6 +59,8 @@ export const SIDES = Object.freeze(['party', 'hostile']);
 export const CONTROLLER_TYPES = Object.freeze(['player', 'ai', 'dm']);
 /** Sprite facings (v1 additive, E5 phase 1.5). */
 export const ENTITY_FACINGS = Object.freeze(['north', 'east', 'south', 'west']);
+/** SRD creature sizes (v1 additive, E5 phase 1.5). */
+export const ENTITY_SIZES = Object.freeze(['Tiny', 'Small', 'Medium', 'Large', 'Huge', 'Gargantuan']);
 /** Ability keys used by saves and conditions. */
 export const ABILITIES = Object.freeze(['STR', 'DEX', 'CON', 'INT', 'WIS', 'CHA']);
 /** RNG algorithms the state may name. */
@@ -180,6 +184,7 @@ export const WRAPPER_FIELD_MAP = Object.freeze({
  * @property {{characterId: string, rev: number|string}|null} [sheetRef]  — PCs
  * @property {{slug: string}|null} [statBlock]                           — monsters (other fields opaque in v1)
  * @property {'north'|'east'|'south'|'west'} [facing]                    — v1 additive (E5): sprite row
+ * @property {'Tiny'|'Small'|'Medium'|'Large'|'Huge'|'Gargantuan'} [size] — v1 additive (E5): render footprint
  * @property {string|null} [imageUrl]                                    — v1 additive (E5): DM token image path
  */
 
@@ -261,6 +266,7 @@ const ENTITY = shape({
   statBlock: optional(nullable(shape({ slug: str({ maxLength: 128 }) }, { strict: false }))),
   // v1 additive (E5, M64 phase 1.5): presentation-only, optional.
   facing: optional(oneOf(ENTITY_FACINGS)),
+  size: optional(oneOf(ENTITY_SIZES)),
   imageUrl: optional(nullable(str({ maxLength: 2048, pattern: /^\/(?![/\\])\S*$/ })))
 });
 

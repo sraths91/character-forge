@@ -23,6 +23,7 @@
  *     id, kind: 'pc'|'monster', side: 'party'|'hostile', name, col, row,
  *     appearanceKey,                    // bake-cache key for the look (sheet / preset)
  *     hpState: 'healthy'|'wounded'|'down',
+ *     size: number,                     // cells per side (1 or 2 …), see below
  *     status?: 'active'|'downed'|'stable'|'dead',
  *     hp?: number, hpMax?: number,      // omitted when the projection redacts them
  *     tempHp: boolean,
@@ -46,6 +47,13 @@
  *                    (E1), else derived from hp (map/token-fx.js). Any
  *                    non-active status forces hpState 'down'. Absent on
  *                    legacy-adapter tokens (treated as 'active').
+ *   tokens[].size    cells per side (1 Medium and smaller, 2 Large, 3 Huge,
+ *                    4 Gargantuan) from `entity.size` or the stat block's
+ *                    `size`. RENDERING ONLY: the token is drawn size×size
+ *                    anchored at (col,row) and `tokenAtCell` hit-tests
+ *                    every covered cell, but movement / reach legality
+ *                    (scene/grid-legality.js) stays 1×1 this phase (owner
+ *                    default, plan Q3).
  *   tokens[].imageUrl  DM-uploaded token image (same-origin path, see
  *                    isTokenImageUrl) drawn instead of the LPC composite
  *                    (circular mask + side ring, same bake-cache slot).
@@ -211,8 +219,67 @@ export function viewMapOf(map) {
   return out;
 }
 
+// Draw order: by the bottom edge (a Large token's lower row), then col, then id.
 function compareTokens(a, b) {
-  return a.row - b.row || a.col - b.col || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+  const ab = a.row + tokenSizeOf(a) - 1;
+  const bb = b.row + tokenSizeOf(b) - 1;
+  return ab - bb || a.row - b.row || a.col - b.col || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+}
+
+const SIZE_CELLS = { tiny: 1, small: 1, medium: 1, large: 2, huge: 3, gargantuan: 4 };
+
+/**
+ * Cells per side for an SRD size name ('Large' → 2). Unknown ⇒ 1.
+ * @param {string|null|undefined} size
+ * @returns {number}
+ */
+export function sizeCellsOf(size) {
+  return SIZE_CELLS[String(size || '').trim().toLowerCase()] || 1;
+}
+
+/**
+ * A token's footprint side in cells (defaults to 1).
+ * @param {{size?: number}} token
+ * @returns {number}
+ */
+export function tokenSizeOf(token) {
+  const n = token?.size;
+  return Number.isInteger(n) && n > 1 ? Math.min(n, 4) : 1;
+}
+
+/**
+ * Every cell a token covers (anchor first, then row-major).
+ * @param {{col: number, row: number, size?: number}} token
+ * @returns {{col: number, row: number}[]}
+ */
+export function tokenCells(token) {
+  const n = tokenSizeOf(token);
+  const out = [];
+  for (let dr = 0; dr < n; dr++) for (let dc = 0; dc < n; dc++) out.push({ col: token.col + dc, row: token.row + dr });
+  return out;
+}
+
+/**
+ * The token a click on `cell` hits: the top-most (last-drawn) token whose
+ * footprint covers it, preferring the living over dead markers. Hidden
+ * tokens count only with `{showHidden: true}` (the DM).
+ * @param {{tokens: object[]}} view
+ * @param {{col: number, row: number}} cell
+ * @param {{showHidden?: boolean, includeDead?: boolean}} [opts]
+ * @returns {object|null}
+ */
+export function tokenAtCell(view, cell, { showHidden = false, includeDead = true } = {}) {
+  if (!cell || !Array.isArray(view?.tokens)) return null;
+  let dead = null;
+  for (let i = view.tokens.length - 1; i >= 0; i--) {
+    const t = view.tokens[i];
+    if (t.hidden && !showHidden) continue;
+    const n = tokenSizeOf(t);
+    if (cell.col < t.col || cell.row < t.row || cell.col >= t.col + n || cell.row >= t.row + n) continue;
+    if (t.status !== 'dead') return t;
+    if (!dead) dead = t;
+  }
+  return includeDead ? dead : null;
 }
 
 /**
@@ -247,6 +314,7 @@ export function projectBattleView(state, appearanceCache = null, opts = {}) {
       row: e.pos.row,
       appearanceKey,
       hpState: isDownStatus(status) ? 'down' : (e.hpState || hpStateOf(e.hp, e.hpMax)),
+      size: sizeCellsOf(e.size ?? e.statBlock?.size),
       status,
       tempHp: (e.hpTemp || 0) > 0,
       conditions,

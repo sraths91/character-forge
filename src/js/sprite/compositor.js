@@ -4,7 +4,7 @@ import { generateItemSprite, rarityToAuraTier } from './item-generator.js';
 import { paintGeneratedBackground, drawMapImage, drawGridLines, paintTerrainOverlay } from '../scene/map-render.js';
 import { asTerrain } from '../map/terrain.js';
 import { WORLD_CELL_PX, MAX_CANVAS_PIXELS, createCamera, cameraTransform, sizeCanvasToViewport, visibleCellRange } from '../map/camera.js';
-import { legacySceneToView, characterForToken } from '../map/view.js';
+import { legacySceneToView, characterForToken, tokenSizeOf } from '../map/view.js';
 import { MONSTER_PRESETS, buildMonsterCharacter } from '../scene/monster-presets.js';
 import { createTokenCache, directionFor } from '../map/token-cache.js';
 import { isRevealed } from '../map/fog.js';
@@ -226,7 +226,11 @@ function renderBattleView(canvas, view, local) {
     const disp = displacementById.get(token.id) || { x: 0, y: 0 };
     const x = token.col * W + disp.x;
     const y = token.row * W + disp.y;
-    drawnPos.set(token.id, { col: token.col, row: token.row });
+    // Phase 1.5 — a Large (size 2) token covers size×size cells anchored
+    // at its pos; legality is still 1×1 (owner default).
+    const n = tokenSizeOf(token);
+    const S = W * n;
+    drawnPos.set(token.id, { col: token.col, row: token.row, n });
     const status = token.status || 'active';
     // Phase 1.5 — death fade: per-viewer clock in the token cache.
     let alpha = token.hidden ? 0.5 : 1;
@@ -235,7 +239,7 @@ function renderBattleView(canvas, view, local) {
       alpha *= deathFadeAlpha(now - deadAt);
       if (now - deadAt < DEATH_FADE_MS) live = true;
     }
-    if (local.ownEntityId != null && String(local.ownEntityId) === token.id) drawOwnMarker(ctx, x, y, px);
+    if (local.ownEntityId != null && String(local.ownEntityId) === token.id) drawOwnMarker(ctx, x, y, px, S);
     // M64 M7 — one drawImage of a baked 64×64 bitmap per token. A miss
     // bakes in the background and keeps showing the previous bitmap
     // (so a facing change never flashes a placeholder).
@@ -258,10 +262,10 @@ function renderBattleView(canvas, view, local) {
     }
     if (alpha !== 1) { ctx.save(); ctx.globalAlpha = alpha; }
     // DM image discs stay upright (greyed by the bake); LPC bodies lie down.
-    if (bmp) drawTokenBitmap(ctx, bmp, x, y, W, isDownStatus(status) && !isImageKey(key));
-    else drawTokenPlaceholder(ctx, token, x, y, px);
+    if (bmp) drawTokenBitmap(ctx, bmp, x, y, S, isDownStatus(status) && !isImageKey(key));
+    else drawTokenPlaceholder(ctx, token, x, y, px, S);
     if (alpha !== 1) ctx.restore();
-    if (status === 'stable') drawStableBadge(ctx, x, y, W, px);
+    if (status === 'stable') drawStableBadge(ctx, x, y, S, px);
     drawn++;
   }
 
@@ -276,11 +280,11 @@ function renderBattleView(canvas, view, local) {
   const at = (id) => drawnPos.get(String(id)) || null;
   if (local.selectionId != null) {
     const pos = at(local.selectionId);
-    if (pos) drawCellOutline(ctx, pos.col * W, pos.row * W, W, '#22d3ee', 4 * px);
+    if (pos) drawCellOutline(ctx, pos.col * W, pos.row * W, W * pos.n, '#22d3ee', 4 * px);
   }
   if (view.activeId != null && view.activeId !== local.selectionId) {
     const pos = at(view.activeId);
-    if (pos) drawCellOutline(ctx, pos.col * W, pos.row * W, W, '#fbbf24', 3 * px);
+    if (pos) drawCellOutline(ctx, pos.col * W, pos.row * W, W * pos.n, '#fbbf24', 3 * px);
   }
   if (local.hover && Number.isFinite(local.hover.col)) {
     drawCellOutline(ctx, local.hover.col * W, local.hover.row * W, W, 'rgba(255,255,255,0.6)', 2 * px);
@@ -293,8 +297,8 @@ function renderBattleView(canvas, view, local) {
       const t = elapsed / anim.duration;
       const pos = at(id);
       if (!pos) continue;
-      if (anim.kind === 'attack') drawCellGlow(ctx, pos.col * W, pos.row * W, W, '#fb923c', Math.sin(t * Math.PI) * 0.55);
-      else if (anim.kind === 'hurt') drawCellGlow(ctx, pos.col * W, pos.row * W, W, '#dc2626', (1 - t) * 0.75);
+      if (anim.kind === 'attack') drawCellGlow(ctx, pos.col * W, pos.row * W, W * pos.n, '#fb923c', Math.sin(t * Math.PI) * 0.55);
+      else if (anim.kind === 'hurt') drawCellGlow(ctx, pos.col * W, pos.row * W, W * pos.n, '#dc2626', (1 - t) * 0.75);
     }
   }
   if (local.popups && local.popups.length > 0) {
@@ -306,7 +310,7 @@ function renderBattleView(canvas, view, local) {
       const pos = at(p.targetId);
       if (!pos) continue;
       const fontSize = Math.max(18 * px, W * 0.22);
-      drawDamageNumber(ctx, pos.col * W + W / 2, pos.row * W + W * 0.2 - t * W * 0.55, p.amount, 1 - t * 0.85, fontSize, px);
+      drawDamageNumber(ctx, pos.col * W + (W * pos.n) / 2, pos.row * W + W * 0.2 - t * W * 0.55, p.amount, 1 - t * 0.85, fontSize, px);
     }
   }
   if (Array.isArray(local.effects) && local.effects.length > 0) {
@@ -413,13 +417,13 @@ function drawPathPreview(ctx, preview, px) {
   ctx.restore();
 }
 
-/** Soft ring under the viewer's own token. */
-function drawOwnMarker(ctx, x, y, px) {
+/** Soft ring under the viewer's own token (S = token box side). */
+function drawOwnMarker(ctx, x, y, px, S = W) {
   ctx.save();
   ctx.strokeStyle = 'rgba(250,204,21,0.85)';
   ctx.lineWidth = 2 * px;
   ctx.beginPath();
-  ctx.ellipse(x + W / 2, y + W * 0.86, W * 0.32, W * 0.1, 0, 0, Math.PI * 2);
+  ctx.ellipse(x + S / 2, y + S * 0.86, S * 0.32, S * 0.1, 0, 0, Math.PI * 2);
   ctx.stroke();
   ctx.restore();
 }
@@ -459,20 +463,20 @@ function drawStableBadge(ctx, x, y, S, px) {
 }
 
 /** Coloured disc + initial for a token whose look is not available yet. */
-function drawTokenPlaceholder(ctx, token, x, y, px) {
+function drawTokenPlaceholder(ctx, token, x, y, px, S = W) {
   ctx.save();
   ctx.fillStyle = token.side === 'hostile' ? '#b91c1c' : '#2563eb';
   ctx.strokeStyle = '#0f172a';
   ctx.lineWidth = 2 * px;
   ctx.beginPath();
-  ctx.arc(x + W / 2, y + W / 2, W * 0.34, 0, Math.PI * 2);
+  ctx.arc(x + S / 2, y + S / 2, S * 0.34, 0, Math.PI * 2);
   ctx.fill();
   ctx.stroke();
   ctx.fillStyle = '#fff';
-  ctx.font = `bold ${Math.round(W * 0.34)}px sans-serif`;
+  ctx.font = `bold ${Math.round(S * 0.34)}px sans-serif`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.fillText((token.name || '?').slice(0, 1).toUpperCase(), x + W / 2, y + W / 2);
+  ctx.fillText((token.name || '?').slice(0, 1).toUpperCase(), x + S / 2, y + S / 2);
   ctx.restore();
 }
 
