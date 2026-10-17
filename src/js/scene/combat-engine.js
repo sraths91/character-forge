@@ -43,7 +43,9 @@ import { planMovement, occupiedCellsOf } from './movement.js';
 import { straightPath, terrainPath, terrainApproach } from './pathing.js';
 import { chooseAction, fleeTargetCell } from './ai/profile.js';
 import { choosePcAction } from './ai/pc-action.js';
-import { PC_FEATURES, resetPerTurnFlags, attacksPerAction } from './ai/pc-features.js';
+import {
+  PC_FEATURES, resetPerTurnFlags, attacksPerAction, classLevel, isRaging, rageDamageBonus, ragesPerLongRest
+} from './ai/pc-features.js';
 import {
   consumeReaction, detectOpportunityAttacks, detectPolearmEntryOAs,
   shouldCastShield, canCastShield, consumeShield, hasReactionAvailable,
@@ -239,6 +241,18 @@ async function resolveTurn(attacker, enemies, allies, scene, rng, prompts, ctx) 
       archetype: plan.archetype ?? null
     });
   }
+  // M64 phase 1.5 — a 'feature' plan (Second Wind, Rage, …) is the whole
+  // turn: no move, no attack.
+  if (plan?.kind === 'feature') {
+    const featureId = plan.featureId || plan.featuresFired?.[0] || null;
+    const used = useFeature(attacker, featureId, { ctx, rng });
+    if (!used) {
+      emitEvent(ctx, explicit ? 'turn.rejected' : 'turn.skipped', explicit
+        ? { actorId, code: 'bad-feature', reason: `${featureId ?? '(none)'} is not available now` }
+        : { actorId, reason: 'no-feature' });
+    }
+    return;
+  }
   if (!target) {
     if (explicit) {
       emitEvent(ctx, 'turn.rejected', {
@@ -411,6 +425,14 @@ async function resolveTurn(attacker, enemies, allies, scene, rng, prompts, ctx) 
     return;
   }
 
+  // M64 phase 1.5 — bonus-action features riding the plan (Rage, Second
+  // Wind) resolve before the swings.
+  if (attacker.kind === 'pc' && plan?.featuresFired?.length) {
+    for (const id of plan.featuresFired) {
+      if (PC_FEATURES[id]?.action === 'bonus') useFeature(attacker, id, { ctx, rng });
+    }
+    if (!isAlive(attacker)) return;
+  }
   // ---- 4. the Attack action ---------------------------------------------
   // M64 R10 — one Attack action makes every swing Extra Attack /
   // Multiattack grants. Action Surge adds a second Attack action right
@@ -607,6 +629,10 @@ async function runWeaponSwing(turn, target, weaponRef, index, shared, firstActio
       parts: [{ source: chosen?.name || 'Attack', value: a.bonus }],
       damageParts: []
     };
+    // M64 phase 1.5 — Rage: +2/+3/+4 on STR melee weapon attacks.
+    if (isRaging(attacker) && !a.ranged && a.ability === 'STR') {
+      attackStats.damageParts.push({ source: 'Rage', value: rageDamageBonus(attacker) });
+    }
     // M42 — Sneak Attack (once per turn: the first swing). M64 R1 — the
     // extra dice are appended AFTER the resolver (below) so its flat
     // combatMods damage fold still sees a single-term spec.
@@ -713,6 +739,8 @@ async function runWeaponSwing(turn, target, weaponRef, index, shared, firstActio
     atk.shielded = true;
   }
   emitAttackRolled(ctx, group, attacker, target, atk, { weapon: weaponUsed?.name ?? null, isReaction: false, mode: verdict.d20.mode, bonus: finalBonus });
+  // Attacking a hostile keeps a rage going.
+  if (attacker._rageSustained === false && isRaging(attacker)) attacker._rageSustained = true;
   // M64 T6 — re-check after the Shield await (a DM edit can land there).
   if (!isAlive(attacker) || !canHit(target, wasDying)) return 'blocked';
   const modifiers = {
@@ -1002,7 +1030,7 @@ export async function runMonsterSpell({ attacker, target, plan, scene, rng, witn
         if (!ep) continue;
         if (chebyshevFeet(center, ep) > (spell.range || 15)) continue;
         const eBonus = saveBonusFor(e, spell.saveStat);
-        const eSave = rollSave({ bonus: eBonus, dc: effectiveBook.dc }, rng);
+        const eSave = rollSave({ bonus: eBonus, dc: effectiveBook.dc, advantage: saveModeFor(e, spell.saveStat) }, rng);
         emitSave(ctx, group, e, spell.saveStat, eSave, 'spell');
         const dmgRoll = rollDamage(spell.dice, { crit: false }, rng);
         let dmg = dmgRoll.total;
@@ -1030,7 +1058,7 @@ export async function runMonsterSpell({ attacker, target, plan, scene, rng, witn
   // Save-based, single target
   const saveStat = spell.saveStat;
   const targetSaveBonus = saveBonusFor(target, saveStat);
-  let save = rollSave({ bonus: targetSaveBonus, dc: effectiveBook.dc }, rng);
+  let save = rollSave({ bonus: targetSaveBonus, dc: effectiveBook.dc, advantage: saveModeFor(target, saveStat) }, rng);
   if (prompts.onRoll) save = await reviewRoll(prompts, ctx, group, 'save', target, attacker, save);
   emitSave(ctx, group, target, saveStat, save, 'spell');
   const before = target.hp;
@@ -1221,7 +1249,7 @@ async function applyLegendaryAction(monster, pick, scene, rng, prompts, ctx, gro
       if (!ep) continue;
       if (chebyshevFeet(center, ep) > action.range) continue;
       const eBonus = saveBonusFor(e, action.saveStat);
-      const save = rollSave({ bonus: eBonus, dc: action.dc }, rng);
+      const save = rollSave({ bonus: eBonus, dc: action.dc, advantage: saveModeFor(e, action.saveStat) }, rng);
       emitSave(ctx, group, e, action.saveStat, save, 'legendary');
       const dmgRoll = rollDamage(action.dice, { crit: false }, rng);
       let dmg = dmgRoll.total;
@@ -1544,7 +1572,9 @@ export function applyDamageModifiers(target, amount, type) {
   if (!type || amount <= 0) return { amount, modifier: null };
   const t = String(type).toLowerCase();
   if (damageTypeList(target, 'immunities').includes(t)) return { amount: 0, modifier: 'immune' };
-  const resist = damageTypeList(target, 'resistances').includes(t);
+  // M64 phase 1.5 — Rage: resistance to bludgeoning, piercing, slashing.
+  const resist = damageTypeList(target, 'resistances').includes(t) ||
+    ((t === 'bludgeoning' || t === 'piercing' || t === 'slashing') && isRaging(target));
   const vuln = damageTypeList(target, 'vulnerabilities').includes(t);
   let out = amount;
   if (resist) out = Math.floor(out / 2);
@@ -1632,6 +1662,7 @@ export function applyDamage(target, amount, type = null, opts = {}) {
       }, group);
     }
     if (taken > 0) {
+      markRageSustained(target);
       deathSaveFailureFromDamage(target, taken, !!opts.crit, attacker, ctx, group);
     }
     return out;
@@ -1668,6 +1699,7 @@ export function applyDamage(target, amount, type = null, opts = {}) {
   } else if (checkConcentration) {
     concentrationCheck(target, out.amount, rng, ctx, group, roster);
   }
+  if (out.amount - out.absorbed > 0) markRageSustained(target);
   // 5. downed — M64 R9: a PC starts dying (or dies outright from massive
   // damage); a monster dies.
   if (out.downed) {
@@ -1675,6 +1707,61 @@ export function applyDamage(target, amount, type = null, opts = {}) {
     dropToZero(target, (out.amount - out.absorbed) - hpBefore, { ctx, group, attacker, roster });
   }
   return out;
+}
+
+// =====================================================================
+// M64 phase 1.5 — usable class features (the 'feature' action kind)
+// =====================================================================
+
+/**
+ * Use a class feature now (a 'feature' plan, or a bonus-action feature
+ * riding an attack plan). Second Wind: heal 1d10 + fighter level (once
+ * per short rest). Rage: the 'raging' condition `{sourceId: self, endsOn:
+ * 'encounter', appliedRound}`, one use of `_features.rage` (sheet
+ * featureUses, else the Barbarian table), concentration ends. Emits
+ * feature.used (+ resource.spent 'feature:rage' / heal). Returns false,
+ * changing nothing, when the feature is unknown or not available.
+ * @param {object} pc — PC wrapper (mutated)
+ * @param {string} featureId
+ * @param {{ctx?: object, rng: function, roster?: object[]|null}} opts
+ * @returns {boolean}
+ */
+export function useFeature(pc, featureId, { ctx = NO_CTX, rng, roster = null } = {}) {
+  const f = featureId ? PC_FEATURES[featureId] : null;
+  if (!pc || pc.kind !== 'pc' || !f || !f.action || !f.available(pc)) return false;
+  const entityId = idOf(pc);
+  if (featureId === 'second-wind') {
+    f.consume(pc);
+    emitEvent(ctx, 'feature.used', { entityId, featureId });
+    const roll = rollDamage(`1d10+${Math.max(1, classLevel(pc, 'Fighter'))}`, { crit: false }, rng);
+    applyHealing(pc, roll.total, { ctx, source: pc });
+    return true;
+  }
+  if (featureId === 'rage') {
+    if (!pc._features || typeof pc._features !== 'object') pc._features = featureLedgerFor(pc.ref || {});
+    if (!pc._features.rage) pc._features.rage = { max: ragesPerLongRest(pc), spent: 0 };
+    if (!spendUse(pc, 'rage')) return false;
+    emitEvent(ctx, 'feature.used', { entityId, featureId });
+    emitEvent(ctx, 'resource.spent', { entityId, resource: 'feature:rage', level: null });
+    if (isConcentrating(pc)) endConcentration(pc, 'ended', ctx, null, roster);
+    applyCondition(pc, {
+      id: 'raging', sourceId: entityId, endsOn: 'encounter',
+      appliedRound: Number.isInteger(ctx.round) ? ctx.round : null
+    }, { ctx, roster });
+    pc._rageSustained = true;
+    return true;
+  }
+  return false;
+}
+
+/** d20 mode for a creature's saving throw: Rage gives advantage on STR saves. */
+export function saveModeFor(entity, stat) {
+  return stat === 'STR' && isRaging(entity) ? 'advantage' : 'normal';
+}
+
+/** Taking damage keeps a rage going (sets the flag only on a raging creature). */
+function markRageSustained(target) {
+  if (target._rageSustained === false && isRaging(target)) target._rageSustained = true;
 }
 
 // =====================================================================
@@ -1942,6 +2029,11 @@ export function startOfTurnConditions(actor, ctx = NO_CTX) {
   for (const id of conditionIds(actor)) {
     if (conditionMeta(actor, id)?.endsOn === 'turn-start') removeCondition(actor, id, { ctx, reason: 'turn-start' });
   }
+  // M64 phase 1.5 — Rage lasts 1 minute (10 rounds).
+  if (isRaging(actor) && Number.isInteger(ctx.round)) {
+    const since = conditionMeta(actor, 'raging')?.appliedRound;
+    if (Number.isInteger(since) && ctx.round - since >= 10) removeCondition(actor, 'raging', { ctx, reason: 'rage-expired' });
+  }
 }
 
 /**
@@ -1960,6 +2052,12 @@ export function startOfTurnConditions(actor, ctx = NO_CTX) {
  * @param {object} [ctx]
  */
 export function endOfTurnConditions(actor, roster, rng, ctx = NO_CTX) {
+  // M64 phase 1.5 — Rage ends early when the barbarian neither attacked
+  // a hostile nor took damage since its last turn.
+  if (actor && actor._rageSustained !== undefined) {
+    if (isRaging(actor) && !actor._rageSustained) removeCondition(actor, 'raging', { ctx, reason: 'rage-lapsed' });
+    if (actor._rageSustained) actor._rageSustained = false;
+  }
   for (const id of conditionIds(actor)) {
     const meta = conditionMeta(actor, id);
     if (!meta) continue;
@@ -1968,7 +2066,7 @@ export function endOfTurnConditions(actor, roster, rng, ctx = NO_CTX) {
       continue;
     }
     if (!meta.save || !isAlive(actor)) continue;
-    const save = rollSave({ bonus: saveBonusFor(actor, meta.save.stat), dc: meta.save.dc }, rng);
+    const save = rollSave({ bonus: saveBonusFor(actor, meta.save.stat), dc: meta.save.dc, advantage: saveModeFor(actor, meta.save.stat) }, rng);
     emitSave(ctx, null, actor, meta.save.stat, save, 'condition');
     if (!save.success) continue;
     removeCondition(actor, id, { ctx, reason: 'save' });

@@ -67,8 +67,8 @@
         "targetId": "m-bugbear",
         "amount": 4,
         "type": "Slashing",
-        "hpBefore": 27,
-        "hpAfter": 23,
+        "hpBefore": 60,
+        "hpAfter": 56,
         "rolled": 4,
         "parts": {
           "weapon": 4
@@ -113,9 +113,9 @@
           {
             "entityId": "m-bugbear",
             "hp": {
-              "before": 27,
-              "after": 23,
-              "max": 27
+              "before": 60,
+              "after": 56,
+              "max": 60
             }
           }
         ],
@@ -176,8 +176,8 @@
         "targetId": "m-bugbear",
         "amount": 11,
         "type": "Slashing",
-        "hpBefore": 23,
-        "hpAfter": 12,
+        "hpBefore": 56,
+        "hpAfter": 45,
         "rolled": 11,
         "parts": {
           "weapon": 11
@@ -222,9 +222,9 @@
           {
             "entityId": "m-bugbear",
             "hp": {
-              "before": 23,
-              "after": 12,
-              "max": 27
+              "before": 56,
+              "after": 45,
+              "max": 60
             }
           }
         ],
@@ -296,8 +296,8 @@
         "targetId": "m-bugbear",
         "amount": 11,
         "type": "Slashing",
-        "hpBefore": 12,
-        "hpAfter": 1,
+        "hpBefore": 45,
+        "hpAfter": 34,
         "rolled": 11,
         "parts": {
           "weapon": 11
@@ -342,9 +342,9 @@
           {
             "entityId": "m-bugbear",
             "hp": {
-              "before": 12,
-              "after": 1,
-              "max": 27
+              "before": 45,
+              "after": 34,
+              "max": 60
             }
           }
         ],
@@ -403,10 +403,10 @@
       "payload": {
         "sourceId": "pc-fighter",
         "targetId": "m-bugbear",
-        "amount": 1,
+        "amount": 7,
         "type": "Slashing",
-        "hpBefore": 1,
-        "hpAfter": 0,
+        "hpBefore": 34,
+        "hpAfter": 27,
         "rolled": 7,
         "parts": {
           "weapon": 7
@@ -415,29 +415,6 @@
     },
     {
       "seq": 15,
-      "type": "entity.downed",
-      "round": 1,
-      "turnId": "t1",
-      "cinemaGroup": "t1.x2",
-      "payload": {
-        "entityId": "m-bugbear",
-        "byId": "pc-fighter"
-      }
-    },
-    {
-      "seq": 16,
-      "type": "entity.died",
-      "round": 1,
-      "turnId": "t1",
-      "cinemaGroup": "t1.x2",
-      "payload": {
-        "entityId": "m-bugbear",
-        "byId": "pc-fighter",
-        "cause": "monster"
-      }
-    },
-    {
-      "seq": 17,
       "type": "exchange",
       "round": 1,
       "turnId": "t1",
@@ -474,9 +451,9 @@
           {
             "entityId": "m-bugbear",
             "hp": {
-              "before": 1,
-              "after": 0,
-              "max": 27
+              "before": 34,
+              "after": 27,
+              "max": 60
             }
           }
         ],
@@ -494,7 +471,7 @@
           ],
           "smiteSlot": null,
           "attackerLevel": 5,
-          "killing": true,
+          "killing": false,
           "spell": null,
           "outcome": null,
           "fxSeed": 1851140601,
@@ -503,21 +480,21 @@
       }
     },
     {
-      "seq": 18,
+      "seq": 16,
       "type": "turn.ended",
       "round": 1,
       "turnId": "t1",
       "cinemaGroup": null,
       "payload": {
         "actorId": "pc-fighter",
-        "stateHash": "0b41dfe0ae873a",
+        "stateHash": "1e632479af5d77",
         "rngDraws": 9
       }
     }
   ],
   "final": {
     "m-bugbear": {
-      "hp": 0,
+      "hp": 27,
       "pos": {
         "col": 3,
         "row": 2

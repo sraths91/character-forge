@@ -67,6 +67,12 @@
  *        'reveal'|'hide'}` — the DM's fog brush (map/fog.js); a server
  *        without it answers E_UNKNOWN_TYPE until E3 wires it.
  *
+ *   v1.4 (2026-10-16, E1 M64 phase 1.5) — `turn.act.plan.featureId`
+ *        (optional): `{kind: 'feature', featureId: 'second-wind'|'rage'|…}`
+ *        uses a class feature as the turn (no move, no attack);
+ *        `features: [...]` on an attack plan still names bonus-action
+ *        features that ride the attack (Rage, then swing).
+ *
  * Client payloads are strict (unknown fields rejected); server payloads
  * enforce required fields and allow additive ones.
  *

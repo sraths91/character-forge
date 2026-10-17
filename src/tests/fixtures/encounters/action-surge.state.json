@@ -82,8 +82,8 @@
         "col": 3,
         "row": 2
       },
-      "hp": 27,
-      "hpMax": 27,
+      "hp": 60,
+      "hpMax": 60,
       "hpTemp": 0,
       "ac": 16,
       "speedFt": 30,

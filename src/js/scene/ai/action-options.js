@@ -25,6 +25,7 @@
  */
 
 import { isRangedWeapon, meleeReachFt } from '../grid-rules.js';
+import { PC_FEATURES } from './pc-features.js';
 
 /** Build the action menu for `entity`. The `_target` parameter is
  *  reserved for future target-aware option filtering (e.g. surface a
@@ -64,7 +65,33 @@ export function enumerateActions(entity, _target) {
     label: 'Dodge',     range: 0, baseScore: 0.1, gates: []
   });
 
+  // ---- M64 phase 1.5: usable class features ('feature' kind) ----
+  // Second Wind, Rage and later features with an `action` hook in
+  // pc-features. The plan is `{kind: 'feature', featureId}`; the engine
+  // resolves it with useFeature (no move, no attack).
+  for (const opt of featureOptionsFor(entity)) options.push(opt);
+
   return options;
+}
+
+/**
+ * The 'feature' action options a PC can take right now: every PC_FEATURES
+ * entry with an `action` ('bonus' | 'action') whose `available` holds.
+ * Monsters get none.
+ * @param {object} entity — PC wrapper (or parsed character)
+ * @returns {object[]} ActionOption[] of kind 'feature'
+ */
+export function featureOptionsFor(entity) {
+  if (!entity || entity.kind === 'monster' || entity.ref?._isMonster) return [];
+  const out = [];
+  for (const f of Object.values(PC_FEATURES)) {
+    if (!f.action || !f.available(entity)) continue;
+    out.push({
+      id: `feature:${f.id}`, kind: 'feature', featureId: f.id,
+      label: f.label, range: 0, baseScore: 0.1, gates: [], action: f.action
+    });
+  }
+  return out;
 }
 
 /**
