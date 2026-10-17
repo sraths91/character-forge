@@ -692,6 +692,29 @@ test('fogEventView: full / masked / redacted, moves across the fog edge, exchang
   assert.equal(fogVisibility(st, new Map([['h', { col: 1, row: 0 }]])).isVisible('h'), true);
 });
 
+test('[real] dm.encounter.setup stores the PC sheets with the encounter and no frame carries them', async () => {
+  const srv = await boot({ engineKind: 'real' });
+  try {
+    const t = await table(srv, 1);
+    const { dm, ps } = await connectAll(srv, t);
+    const r = await dm.send('dm.encounter.setup', SETUP);
+    assert.equal(r.t, 'ack');
+    await dm.send('dm.encounter.start', { seed: 2 });
+    await dm.find(m => m.t === 'turn.started');
+    const sheets = srv.journal.sheetsFor(r.p.encounterId);
+    const room = srv.registry.get(t.room.roomId);
+    const cid = room.enc.state.entities['pc-1'].sheetRef.characterId;
+    assert.deepEqual(Object.keys(sheets), [cid]);
+    assert.ok(Array.isArray(sheets[cid].classes) && sheets[cid].equipment, 'the parsed sheet is stored');
+    for (const c of [dm, ...ps]) {
+      const wire = JSON.stringify(c.frames);
+      assert.equal(wire.includes('"classes"'), false, `${c.name}: no sheet content on the wire`);
+      assert.ok(wire.includes('"sheetRef"'), `${c.name}: entities carry sheetRef`);
+    }
+    assertClean(dm, ...ps);
+  } finally { await srv.close(); }
+});
+
 test('[real] dm.spell.adjudicate: DM-only; slot from the ledger, damage / heal / conditions as events plus dm.override', async () => {
   const srv = await boot({ engineKind: 'real' });
   try {

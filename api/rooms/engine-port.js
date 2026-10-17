@@ -94,6 +94,10 @@ export const ENGINE_PORT_VERSION = 1;
  *   Rolls initiative if empty, round 1, turnIndex 0, phase 'running'.
  * @property {(state: EncounterState, ctx: TurnContext) => Promise<{state: EncounterState, events: EncounterEvent[]}>} runTurn
  *   One creature's turn, then advance turnIndex/round.
+ * @property {(state: EncounterState) => Record<string, object>} [sheetsFor]
+ *   Optional: the PC sheets (by sheetRef.characterId) an encounter fights with. The
+ *   room stores them with the encounter row at setup (encounters.sheets_json); they
+ *   are never broadcast. Engines without sheets (the stub) omit it.
  * @property {(state: EncounterState, intent: {actorId: string, plan: object}) => ({ok: true} | {ok: false, code: string, reason: string})} validateIntent
  * @property {(state: EncounterState, cmd: {type: string, payload: object}, ctx: {emit: TurnContext['emit'], rng: PortRng}) => {state: EncounterState, events: EncounterEvent[]}} applyDmCommand
  *   DM edits at a safe point: dm.entity.patch / add / remove, dm.terrain.paint,

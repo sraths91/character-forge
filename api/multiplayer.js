@@ -71,8 +71,10 @@ export async function startMultiplayerServer({
  * The engine port a server runs: the real engine (default) or, with
  * `CF_ENGINE=stub`, the Wave 3 stub (tests, tooling). The real engine
  * resolves PC sheets for encounters it did not build in this process
- * (boot recovery) from the room's seats, then from the character cache,
- * and Open5e stat blocks from the monster cache.
+ * (boot recovery, cache eviction) from the encounter row's `sheets_json`
+ * (migration 0003). Only an encounter built before 0003 falls back to the
+ * room's seats, then the character cache (logged). Open5e stat blocks
+ * come from the monster cache.
  * @param {object} o
  * @param {string|undefined} o.kind  'stub' | 'real' | undefined
  * @param {import('./db/database.js').DbHandle} o.db
@@ -83,12 +85,14 @@ export async function startMultiplayerServer({
 export function createEngine({ kind, db, store, log = () => {} }) {
   if (kind === 'stub') return createStubEngine();
   if (kind && kind !== 'real') throw new Error(`CF_ENGINE must be "real" or "stub", got "${kind}"`);
-  const roomOf = db.db.prepare('SELECT room_id FROM encounters WHERE id = ?');
+  const roomOf = db.db.prepare('SELECT room_id, sheets_json FROM encounters WHERE id = ?');
   return createRealEngine({
     log,
     resolveSheets(state) {
-      const out = {};
       const row = roomOf.get(state.encounterId);
+      if (row?.sheets_json) return JSON.parse(row.sheets_json);
+      log('warn', 'engine: encounter has no stored sheets (pre-0003); resolving from seats / character cache', { encounterId: state.encounterId });
+      const out = {};
       const seats = row ? store.listSeats(row.room_id) : [];
       for (const e of Object.values(state.entities)) {
         if (e.kind !== 'pc') continue;

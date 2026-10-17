@@ -63,11 +63,15 @@ it writes `<db>.pre-NNNN.bak` next to it (last 3 kept). It refuses to boot if
 an applied migration file was edited or the DB is newer than the code, so a
 rollback to an older build after a schema change needs the matching backup.
 
+Shipped: `0001_baseline`, `0002_multiplayer`, `0003_encounter_sheets` (adds the
+nullable `encounters.sheets_json`: the PC sheets an encounter was built with,
+so restart recovery no longer reads the seats or the character cache).
+
 ### 4. Health check
 Railway uses `GET /api/health` (configured in `railway.json`). It runs
 `SELECT 1` against the database and returns:
 ```json
-{ "ok": true, "time": 1715432100000, "migrationVersion": 2, "dataDir": "/app/data", "sockets": 0, "connections": 0, "rooms": 0 }
+{ "ok": true, "time": 1715432100000, "migrationVersion": 3, "dataDir": "/app/data", "sockets": 0, "connections": 0, "rooms": 0 }
 ```
 (`sockets` / `connections` / `rooms` only with `CF_MULTIPLAYER=1`.)
 `sockets` counts authenticated table members online; `connections` counts

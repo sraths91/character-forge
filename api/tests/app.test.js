@@ -10,6 +10,10 @@ import { join } from 'node:path';
 import { openDb, ITEM_GENERATOR_VERSION } from '../db/database.js';
 import { createApp } from '../app.js';
 import { startServer } from '../start.js';
+import { loadMigrations } from '../db/migrate.js';
+
+/** The newest shipped migration (the health endpoint's migrationVersion). */
+const LATEST_MIGRATION = loadMigrations().at(-1).version;
 
 const quiet = () => {};
 const root = mkdtempSync(join(tmpdir(), 'cf-app-'));
@@ -32,7 +36,7 @@ test('boots on port 0, serves /api/health, and closes cleanly', async () => {
   assert.equal(res.status, 200);
   const body = await res.json();
   assert.equal(body.ok, true);
-  assert.equal(body.migrationVersion, 2);
+  assert.equal(body.migrationVersion, LATEST_MIGRATION);
   assert.equal(body.dataDir, srv.dir);
   await srv.close();
   await srv.close(); // idempotent
@@ -123,7 +127,7 @@ test('/api/health reports an injected dataDir', async () => {
   try {
     const body = await (await fetch(`${srv.url}/api/health`)).json();
     assert.deepEqual({ ok: body.ok, migrationVersion: body.migrationVersion, dataDir: body.dataDir },
-      { ok: true, migrationVersion: 2, dataDir: '/app/data' });
+      { ok: true, migrationVersion: LATEST_MIGRATION, dataDir: '/app/data' });
     assert.equal(typeof body.time, 'number');
   } finally {
     await srv.close();

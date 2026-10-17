@@ -9,6 +9,10 @@
 // answers stand in for the players, so the replay reproduces the log and
 // continues live from where it stopped.
 //
+// The PC sheets an encounter was built with are written once, at setup
+// (encounters.sheets_json, migration 0003), and read back by the engine's
+// sheet resolver after a restart. They never leave the server.
+//
 // Statements are prepared once. Write times are sampled; the p99 is
 // logged every `reportEvery` flushes with a warning above `budgetMs`
 // (5 ms on Railway's volume).
@@ -20,7 +24,7 @@ export const WRITE_BUDGET_MS = 5;
 
 /**
  * @param {object} o
- * @param {import('better-sqlite3').Database} o.db  migrated connection (>= 0002)
+ * @param {import('better-sqlite3').Database} o.db  migrated connection (>= 0003)
  * @param {(level: string, msg: string, extra?: object) => void} [o.log]
  * @param {() => number} [o.now=Date.now]
  * @param {number} [o.budgetMs=WRITE_BUDGET_MS]
@@ -33,8 +37,9 @@ export function createSqliteJournal({
 }) {
   const q = {
     insertEncounter: db.prepare(`
-      INSERT INTO encounters (id, room_id, status, engine_version, snapshot_json, snapshot_seq, head_seq, created_at, updated_at)
-      VALUES (?, ?, 'setup', ?, ?, 0, 0, ?, ?)`),
+      INSERT INTO encounters (id, room_id, status, engine_version, snapshot_json, sheets_json, snapshot_seq, head_seq, created_at, updated_at)
+      VALUES (?, ?, 'setup', ?, ?, ?, 0, 0, ?, ?)`),
+    sheets: db.prepare('SELECT sheets_json FROM encounters WHERE id = ?'),
     setStatus: db.prepare(`
       UPDATE encounters SET status = ?, outcome = COALESCE(?, outcome), updated_at = ?,
         ended_at = CASE WHEN ? IN ('ended', 'abandoned') THEN ? ELSE ended_at END
@@ -82,10 +87,25 @@ export function createSqliteJournal({
   });
 
   return {
-    /** Insert a new encounter in 'setup'. */
-    createEncounter({ roomId, encounterId, state, engineVersion }) {
+    /**
+     * Insert a new encounter in 'setup'.
+     * @param {{roomId: string, encounterId: string, state: object, engineVersion: number,
+     *   sheets?: Record<string, object>|null}} o  sheets by sheetRef.characterId
+     */
+    createEncounter({ roomId, encounterId, state, engineVersion, sheets = null }) {
       const t = now();
-      q.insertEncounter.run(encounterId, roomId, engineVersion, JSON.stringify(state), t, t);
+      q.insertEncounter.run(encounterId, roomId, engineVersion, JSON.stringify(state), sheets ? JSON.stringify(sheets) : null, t, t);
+    },
+
+    /**
+     * The PC sheets stored with an encounter, or null (none stored: built
+     * before migration 0003, or by an engine without sheets).
+     * @param {string} encounterId
+     * @returns {Record<string, object>|null}
+     */
+    sheetsFor(encounterId) {
+      const row = q.sheets.get(encounterId);
+      return row?.sheets_json ? JSON.parse(row.sheets_json) : null;
     },
 
     /** Change an encounter's status ('ended' / 'abandoned' stamp ended_at). */

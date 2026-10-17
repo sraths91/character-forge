@@ -1053,7 +1053,10 @@ export class Room {
     }
     const v = validateEncounterState(state);
     if (!v.ok) throw new IntentError('E_INVALID_INTENT', `setup produced an invalid state: ${v.errors[0].path} ${v.errors[0].message}`);
-    this.journal.createEncounter({ roomId: this.id, encounterId, state, engineVersion: this.engine.version });
+    // The PC sheets ride with the encounter row (never with a broadcast) so
+    // boot recovery does not depend on the seats or the character cache.
+    const sheets = typeof this.engine.sheetsFor === 'function' ? this.engine.sheetsFor(state) : null;
+    this.journal.createEncounter({ roomId: this.id, encounterId, state, engineVersion: this.engine.version, sheets });
     this.enc = { id: encounterId, state, status: 'setup', liveState: null, history: [], outcome: null };
     this.lastEventSeq = 0;
     this.store.setRoomStatus(this.id, 'active');
