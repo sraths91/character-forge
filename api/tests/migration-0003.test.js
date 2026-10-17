@@ -38,7 +38,8 @@ test('0003 upgrades a 0002 database: sheets_json is added, NULL on existing rows
   assert.equal(db.prepare('PRAGMA table_info(encounters)').all().some(c => c.name === 'sheets_json'), false);
 
   const res = await runMigrations(db, { log: () => {} });
-  assert.deepEqual(res.applied, ['0003_encounter_sheets.sql']);
+  assert.deepEqual(res.applied, loadMigrations().filter(m => m.version > 2).map(m => m.name));
+  assert.equal(res.applied[0], '0003_encounter_sheets.sql');
   assert.equal(res.version, loadMigrations().at(-1).version);
   assert.ok(res.backupPath, 'a populated DB is backed up before 0003');
   const col = db.prepare('PRAGMA table_info(encounters)').all().find(c => c.name === 'sheets_json');

@@ -65,13 +65,16 @@ rollback to an older build after a schema change needs the matching backup.
 
 Shipped: `0001_baseline`, `0002_multiplayer`, `0003_encounter_sheets` (adds the
 nullable `encounters.sheets_json`: the PC sheets an encounter was built with,
-so restart recovery no longer reads the seats or the character cache).
+so restart recovery no longer reads the seats or the character cache) and
+`0004_character_import_sessions` (which browser session imported which
+character; `GET /api/characters/:ddbId` serves rules prose only to that
+session, the room's DM / importer / seat, see below).
 
 ### 4. Health check
 Railway uses `GET /api/health` (configured in `railway.json`). It runs
 `SELECT 1` against the database and returns:
 ```json
-{ "ok": true, "time": 1715432100000, "migrationVersion": 3, "dataDir": "/app/data", "sockets": 0, "connections": 0, "rooms": 0 }
+{ "ok": true, "time": 1715432100000, "migrationVersion": 4, "dataDir": "/app/data", "sockets": 0, "connections": 0, "rooms": 0 }
 ```
 (`sockets` / `connections` / `rooms` only with `CF_MULTIPLAYER=1`.)
 `sockets` counts authenticated table members online; `connections` counts

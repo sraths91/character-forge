@@ -22,7 +22,7 @@ import { searchOpen5eCreatures, fetchOpen5eCreature, toSummary } from './lib/ope
 import { createRoomService } from './rooms/service.js';
 import { mountRoomRoutes } from './rooms/http.js';
 import { mountMapRoutes } from './rooms/maps.js';
-import { bearerToken } from './rooms/tokens.js';
+import { bearerToken, generateToken, hashToken } from './rooms/tokens.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -60,6 +60,27 @@ export class HttpError extends Error {
     this.status = status;
     this.code = code;
   }
+}
+
+/** httpOnly cookie naming the browser session that imported a character. */
+export const IMPORT_SESSION_COOKIE = 'cf_session';
+const SESSION_RE = /^[A-Za-z0-9_-]{16,128}$/;
+/** Keys holding rules prose (D&D Beyond feature / spell text, often non-SRD). */
+const PROSE_KEYS = new Set(['description', 'snippet']);
+
+/**
+ * A parsed sheet without its rules prose: every `description` / `snippet`
+ * key at any depth removed (classFeatures[].description today). Mechanics,
+ * equipment and appearance stay, so the sheet still renders and bakes.
+ * @param {unknown} v
+ * @returns {unknown}
+ */
+export function stripSheetProse(v) {
+  if (Array.isArray(v)) return v.map(stripSheetProse);
+  if (!v || typeof v !== 'object') return v;
+  const out = {};
+  for (const [k, x] of Object.entries(v)) if (!PROSE_KEYS.has(k)) out[k] = stripSheetProse(x);
+  return out;
 }
 
 const REQ_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
@@ -173,6 +194,32 @@ export function createApp({
   app.use('/api', express.json({ limit: '2mb' }));
   app.use(cookieParser());
 
+  // Import sessions (migration 0004): which browser imported which sheet.
+  const sessionQ = {
+    add: db.db.prepare('INSERT OR IGNORE INTO character_import_sessions (character_id, session_hash, created_at) VALUES (?, ?, ?)'),
+    has: db.db.prepare('SELECT 1 FROM character_import_sessions WHERE character_id = ? AND session_hash = ?'),
+    importer: db.db.prepare('SELECT 1 FROM room_characters WHERE room_id = ? AND character_id = ? AND participant_id = ?'),
+    seated: db.db.prepare('SELECT 1 FROM party_slots WHERE room_id = ? AND character_id = ? AND controller_participant_id = ?')
+  };
+  /** The caller's import session id (cookie), or null. */
+  function sessionOf(req) {
+    const s = req.cookies?.[IMPORT_SESSION_COOKIE];
+    return typeof s === 'string' && SESSION_RE.test(s) ? s : null;
+  }
+  /** The caller's session id, minting the cookie on first import. */
+  function ensureSession(req, res) {
+    let s = sessionOf(req);
+    if (!s) {
+      s = generateToken();
+      res.cookie(IMPORT_SESSION_COOKIE, s, { httpOnly: true, sameSite: 'lax', secure: PROD, path: '/api', maxAge: 365 * 24 * 3600 * 1000 });
+    }
+    return s;
+  }
+  function importedBySession(req, characterRowId) {
+    const s = sessionOf(req);
+    return !!s && !!sessionQ.has.get(characterRowId, hashToken(s));
+  }
+
   /** Resolve the bearer token to a member, optionally of a specific room. */
   function memberOf(req, roomId) {
     const m = roomStore.authenticate(bearerToken(req));
@@ -253,6 +300,7 @@ export function createApp({
       });
       if (!row) throw new HttpError(409, 'IMPORT_CONFLICT', 'A character imported from D&D Beyond already uses this id');
       if (member) roomStore.addRoomCharacter({ roomId: member.roomId, characterId: row.id, participantId: member.participantId });
+      sessionQ.add.run(row.id, hashToken(ensureSession(req, res)), Date.now());
 
       res.json({ character: parsed, previous, source });
     } catch (err) {
@@ -261,10 +309,37 @@ export function createApp({
     }
   });
 
-  app.get('/api/characters/:ddbId', (req, res) => {
-    const row = getCharacterByDdbId(req.params.ddbId);
-    if (!row) return res.status(404).json({ error: 'Not found', code: 'NOT_FOUND' });
-    res.json({ character: row.parsed });
+  /**
+   * GET /api/characters/:ddbId — one parsed sheet.
+   *  - With a member token (any mode): only a character in the caller's
+   *    room (else 404). The DM, the member who imported it and the seat
+   *    that controls it get the full sheet; other members of the room get
+   *    it with rules prose stripped (`prose: 'stripped'`), enough to bake
+   *    a teammate's sprite.
+   *  - Without a token: the browser session that imported the character
+   *    gets the full sheet. In multiplayer mode nobody else is served
+   *    (401). Single-player keeps serving everyone else, prose stripped.
+   */
+  app.get('/api/characters/:ddbId', (req, res, next) => {
+    const ddbId = req.params.ddbId;
+    const notFound = () => res.status(404).json({ error: 'Not found', code: 'NOT_FOUND' });
+    const send = (parsed, full) => res.json(full ? { character: parsed } : { character: stripSheetProse(parsed), prose: 'stripped' });
+    if (bearerToken(req)) {
+      const m = roomStore.authenticate(bearerToken(req));
+      if (!m) return next(new HttpError(401, 'UNAUTHENTICATED', 'Unknown or revoked token'));
+      const rc = roomStore.getRoomCharacter(m.roomId, ddbId);
+      if (!rc) return notFound();
+      const full = m.role === 'dm'
+        || !!sessionQ.importer.get(m.roomId, rc.id, m.participantId)
+        || !!sessionQ.seated.get(m.roomId, rc.id, m.participantId)
+        || importedBySession(req, rc.id);
+      return send(rc.parsed, full);
+    }
+    const row = getCharacterByDdbId(ddbId);
+    const mine = !!row && importedBySession(req, row.id);
+    if (MULTIPLAYER && !mine) return next(new HttpError(401, 'UNAUTHENTICATED', 'A member token for the character\'s room is required'));
+    if (!row) return notFound();
+    send(row.parsed, mine);
   });
 
   // P0-10 / F2: the global "recent imports" list leaks every table's
