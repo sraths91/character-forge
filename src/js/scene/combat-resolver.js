@@ -38,6 +38,10 @@ import {
   isRangedWeapon
 } from './grid-rules.js';
 import { evaluateFeatures } from './class-feature-rules.js';
+import { coverBetween } from './grid-legality.js';
+
+/** AC bonus per cover degree (PHB p196). */
+export const COVER_AC_BONUS = Object.freeze({ none: 0, half: 2, threeQuarters: 5, total: 0 });
 
 // Re-export grid distance + ranged-detection helpers so existing M11
 // callers (and tests importing from combat-resolver) keep working.
@@ -151,6 +155,18 @@ export function resolveAttack(ctx) {
     }
   }
 
+  // --- M64 phase 1.5: cover (only with a terrain layer) ---
+  // grid-legality.coverBetween: walls / obstacles by their cover flag,
+  // other creatures (`ctx.coverEntities`) half cover. Half +2 AC,
+  // three-quarters +5, total = no line (refused). Terrain-free scenes
+  // compute nothing here, so their results are unchanged.
+  let cover = 'none';
+  if (scene?.terrain && attackerPos && targetPos) {
+    cover = coverBetween(scene.terrain, ctx.coverEntities || [], attackerPos, targetPos);
+    if (cover === 'total') blockers.push('Target has total cover (no line of effect)');
+  }
+  const coverBonus = COVER_AC_BONUS[cover] || 0;
+
   // --- d20 mode: collect advantage + disadvantage reasons ---
   const advReasons = [];
   const disReasons = [];
@@ -255,7 +271,8 @@ export function resolveAttack(ctx) {
     autoCritReason,
     autoMiss: blockers.length > 0,
     blockers,
-    targetAC: targetAC ?? 10,
+    targetAC: (targetAC ?? 10) + coverBonus,
+    cover,
     weaponIsRanged: ranged,
     features
   };
