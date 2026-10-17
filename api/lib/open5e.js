@@ -14,6 +14,17 @@
  * request reads from SQLite.
  */
 
+// M64 R11 — the stat-block normaliser is shared with the browser.
+export {
+  normalizeCreature,
+  engineAttacksFrom,
+  withEngineFields,
+  isNormalizedStatBlock,
+  parseMultiattack,
+  proficiencyForCr,
+  OPEN5E_SOURCE
+} from '../../src/js/scene/open5e-normalize.js';
+
 const OPEN5E_HOST = 'https://api.open5e.com';
 
 /** Upstream request budget (M64 B4). */

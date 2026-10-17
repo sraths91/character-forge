@@ -30,6 +30,7 @@ import { isLegendary, freshLegendaryBudget } from './monster-legendary.js';
 import { deriveAC } from './pc-stats.js';
 import { slotsForPc, pactForPc } from './reactions.js';
 import { wrapperConditions, normalizeCondition, hasLifecycle } from './conditions.js';
+import { withEngineFields } from './open5e-normalize.js';
 
 /** Wrapper fields that are recomputed per turn and never persisted. */
 export const TRANSIENT_WRAPPER_FIELDS = Object.freeze([
@@ -422,7 +423,9 @@ export function entityFromSheet(sheet, opts) {
 /**
  * A fresh monster entity from a MONSTER_PRESETS slug, optionally with an
  * imported stat block (`{name, ac, hpMax, attacks[], saves{}, profile}`)
- * layered over the preset.
+ * layered over the preset. A normalised Open5e block (`normalizeCreature`,
+ * M64 R11) also gets `hpMax` from `hp.average` and engine `attacks[]`
+ * from its weapon actions when the caller has not set them.
  *
  * @param {string} slug — preset slug (also the sprite)
  * @param {{id: string, side?: 'party'|'hostile', pos: {col: number, row: number},
@@ -432,7 +435,7 @@ export function entityFromSheet(sheet, opts) {
 export function entityFromPreset(slug, opts) {
   const preset = MONSTER_PRESETS[slug];
   if (!preset) throw new Error(`encounter-adapters: unknown monster preset "${slug}"`);
-  const sb = opts?.statBlock ? clone(opts.statBlock) : {};
+  const sb = opts?.statBlock ? withEngineFields(clone(opts.statBlock)) : {};
   const max = Math.max(1, Math.trunc(sb.hpMax ?? preset.defaultHp?.max ?? 1));
   return {
     id: String(opts.id),

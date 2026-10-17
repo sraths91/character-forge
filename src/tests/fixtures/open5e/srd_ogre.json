@@ -1,0 +1,145 @@
+{
+  "key": "srd_ogre",
+  "name": "Ogre",
+  "document": {
+    "key": "srd-2014",
+    "name": "System Reference Document 5.1"
+  },
+  "type": {
+    "name": "Giant",
+    "key": "giant"
+  },
+  "size": {
+    "name": "Large",
+    "key": "large"
+  },
+  "challenge_rating": 2.0,
+  "proficiency_bonus": null,
+  "speed": {
+    "walk": 40,
+    "unit": "feet"
+  },
+  "armor_class": 11,
+  "armor_detail": "hide armor",
+  "hit_points": 59,
+  "hit_dice": "7d10+21",
+  "experience_points": 450,
+  "ability_scores": {
+    "strength": 19,
+    "dexterity": 8,
+    "constitution": 16,
+    "intelligence": 5,
+    "wisdom": 7,
+    "charisma": 7
+  },
+  "modifiers": {
+    "strength": 4,
+    "dexterity": -1,
+    "constitution": 3,
+    "intelligence": -3,
+    "wisdom": -2,
+    "charisma": -2
+  },
+  "saving_throws": {},
+  "saving_throws_all": {
+    "strength": 4,
+    "dexterity": -1,
+    "constitution": 3,
+    "intelligence": -3,
+    "wisdom": -2,
+    "charisma": -2
+  },
+  "skill_bonuses": {},
+  "passive_perception": 8,
+  "resistances_and_immunities": {
+    "damage_immunities_display": "",
+    "damage_immunities": [],
+    "damage_resistances_display": "",
+    "damage_resistances": [],
+    "damage_vulnerabilities_display": "",
+    "damage_vulnerabilities": [],
+    "condition_immunities_display": "",
+    "condition_immunities": []
+  },
+  "darkvision_range": 60,
+  "blindsight_range": null,
+  "tremorsense_range": null,
+  "truesight_range": null,
+  "actions": [
+    {
+      "name": "Greatclub",
+      "desc": "Melee Weapon Attack: +6 to hit, reach 5 ft., one target. Hit: 13 (2d8 + 4) bludgeoning damage.",
+      "attacks": [
+        {
+          "attack_type": "WEAPON",
+          "to_hit_mod": 6,
+          "reach": 5,
+          "range": null,
+          "long_range": null,
+          "damage_die_count": 2,
+          "damage_die_type": "D8",
+          "damage_bonus": null,
+          "damage_type": {
+            "name": "Thunder",
+            "key": "thunder"
+          },
+          "extra_damage_die_count": null,
+          "extra_damage_die_type": null,
+          "extra_damage_bonus": null,
+          "extra_damage_type": null
+        }
+      ],
+      "action_type": "ACTION",
+      "order_in_statblock": 0,
+      "legendary_action_cost": 1,
+      "usage_limits": null
+    },
+    {
+      "name": "Javelin",
+      "desc": "Melee or Ranged Weapon Attack: +6 to hit, reach 5 ft. or range 30/120 ft., one target. Hit: 11 (2d6 + 4) piercing damage.",
+      "attacks": [
+        {
+          "attack_type": "WEAPON",
+          "to_hit_mod": 6,
+          "reach": 5,
+          "range": 30,
+          "long_range": 120,
+          "damage_die_count": 2,
+          "damage_die_type": "D6",
+          "damage_bonus": null,
+          "damage_type": {
+            "name": "Thunder",
+            "key": "thunder"
+          },
+          "extra_damage_die_count": null,
+          "extra_damage_die_type": null,
+          "extra_damage_bonus": null,
+          "extra_damage_type": null
+        },
+        {
+          "attack_type": "WEAPON",
+          "to_hit_mod": 6,
+          "reach": null,
+          "range": 30,
+          "long_range": 120,
+          "damage_die_count": 2,
+          "damage_die_type": "D6",
+          "damage_bonus": null,
+          "damage_type": {
+            "name": "Thunder",
+            "key": "thunder"
+          },
+          "extra_damage_die_count": null,
+          "extra_damage_die_type": null,
+          "extra_damage_bonus": null,
+          "extra_damage_type": null
+        }
+      ],
+      "action_type": "ACTION",
+      "order_in_statblock": 1,
+      "legendary_action_cost": 1,
+      "usage_limits": null
+    }
+  ],
+  "traits": []
+}

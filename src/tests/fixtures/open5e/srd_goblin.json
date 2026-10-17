@@ -1,0 +1,134 @@
+{
+  "key": "srd_goblin",
+  "name": "Goblin",
+  "document": {
+    "key": "srd-2014",
+    "name": "System Reference Document 5.1"
+  },
+  "type": {
+    "name": "Humanoid",
+    "key": "humanoid"
+  },
+  "size": {
+    "name": "Small",
+    "key": "small"
+  },
+  "challenge_rating": 0.25,
+  "proficiency_bonus": null,
+  "speed": {
+    "walk": 30,
+    "unit": "feet"
+  },
+  "armor_class": 15,
+  "armor_detail": "leather armor, shield",
+  "hit_points": 7,
+  "hit_dice": "2d6",
+  "experience_points": 50,
+  "ability_scores": {
+    "strength": 8,
+    "dexterity": 14,
+    "constitution": 10,
+    "intelligence": 10,
+    "wisdom": 8,
+    "charisma": 8
+  },
+  "modifiers": {
+    "strength": -1,
+    "dexterity": 2,
+    "constitution": 0,
+    "intelligence": 0,
+    "wisdom": -1,
+    "charisma": -1
+  },
+  "saving_throws": {},
+  "saving_throws_all": {
+    "strength": -1,
+    "dexterity": 2,
+    "constitution": 0,
+    "intelligence": 0,
+    "wisdom": -1,
+    "charisma": -1
+  },
+  "skill_bonuses": {
+    "stealth": 6
+  },
+  "passive_perception": 9,
+  "resistances_and_immunities": {
+    "damage_immunities_display": "",
+    "damage_immunities": [],
+    "damage_resistances_display": "",
+    "damage_resistances": [],
+    "damage_vulnerabilities_display": "",
+    "damage_vulnerabilities": [],
+    "condition_immunities_display": "",
+    "condition_immunities": []
+  },
+  "darkvision_range": 60,
+  "blindsight_range": null,
+  "tremorsense_range": null,
+  "truesight_range": null,
+  "actions": [
+    {
+      "name": "Scimitar",
+      "desc": "Melee Weapon Attack: +4 to hit, reach 5 ft., one target. Hit: 5 (1d6 + 2) slashing damage.",
+      "attacks": [
+        {
+          "attack_type": "WEAPON",
+          "to_hit_mod": 4,
+          "reach": 5,
+          "range": null,
+          "long_range": null,
+          "damage_die_count": 1,
+          "damage_die_type": "D6",
+          "damage_bonus": null,
+          "damage_type": {
+            "name": "Thunder",
+            "key": "thunder"
+          },
+          "extra_damage_die_count": null,
+          "extra_damage_die_type": null,
+          "extra_damage_bonus": null,
+          "extra_damage_type": null
+        }
+      ],
+      "action_type": "ACTION",
+      "order_in_statblock": 0,
+      "legendary_action_cost": 1,
+      "usage_limits": null
+    },
+    {
+      "name": "Shortbow",
+      "desc": "Ranged Weapon Attack: +4 to hit, range 80/320 ft., one target. Hit: 5 (1d6 + 2) piercing damage.",
+      "attacks": [
+        {
+          "attack_type": "WEAPON",
+          "to_hit_mod": 4,
+          "reach": null,
+          "range": 80,
+          "long_range": 320,
+          "damage_die_count": 1,
+          "damage_die_type": "D6",
+          "damage_bonus": null,
+          "damage_type": {
+            "name": "Thunder",
+            "key": "thunder"
+          },
+          "extra_damage_die_count": null,
+          "extra_damage_die_type": null,
+          "extra_damage_bonus": null,
+          "extra_damage_type": null
+        }
+      ],
+      "action_type": "ACTION",
+      "order_in_statblock": 1,
+      "legendary_action_cost": 1,
+      "usage_limits": null
+    }
+  ],
+  "traits": [
+    {
+      "name": "Nimble Escape",
+      "desc": "The goblin can take the Disengage or Hide action as a bonus action on each of its turns."
+    }
+  ]
+}

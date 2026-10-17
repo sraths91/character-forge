@@ -1,0 +1,107 @@
+{
+  "key": "srd_cultist",
+  "name": "Cultist",
+  "document": {
+    "key": "srd-2014",
+    "name": "System Reference Document 5.1"
+  },
+  "type": {
+    "name": "Humanoid",
+    "key": "humanoid"
+  },
+  "size": {
+    "name": "Medium",
+    "key": "medium"
+  },
+  "challenge_rating": 0.125,
+  "proficiency_bonus": null,
+  "speed": {
+    "walk": 30,
+    "unit": "feet"
+  },
+  "armor_class": 12,
+  "armor_detail": "leather armor",
+  "hit_points": 9,
+  "hit_dice": "2d8",
+  "experience_points": 25,
+  "ability_scores": {
+    "strength": 11,
+    "dexterity": 12,
+    "constitution": 10,
+    "intelligence": 10,
+    "wisdom": 11,
+    "charisma": 10
+  },
+  "modifiers": {
+    "strength": 0,
+    "dexterity": 1,
+    "constitution": 0,
+    "intelligence": 0,
+    "wisdom": 0,
+    "charisma": 0
+  },
+  "saving_throws": {},
+  "saving_throws_all": {
+    "strength": 0,
+    "dexterity": 1,
+    "constitution": 0,
+    "intelligence": 0,
+    "wisdom": 0,
+    "charisma": 0
+  },
+  "skill_bonuses": {
+    "deception": 2,
+    "religion": 2
+  },
+  "passive_perception": 10,
+  "resistances_and_immunities": {
+    "damage_immunities_display": "",
+    "damage_immunities": [],
+    "damage_resistances_display": "",
+    "damage_resistances": [],
+    "damage_vulnerabilities_display": "",
+    "damage_vulnerabilities": [],
+    "condition_immunities_display": "",
+    "condition_immunities": []
+  },
+  "darkvision_range": null,
+  "blindsight_range": null,
+  "tremorsense_range": null,
+  "truesight_range": null,
+  "actions": [
+    {
+      "name": "Scimitar",
+      "desc": "Melee Weapon Attack: +3 to hit, reach 5 ft., one creature. Hit: 4 (1d6 + 1) slashing damage.",
+      "attacks": [
+        {
+          "attack_type": "WEAPON",
+          "to_hit_mod": 3,
+          "reach": 5,
+          "range": null,
+          "long_range": null,
+          "damage_die_count": 1,
+          "damage_die_type": "D6",
+          "damage_bonus": null,
+          "damage_type": {
+            "name": "Thunder",
+            "key": "thunder"
+          },
+          "extra_damage_die_count": null,
+          "extra_damage_die_type": null,
+          "extra_damage_bonus": null,
+          "extra_damage_type": null
+        }
+      ],
+      "action_type": "ACTION",
+      "order_in_statblock": 0,
+      "legendary_action_cost": 1,
+      "usage_limits": null
+    }
+  ],
+  "traits": [
+    {
+      "name": "Dark Devotion",
+      "desc": "The cultist has advantage on saving throws against being charmed or frightened."
+    }
+  ]
+}

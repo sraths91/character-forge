@@ -1,0 +1,143 @@
+{
+  "key": "srd_owlbear",
+  "name": "Owlbear",
+  "document": {
+    "key": "srd-2014",
+    "name": "System Reference Document 5.1"
+  },
+  "type": {
+    "name": "Monstrosity",
+    "key": "monstrosity"
+  },
+  "size": {
+    "name": "Large",
+    "key": "large"
+  },
+  "challenge_rating": 3.0,
+  "proficiency_bonus": null,
+  "speed": {
+    "walk": 40,
+    "unit": "feet"
+  },
+  "armor_class": 13,
+  "armor_detail": "natural armor",
+  "hit_points": 59,
+  "hit_dice": "7d10+21",
+  "experience_points": 700,
+  "ability_scores": {
+    "strength": 20,
+    "dexterity": 12,
+    "constitution": 17,
+    "intelligence": 3,
+    "wisdom": 12,
+    "charisma": 7
+  },
+  "modifiers": {
+    "strength": 5,
+    "dexterity": 1,
+    "constitution": 3,
+    "intelligence": -4,
+    "wisdom": 1,
+    "charisma": -2
+  },
+  "saving_throws": {},
+  "saving_throws_all": {
+    "strength": 5,
+    "dexterity": 1,
+    "constitution": 3,
+    "intelligence": -4,
+    "wisdom": 1,
+    "charisma": -2
+  },
+  "skill_bonuses": {
+    "perception": 3
+  },
+  "passive_perception": 13,
+  "resistances_and_immunities": {
+    "damage_immunities_display": "",
+    "damage_immunities": [],
+    "damage_resistances_display": "",
+    "damage_resistances": [],
+    "damage_vulnerabilities_display": "",
+    "damage_vulnerabilities": [],
+    "condition_immunities_display": "",
+    "condition_immunities": []
+  },
+  "darkvision_range": 60,
+  "blindsight_range": null,
+  "tremorsense_range": null,
+  "truesight_range": null,
+  "actions": [
+    {
+      "name": "Beak",
+      "desc": "Melee Weapon Attack: +7 to hit, reach 5 ft., one creature. Hit: 10 (1d10 + 5) piercing damage.",
+      "attacks": [
+        {
+          "attack_type": "WEAPON",
+          "to_hit_mod": 7,
+          "reach": 5,
+          "range": null,
+          "long_range": null,
+          "damage_die_count": 1,
+          "damage_die_type": "D10",
+          "damage_bonus": null,
+          "damage_type": {
+            "name": "Thunder",
+            "key": "thunder"
+          },
+          "extra_damage_die_count": null,
+          "extra_damage_die_type": null,
+          "extra_damage_bonus": null,
+          "extra_damage_type": null
+        }
+      ],
+      "action_type": "ACTION",
+      "order_in_statblock": 1,
+      "legendary_action_cost": 1,
+      "usage_limits": null
+    },
+    {
+      "name": "Claws",
+      "desc": "Melee Weapon Attack: +7 to hit, reach 5 ft., one target. Hit: 14 (2d8 + 5) slashing damage.",
+      "attacks": [
+        {
+          "attack_type": "WEAPON",
+          "to_hit_mod": 7,
+          "reach": 5,
+          "range": null,
+          "long_range": null,
+          "damage_die_count": 2,
+          "damage_die_type": "D8",
+          "damage_bonus": null,
+          "damage_type": {
+            "name": "Thunder",
+            "key": "thunder"
+          },
+          "extra_damage_die_count": null,
+          "extra_damage_die_type": null,
+          "extra_damage_bonus": null,
+          "extra_damage_type": null
+        }
+      ],
+      "action_type": "ACTION",
+      "order_in_statblock": 2,
+      "legendary_action_cost": 1,
+      "usage_limits": null
+    },
+    {
+      "name": "Multiattack",
+      "desc": "The owlbear makes two attacks: one with its beak and one with its claws.",
+      "attacks": [],
+      "action_type": "ACTION",
+      "order_in_statblock": 0,
+      "legendary_action_cost": 1,
+      "usage_limits": null
+    }
+  ],
+  "traits": [
+    {
+      "name": "Keen Sight and Smell",
+      "desc": "The owlbear has advantage on Wisdom (Perception) checks that rely on sight or smell."
+    }
+  ]
+}

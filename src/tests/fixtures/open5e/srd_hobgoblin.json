@@ -1,0 +1,132 @@
+{
+  "key": "srd_hobgoblin",
+  "name": "Hobgoblin",
+  "document": {
+    "key": "srd-2014",
+    "name": "System Reference Document 5.1"
+  },
+  "type": {
+    "name": "Humanoid",
+    "key": "humanoid"
+  },
+  "size": {
+    "name": "Medium",
+    "key": "medium"
+  },
+  "challenge_rating": 0.5,
+  "proficiency_bonus": null,
+  "speed": {
+    "walk": 30,
+    "unit": "feet"
+  },
+  "armor_class": 18,
+  "armor_detail": "chain mail, shield",
+  "hit_points": 11,
+  "hit_dice": "2d8+2",
+  "experience_points": 100,
+  "ability_scores": {
+    "strength": 13,
+    "dexterity": 12,
+    "constitution": 12,
+    "intelligence": 10,
+    "wisdom": 10,
+    "charisma": 9
+  },
+  "modifiers": {
+    "strength": 1,
+    "dexterity": 1,
+    "constitution": 1,
+    "intelligence": 0,
+    "wisdom": 0,
+    "charisma": -1
+  },
+  "saving_throws": {},
+  "saving_throws_all": {
+    "strength": 1,
+    "dexterity": 1,
+    "constitution": 1,
+    "intelligence": 0,
+    "wisdom": 0,
+    "charisma": -1
+  },
+  "skill_bonuses": {},
+  "passive_perception": 10,
+  "resistances_and_immunities": {
+    "damage_immunities_display": "",
+    "damage_immunities": [],
+    "damage_resistances_display": "",
+    "damage_resistances": [],
+    "damage_vulnerabilities_display": "",
+    "damage_vulnerabilities": [],
+    "condition_immunities_display": "",
+    "condition_immunities": []
+  },
+  "darkvision_range": 60,
+  "blindsight_range": null,
+  "tremorsense_range": null,
+  "truesight_range": null,
+  "actions": [
+    {
+      "name": "Longbow",
+      "desc": "Ranged Weapon Attack: +3 to hit, range 150/600 ft., one target. Hit: 5 (1d8 + 1) piercing damage.",
+      "attacks": [
+        {
+          "attack_type": "WEAPON",
+          "to_hit_mod": 3,
+          "reach": null,
+          "range": 150,
+          "long_range": 600,
+          "damage_die_count": 1,
+          "damage_die_type": "D8",
+          "damage_bonus": null,
+          "damage_type": {
+            "name": "Thunder",
+            "key": "thunder"
+          },
+          "extra_damage_die_count": null,
+          "extra_damage_die_type": null,
+          "extra_damage_bonus": null,
+          "extra_damage_type": null
+        }
+      ],
+      "action_type": "ACTION",
+      "order_in_statblock": 1,
+      "legendary_action_cost": 1,
+      "usage_limits": null
+    },
+    {
+      "name": "Longsword",
+      "desc": "Melee Weapon Attack: +3 to hit, reach 5 ft., one target. Hit: 5 (1d8 + 1) slashing damage, or 6 (1d10 + 1) slashing damage if used with two hands.",
+      "attacks": [
+        {
+          "attack_type": "WEAPON",
+          "to_hit_mod": 3,
+          "reach": 5,
+          "range": null,
+          "long_range": null,
+          "damage_die_count": 1,
+          "damage_die_type": "D10",
+          "damage_bonus": null,
+          "damage_type": {
+            "name": "Thunder",
+            "key": "thunder"
+          },
+          "extra_damage_die_count": null,
+          "extra_damage_die_type": null,
+          "extra_damage_bonus": null,
+          "extra_damage_type": null
+        }
+      ],
+      "action_type": "ACTION",
+      "order_in_statblock": 0,
+      "legendary_action_cost": 1,
+      "usage_limits": null
+    }
+  ],
+  "traits": [
+    {
+      "name": "Martial Advantage",
+      "desc": "Once per turn, the hobgoblin can deal an extra 7 (2d6) damage to a creature it hits with a weapon attack if that creature is within 5 ft. of an ally of the hobgoblin that isn't incapacitated."
+    }
+  ]
+}

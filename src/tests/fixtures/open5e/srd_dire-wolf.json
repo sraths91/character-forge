@@ -1,0 +1,111 @@
+{
+  "key": "srd_dire-wolf",
+  "name": "Dire Wolf",
+  "document": {
+    "key": "srd-2014",
+    "name": "System Reference Document 5.1"
+  },
+  "type": {
+    "name": "Beast",
+    "key": "beast"
+  },
+  "size": {
+    "name": "Large",
+    "key": "large"
+  },
+  "challenge_rating": 1.0,
+  "proficiency_bonus": null,
+  "speed": {
+    "walk": 50,
+    "unit": "feet"
+  },
+  "armor_class": 14,
+  "armor_detail": "natural armor",
+  "hit_points": 37,
+  "hit_dice": "5d10+10",
+  "experience_points": 200,
+  "ability_scores": {
+    "strength": 17,
+    "dexterity": 15,
+    "constitution": 15,
+    "intelligence": 3,
+    "wisdom": 12,
+    "charisma": 7
+  },
+  "modifiers": {
+    "strength": 3,
+    "dexterity": 2,
+    "constitution": 2,
+    "intelligence": -4,
+    "wisdom": 1,
+    "charisma": -2
+  },
+  "saving_throws": {},
+  "saving_throws_all": {
+    "strength": 3,
+    "dexterity": 2,
+    "constitution": 2,
+    "intelligence": -4,
+    "wisdom": 1,
+    "charisma": -2
+  },
+  "skill_bonuses": {
+    "perception": 3,
+    "stealth": 4
+  },
+  "passive_perception": 13,
+  "resistances_and_immunities": {
+    "damage_immunities_display": "",
+    "damage_immunities": [],
+    "damage_resistances_display": "",
+    "damage_resistances": [],
+    "damage_vulnerabilities_display": "",
+    "damage_vulnerabilities": [],
+    "condition_immunities_display": "",
+    "condition_immunities": []
+  },
+  "darkvision_range": null,
+  "blindsight_range": null,
+  "tremorsense_range": null,
+  "truesight_range": null,
+  "actions": [
+    {
+      "name": "Bite",
+      "desc": "Melee Weapon Attack: +5 to hit, reach 5 ft., one target. Hit: 10 (2d6 + 3) piercing damage. If the target is a creature, it must succeed on a DC 13 Strength saving throw or be knocked prone.",
+      "attacks": [
+        {
+          "attack_type": "WEAPON",
+          "to_hit_mod": 5,
+          "reach": 5,
+          "range": null,
+          "long_range": null,
+          "damage_die_count": 2,
+          "damage_die_type": "D6",
+          "damage_bonus": null,
+          "damage_type": {
+            "name": "Thunder",
+            "key": "thunder"
+          },
+          "extra_damage_die_count": null,
+          "extra_damage_die_type": null,
+          "extra_damage_bonus": null,
+          "extra_damage_type": null
+        }
+      ],
+      "action_type": "ACTION",
+      "order_in_statblock": 0,
+      "legendary_action_cost": 1,
+      "usage_limits": null
+    }
+  ],
+  "traits": [
+    {
+      "name": "Keen Hearing and Smell",
+      "desc": "The wolf has advantage on Wisdom (Perception) checks that rely on hearing or smell."
+    },
+    {
+      "name": "Pack Tactics",
+      "desc": "The wolf has advantage on an attack roll against a creature if at least one of the wolf's allies is within 5 ft. of the creature and the ally isn't incapacitated."
+    }
+  ]
+}

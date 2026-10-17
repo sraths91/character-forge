@@ -1,0 +1,175 @@
+{
+  "key": "srd_vampire-spawn",
+  "name": "Vampire Spawn",
+  "document": {
+    "key": "srd-2014",
+    "name": "System Reference Document 5.1"
+  },
+  "type": {
+    "name": "Undead",
+    "key": "undead"
+  },
+  "size": {
+    "name": "Medium",
+    "key": "medium"
+  },
+  "challenge_rating": 5.0,
+  "proficiency_bonus": null,
+  "speed": {
+    "walk": 30,
+    "unit": "feet"
+  },
+  "armor_class": 15,
+  "armor_detail": "natural armor",
+  "hit_points": 82,
+  "hit_dice": "11d8+33",
+  "experience_points": 1800,
+  "ability_scores": {
+    "strength": 16,
+    "dexterity": 16,
+    "constitution": 16,
+    "intelligence": 11,
+    "wisdom": 10,
+    "charisma": 12
+  },
+  "modifiers": {
+    "strength": 3,
+    "dexterity": 3,
+    "constitution": 3,
+    "intelligence": 0,
+    "wisdom": 0,
+    "charisma": 1
+  },
+  "saving_throws": {
+    "dexterity": 6,
+    "wisdom": 3
+  },
+  "saving_throws_all": {
+    "strength": 3,
+    "dexterity": 6,
+    "constitution": 3,
+    "intelligence": 0,
+    "wisdom": 3,
+    "charisma": 1
+  },
+  "skill_bonuses": {
+    "perception": 3,
+    "stealth": 6
+  },
+  "passive_perception": 13,
+  "resistances_and_immunities": {
+    "damage_immunities_display": "",
+    "damage_immunities": [],
+    "damage_resistances_display": "necrotic; bludgeoning, piercing, and slashing from nonmagical attacks",
+    "damage_resistances": [
+      {
+        "name": "Bludgeoning",
+        "key": "bludgeoning"
+      },
+      {
+        "name": "Necrotic",
+        "key": "necrotic"
+      },
+      {
+        "name": "Piercing",
+        "key": "piercing"
+      },
+      {
+        "name": "Slashing",
+        "key": "slashing"
+      }
+    ],
+    "damage_vulnerabilities_display": "",
+    "damage_vulnerabilities": [],
+    "condition_immunities_display": "",
+    "condition_immunities": []
+  },
+  "darkvision_range": 60,
+  "blindsight_range": null,
+  "tremorsense_range": null,
+  "truesight_range": null,
+  "actions": [
+    {
+      "name": "Bite",
+      "desc": "Melee Weapon Attack: +6 to hit, reach 5 ft., one willing creature, or a creature that is grappled by the vampire, incapacitated, or restrained. Hit: 6 (1d6 + 3) piercing damage plus 7 (2d6) necrotic damage. The target's hit point maximum is reduced by an amount equal to the necrotic damage taken, and the vampire regains hit points equal to that amount. The reduction lasts until the target finishes a long rest. The target dies if this effect reduces its hit point maximum to 0.",
+      "attacks": [
+        {
+          "attack_type": "WEAPON",
+          "to_hit_mod": 6,
+          "reach": 5,
+          "range": null,
+          "long_range": null,
+          "damage_die_count": 1,
+          "damage_die_type": "D6",
+          "damage_bonus": null,
+          "damage_type": {
+            "name": "Thunder",
+            "key": "thunder"
+          },
+          "extra_damage_die_count": null,
+          "extra_damage_die_type": null,
+          "extra_damage_bonus": null,
+          "extra_damage_type": {
+            "name": "Thunder",
+            "key": "thunder"
+          }
+        }
+      ],
+      "action_type": "ACTION",
+      "order_in_statblock": 1,
+      "legendary_action_cost": 1,
+      "usage_limits": null
+    },
+    {
+      "name": "Claws",
+      "desc": "Melee Weapon Attack: +6 to hit, reach 5 ft., one creature. Hit: 8 (2d4 + 3) slashing damage. Instead of dealing damage, the vampire can grapple the target (escape DC 13).",
+      "attacks": [
+        {
+          "attack_type": "WEAPON",
+          "to_hit_mod": 6,
+          "reach": 5,
+          "range": null,
+          "long_range": null,
+          "damage_die_count": 2,
+          "damage_die_type": "D4",
+          "damage_bonus": null,
+          "damage_type": {
+            "name": "Thunder",
+            "key": "thunder"
+          },
+          "extra_damage_die_count": null,
+          "extra_damage_die_type": null,
+          "extra_damage_bonus": null,
+          "extra_damage_type": null
+        }
+      ],
+      "action_type": "ACTION",
+      "order_in_statblock": 2,
+      "legendary_action_cost": 1,
+      "usage_limits": null
+    },
+    {
+      "name": "Multiattack",
+      "desc": "The vampire makes two attacks, only one of which can be a bite attack.",
+      "attacks": [],
+      "action_type": "ACTION",
+      "order_in_statblock": 0,
+      "legendary_action_cost": 1,
+      "usage_limits": null
+    }
+  ],
+  "traits": [
+    {
+      "name": "Regeneration",
+      "desc": "The vampire regains 10 hit points at the start of its turn if it has at least 1 hit point and isn't in sunlight or running water. If the vampire takes radiant damage or damage from holy water, this trait doesn't function at the start of the vampire's next turn."
+    },
+    {
+      "name": "Spider Climb",
+      "desc": "The vampire can climb difficult surfaces, including upside down on ceilings, without needing to make an ability check."
+    },
+    {
+      "name": "Vampire Weaknesses",
+      "desc": "The vampire has the following flaws:\nForbiddance. The vampire can't enter a residence without an invitation from one of the occupants.\nHarmed by Running Water. The vampire takes 20 acid damage when it ends its turn in running water.\nStake to the Heart. The vampire is destroyed if a piercing weapon made of wood is driven into its heart while it is incapacitated in its resting place.\nSunlight Hypersensitivity. The vampire takes 20 radiant damage when it starts its turn in sunlight. While in sunlight, it has disadvantage on attack rolls and ability checks."
+    }
+  ]
+}

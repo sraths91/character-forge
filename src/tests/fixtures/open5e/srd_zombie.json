@@ -1,0 +1,111 @@
+{
+  "key": "srd_zombie",
+  "name": "Zombie",
+  "document": {
+    "key": "srd-2014",
+    "name": "System Reference Document 5.1"
+  },
+  "type": {
+    "name": "Undead",
+    "key": "undead"
+  },
+  "size": {
+    "name": "Medium",
+    "key": "medium"
+  },
+  "challenge_rating": 0.25,
+  "proficiency_bonus": null,
+  "speed": {
+    "walk": 20,
+    "unit": "feet"
+  },
+  "armor_class": 8,
+  "armor_detail": "",
+  "hit_points": 22,
+  "hit_dice": "3d8+9",
+  "experience_points": 50,
+  "ability_scores": {
+    "strength": 13,
+    "dexterity": 6,
+    "constitution": 16,
+    "intelligence": 3,
+    "wisdom": 6,
+    "charisma": 5
+  },
+  "modifiers": {
+    "strength": 1,
+    "dexterity": -2,
+    "constitution": 3,
+    "intelligence": -4,
+    "wisdom": -2,
+    "charisma": -3
+  },
+  "saving_throws": {
+    "wisdom": 0
+  },
+  "saving_throws_all": {
+    "strength": 1,
+    "dexterity": -2,
+    "constitution": 3,
+    "intelligence": -4,
+    "wisdom": 0,
+    "charisma": -3
+  },
+  "skill_bonuses": {},
+  "passive_perception": 8,
+  "resistances_and_immunities": {
+    "damage_immunities_display": "",
+    "damage_immunities": [],
+    "damage_resistances_display": "",
+    "damage_resistances": [],
+    "damage_vulnerabilities_display": "",
+    "damage_vulnerabilities": [],
+    "condition_immunities_display": "poisoned",
+    "condition_immunities": [
+      {
+        "name": "Poisoned",
+        "key": "poisoned"
+      }
+    ]
+  },
+  "darkvision_range": 60,
+  "blindsight_range": null,
+  "tremorsense_range": null,
+  "truesight_range": null,
+  "actions": [
+    {
+      "name": "Slam",
+      "desc": "Melee Weapon Attack: +3 to hit, reach 5 ft., one target. Hit: 4 (1d6 + 1) bludgeoning damage.",
+      "attacks": [
+        {
+          "attack_type": "WEAPON",
+          "to_hit_mod": 3,
+          "reach": 5,
+          "range": null,
+          "long_range": null,
+          "damage_die_count": 1,
+          "damage_die_type": "D6",
+          "damage_bonus": null,
+          "damage_type": {
+            "name": "Thunder",
+            "key": "thunder"
+          },
+          "extra_damage_die_count": null,
+          "extra_damage_die_type": null,
+          "extra_damage_bonus": null,
+          "extra_damage_type": null
+        }
+      ],
+      "action_type": "ACTION",
+      "order_in_statblock": 0,
+      "legendary_action_cost": 1,
+      "usage_limits": null
+    }
+  ],
+  "traits": [
+    {
+      "name": "Undead Fortitude",
+      "desc": "If damage reduces the zombie to 0 hit points, it must make a Constitution saving throw with a DC of 5+the damage taken, unless the damage is radiant or from a critical hit. On a success, the zombie drops to 1 hit point instead."
+    }
+  ]
+}
