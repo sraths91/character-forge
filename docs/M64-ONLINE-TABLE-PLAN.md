@@ -37,13 +37,20 @@ asserts identical `seq` and `stateHash` on both clients; the restart
 variant SIGTERMs mid-encounter and restores a `paused` snapshot with
 the same hash on the same DB.
 
+Closed after the acceptance pass (both on main by b969efc):
+- **Simulator hot loop:** the true regression was 1.9x (27 → 50 ms per
+  200×4v4), from a per-turn `delete` that dropped engine wrappers into
+  V8 dictionary mode, allocation-heavy condition helpers, and dice
+  strings re-parsed on every roll. Fixed to ~32 ms with byte-identical
+  goldens; `m64-sim-hotpath.test.js` pins the fast-properties rule.
+  The 720 ms–6.5 s readings were machine load and a sleep/clock jump,
+  so bisect by instructions retired, not wall time.
+- **CI Node 24 (Linux) failures:** better-sqlite3 11's `Statement` is
+  a `node::ObjectWrap`, and Node 24.19+ aborts in its cleanup hook on
+  GC (nodejs/node#65446). Upgraded to better-sqlite3 ^13 (N-API). Every
+  worktree needs a fresh `npm ci` for the new native module.
+
 Partial / known gaps carried into phase 1.5 (owners in brackets):
-- **Simulator hot loop regressed ~20x** (27–52 ms → 720–875 ms for
-  200×4v4; >6 s under the parallel runner). The timing test is a
-  `todo` with the bound unchanged. [E1, bisecting]
-- **CI Node 24 job red on Linux only** since efcb9a0: `migration-0002`
-  and `rooms-http` test files die before reporting; both pass on
-  macOS under 24.21/24.22. [E3, reproducing via CI on `p1/e3-server`]
 - Fog: `entity.updated` and engine events are not yet fog-filtered,
   and players under fog get a `stateHash` of the unfiltered state. Fog
   is a phase 2 feature; the hooks exist. [E3]
