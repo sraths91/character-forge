@@ -113,6 +113,18 @@ test('legacySceneToView: PCs via positionOf, monsters via _position, overlays in
   assert.equal(view.tokens[1].appearanceKey, 'monster:goblin');
 });
 
+test('legacySceneToView: forwards pathPreview to local (it used to be dropped)', async () => {
+  const scene = { cols: 6, rows: 4, cellSize: 64, scale: 1, map: { kind: 'color', color: '#123' } };
+  const pathPreview = { cells: [{ col: 0, row: 0 }, { col: 1, row: 0 }], legal: false, costFt: 5 };
+  const { local } = legacySceneToView([], scene, { pathPreview });
+  assert.equal(local.pathPreview, pathPreview);
+  assert.equal(legacySceneToView([], scene, {}).local.pathPreview, null);
+  // And the legacy call shape draws it (the red illegal-path fill).
+  const { canvas, calls } = recordingCanvas();
+  await renderBattleScene(canvas, [], scene, { pathPreview });
+  assert.ok(calls.some(c => c[0] === 'fillRect' && c[1] === 64 && c[2] === 0), 'path cell painted');
+});
+
 // ---- scheduler -------------------------------------------------------------
 
 function fakeRaf() {

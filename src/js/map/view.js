@@ -372,7 +372,8 @@ function legacyStatus(ch) {
  * Tokens keep the legacy draw order (PCs, then monsters).
  * @param {object[]} characters — party records
  * @param {object} scene — scene-state scene
- * @param {object} [opts] — the legacy opts (positionOf, monsterCharacters, overlays, camera …)
+ * @param {object} [opts] — the legacy opts (positionOf, monsterCharacters, overlays,
+ *   aoeTemplate, pathPreview {cells, legal, costFt}, camera …)
  * @returns {{view: object, local: object, appearances: Map<string, object>}}
  */
 export function legacySceneToView(characters, scene, opts = {}) {
@@ -410,6 +411,7 @@ export function legacySceneToView(characters, scene, opts = {}) {
     popups: opts.popups || null,
     effects: opts.effects || null,
     aoePreview: opts.aoeTemplate || null,
+    pathPreview: opts.pathPreview || null,
     direction: opts.direction || 'south',
     frameIdx: opts.frameIdx || 0,
     appearances
