@@ -67,6 +67,9 @@ test('turn-manager: per-creature resets at the start of its own turn', () => {
 
 test('turn-manager: a turn emits turn.started … turn.ended and advances', async () => {
   const ts = startEncounter(duel(), { initiative: 'given' });
+  // A sturdier goblin: the Fighter 5 makes two attacks (R10) and must not
+  // end the encounter on its first turn.
+  ts.entities.gob.hp = ts.entities.gob.hpMax = 40;
   const s = sink();
   const r = await runTurn(ts, { rng: createRng({ s: 2 }), emit: s.emit });
   assert.equal(r.actorId, 'pc');

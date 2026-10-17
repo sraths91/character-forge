@@ -8,6 +8,13 @@
  *     weapon against a target with advantage source)
  *   - `consume(entity)`       — burn the usage (action surge, smite slot)
  *
+ * M64 R10 — engine hooks live next to them (E4 rules review, "Structural
+ * recommendation"), so class features stay in this one registry:
+ *   - `attacksPerAction(pc)`  — weapon attacks one Attack action makes
+ *     (Extra Attack). The engine takes the maximum over every entry
+ *     (`attacksPerAction` below); Extra Attack from two classes does not
+ *     stack (PHB p164).
+ *
  * Pure module; mutation is funneled through consume(). Feature presence
  * is detected from the parsed character (M14: feats, classes) plus a few
  * per-turn flags (action surge used this short rest, etc.).
@@ -90,6 +97,9 @@ function sneakAttackEligible({ self, target, allies, weapon }) {
   }
   return false;
 }
+
+/** Classes whose Extra Attack arrives at level 5 (PHB: Fighter, Barbarian, Paladin, Ranger, Monk). */
+const EXTRA_ATTACK_CLASSES = ['Fighter', 'Barbarian', 'Paladin', 'Ranger', 'Monk'];
 
 /**
  * Registry of class features the AI can reason about. Keep additive
@@ -176,6 +186,30 @@ export const PC_FEATURES = {
       return 0;
     },
     consume(pc) { pc._secondWindUsed = true; }
+  },
+
+  // M64 R10 — Extra Attack (PHB p72 and each martial class). A passive
+  // feature: it never boosts an option (so it never lands in a plan's
+  // featuresFired); the engine reads attacksPerAction for every Attack
+  // action. Fighter 5: 2 attacks, 11: 3, 20: 4; the others 2 from 5.
+  'extra-attack': {
+    id: 'extra-attack',
+    label: 'Extra Attack',
+    passive: true,
+    available(pc) {
+      return attacksPerAction(pc) > 1;
+    },
+    scoreBoost() { return 0; },
+    consume() {},
+    attacksPerAction(pc) {
+      const fighter = classLevel(pc, 'Fighter');
+      if (fighter >= 20) return 4;
+      if (fighter >= 11) return 3;
+      for (const name of EXTRA_ATTACK_CLASSES) {
+        if (classLevel(pc, name) >= 5) return 2;
+      }
+      return 1;
+    }
   },
 
   // M42.1 — Divine Smite (PHB p85). After a paladin lvl 2+ hits with
@@ -267,9 +301,30 @@ export const PC_FEATURES = {
   }
 };
 
-/** Pull the list of features this PC currently has access to. */
+const FEATURE_LIST = Object.values(PC_FEATURES);
+
+/** Pull the list of features this PC currently has access to. Passive
+ *  features (Extra Attack) are engine-only and never scored. */
 export function availableFeatures(pc) {
-  return Object.values(PC_FEATURES).filter(f => f.available(pc));
+  return FEATURE_LIST.filter(f => !f.passive && f.available(pc));
+}
+
+/**
+ * M64 R10 — How many weapon attacks one Attack action makes for this PC:
+ * the largest `attacksPerAction` any registry entry reports (1 without
+ * Extra Attack).
+ * @param {object} pc — parsed character or engine wrapper (its `ref` is read)
+ * @returns {number}
+ */
+export function attacksPerAction(pc) {
+  const ref = pc?.ref || pc;
+  let n = 1;
+  for (const f of FEATURE_LIST) {
+    if (typeof f.attacksPerAction !== 'function' || f.attacksPerAction === attacksPerAction) continue;
+    const k = f.attacksPerAction(ref);
+    if (Number.isInteger(k) && k > n) n = k;
+  }
+  return n;
 }
 
 /** Refresh per-turn feature flags (cunning action, sneak attack window). */

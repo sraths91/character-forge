@@ -81,7 +81,7 @@ async function newTable(srv) {
 
 async function startEncounter(dm) {
   for (const [t, p] of [
-    ['dm.encounter.setup', { map: null, grid: { cols: 6, rows: 4 }, monsters: [{ id: 'gob', name: 'Goblin', hp: 30, ac: 11 }], placements: {} }],
+    ['dm.encounter.setup', { map: null, grid: { cols: 6, rows: 4 }, monsters: [{ id: 'gob', name: 'Goblin', hp: 60, ac: 11 }], placements: {} }],
     ['dm.initiative.set', { order: ['gob', 'pc-1'] }],
     ['dm.encounter.start', { seed: 4242 }]
   ]) {

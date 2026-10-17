@@ -361,20 +361,138 @@
     },
     {
       "seq": 18,
+      "type": "attack.rolled",
+      "round": 2,
+      "turnId": "t3",
+      "cinemaGroup": "t3.x1",
+      "payload": {
+        "attackerId": "pc-fighter",
+        "targetId": "m-gob-a",
+        "weapon": "Longsword",
+        "isReaction": false,
+        "advantage": "normal",
+        "d20": [
+          16
+        ],
+        "kept": 16,
+        "bonus": 6,
+        "total": 22,
+        "ac": 15,
+        "hit": true,
+        "crit": false,
+        "shielded": false
+      }
+    },
+    {
+      "seq": 19,
+      "type": "damage",
+      "round": 2,
+      "turnId": "t3",
+      "cinemaGroup": "t3.x1",
+      "payload": {
+        "sourceId": "pc-fighter",
+        "targetId": "m-gob-a",
+        "amount": 3,
+        "type": "Slashing",
+        "hpBefore": 3,
+        "hpAfter": 0,
+        "rolled": 7,
+        "parts": {
+          "weapon": 7
+        }
+      }
+    },
+    {
+      "seq": 20,
+      "type": "entity.downed",
+      "round": 2,
+      "turnId": "t3",
+      "cinemaGroup": "t3.x1",
+      "payload": {
+        "entityId": "m-gob-a",
+        "byId": "pc-fighter"
+      }
+    },
+    {
+      "seq": 21,
+      "type": "exchange",
+      "round": 2,
+      "turnId": "t3",
+      "cinemaGroup": "t3.x1",
+      "payload": {
+        "exchangeId": "t3.x1.s2",
+        "attackerId": "pc-fighter",
+        "defenderId": "m-gob-a",
+        "reaction": false,
+        "cast": false,
+        "roll": {
+          "d20": {
+            "dice": [
+              16
+            ],
+            "kept": 16,
+            "mode": "normal"
+          },
+          "bonus": 6,
+          "total": 22,
+          "ac": 15,
+          "hit": true,
+          "crit": false,
+          "shielded": false
+        },
+        "damage": {
+          "total": 7,
+          "smite": 0,
+          "heal": 0,
+          "type": "Slashing",
+          "crit": false
+        },
+        "effects": [
+          {
+            "entityId": "m-gob-a",
+            "hp": {
+              "before": 3,
+              "after": 0,
+              "max": 7
+            }
+          }
+        ],
+        "miss": false,
+        "cinema": {
+          "weapon": {
+            "name": "Longsword",
+            "damageType": "Slashing",
+            "magical": false
+          },
+          "style": null,
+          "swing": null,
+          "modifiers": [],
+          "smiteSlot": null,
+          "attackerLevel": 5,
+          "killing": true,
+          "spell": null,
+          "outcome": null,
+          "fxSeed": 1660127308,
+          "durationMs": 0
+        }
+      }
+    },
+    {
+      "seq": 22,
       "type": "turn.ended",
       "round": 2,
       "turnId": "t3",
       "cinemaGroup": null,
       "payload": {
         "actorId": "pc-fighter",
-        "stateHash": "0afff19f80cf0d",
-        "rngDraws": 2
+        "stateHash": "07be2fb6f20a20",
+        "rngDraws": 4
       }
     }
   ],
   "final": {
     "m-gob-a": {
-      "hp": 3,
+      "hp": 0,
       "pos": {
         "col": 3,
         "row": 2
@@ -428,7 +546,7 @@
       "actionSurgeUsed": 0,
       "secondWindUsed": false,
       "shieldActive": false,
-      "damageDealt": 4
+      "damageDealt": 11
     }
   }
 }

@@ -176,6 +176,14 @@ export function wrapperFromEntity(entity, sheet = null) {
   };
   const secondary = attacks[1] || preset.secondary;
   if (secondary) w.secondary = clone(secondary);
+  // M64 R10 — Multiattack: every stat-block attack record plus the
+  // multiattack routine (E4's normaliser shape, see attackSequenceFor).
+  // Static: read from the stat block, never written back.
+  if (attacks.length > 2) w.attacks = clone(attacks);
+  if (sb.multiattack && (Array.isArray(sb.multiattack) || typeof sb.multiattack === 'object')) {
+    if (!w.attacks && attacks.length) w.attacks = clone(attacks);
+    w.multiattack = clone(sb.multiattack);
+  }
   if (sb.saves && typeof sb.saves === 'object') w.saves = { ...sb.saves };
   // M64 R8 — damage resistances / immunities / vulnerabilities from an
   // imported stat block (applyDamage reads them; PCs read their sheet).

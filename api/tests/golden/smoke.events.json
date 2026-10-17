@@ -16,6 +16,8 @@
     "attack.rolled",
     "damage",
     "exchange",
+    "attack.rolled",
+    "exchange",
     "turn.ended"
   ]
 }

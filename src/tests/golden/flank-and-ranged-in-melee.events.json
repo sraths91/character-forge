@@ -141,18 +141,127 @@
     },
     {
       "seq": 6,
+      "type": "attack.rolled",
+      "round": 1,
+      "turnId": "t1",
+      "cinemaGroup": "t1.x1",
+      "payload": {
+        "attackerId": "pc-fighter",
+        "targetId": "m-bugbear",
+        "weapon": "Longsword",
+        "isReaction": false,
+        "advantage": "advantage",
+        "d20": [
+          20,
+          20
+        ],
+        "kept": 20,
+        "bonus": 6,
+        "total": 26,
+        "ac": 16,
+        "hit": true,
+        "crit": true,
+        "shielded": false
+      }
+    },
+    {
+      "seq": 7,
+      "type": "damage",
+      "round": 1,
+      "turnId": "t1",
+      "cinemaGroup": "t1.x1",
+      "payload": {
+        "sourceId": "pc-fighter",
+        "targetId": "m-bugbear",
+        "amount": 11,
+        "type": "Slashing",
+        "hpBefore": 19,
+        "hpAfter": 8,
+        "rolled": 11,
+        "parts": {
+          "weapon": 11
+        }
+      }
+    },
+    {
+      "seq": 8,
+      "type": "exchange",
+      "round": 1,
+      "turnId": "t1",
+      "cinemaGroup": "t1.x1",
+      "payload": {
+        "exchangeId": "t1.x1.s2",
+        "attackerId": "pc-fighter",
+        "defenderId": "m-bugbear",
+        "reaction": false,
+        "cast": false,
+        "roll": {
+          "d20": {
+            "dice": [
+              20,
+              20
+            ],
+            "kept": 20,
+            "mode": "advantage"
+          },
+          "bonus": 6,
+          "total": 26,
+          "ac": 16,
+          "hit": true,
+          "crit": true,
+          "shielded": false
+        },
+        "damage": {
+          "total": 11,
+          "smite": 0,
+          "heal": 0,
+          "type": "Slashing",
+          "crit": true
+        },
+        "effects": [
+          {
+            "entityId": "m-bugbear",
+            "hp": {
+              "before": 19,
+              "after": 8,
+              "max": 27
+            }
+          }
+        ],
+        "miss": false,
+        "cinema": {
+          "weapon": {
+            "name": "Longsword",
+            "damageType": "Slashing",
+            "magical": false
+          },
+          "style": null,
+          "swing": null,
+          "modifiers": [],
+          "smiteSlot": null,
+          "attackerLevel": 5,
+          "killing": false,
+          "spell": null,
+          "outcome": null,
+          "fxSeed": 3947703146,
+          "durationMs": 0
+        }
+      }
+    },
+    {
+      "seq": 9,
       "type": "turn.ended",
       "round": 1,
       "turnId": "t1",
       "cinemaGroup": null,
       "payload": {
         "actorId": "pc-fighter",
-        "stateHash": "108af7508e86f4",
-        "rngDraws": 3
+        "stateHash": "11bd8d94b69237",
+        "rngDraws": 7
       }
     },
     {
-      "seq": 7,
+      "seq": 10,
       "type": "turn.started",
       "round": 1,
       "turnId": "t2",
@@ -162,7 +271,7 @@
       }
     },
     {
-      "seq": 8,
+      "seq": 11,
       "type": "plan.chosen",
       "round": 1,
       "turnId": "t2",
@@ -180,7 +289,7 @@
       }
     },
     {
-      "seq": 9,
+      "seq": 12,
       "type": "attack.rolled",
       "round": 1,
       "turnId": "t2",
@@ -192,39 +301,20 @@
         "isReaction": false,
         "advantage": "disadvantage",
         "d20": [
-          20,
-          20
+          15,
+          9
         ],
-        "kept": 20,
+        "kept": 9,
         "bonus": 5,
-        "total": 25,
+        "total": 14,
         "ac": 16,
-        "hit": true,
-        "crit": true,
+        "hit": false,
+        "crit": false,
         "shielded": false
       }
     },
     {
-      "seq": 10,
-      "type": "damage",
-      "round": 1,
-      "turnId": "t2",
-      "cinemaGroup": "t2.x1",
-      "payload": {
-        "sourceId": "pc-wizard",
-        "targetId": "m-bugbear",
-        "amount": 10,
-        "type": "Piercing",
-        "hpBefore": 19,
-        "hpAfter": 9,
-        "rolled": 10,
-        "parts": {
-          "weapon": 10
-        }
-      }
-    },
-    {
-      "seq": 11,
+      "seq": 13,
       "type": "exchange",
       "round": 1,
       "turnId": "t2",
@@ -238,37 +328,37 @@
         "roll": {
           "d20": {
             "dice": [
-              20,
-              20
+              15,
+              9
             ],
-            "kept": 20,
+            "kept": 9,
             "mode": "disadvantage"
           },
           "bonus": 5,
-          "total": 25,
+          "total": 14,
           "ac": 16,
-          "hit": true,
-          "crit": true,
+          "hit": false,
+          "crit": false,
           "shielded": false
         },
         "damage": {
-          "total": 10,
+          "total": 0,
           "smite": 0,
           "heal": 0,
-          "type": "Piercing",
-          "crit": true
+          "type": null,
+          "crit": false
         },
         "effects": [
           {
             "entityId": "m-bugbear",
             "hp": {
-              "before": 19,
-              "after": 9,
+              "before": 8,
+              "after": 8,
               "max": 27
             }
           }
         ],
-        "miss": false,
+        "miss": true,
         "cinema": {
           "weapon": {
             "name": "Light Crossbow",
@@ -289,19 +379,19 @@
       }
     },
     {
-      "seq": 12,
+      "seq": 14,
       "type": "turn.ended",
       "round": 1,
       "turnId": "t2",
       "cinemaGroup": null,
       "payload": {
         "actorId": "pc-wizard",
-        "stateHash": "17a0b6d7367c48",
-        "rngDraws": 4
+        "stateHash": "11bd8d94b69237",
+        "rngDraws": 2
       }
     },
     {
-      "seq": 13,
+      "seq": 15,
       "type": "turn.started",
       "round": 1,
       "turnId": "t3",
@@ -311,7 +401,7 @@
       }
     },
     {
-      "seq": 14,
+      "seq": 16,
       "type": "plan.chosen",
       "round": 1,
       "turnId": "t3",
@@ -329,7 +419,7 @@
       }
     },
     {
-      "seq": 15,
+      "seq": 17,
       "type": "attack.rolled",
       "round": 1,
       "turnId": "t3",
@@ -341,20 +431,20 @@
         "isReaction": false,
         "advantage": "advantage",
         "d20": [
-          15,
-          9
+          20,
+          10
         ],
-        "kept": 15,
+        "kept": 20,
         "bonus": 5,
-        "total": 20,
+        "total": 25,
         "ac": 16,
         "hit": true,
-        "crit": false,
+        "crit": true,
         "shielded": false
       }
     },
     {
-      "seq": 16,
+      "seq": 18,
       "type": "damage",
       "round": 1,
       "turnId": "t3",
@@ -362,18 +452,18 @@
       "payload": {
         "sourceId": "pc-cleric",
         "targetId": "m-bugbear",
-        "amount": 8,
+        "amount": 6,
         "type": "Bludgeoning",
-        "hpBefore": 9,
-        "hpAfter": 1,
-        "rolled": 8,
+        "hpBefore": 8,
+        "hpAfter": 2,
+        "rolled": 6,
         "parts": {
-          "weapon": 8
+          "weapon": 6
         }
       }
     },
     {
-      "seq": 17,
+      "seq": 19,
       "type": "exchange",
       "round": 1,
       "turnId": "t3",
@@ -387,32 +477,32 @@
         "roll": {
           "d20": {
             "dice": [
-              15,
-              9
+              20,
+              10
             ],
-            "kept": 15,
+            "kept": 20,
             "mode": "advantage"
           },
           "bonus": 5,
-          "total": 20,
+          "total": 25,
           "ac": 16,
           "hit": true,
-          "crit": false,
+          "crit": true,
           "shielded": false
         },
         "damage": {
-          "total": 8,
+          "total": 6,
           "smite": 0,
           "heal": 0,
           "type": "Bludgeoning",
-          "crit": false
+          "crit": true
         },
         "effects": [
           {
             "entityId": "m-bugbear",
             "hp": {
-              "before": 9,
-              "after": 1,
+              "before": 8,
+              "after": 2,
               "max": 27
             }
           }
@@ -438,21 +528,21 @@
       }
     },
     {
-      "seq": 18,
+      "seq": 20,
       "type": "turn.ended",
       "round": 1,
       "turnId": "t3",
       "cinemaGroup": null,
       "payload": {
         "actorId": "pc-cleric",
-        "stateHash": "0b5334c66dc14b",
-        "rngDraws": 3
+        "stateHash": "1f4c9ef05892c6",
+        "rngDraws": 4
       }
     }
   ],
   "final": {
     "m-bugbear": {
-      "hp": 1,
+      "hp": 2,
       "pos": {
         "col": 4,
         "row": 2
@@ -506,7 +596,7 @@
       "actionSurgeUsed": 0,
       "secondWindUsed": false,
       "shieldActive": false,
-      "damageDealt": 8
+      "damageDealt": 6
     },
     "pc-fighter": {
       "hp": 44,
@@ -529,7 +619,7 @@
       "actionSurgeUsed": 0,
       "secondWindUsed": false,
       "shieldActive": false,
-      "damageDealt": 8
+      "damageDealt": 19
     },
     "pc-wizard": {
       "hp": 32,
@@ -552,7 +642,7 @@
       "actionSurgeUsed": 0,
       "secondWindUsed": false,
       "shieldActive": false,
-      "damageDealt": 10
+      "damageDealt": 0
     }
   }
 }

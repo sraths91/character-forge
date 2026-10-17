@@ -43,7 +43,7 @@ import { planMovement, occupiedCellsOf } from './movement.js';
 import { straightPath, terrainPath, terrainApproach } from './pathing.js';
 import { chooseAction, fleeTargetCell } from './ai/profile.js';
 import { choosePcAction } from './ai/pc-action.js';
-import { PC_FEATURES, resetPerTurnFlags } from './ai/pc-features.js';
+import { PC_FEATURES, resetPerTurnFlags, attacksPerAction } from './ai/pc-features.js';
 import {
   consumeReaction, detectOpportunityAttacks, detectPolearmEntryOAs,
   shouldCastShield, canCastShield, consumeShield, hasReactionAvailable,
@@ -408,38 +408,210 @@ async function resolveTurn(attacker, enemies, allies, scene, rng, prompts, ctx) 
     return;
   }
 
+  // ---- 4. the Attack action ---------------------------------------------
+  // M64 R10 — one Attack action makes every swing Extra Attack /
+  // Multiattack grants. Action Surge adds a second Attack action right
+  // after it, WITHOUT re-running the planner or movement (it used to
+  // recurse through runOneAttack, which moved the fighter again).
+  const turn = {
+    attacker, enemies, allies, targetable, scene, rng, prompts, ctx, plan, explicit,
+    charmers, actorId, sneakDone: false, recklessDone: false
+  };
+  const first = await runAttackAction(turn, target, true);
+  if (first.status === 'rejected') return;
+  if (attacker.kind === 'pc' && plan?.featuresFired?.includes('action-surge') && !attacker._surgeFiredThisTurn) {
+    attacker._surgeFiredThisTurn = true;
+    PC_FEATURES['action-surge'].consume(attacker);
+    emitEvent(ctx, 'feature.used', { entityId: actorId, featureId: 'action-surge' });
+    if (isAlive(attacker) && sideAlive(enemies) > 0) {
+      const next = keepsTarget(turn, first.target) ? first.target : retargetFor(turn, first.weaponRef);
+      if (next) await runAttackAction(turn, next, false);
+    }
+    attacker._surgeFiredThisTurn = false;
+  }
+}
+
+/**
+ * M64 R10 — the attack records one Attack action uses, in order.
+ *
+ *   PCs: the plan's weapon, `attacksPerAction` times (pc-features: Extra
+ *     Attack — Fighter 5: 2, 11: 3, 20: 4; Barbarian / Paladin / Ranger /
+ *     Monk 5: 2).
+ *   Monsters: the stat block's Multiattack when present —
+ *     `multiattack: [{action, count}]` (E4's Open5e normaliser, R11:
+ *     `action` names an `attacks[]` record; `action: null` means "any
+ *     weapon attack", optionally `kind: 'melee'|'ranged'` and
+ *     `limits: {Bite: 1}`) or the legacy `{attacks: [{name, count}]}`
+ *     object — else the one primary attack.
+ *
+ * @param {object} attacker — wrapper
+ * @returns {object[]} PCs: weapon records (null = unarmed); monsters:
+ *   attack records `{name, bonus, dice, damageType?, reachFt?, rangeFt?}`
+ */
+export function attackSequenceFor(attacker) {
+  if (attacker?.kind === 'pc') {
+    const weapon = attacker._chosenWeapon || attacker.weapon || null;
+    const n = Math.min(4, attacksPerAction(attacker));
+    return n === 1 ? [weapon] : new Array(n).fill(weapon);
+  }
+  const primary = attacker?.attack || { name: 'Strike', bonus: 2, dice: '1d6' };
+  const raw = attacker?.multiattack;
+  const list = Array.isArray(raw) ? raw : (Array.isArray(raw?.attacks) ? raw.attacks : null);
+  if (!list || list.length === 0) return [primary];
+  const pool = Array.isArray(attacker.attacks) && attacker.attacks.length
+    ? attacker.attacks
+    : [primary, attacker.secondary].filter(Boolean);
+  const out = [];
+  const used = new Map();
+  for (const entry of list) {
+    const count = Math.max(1, Math.min(10, Math.trunc(Number(entry?.count) || 1)));
+    const name = entry?.action ?? entry?.name ?? null;
+    for (let i = 0; i < count && out.length < 8; i++) {
+      const rec = name != null
+        ? (findAttack(pool, name) || primary)
+        : anyAttack(pool, primary, entry?.kind, entry?.limits, used);
+      used.set(lc(rec.name), (used.get(lc(rec.name)) || 0) + 1);
+      out.push(rec);
+    }
+  }
+  return out.length ? out : [primary];
+}
+
+function lc(s) { return String(s ?? '').toLowerCase(); }
+
+function findAttack(pool, name) {
+  const want = lc(name);
+  return pool.find(a => lc(a?.name) === want) || null;
+}
+
+function isRangedRecord(rec) {
+  if (Number.isFinite(rec?.rangeFt) && !Number.isFinite(rec?.reachFt)) return true;
+  return isRangedWeapon({ name: rec?.name });
+}
+
+/** "Any weapon attack" multiattack entry: the first record of the kind whose limit is not reached. */
+function anyAttack(pool, primary, kind, limits, used) {
+  const ok = (a) => {
+    if (!a) return false;
+    if (kind === 'melee' && isRangedRecord(a)) return false;
+    if (kind === 'ranged' && !isRangedRecord(a)) return false;
+    const cap = limits ? Object.entries(limits).find(([n]) => lc(n) === lc(a.name)) : null;
+    return !cap || (used.get(lc(a.name)) || 0) < Number(cap[1]);
+  };
+  return [primary, ...pool].find(ok) || primary;
+}
+
+/** Reach / range (ft) a swing can retarget within, without moving. */
+function swingReachFt(attacker, weaponRef) {
+  if (attacker.kind === 'pc') {
+    if (isRangedWeapon(weaponRef)) {
+      const r = Number(weaponRef?.range?.normal ?? weaponRef?.range);
+      return Number.isFinite(r) && r > 0 ? r : 80;
+    }
+    return meleeReachFt(weaponRef);
+  }
+  if (Number.isFinite(weaponRef?.reachFt) && weaponRef.reachFt > 0) return weaponRef.reachFt;
+  if (Number.isFinite(weaponRef?.rangeFt) && weaponRef.rangeFt > 0) return weaponRef.rangeFt;
+  return isRangedWeapon({ name: weaponRef?.name }) ? 80 : meleeReachFt({ name: weaponRef?.name });
+}
+
+/** Does the swing stay on `target`? Standing creatures always. */
+function keepsTarget(turn, target) {
+  return !!target && isAlive(target);
+}
+
+/**
+ * The nearest standing hostile the attacker can reach with `weaponRef`
+ * from where it stands (Extra Attack / Multiattack re-target, PHB p192:
+ * the attacks may go to different targets). Null when none is in reach.
+ */
+function retargetFor(turn, weaponRef) {
+  const { attacker, targetable } = turn;
+  const from = attacker._position || attacker.position;
+  if (!from) return null;
+  const reach = swingReachFt(attacker, weaponRef);
+  let best = null;
+  let bestD = Infinity;
+  for (const e of targetable) {
+    if (!isAlive(e)) continue;
+    const p = e._position || e.position;
+    if (!p) continue;
+    const d = chebyshevFeet(from, p);
+    if (d <= reach && d < bestD) { best = e; bestD = d; }
+  }
+  return best;
+}
+
+/**
+ * One Attack action: every swing of attackSequenceFor, re-targeting the
+ * nearest standing hostile in reach when the current target drops. All
+ * swings share one cinema group; swing k ≥ 2 gets exchangeId
+ * `<group>.s<k>` (swing 1 keeps the group id, as before R10).
+ * @returns {Promise<{status: 'rejected'|'done', target: object|null, weaponRef: object|null}>}
+ */
+async function runAttackAction(turn, firstTarget, firstAction) {
+  const { attacker } = turn;
+  const sequence = attackSequenceFor(attacker);
+  const shared = { group: null, smiteDone: false };
+  let target = firstTarget;
+  let weaponRef = sequence[0] ?? null;
+  for (let i = 0; i < sequence.length; i++) {
+    weaponRef = sequence[i];
+    if (!isAlive(attacker)) break;
+    if (i > 0 && !keepsTarget(turn, target)) {
+      target = retargetFor(turn, weaponRef);
+      if (!target) break;
+    }
+    const status = await runWeaponSwing(turn, target, weaponRef, i, shared, firstAction);
+    if (status === 'rejected') return { status, target, weaponRef };
+    if (status === 'blocked') break;
+  }
+  return { status: 'done', target, weaponRef };
+}
+
+/**
+ * One weapon swing (resolver → roll → Shield → damage → riders → cinema).
+ * @returns {Promise<'rejected'|'blocked'|'done'>}
+ */
+async function runWeaponSwing(turn, target, weaponRef, index, shared, firstAction) {
+  const { attacker, enemies, allies, scene, rng, prompts, ctx, plan, explicit, charmers, actorId } = turn;
   // Build the resolver context. PCs use deriveWeaponAttack; monsters
-  // use the preset attack record directly. M42 weapon-switch is honored
-  // via attacker._chosenWeapon (set by the planner above).
+  // use the swing's attack record. M42 weapon-switch is honored via
+  // attacker._chosenWeapon (set by the planner).
   let attackStats;
   let sneakDice = 0;
+  let monsterAttack = null;
   if (attacker.kind === 'pc') {
-    const chosen = attacker._chosenWeapon || attacker.weapon;
+    const chosen = weaponRef;
     const a = deriveWeaponAttack(attacker.ref, chosen);
     attackStats = {
       bonus: a.bonus, dice: a.dice, damageType: a.damageType,
       parts: [{ source: chosen?.name || 'Attack', value: a.bonus }],
       damageParts: []
     };
-    // M42 — Sneak Attack. M64 R1 — the extra dice are appended AFTER the
-    // resolver (below) so its flat combatMods damage fold still sees a
-    // single-term spec; rollDamage handles the multi-term result.
-    if (plan?.featuresFired?.includes('sneak-attack')) {
+    // M42 — Sneak Attack (once per turn: the first swing). M64 R1 — the
+    // extra dice are appended AFTER the resolver (below) so its flat
+    // combatMods damage fold still sees a single-term spec.
+    if (!turn.sneakDone && plan?.featuresFired?.includes('sneak-attack')) {
+      turn.sneakDone = true;
       const lvl = (attacker.ref.classes || []).find(c => /rogue/i.test(c.name))?.level || 1;
       sneakDice = Math.max(1, Math.ceil(lvl / 2));
       PC_FEATURES['sneak-attack'].consume(attacker);
       emitEvent(ctx, 'feature.used', { entityId: actorId, featureId: 'sneak-attack' });
     }
-    // M42.1 — Reckless Attack
-    if (plan?.featuresFired?.includes('reckless-attack')) {
+    // M42.1 — Reckless Attack (decided on the first attack of the turn;
+    // advantage then lasts for every STR melee swing this turn).
+    if (!turn.recklessDone && plan?.featuresFired?.includes('reckless-attack')) {
+      turn.recklessDone = true;
       PC_FEATURES['reckless-attack'].consume(attacker);
       emitEvent(ctx, 'feature.used', { entityId: actorId, featureId: 'reckless-attack' });
     }
   } else {
+    monsterAttack = weaponRef || attacker.attack;
     attackStats = {
-      bonus: attacker.attack.bonus, dice: attacker.attack.dice,
-      damageType: null,
-      parts: [{ source: attacker.attack.name, value: attacker.attack.bonus }],
+      bonus: monsterAttack.bonus, dice: monsterAttack.dice,
+      damageType: monsterAttack.damageType ?? null,
+      parts: [{ source: monsterAttack.name, value: monsterAttack.bonus }],
       damageParts: []
     };
   }
@@ -473,7 +645,7 @@ async function resolveTurn(attacker, enemies, allies, scene, rng, prompts, ctx) 
   } else if (attacker.kind === 'monster' && target?._recklessUntilNextTurn) {
     advantageOverride = 'advantage';
   }
-  const weaponUsed = attacker.kind === 'pc' ? attacker.weapon : { name: attacker.attack.name };
+  const weaponUsed = attacker.kind === 'pc' ? weaponRef : { name: monsterAttack.name };
   const verdict = resolveAttack({
     attacker: attackerForResolver,
     target: targetForResolver,
@@ -491,15 +663,18 @@ async function resolveTurn(attacker, enemies, allies, scene, rng, prompts, ctx) 
   });
 
   if (verdict.autoMiss) {
-    if (explicit) {
+    if (explicit && index === 0 && firstAction) {
       emitEvent(ctx, 'turn.rejected', {
         actorId, code: 'blocked', reason: (verdict.blockers || []).join('; ') || 'attack not possible'
       });
+      return 'rejected';
     }
-    return;
+    return 'blocked';
   }
 
-  const group = nextCinemaGroup(ctx);
+  if (shared.group === null) shared.group = nextCinemaGroup(ctx);
+  const group = shared.group;
+  const exchangeId = index === 0 || group === null ? group : `${group}.s${index + 1}`;
   const targetHpBefore = target.hp;
   const finalBonus = verdict.attackBonus.total;
   const finalDmgDice = sneakDice > 0
@@ -514,36 +689,39 @@ async function resolveTurn(attacker, enemies, allies, scene, rng, prompts, ctx) 
   }
   // M33.1 — Shield reaction (target casts AFTER the roll lands).
   // M64 N1 — offered only when Shield could block it; answer gated.
-  if (await askShield(target, atk, { weapon: attacker.weapon }, prompts, ctx, group)) {
+  if (await askShield(target, atk, { weapon: weaponUsed }, prompts, ctx, group)) {
     spendShield(target, ctx, group);
     atk.hit = false;
     atk.shielded = true;
   }
   emitAttackRolled(ctx, group, attacker, target, atk, { weapon: weaponUsed?.name ?? null, isReaction: false, mode: verdict.d20.mode, bonus: finalBonus });
   // M64 T6 — re-check after the Shield await (a DM edit can land there).
-  if (!isAlive(attacker) || !isAlive(target)) return;
+  if (!isAlive(attacker) || !isAlive(target)) return 'blocked';
   const modifiers = {
     sneak: sneakDice > 0,
     reckless: !!plan?.featuresFired?.includes('reckless-attack'),
     surge: !!plan?.featuresFired?.includes('action-surge'),
     smiteSlot: null
   };
+  const cinemaInfo = { reaction: false, cast: false, targetHpBefore, modifiers, exchangeId, attackRecord: monsterAttack, weaponRef };
   if (!atk.hit) {
     // Dispatch a cinema round for the miss too — the live runner uses
     // this to dramatize the swing even when no damage lands.
     await dispatchCinema(prompts, ctx, group, {
       attacker, defender: target, plan, atk, dmg: 0, crit: false, miss: true
-    }, { reaction: false, cast: false, targetHpBefore, modifiers });
-    return;
+    }, cinemaInfo);
+    return 'done';
   }
   let dmg = rollDamage(finalDmgDice, { crit: atk.crit }, rng);
   if (prompts.onRoll) {
     dmg = await reviewRoll(prompts, ctx, group, 'damage', attacker, target, dmg);
-    if (!isAlive(attacker) || !isAlive(target)) return;
+    if (!isAlive(attacker) || !isAlive(target)) return 'blocked';
   }
   // M64 R8 — one damage path. With a smite following, the concentration
   // save waits for the smite so the hit forces ONE save on its total.
-  const smiting = attacker.kind === 'pc' && !!plan?.featuresFired?.includes('divine-smite');
+  // Divine Smite rides the first hit of the action (one slot per action).
+  const smiting = attacker.kind === 'pc' && !shared.smiteDone && !!plan?.featuresFired?.includes('divine-smite') &&
+    (index === 0 || PC_FEATURES['divine-smite'].available(attacker));
   const weaponHit = applyDamage(target, dmg.total, verdict.damage.damageType ?? null, {
     crit: !!atk.crit, attacker, ctx, rng, group, roster: [...allies, ...enemies],
     parts: { weapon: dmg.total, ...(sneakDice > 0 ? { sneakDice } : {}) },
@@ -553,6 +731,7 @@ async function resolveTurn(attacker, enemies, allies, scene, rng, prompts, ctx) 
   // M42.1 — Divine Smite
   let smiteTotal = 0;
   if (smiting) {
+    shared.smiteDone = true;
     PC_FEATURES['divine-smite'].consume(attacker, rng);
     const slotLevel = attacker._smiteSlotUsed || 1;
     modifiers.smiteSlot = slotLevel;
@@ -577,18 +756,8 @@ async function resolveTurn(attacker, enemies, allies, scene, rng, prompts, ctx) 
   await dispatchCinema(prompts, ctx, group, {
     attacker, defender: target, plan, atk,
     dmg: dmg.total + smiteTotal, crit: !!atk.crit, miss: false
-  }, { reaction: false, cast: false, targetHpBefore, modifiers, smiteTotal, damageType: verdict.damage.damageType ?? null });
-
-  // M42 — Action Surge: a second action right now.
-  if (plan?.featuresFired?.includes('action-surge') && !attacker._surgeFiredThisTurn) {
-    attacker._surgeFiredThisTurn = true;
-    PC_FEATURES['action-surge'].consume(attacker);
-    emitEvent(ctx, 'feature.used', { entityId: actorId, featureId: 'action-surge' });
-    if (isAlive(attacker) && sideAlive(enemies) > 0) {
-      await runOneAttack(attacker, enemies, allies, scene, rng, prompts, ctx);
-    }
-    attacker._surgeFiredThisTurn = false;
-  }
+  }, { ...cinemaInfo, smiteTotal, damageType: verdict.damage.damageType ?? null });
+  return 'done';
 }
 
 // =====================================================================
@@ -1162,7 +1331,8 @@ async function dispatchCinema(prompts, ctx, group, roundPayload, info) {
       entityId: idOf(defender),
       hp: { before: info.targetHpBefore ?? defender.hp, after: defender.hp, max: defender.hpMax ?? defender.hp }
     }] : []);
-    const weapon = info.cast ? null : cinemaWeapon(attacker, info.damageType);
+    const weapon = info.cast ? null : cinemaWeapon(attacker, info.damageType, info);
+    const exchangeId = info.exchangeId ?? group;
     const seat = typeof ctx.cinemaInputs === 'function'
       ? (ctx.cinemaInputs({ attackerId: idOf(attacker), weapon }) || {})
       : {};
@@ -1176,7 +1346,7 @@ async function dispatchCinema(prompts, ctx, group, roundPayload, info) {
       ? { id: String(info.spell.id), kind: String(info.spell.kind), aoe: !!info.spell.aoe, damageType: info.spell.damageType ?? null }
       : null;
     emitEvent(ctx, 'exchange', {
-      exchangeId: group,
+      exchangeId,
       attackerId: idOf(attacker),
       defenderId: idOf(defender),
       reaction: !!info.reaction,
@@ -1203,7 +1373,7 @@ async function dispatchCinema(prompts, ctx, group, roundPayload, info) {
         killing: !!defender && (info.targetHpBefore ?? 0) > 0 && defender.hp <= 0,
         spell,
         outcome: info.outcome ? { ...info.outcome } : null,
-        fxSeed: fxSeedOf(group),
+        fxSeed: fxSeedOf(exchangeId),
         durationMs: 0
       }
     }, group);
@@ -1211,9 +1381,9 @@ async function dispatchCinema(prompts, ctx, group, roundPayload, info) {
   if (prompts.onCinemaRound) await prompts.onCinemaRound(roundPayload);
 }
 
-function cinemaWeapon(attacker, damageType) {
+function cinemaWeapon(attacker, damageType, info = {}) {
   if (attacker?.kind === 'pc') {
-    const w = attacker._chosenWeapon || attacker.weapon || null;
+    const w = info.weaponRef !== undefined ? info.weaponRef : (attacker._chosenWeapon || attacker.weapon || null);
     const name = w?.name || 'Unarmed Strike';
     const bonus = Number(w?.magicBonus ?? w?.bonus ?? 0);
     return {
@@ -1222,7 +1392,7 @@ function cinemaWeapon(attacker, damageType) {
       magical: bonus > 0 || !!w?.magic || /\+\d/.test(name)
     };
   }
-  const a = attacker?.attack || {};
+  const a = info.attackRecord || attacker?.attack || {};
   return { name: a.name || 'Strike', damageType: a.damageType ?? damageType ?? null, magical: false };
 }
 

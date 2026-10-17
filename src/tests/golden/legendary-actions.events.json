@@ -139,18 +139,125 @@
     },
     {
       "seq": 6,
+      "type": "attack.rolled",
+      "round": 1,
+      "turnId": "t1",
+      "cinemaGroup": "t1.x1",
+      "payload": {
+        "attackerId": "pc-fighter",
+        "targetId": "m-dragon",
+        "weapon": "Longsword",
+        "isReaction": false,
+        "advantage": "normal",
+        "d20": [
+          11
+        ],
+        "kept": 11,
+        "bonus": 6,
+        "total": 17,
+        "ac": 17,
+        "hit": true,
+        "crit": false,
+        "shielded": false
+      }
+    },
+    {
+      "seq": 7,
+      "type": "damage",
+      "round": 1,
+      "turnId": "t1",
+      "cinemaGroup": "t1.x1",
+      "payload": {
+        "sourceId": "pc-fighter",
+        "targetId": "m-dragon",
+        "amount": 11,
+        "type": "Slashing",
+        "hpBefore": 76,
+        "hpAfter": 65,
+        "rolled": 11,
+        "parts": {
+          "weapon": 11
+        }
+      }
+    },
+    {
+      "seq": 8,
+      "type": "exchange",
+      "round": 1,
+      "turnId": "t1",
+      "cinemaGroup": "t1.x1",
+      "payload": {
+        "exchangeId": "t1.x1.s2",
+        "attackerId": "pc-fighter",
+        "defenderId": "m-dragon",
+        "reaction": false,
+        "cast": false,
+        "roll": {
+          "d20": {
+            "dice": [
+              11
+            ],
+            "kept": 11,
+            "mode": "normal"
+          },
+          "bonus": 6,
+          "total": 17,
+          "ac": 17,
+          "hit": true,
+          "crit": false,
+          "shielded": false
+        },
+        "damage": {
+          "total": 11,
+          "smite": 0,
+          "heal": 0,
+          "type": "Slashing",
+          "crit": false
+        },
+        "effects": [
+          {
+            "entityId": "m-dragon",
+            "hp": {
+              "before": 76,
+              "after": 65,
+              "max": 80
+            }
+          }
+        ],
+        "miss": false,
+        "cinema": {
+          "weapon": {
+            "name": "Longsword",
+            "damageType": "Slashing",
+            "magical": false
+          },
+          "style": null,
+          "swing": null,
+          "modifiers": [],
+          "smiteSlot": null,
+          "attackerLevel": 5,
+          "killing": false,
+          "spell": null,
+          "outcome": null,
+          "fxSeed": 3947703146,
+          "durationMs": 0
+        }
+      }
+    },
+    {
+      "seq": 9,
       "type": "turn.ended",
       "round": 1,
       "turnId": "t1",
       "cinemaGroup": null,
       "payload": {
         "actorId": "pc-fighter",
-        "stateHash": "174db52ae236bd",
-        "rngDraws": 2
+        "stateHash": "1aa4ddf14fc55d",
+        "rngDraws": 4
       }
     },
     {
-      "seq": 7,
+      "seq": 10,
       "type": "feature.used",
       "round": 1,
       "turnId": "l2",
@@ -161,7 +268,7 @@
       }
     },
     {
-      "seq": 8,
+      "seq": 11,
       "type": "save.rolled",
       "round": 1,
       "turnId": "l2",
@@ -171,15 +278,15 @@
         "stat": "STR",
         "dc": 14,
         "d20": [
-          11
+          20
         ],
-        "total": 17,
+        "total": 26,
         "success": true,
         "reason": "legendary"
       }
     },
     {
-      "seq": 9,
+      "seq": 12,
       "type": "damage",
       "round": 1,
       "turnId": "l2",
@@ -187,15 +294,15 @@
       "payload": {
         "sourceId": "m-dragon",
         "targetId": "pc-fighter",
-        "amount": 8,
+        "amount": 5,
         "type": "Bludgeoning",
         "hpBefore": 44,
-        "hpAfter": 36,
-        "rolled": 8
+        "hpAfter": 39,
+        "rolled": 5
       }
     },
     {
-      "seq": 10,
+      "seq": 13,
       "type": "resource.spent",
       "round": 1,
       "turnId": "l2",
@@ -208,7 +315,7 @@
       }
     },
     {
-      "seq": 11,
+      "seq": 14,
       "type": "feature.used",
       "round": 1,
       "turnId": "l2",
@@ -219,7 +326,7 @@
       }
     },
     {
-      "seq": 12,
+      "seq": 15,
       "type": "attack.rolled",
       "round": 1,
       "turnId": "l2",
@@ -231,19 +338,35 @@
         "isReaction": false,
         "advantage": "normal",
         "d20": [
-          6
+          15
         ],
-        "kept": 6,
+        "kept": 15,
         "bonus": 7,
-        "total": 13,
+        "total": 22,
         "ac": 18,
-        "hit": false,
+        "hit": true,
         "crit": false,
         "shielded": false
       }
     },
     {
-      "seq": 13,
+      "seq": 16,
+      "type": "damage",
+      "round": 1,
+      "turnId": "l2",
+      "cinemaGroup": "l2.x2",
+      "payload": {
+        "sourceId": "m-dragon",
+        "targetId": "pc-fighter",
+        "amount": 16,
+        "type": "Bludgeoning",
+        "hpBefore": 39,
+        "hpAfter": 23,
+        "rolled": 16
+      }
+    },
+    {
+      "seq": 17,
       "type": "resource.spent",
       "round": 1,
       "turnId": "l2",
@@ -258,7 +381,7 @@
   ],
   "final": {
     "m-dragon": {
-      "hp": 76,
+      "hp": 65,
       "pos": {
         "col": 4,
         "row": 3
@@ -274,10 +397,10 @@
       "actionSurgeUsed": 0,
       "secondWindUsed": false,
       "shieldActive": false,
-      "damageDealt": 8
+      "damageDealt": 21
     },
     "pc-fighter": {
-      "hp": 36,
+      "hp": 23,
       "pos": {
         "col": 3,
         "row": 3
@@ -297,7 +420,7 @@
       "actionSurgeUsed": 0,
       "secondWindUsed": false,
       "shieldActive": false,
-      "damageDealt": 4
+      "damageDealt": 15
     }
   }
 }
