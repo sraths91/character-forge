@@ -41,6 +41,7 @@ import {
 import { factionLists, chebyshevFeet, isRangedWeapon, meleeReachFt } from './grid-rules.js';
 import { planMovement, occupiedCellsOf } from './movement.js';
 import { straightPath, terrainPath, terrainApproach } from './pathing.js';
+import { coverBetween } from './grid-legality.js';
 import { chooseAction, fleeTargetCell } from './ai/profile.js';
 import { choosePcAction } from './ai/pc-action.js';
 import {
@@ -728,7 +729,8 @@ async function runWeaponSwing(turn, target, weaponRef, index, shared, firstActio
     hostiles: hostileList,
     attackStats,
     charmerIds: charmers,
-    targetId: target.id
+    targetId: target.id,
+    coverEntities: scene?.terrain ? [...allies, ...enemies] : null
   });
 
   if (verdict.autoMiss) {
@@ -753,7 +755,7 @@ async function runWeaponSwing(turn, target, weaponRef, index, shared, firstActio
   if (verdict.autoCrit) {
     atk = { hit: true, crit: true, total: 20 + finalBonus };
   } else {
-    atk = rollAttack({ bonus: finalBonus, advantage: dodgeMode(verdict.d20.mode, target), targetAC: target.ac }, rng);
+    atk = rollAttack({ bonus: finalBonus, advantage: dodgeMode(verdict.d20.mode, target), targetAC: verdict.targetAC }, rng);
     if (prompts.onRoll) atk = await reviewRoll(prompts, ctx, group, 'attack', attacker, target, atk);
   }
   // M33.1 — Shield reaction (target casts AFTER the roll lands).
@@ -869,6 +871,13 @@ export async function runMonsterSpell({ attacker, target, plan, scene, rng, witn
   const wasDying = isDying(target);
 
   const roster = [...allies, ...allEnemies];
+  // M64 phase 1.5 — with a terrain layer, a single target behind total
+  // cover cannot be targeted (PHB p196); refused before anything is spent.
+  if (scene?.terrain && target && !spell.aoe && spell.kind !== 'heal' && target !== attacker &&
+      coverBetweenWrappers(scene, roster, attacker, target) === 'total') {
+    emitEvent(ctx, 'turn.rejected', { actorId: casterId, code: 'no-line', reason: `${target.name || idOf(target)} has total cover` });
+    return;
+  }
   if (spell.concentration && isConcentrating(attacker)) {
     endConcentration(attacker, 'recast', ctx, group, roster);
   }
@@ -1015,7 +1024,8 @@ export async function runMonsterSpell({ attacker, target, plan, scene, rng, witn
           parts: [{ source: spell.name, value: effectiveBook.attackBonus }], damageParts: []
         },
         charmerIds: charmerIds(attacker),
-        targetId: t.id
+        targetId: t.id,
+        coverEntities: scene?.terrain ? roster : null
       });
       if (verdict.autoMiss) {
         await castCinema(t, { dmg: 0, miss: true }, { exchangeId });
@@ -1024,7 +1034,7 @@ export async function runMonsterSpell({ attacker, target, plan, scene, rng, witn
       const mode = verdict.d20.mode;
       let atk = verdict.autoCrit
         ? { hit: true, crit: true, total: 20 + verdict.attackBonus.total }
-        : rollAttack({ bonus: verdict.attackBonus.total, advantage: dodgeMode(mode, t), targetAC: t.ac }, rng);
+        : rollAttack({ bonus: verdict.attackBonus.total, advantage: dodgeMode(mode, t), targetAC: verdict.targetAC }, rng);
       if (prompts.onRoll) atk = await reviewRoll(prompts, ctx, group, 'attack', attacker, t, atk);
       if (await askShield(t, atk, { weapon: null, spell }, prompts, ctx, group)) {
         spendShield(t, ctx, group);
@@ -1074,7 +1084,11 @@ export async function runMonsterSpell({ attacker, target, plan, scene, rng, witn
         const ep = e._position || e.position;
         if (!ep) continue;
         if (chebyshevFeet(center, ep) > (spell.range || 15)) continue;
-        const eBonus = saveBonusFor(e, spell.saveStat);
+        // M64 phase 1.5 — cover from the effect's origin: +2 / +5 to a
+        // DEX save; total cover shields the creature entirely.
+        const eCover = scene?.terrain ? coverBetweenWrappers(scene, roster, attacker, e) : 'none';
+        if (eCover === 'total') continue;
+        const eBonus = saveBonusFor(e, spell.saveStat) + coverSaveBonus(eCover, spell.saveStat);
         const eSave = rollSave({ bonus: eBonus, dc: effectiveBook.dc, advantage: saveModeFor(e, spell.saveStat) }, rng);
         emitSave(ctx, group, e, spell.saveStat, eSave, 'spell');
         const dmgRoll = rollDamage(spell.dice, { crit: false }, rng);
@@ -1102,7 +1116,8 @@ export async function runMonsterSpell({ attacker, target, plan, scene, rng, witn
 
   // Save-based, single target
   const saveStat = spell.saveStat;
-  const targetSaveBonus = saveBonusFor(target, saveStat);
+  const targetSaveBonus = saveBonusFor(target, saveStat) +
+    (scene?.terrain ? coverSaveBonus(coverBetweenWrappers(scene, roster, attacker, target), saveStat) : 0);
   let save = rollSave({ bonus: targetSaveBonus, dc: effectiveBook.dc, advantage: saveModeFor(target, saveStat) }, rng);
   if (prompts.onRoll) save = await reviewRoll(prompts, ctx, group, 'save', target, attacker, save);
   emitSave(ctx, group, target, saveStat, save, 'spell');
@@ -1183,14 +1198,15 @@ export async function runReactionAttack(attacker, target, targetBeforePos, scene
     allies: [], hostiles: [],
     attackStats,
     charmerIds: charmerIds(attacker),
-    targetId: target.id
+    targetId: target.id,
+    coverEntities: scene?.terrain ? (opts.roster || []) : null
   });
   if (verdict.autoMiss) return;
   const group = nextCinemaGroup(ctx);
   const targetHpBefore = target.hp;
   let atk = verdict.autoCrit
     ? { hit: true, crit: true, total: 20 + verdict.attackBonus.total }
-    : rollAttack({ bonus: verdict.attackBonus.total, advantage: dodgeMode(verdict.d20.mode, target), targetAC: target.ac }, rng);
+    : rollAttack({ bonus: verdict.attackBonus.total, advantage: dodgeMode(verdict.d20.mode, target), targetAC: verdict.targetAC }, rng);
   if (prompts.onRoll && atk.d20) atk = await reviewRoll(prompts, ctx, group, 'attack', attacker, target, atk);
   if (await askShield(target, atk, { weapon: attacker.weapon }, prompts, ctx, group)) {
     spendShield(target, ctx, group);
@@ -1545,7 +1561,8 @@ export function shieldCanBlock(defender, atk) {
   if (!atk.hit || atk.crit) return false;
   if (!canCastShield(defender)) return false;
   if (atk.autoHit) return true;
-  return atk.total < defender.ac + 5;
+  // M64 phase 1.5 — the AC the roll was made against (cover included).
+  return atk.total < (Number.isFinite(atk.ac) ? atk.ac : defender.ac) + 5;
 }
 
 /**
@@ -1565,7 +1582,7 @@ async function askShield(defender, atk, info, prompts, ctx = NO_CTX, group = nul
   if (!shieldCanBlock(defender, atk)) return false;
   const auto = atk.autoHit
     ? true
-    : shouldCastShield({ target: defender, attackerTotal: atk.total, targetAc: defender.ac });
+    : shouldCastShield({ target: defender, attackerTotal: atk.total, targetAc: Number.isFinite(atk.ac) ? atk.ac : defender.ac });
   const reactorId = idOf(defender);
   emitEvent(ctx, 'reaction.offered', offeredPayload(ctx, reactorId, 'shield', auto, { attackTotal: atk.total ?? null }), group);
   const { answer, by } = normalizeAnswer(prompts.onShieldReaction
@@ -2311,6 +2328,33 @@ export function abilityModFor(entity, stat) {
     return ref.abilityModifiers?.[stat] ?? 0;
   }
   return saveBonusFor(entity, stat);
+}
+
+/**
+ * M64 phase 1.5 — cover between two wrappers on the scene's terrain
+ * (grid-legality.coverBetween; other creatures give half cover).
+ * @param {object} scene
+ * @param {object[]} roster — wrappers that may stand in the way
+ * @param {object} from — wrapper
+ * @param {object} to — wrapper
+ * @returns {'none'|'half'|'threeQuarters'|'total'}
+ */
+export function coverBetweenWrappers(scene, roster, from, to) {
+  const a = from?._position || from?.position;
+  const b = to?._position || to?.position;
+  if (!scene?.terrain || !a || !b) return 'none';
+  return coverBetween(scene.terrain, roster || [], a, b);
+}
+
+/**
+ * DEX-save bonus from cover (PHB p196): half +2, three-quarters +5.
+ * @param {string} cover
+ * @param {string} stat
+ * @returns {number}
+ */
+export function coverSaveBonus(cover, stat) {
+  if (stat !== 'DEX') return 0;
+  return cover === 'half' ? 2 : cover === 'threeQuarters' ? 5 : 0;
 }
 
 /** The sheet's own spell entry (parsed spells[]) for a registry id, or null. */
