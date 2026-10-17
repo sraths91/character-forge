@@ -7,11 +7,11 @@
  * mounted (lobby, setup) broadcasts present immediately. A store resync
  * request becomes a ws `resync`.
  *
- * The client-side `turn.ended.stateHash` check is OFF here: the server
- * stamps the shared `stateHash` (shared/state-hash.js), which covers
- * resource ledgers and turn flags the event stream does not carry, so a
- * client mirror cannot reproduce it. Drift is still caught by seq gaps,
- * and every (re)connect brings a full snapshot.
+ * The client-side `turn.ended.stateHash` check is ON (M64 phase 1.5):
+ * the store's mirror (mirror.js) replays the engine's resource ledgers,
+ * turn flags and turn order from the events, so its shared `stateHash`
+ * equals the one the server stamps. A mismatch asks for a resync; seq
+ * gaps and every (re)connect still bring a full snapshot.
  */
 
 import { createWsClient } from './ws-client.js';
@@ -25,7 +25,7 @@ const EVENT_SET = new Set(EVENT_TYPES);
  * @param {string} opts.url — ws URL
  * @param {string|(() => string)} opts.token
  * @param {Function} [opts.WebSocketCtor]
- * @param {object} [opts.store] — defaults to createStore({hashState: null})
+ * @param {object} [opts.store] — defaults to createStore() (hash check on)
  * @param {object} [opts.wsOptions] — extra createWsClient options (timers, now, random, logger)
  * @returns {{
  *   store: object, ws: object,
@@ -37,7 +37,7 @@ const EVENT_SET = new Set(EVENT_TYPES);
  *   close: () => void
  * }}
  */
-export function createSession({ url, token, WebSocketCtor, store = createStore({ hashState: null }), wsOptions = {} }) {
+export function createSession({ url, token, WebSocketCtor, store = createStore(), wsOptions = {} }) {
   const ws = createWsClient({
     url, token, WebSocketCtor,
     getLastSeq: () => (store.getState().synced ? store.getState().seq : null),

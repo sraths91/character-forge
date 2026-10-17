@@ -32,10 +32,18 @@ import { ABILITIES } from './encounter-state.js';
  * attackerLevel, killing, spell, outcome, fxSeed, durationMs). The
  * engine emits `durationMs: 0` (it cannot import the anim builders);
  * the server falls back to its fixed pacing cap when it is 0.
+ * v1.2 (additive, 2026-10-16, E2 — mirrors E1's wave-5 dying contract;
+ * E1 adds the same types on its branch, one copy survives the merge):
+ * `death.save {entityId, d20|null, success, crit, successes, failures,
+ * cause: 'roll'|'damage'}`, `entity.died {entityId, byId|null, cause:
+ * 'failures'|'massive'|'monster'}`, `entity.stabilized {entityId}`,
+ * `entity.revived {entityId, hp, byId|null}` — payloads carry post-event
+ * values. Extra Attack swings share one cinemaGroup; swing k >= 2 has
+ * exchangeId `${group}.s${k}`.
  */
 export const EVENT_CATALOGUE_VERSION = 1;
 /** Additive minor revision of catalogue v1. */
-export const EVENT_CATALOGUE_MINOR = 1;
+export const EVENT_CATALOGUE_MINOR = 2;
 
 /** Every event type, in catalogue order. */
 export const EVENT_TYPES = Object.freeze([
@@ -52,6 +60,7 @@ export const EVENT_TYPES = Object.freeze([
   'resource.spent',
   'feature.used',
   'entity.downed',
+  'death.save', 'entity.died', 'entity.stabilized', 'entity.revived',
   'exchange',
   'dm.override',
   'turn.rejected',
@@ -68,6 +77,8 @@ export const PLAN_SOURCES = Object.freeze(['ai', 'player', 'dm']);
 export const ADVANTAGE_MODES = Object.freeze(['normal', 'advantage', 'disadvantage']);
 /** Why a spell produced no effect. */
 export const FIZZLE_REASONS = Object.freeze(['shield', 'counterspell']);
+/** What forced a death saving throw (v1.2). */
+export const DEATH_SAVE_CAUSES = Object.freeze(['roll', 'damage']);
 /** How an encounter ended. */
 export const ENCOUNTER_OUTCOMES = Object.freeze(['party-victory', 'hostile-victory', 'draw', 'dm-ended']);
 
@@ -155,6 +166,14 @@ export const EVENT_PAYLOAD_SPECS = Object.freeze({
   'resource.spent': shape({ entityId: ID, resource: str(), level: nullable(int(0, 9)) }, LOOSE),
   'feature.used': shape({ entityId: ID, featureId: str() }, LOOSE),
   'entity.downed': shape({ entityId: ID }, LOOSE),
+  // v1.2 — the dying state (E1 wave 5).
+  'death.save': shape({
+    entityId: ID, d20: nullable(int(1, 20)), success: bool(),
+    successes: int(0, 3), failures: int(0, 3), cause: oneOf(DEATH_SAVE_CAUSES)
+  }, LOOSE),
+  'entity.died': shape({ entityId: ID, byId: optional(nullable(ID)), cause: optional(str()) }, LOOSE),
+  'entity.stabilized': shape({ entityId: ID }, LOOSE),
+  'entity.revived': shape({ entityId: ID, hp: int(0), byId: optional(nullable(ID)) }, LOOSE),
   exchange: shape({
     exchangeId: ID,
     attackerId: ID,

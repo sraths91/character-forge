@@ -28,6 +28,20 @@ import { applyTerrainPaint, encodeTerrain, asTerrain } from '../map/terrain.js';
 
 const clone = (v) => (v === undefined ? undefined : JSON.parse(JSON.stringify(v)));
 const MAX_SEATS = 6;
+
+/**
+ * Whether the shared EncounterState schema carries E1's wave-5 dying
+ * fields yet (entity `status` / `deathSaves`). Probed once, so the fake
+ * tracks them exactly when the real engine does and stays valid before.
+ */
+const DYING_SCHEMA = (() => {
+  const e = entityFromPreset('goblin', { id: 'probe', pos: { col: 0, row: 0 } });
+  const probe = {
+    v: 1, encounterId: 'probe', round: 0, turnIndex: 0, phase: 'setup', grid: { cols: 1, rows: 1, cellFt: 5, flankingEnabled: false },
+    map: null, initiative: [], entities: { probe: { ...e, hp: 0, status: 'dead' } }, lastEventSeq: 0
+  };
+  return validateEncounterState(probe, { projected: true }).ok;
+})();
 const CODE_ALPHABET = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
 
 function mulberry32(seed) {
@@ -237,9 +251,9 @@ export function createFakeServer({
     return msg;
   }
 
-  function emit(room, type, payload, cinemaGroup = null) {
+  function emit(room, type, payload, cinemaGroup = null, round = null) {
     const enc = room.enc;
-    const ev = { seq: room.seq + 1, type, round: enc?.state.round ?? 0, turnId: room.turn?.turnId ?? null, cinemaGroup, payload };
+    const ev = { seq: room.seq + 1, type, round: round ?? enc?.state.round ?? 0, turnId: room.turn?.turnId ?? null, cinemaGroup, payload };
     broadcast(room, type, ev);
     if (enc) {
       enc.state.lastEventSeq = ev.seq;
@@ -468,6 +482,7 @@ export function createFakeServer({
       if (used) {
         target.resources.reactionUsed = true;
         target.resources.slots[slot[0]].spent += 1;
+        target.turnFlags = { ...target.turnFlags, shieldActive: true };
         emit(room, 'resource.spent', { entityId: target.id, resource: 'reaction', level: null }, group);
         emit(room, 'resource.spent', { entityId: target.id, resource: 'spell-slot', level: Number(slot[0]) }, group);
         shielded = true;
@@ -485,7 +500,7 @@ export function createFakeServer({
       if (actor.kind === 'monster' || actor.controller.type === 'ai') dmg = await reviewRoll(room, actor, target.id, 'damage', dmg);
       target.hp = Math.max(0, before - dmg);
       emit(room, 'damage', { sourceId: actor.id, targetId: target.id, amount: before - target.hp, type: prof.damageType, hpBefore: before, hpAfter: target.hp }, group);
-      if (before > 0 && target.hp === 0) emit(room, 'entity.downed', { entityId: target.id, byId: actor.id }, group);
+      if (before > 0 && target.hp === 0) downed(room, target, actor, group);
     }
     emit(room, 'exchange', {
       exchangeId: group, attackerId: actor.id, defenderId: target.id, reaction: false, cast: false,
@@ -501,6 +516,23 @@ export function createFakeServer({
       }
     }, group);
     await waitCinema(room, group);
+  }
+
+  /**
+   * A creature dropped to 0 HP. With the E1 wave-5 dying schema (entity
+   * `status` / `deathSaves`) a PC is downed and unconscious, a monster
+   * dies; before it the state carries nothing beyond hp 0.
+   */
+  function downed(room, target, actor, group) {
+    emit(room, 'entity.downed', { entityId: target.id, byId: actor.id }, group);
+    if (!DYING_SCHEMA) return;
+    if (target.kind === 'pc') {
+      target.status = 'downed';
+      target.deathSaves = { successes: 0, failures: 0, stable: false };
+    } else {
+      target.status = 'dead';
+      emit(room, 'entity.died', { entityId: target.id, byId: actor.id, cause: 'monster' }, group);
+    }
   }
 
   function nearestEnemy(state, actor) {
@@ -542,10 +574,14 @@ export function createFakeServer({
     const entry = state.initiative[state.turnIndex];
     const actor = state.entities[entry.entityId];
     room.turn = { turnId: `t${++room.turnN}`, actorId: actor.id, awaiting: null };
+    const round = state.round;
     if (!alive(actor)) {
       emit(room, 'turn.skipped', { actorId: actor.id, reason: 'down' });
     } else {
+      // The engine's start-of-turn resets (turn-manager beginTurnResets).
       actor.resources.reactionUsed = false;
+      const { shieldActive: _s, dodging: _d, disengaged: _g, ...flags } = actor.turnFlags || {};
+      actor.turnFlags = flags;
       emit(room, 'turn.started', { actorId: actor.id });
       let plan = null;
       let source = 'ai';
@@ -567,10 +603,23 @@ export function createFakeServer({
         const target = plan.targetId ? state.entities[plan.targetId] : null;
         if (['attack', 'melee', 'ranged'].includes(plan.kind) && target && alive(target)) await doAttack(room, actor, target, plan.weaponName);
         if (plan.kind === 'dodge') actor.turnFlags = { ...actor.turnFlags, dodging: true };
+        if (plan.kind === 'disengage') actor.turnFlags = { ...actor.turnFlags, disengaged: true };
       }
     }
-    emit(room, 'turn.ended', { actorId: actor.id, stateHash: stateHash(state) });
+    // Like the real server: the victory check, else advance the turn
+    // index — then hash, so turn.ended carries the post-turn state.
+    const outcome = outcomeOf(state);
+    let wrapped = false;
+    if (outcome) {
+      state.phase = 'ended';
+    } else {
+      state.turnIndex += 1;
+      if (state.turnIndex >= state.initiative.length) { state.turnIndex = 0; state.round += 1; wrapped = true; }
+    }
+    emit(room, 'turn.ended', { actorId: actor.id, stateHash: stateHash(state) }, null, round);
     room.turn = null;
+    if (outcome) endEncounter(room, outcome, true);
+    else if (wrapped) broadcast(room, 'round.started', { round: state.round });
   }
 
   function outcomeOf(state) {
@@ -580,8 +629,8 @@ export function createFakeServer({
     return null;
   }
 
-  function endEncounter(room, outcome) {
-    if (!room.enc || room.enc.state.phase === 'ended') return;
+  function endEncounter(room, outcome, decided = false) {
+    if (!room.enc || (room.enc.state.phase === 'ended' && !decided)) return;
     room.enc.state.phase = 'ended';
     emit(room, 'encounter.ended', { outcome, round: room.enc.state.round });
     for (const p of [...room.prompts.values()]) settlePrompt(room, p, clone(p.autoAnswer), 'cancelled');
@@ -592,15 +641,6 @@ export function createFakeServer({
     while (room.enc && room.enc.state.phase === 'running' && !room.paused) {
       await runTurn(room);
       if (room.endRequested) { endEncounter(room, room.endRequested); room.endRequested = null; break; }
-      const state = room.enc.state;
-      const outcome = outcomeOf(state);
-      if (outcome) { endEncounter(room, outcome); break; }
-      const n = state.initiative.length;
-      state.turnIndex = (state.turnIndex + 1) % n;
-      if (state.turnIndex === 0) {
-        state.round += 1;
-        broadcast(room, 'round.started', { round: state.round });
-      }
     }
     room.loop = null;
   }
