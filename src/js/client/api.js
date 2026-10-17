@@ -10,7 +10,7 @@
  *   DELETE /api/rooms/:id/seats/:n                                 → {ok}
  *   POST   /api/import?room=<id>             {url | json}          → {character}  (use character.id)
  *   GET    /api/characters?room=<id>                               → {characters: [{ddbId, name}]}
- *   GET    /api/characters/:ddbId                                  → {character}
+ *   GET    /api/characters/:ddbId (Bearer)                         → {character, prose?: 'stripped'}
  *   PUT    /api/rooms/:id/maps?filename=     raw image bytes       → {mapId, url, width, height, …}
  *   GET    /api/monsters/search?q=                                 → {results: [{slug, name, type, cr, hp}]}
  *
@@ -61,7 +61,10 @@ export function createApi({ fetch: fetchImpl = globalThis.fetch?.bind(globalThis
     releaseSeat: (roomId, seat) => call('DELETE', `/api/rooms/${enc(roomId)}/seats/${enc(seat)}`),
     importCharacter: (roomId, { url, json } = {}) => call('POST', `/api/import?room=${enc(roomId)}`, { body: json ? { json } : { url } }),
     listCharacters: (roomId) => call('GET', `/api/characters?room=${enc(roomId)}`),
-    getCharacter: (ddbId) => call('GET', `/api/characters/${enc(ddbId)}`, { auth: false }),
+    // Authenticated since E3's leak fix: a member token sees characters in
+    // its room (teammates get the prose-stripped sheet); without a token
+    // the server serves only what this browser imported.
+    getCharacter: (ddbId) => call('GET', `/api/characters/${enc(ddbId)}`),
     uploadMap: (roomId, bytes, { filename = '', mime = 'application/octet-stream' } = {}) =>
       call('PUT', `/api/rooms/${enc(roomId)}/maps${filename ? `?filename=${enc(filename)}` : ''}`, { raw: bytes, contentType: mime }),
     searchMonsters: (q) => call('GET', `/api/monsters/search?q=${enc(q)}`, { auth: false })

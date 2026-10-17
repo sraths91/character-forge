@@ -194,3 +194,13 @@ test('M64 1.5 session: the smoke script with the shared stateHash check on — e
   dm.close();
   player.close();
 });
+
+test('M64 1.5 api: getCharacter sends the member token (characters are room-scoped)', async () => {
+  const calls = [];
+  const api = createApi({ fetch: async (url, init) => { calls.push({ url, init }); return { ok: true, status: 200, json: async () => ({ character: { id: 'x' } }) }; }, token: () => 'tok_1' });
+  await api.getCharacter('paste:r1:x');
+  assert.equal(calls[0].url, '/api/characters/paste%3Ar1%3Ax');
+  assert.equal(calls[0].init.headers.Authorization, 'Bearer tok_1');
+  await api.searchMonsters('gob');
+  assert.equal(calls[1].init.headers.Authorization, undefined, 'monster search stays anonymous');
+});
