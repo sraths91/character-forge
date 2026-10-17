@@ -317,6 +317,7 @@ export function legacySceneToView(characters, scene, opts = {}) {
     popups: opts.popups || null,
     effects: opts.effects || null,
     aoePreview: opts.aoeTemplate || null,
+    pathPreview: opts.pathPreview || null,
     direction: opts.direction || 'south',
     frameIdx: opts.frameIdx || 0,
     appearances

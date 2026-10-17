@@ -243,3 +243,10 @@ test('render path: no scene-state / main.js import and no scene mutator reachabl
     }
   }
 });
+
+test('legacySceneToView forwards pathPreview to local (M64 1.5 fix: it used to be dropped)', () => {
+  const scene = { cols: 4, rows: 4, cellSize: 64, scale: 1, map: null, grid: { visible: true } };
+  const preview = { cells: [{ col: 0, row: 0 }, { col: 1, row: 1 }], legal: true, costFt: 5 };
+  assert.deepEqual(legacySceneToView([], scene, { pathPreview: preview }).local.pathPreview, preview);
+  assert.equal(legacySceneToView([], scene, {}).local.pathPreview, null);
+});
