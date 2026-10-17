@@ -6,7 +6,8 @@
  * into `room.snapshot`, and clients compare it to detect drift. It covers
  * round, turnIndex, phase, the initiative order, and per entity: hp,
  * hpTemp, pos, condition ids, concentration, the resource ledger (spent
- * counts, reaction, legendary budget, innate state) and turnFlags.
+ * counts, reaction, legendary budget, innate state) and turnFlags, plus
+ * (v1 additive, M64 R9) `status` / `deathSaves` when the entity has them.
  * It NEVER covers `sheetRef` / `statBlock` contents, `rng`,
  * `lastEventSeq`, names, controllers or anything else static, so an
  * additive parser field or a view projection cannot flip it.
@@ -86,6 +87,10 @@ export function stateHashInput(state) {
       },
       turnFlags: e?.turnFlags || {}
     };
+    // v1 additive (M64 R9): covered only when present, so states without
+    // a dying creature hash exactly as before.
+    if (e?.status !== undefined) entities[id].status = e.status;
+    if (e?.deathSaves !== undefined) entities[id].deathSaves = { ...e.deathSaves };
   }
   return {
     round: state?.round ?? 0,

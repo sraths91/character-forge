@@ -33,7 +33,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { validateEncounterState } from '../../js/shared/encounter-state.js';
 import { validateEvent, validateEventLog } from '../../js/shared/events.js';
-import { runOneAttack, runLegendaryActions } from '../../js/scene/combat-engine.js';
+import { runOneAttack, runLegendaryActions, setHpRaw } from '../../js/scene/combat-engine.js';
 import { withD20, withSaveD20 } from '../../js/scene/combat-roll.js';
 import { seedRng } from '../../js/scene/simulator.js';
 import { resetReactionsForAll } from '../../js/scene/reactions.js';
@@ -258,7 +258,9 @@ export async function runScenario({ name, state, intents }) {
       if (!target) throw new Error(`${where}: unknown entity ${p.entityId}`);
       if (p.hp !== undefined) {
         emit('dm.override', { kind: 'hp', entityId: target.id, before: target.hp, after: p.hp }, null);
-        target.hp = Math.min(target.hpMax, p.hp);
+        // M64 R9 — through setHpRaw, as the turn manager's DM lane does,
+        // so a DM heal wakes a downed PC (status, unconscious) silently.
+        setHpRaw(target, Math.min(target.hpMax, p.hp));
       }
       for (const c of p.addConditions || []) if (!target.conditions.includes(c)) target.conditions.push(c);
       for (const c of p.removeConditions || []) target.conditions = target.conditions.filter(x => x !== c);

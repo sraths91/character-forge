@@ -86,6 +86,20 @@
     },
     {
       "seq": 6,
+      "type": "condition.applied",
+      "round": 1,
+      "turnId": "t1",
+      "cinemaGroup": "t1.x1",
+      "payload": {
+        "entityId": "pc-fighter",
+        "condition": "unconscious",
+        "sourceId": null,
+        "endsOn": "encounter",
+        "save": null
+      }
+    },
+    {
+      "seq": 7,
       "type": "exchange",
       "round": 1,
       "turnId": "t1",
@@ -149,19 +163,19 @@
       }
     },
     {
-      "seq": 7,
+      "seq": 8,
       "type": "turn.ended",
       "round": 1,
       "turnId": "t1",
       "cinemaGroup": null,
       "payload": {
         "actorId": "m-gob-a",
-        "stateHash": "1355a5d9b16194",
+        "stateHash": "1fff6e4ddcc8dc",
         "rngDraws": 2
       }
     },
     {
-      "seq": 8,
+      "seq": 9,
       "type": "turn.started",
       "round": 1,
       "turnId": "t2",
@@ -171,7 +185,7 @@
       }
     },
     {
-      "seq": 9,
+      "seq": 10,
       "type": "plan.chosen",
       "round": 1,
       "turnId": "t2",
@@ -189,7 +203,7 @@
       }
     },
     {
-      "seq": 10,
+      "seq": 11,
       "type": "turn.skipped",
       "round": 1,
       "turnId": "t2",
@@ -200,19 +214,19 @@
       }
     },
     {
-      "seq": 11,
+      "seq": 12,
       "type": "turn.ended",
       "round": 1,
       "turnId": "t2",
       "cinemaGroup": null,
       "payload": {
         "actorId": "m-gob-b",
-        "stateHash": "1355a5d9b16194",
+        "stateHash": "1fff6e4ddcc8dc",
         "rngDraws": 0
       }
     },
     {
-      "seq": 12,
+      "seq": 13,
       "type": "dm.override",
       "round": 1,
       "turnId": null,
@@ -225,7 +239,19 @@
       }
     },
     {
-      "seq": 13,
+      "seq": 14,
+      "type": "condition.removed",
+      "round": 1,
+      "turnId": null,
+      "cinemaGroup": null,
+      "payload": {
+        "entityId": "pc-fighter",
+        "condition": "unconscious",
+        "sourceId": null
+      }
+    },
+    {
+      "seq": 15,
       "type": "turn.started",
       "round": 2,
       "turnId": "t3",
@@ -235,7 +261,7 @@
       }
     },
     {
-      "seq": 14,
+      "seq": 16,
       "type": "plan.chosen",
       "round": 2,
       "turnId": "t3",
@@ -253,7 +279,7 @@
       }
     },
     {
-      "seq": 15,
+      "seq": 17,
       "type": "attack.rolled",
       "round": 2,
       "turnId": "t3",
@@ -277,7 +303,7 @@
       }
     },
     {
-      "seq": 16,
+      "seq": 18,
       "type": "damage",
       "round": 2,
       "turnId": "t3",
@@ -296,7 +322,7 @@
       }
     },
     {
-      "seq": 17,
+      "seq": 19,
       "type": "exchange",
       "round": 2,
       "turnId": "t3",
@@ -360,7 +386,7 @@
       }
     },
     {
-      "seq": 18,
+      "seq": 20,
       "type": "attack.rolled",
       "round": 2,
       "turnId": "t3",
@@ -384,7 +410,7 @@
       }
     },
     {
-      "seq": 19,
+      "seq": 21,
       "type": "damage",
       "round": 2,
       "turnId": "t3",
@@ -403,7 +429,7 @@
       }
     },
     {
-      "seq": 20,
+      "seq": 22,
       "type": "entity.downed",
       "round": 2,
       "turnId": "t3",
@@ -414,7 +440,19 @@
       }
     },
     {
-      "seq": 21,
+      "seq": 23,
+      "type": "entity.died",
+      "round": 2,
+      "turnId": "t3",
+      "cinemaGroup": "t3.x1",
+      "payload": {
+        "entityId": "m-gob-a",
+        "byId": "pc-fighter",
+        "cause": "monster"
+      }
+    },
+    {
+      "seq": 24,
       "type": "exchange",
       "round": 2,
       "turnId": "t3",
@@ -478,14 +516,14 @@
       }
     },
     {
-      "seq": 22,
+      "seq": 25,
       "type": "turn.ended",
       "round": 2,
       "turnId": "t3",
       "cinemaGroup": null,
       "payload": {
         "actorId": "pc-fighter",
-        "stateHash": "07be2fb6f20a20",
+        "stateHash": "0fb4a48df5c175",
         "rngDraws": 4
       }
     }

@@ -88,10 +88,13 @@ test('R8: dropping to 0 HP ends concentration without a save, then emits entity.
   assert.equal(r.downed, true);
   assert.equal(caster.hp, 0);
   assert.equal(caster._concentrating, null);
-  assert.deepEqual(types(events), ['damage', 'concentration.broken', 'entity.downed']);
+  // M64 R9 — a monster at 0 HP dies (entity.died cause 'monster').
+  assert.deepEqual(types(events), ['damage', 'concentration.broken', 'entity.downed', 'entity.died']);
   assert.equal(events[1].payload.reason, 'downed');
   assert.equal(events[2].payload.byId, 'p');
-  assert.equal(isAlive(caster), false, 'isAlive semantics unchanged until death saves');
+  assert.deepEqual(events[3].payload, { entityId: 'c', byId: 'p', cause: 'monster' });
+  assert.equal(caster.status, 'dead');
+  assert.equal(isAlive(caster), false);
 });
 
 test('R8: concentrationCheck is a no-op without concentration or damage', () => {

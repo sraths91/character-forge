@@ -31,11 +31,16 @@ import { ABILITIES } from './encounter-state.js';
  * animation inputs (weapon, style, swing, modifiers[], smiteSlot,
  * attackerLevel, killing, spell, outcome, fxSeed, durationMs). The
  * engine emits `durationMs: 0` (it cannot import the anim builders);
- * the server falls back to its fixed pacing cap when it is 0.
+ * the server falls back to its fixed pacing cap when it is 0. *
+ * v1.2 (additive, 2026-10-16, E1 M64 R9): dying. `death.save` {entityId,
+ * d20: int|null (null = a failure from damage at 0 HP), success, crit,
+ * successes, failures, cause: 'roll'|'damage'} carries the tallies after
+ * the save; `entity.died` {entityId, byId, cause: DEATH_CAUSES};
+ * `entity.stabilized` {entityId}; `entity.revived` {entityId, hp, byId}.
  */
 export const EVENT_CATALOGUE_VERSION = 1;
 /** Additive minor revision of catalogue v1. */
-export const EVENT_CATALOGUE_MINOR = 1;
+export const EVENT_CATALOGUE_MINOR = 2;
 
 /** Every event type, in catalogue order. */
 export const EVENT_TYPES = Object.freeze([
@@ -52,6 +57,8 @@ export const EVENT_TYPES = Object.freeze([
   'resource.spent',
   'feature.used',
   'entity.downed',
+  // v1.2 (additive, M64 R9)
+  'death.save', 'entity.died', 'entity.stabilized', 'entity.revived',
   'exchange',
   'dm.override',
   'turn.rejected',
@@ -68,6 +75,10 @@ export const PLAN_SOURCES = Object.freeze(['ai', 'player', 'dm']);
 export const ADVANTAGE_MODES = Object.freeze(['normal', 'advantage', 'disadvantage']);
 /** Why a spell produced no effect. */
 export const FIZZLE_REASONS = Object.freeze(['shield', 'counterspell']);
+/** Why a creature died (v1.2): 3 failed death saves, massive damage, a monster at 0 HP. */
+export const DEATH_CAUSES = Object.freeze(['failures', 'massive', 'monster']);
+/** What produced a death save result (v1.2). */
+export const DEATH_SAVE_CAUSES = Object.freeze(['roll', 'damage']);
 /** How an encounter ended. */
 export const ENCOUNTER_OUTCOMES = Object.freeze(['party-victory', 'hostile-victory', 'draw', 'dm-ended']);
 
@@ -155,6 +166,13 @@ export const EVENT_PAYLOAD_SPECS = Object.freeze({
   'resource.spent': shape({ entityId: ID, resource: str(), level: nullable(int(0, 9)) }, LOOSE),
   'feature.used': shape({ entityId: ID, featureId: str() }, LOOSE),
   'entity.downed': shape({ entityId: ID }, LOOSE),
+  'death.save': shape({
+    entityId: ID, d20: nullable(int(1, 20)), success: bool(), crit: bool(),
+    successes: int(0, 3), failures: int(0, 3), cause: oneOf(DEATH_SAVE_CAUSES)
+  }, LOOSE),
+  'entity.died': shape({ entityId: ID, byId: nullable(ID), cause: oneOf(DEATH_CAUSES) }, LOOSE),
+  'entity.stabilized': shape({ entityId: ID }, LOOSE),
+  'entity.revived': shape({ entityId: ID, hp: int(1), byId: nullable(ID) }, LOOSE),
   exchange: shape({
     exchangeId: ID,
     attackerId: ID,

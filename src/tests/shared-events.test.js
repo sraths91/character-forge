@@ -30,7 +30,9 @@ test('events: catalogue is frozen, versioned, and matches the M64 plan list', ()
     'reaction.offered', 'reaction.resolved', 'attack.rolled', 'damage', 'heal',
     'save.rolled', 'spell.cast', 'spell.countered', 'spell.fizzled',
     'condition.applied', 'condition.removed', 'concentration.started', 'concentration.broken',
-    'resource.spent', 'feature.used', 'entity.downed', 'exchange', 'dm.override',
+    'resource.spent', 'feature.used', 'entity.downed',
+    'death.save', 'entity.died', 'entity.stabilized', 'entity.revived',
+    'exchange', 'dm.override',
     'turn.rejected', 'encounter.ended'
   ]);
   for (const t of EVENT_TYPES) assert.ok(EVENT_PAYLOAD_SPECS[t], `${t} has a payload spec`);

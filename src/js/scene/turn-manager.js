@@ -4,7 +4,8 @@
  *
  * It owns everything around a single `runOneAttack`: initiative order,
  * per-creature start-of-turn resets (reaction, Shield, Reckless, per-turn
- * feature flags, the legendary budget), skipping downed and incapacitated
+ * feature flags, the legendary budget), death saves for downed PCs (M64
+ * R9: at the start of their turn), skipping downed and incapacitated
  * creatures, legendary actions after each opposing turn, the victory
  * check, the round cap, `skipTurn`, and a pause flag checked at safe
  * points (between turns only — never mid-resolution). Innate recharge is
@@ -46,7 +47,8 @@
 
 import {
   runOneAttack, runLegendaryActions, isAlive, isIncapacitated, sameId, setHpRaw,
-  startOfTurnConditions, endOfTurnConditions, sweepConcentrationConditions
+  startOfTurnConditions, endOfTurnConditions, sweepConcentrationConditions,
+  rollDeathSave
 } from './combat-engine.js';
 import { wrapperConditions } from './conditions.js';
 import { resetReaction } from './reactions.js';
@@ -306,6 +308,9 @@ export async function runTurn(ts, ctx = {}) {
 
   const engineCtx = engineCtxFor(ts, ctx, turnId);
   const roster = Object.values(ts.entities);
+  // M64 R9 — a downed PC makes its death save at the start of its turn; a
+  // natural 20 brings it back with 1 HP and it takes the turn.
+  if (actor && !isAlive(actor) && actor.status === 'downed') rollDeathSave(actor, rng, engineCtx);
   if (!actor || !isAlive(actor)) {
     result.skipped = 'down';
     if (emit && actorId) emit({ type: 'turn.skipped', payload: { actorId, reason: 'down' }, cinemaGroup: null });

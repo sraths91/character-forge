@@ -46,6 +46,13 @@ export const ENCOUNTER_PHASES = Object.freeze(['setup', 'running', 'awaiting-pro
 export const ENTITY_KINDS = Object.freeze(['pc', 'monster']);
 /** Sides. */
 export const SIDES = Object.freeze(['party', 'hostile']);
+/**
+ * Life status (v1 additive, M64 R9, E1). Optional on an entity; absent
+ * means 'active'. 'downed' = a PC at 0 HP making death saves
+ * (unconscious); 'stable' = 0 HP, no more saves; 'dead' = 3 failures,
+ * massive damage, or any monster at 0 HP.
+ */
+export const ENTITY_STATUSES = Object.freeze(['active', 'downed', 'stable', 'dead']);
 /** Who drives an entity's turn. */
 export const CONTROLLER_TYPES = Object.freeze(['player', 'ai', 'dm']);
 /** Ability keys used by saves and conditions. */
@@ -57,7 +64,10 @@ export const TURN_FLAG_KEYS = Object.freeze([
   'sneakUsed', 'cunningUsed', 'recklessUsed', 'recklessUntilNextTurn',
   'shieldActive', 'surgeFired', 'extraAction', 'smiteSlotUsed',
   // v1 additive (M64 R13, E1): Dodge lasts until the creature's next turn.
-  'dodging', 'disengaged'
+  'dodging', 'disengaged',
+  // v1 additive (M64 R9 phase 1.5, E1): a raging barbarian attacked or
+  // took damage since its last turn (Rage lapses without it).
+  'rageSustained'
 ]);
 
 /**
@@ -110,6 +120,13 @@ export const WRAPPER_FIELD_MAP = Object.freeze({
   secondary: 'statBlock.attacks[1]',
   _dodging: 'turnFlags.dodging',
   _disengaged: 'turnFlags.disengaged',
+  // v1 additive (M64 R9, E1): dying. Stored only when status != 'active'.
+  status: 'status',
+  deathSaves: 'deathSaves',
+  // v1 additive (M64 phase 1.5, E1): every limited-use ledger (Rage,
+  // feat / race spell uses `spell:<id>`, …) as {key: {max, spent}}.
+  _features: 'resources.features',
+  _rageSustained: 'turnFlags.rageSustained',
   // v1 additive (M64 R8, E1): damage R/I/V lists read by applyDamage. PCs
   // carry them on the sheet (`ref`); monsters on the stat block (opaque
   // in v1, so no schema change).
@@ -173,6 +190,8 @@ export const WRAPPER_FIELD_MAP = Object.freeze({
  * @property {{spellId: string, targetIds: string[]}|null} concentration
  * @property {EntityResources} resources
  * @property {Record<string, boolean|number|null>} turnFlags
+ * @property {'active'|'downed'|'stable'|'dead'} [status] — v1 additive (R9); absent = active
+ * @property {{successes: number, failures: number, stable: boolean}} [deathSaves] — v1 additive (R9)
  * @property {{characterId: string, rev: number|string}|null} [sheetRef]  — PCs
  * @property {{slug: string}|null} [statBlock]                           — monsters (other fields opaque in v1)
  */
@@ -232,7 +251,8 @@ const TURN_FLAGS = shape({
   extraAction: optional(bool()),
   smiteSlotUsed: optional(nullable(int(1, 9))),
   dodging: optional(bool()),
-  disengaged: optional(bool())
+  disengaged: optional(bool()),
+  rageSustained: optional(bool())
 });
 
 const ENTITY = shape({
@@ -251,6 +271,9 @@ const ENTITY = shape({
   concentration: nullable(shape({ spellId: str(), targetIds: arrayOf(ID) })),
   resources: RESOURCES,
   turnFlags: TURN_FLAGS,
+  // v1 additive (M64 R9, E1): optional; absent = 'active' / no saves.
+  status: optional(oneOf(ENTITY_STATUSES)),
+  deathSaves: optional(shape({ successes: int(0, 3), failures: int(0, 3), stable: bool() })),
   sheetRef: optional(nullable(shape({ characterId: ID, rev: union(int(0), str()) }))),
   statBlock: optional(nullable(shape({ slug: str({ maxLength: 128 }) }, { strict: false })))
 });
