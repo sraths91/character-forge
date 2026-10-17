@@ -2936,3 +2936,23 @@ body.party-view-mode .combat-panel { display: block !important; }
 .play-paused-banner { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; background: #3b2a12; border: 1px solid #a16207; border-radius: 6px; padding: 8px; }
 .play-pending-line { font-weight: 600; }
 .play-inspect input[type="number"] { width: 4.5em; }
+
+/* M64 phase 1.5 — dying state (E1 wave 5): badges, death-save banner */
+.play-badge { display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 8px; font-size: 0.72rem; font-weight: 700; letter-spacing: 0.02em; vertical-align: middle; background: #374151; color: #e5e7eb; }
+.play-badge.is-down { background: #374151; color: #d1d5db; }
+.play-badge.is-dying { background: #7f1d1d; color: #fecaca; }
+.play-badge.is-stable { background: #1e3a8a; color: #bfdbfe; }
+.play-badge.is-dead { background: #111827; color: #9ca3af; border: 1px solid #4b5563; }
+.play-badge.is-active { background: #14532d; color: #bbf7d0; }
+.play-root .init-row.is-dead .init-name { text-decoration: line-through; opacity: 0.6; }
+.play-root .init-row.is-dying .init-name { color: #fca5a5; }
+.play-death-banner { margin: 6px 0; padding: 8px; border-radius: 6px; background: #3f1d1d; border: 1px solid #b91c1c; }
+.play-death-banner.stable { background: #172554; border-color: #2563eb; }
+.play-death-banner.dead { background: #111827; border-color: #4b5563; }
+.play-death-banner.my-turn { box-shadow: 0 0 0 2px #f87171; }
+.play-death-tally { margin-top: 4px; font-size: 0.9rem; }
+.play-pip { margin: 0 1px; }
+.play-pip.ok.on { color: #86efac; }
+.play-pip.bad.on { color: #f87171; }
+.play-log .roll-death { color: #fca5a5; }
+.play-dying { gap: 6px; align-items: center; }

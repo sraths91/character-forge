@@ -8,7 +8,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createStore } from '../js/client/store.js';
-import { createRenderAdapter, cinemaActorFor } from '../js/client/render-adapter.js';
+import { createRenderAdapter, cinemaActorFor, tokenBadges } from '../js/client/render-adapter.js';
+import { projectBattleView } from '../js/map/view.js';
+import { projectedState as dyingState } from './helpers/client-fixtures.js';
 import { createAppearanceCache } from '../js/map/view.js';
 import { buildCinemaSequence, motionMetaForWeapon } from '../js/anim/cinema-plan.js';
 import { findHitPauseAt } from '../js/anim/cinema.js';
@@ -246,4 +248,20 @@ test('C8: motionMetaForWeapon tells melee from ranged for the swing counter', ()
   assert.equal(motionMetaForWeapon({ name: 'Longsword' }).kind, 'melee');
   assert.notEqual(motionMetaForWeapon({ name: 'Longbow' }).kind, 'melee');
   assert.equal(motionMetaForWeapon({ name: 'Longsword' }).motionId, motionForWeapon({ name: 'Longsword' }));
+});
+
+test('M64 1.5: tokenBadges marks downed / stable / dead tokens and keeps hidden ones hidden from players', () => {
+  const enc = dyingState();
+  enc.entities['pc-wizard'].hp = 0;
+  enc.entities['pc-wizard'].status = 'downed';
+  enc.entities['m-fanatic'].hp = 0;
+  enc.entities['m-fanatic'].status = 'dead';
+  enc.entities['m-goblin'].hp = 0;   // pre-wave-5: no status, HP only
+  const view = projectBattleView(enc);
+  const byId = Object.fromEntries(tokenBadges(view, enc).map(b => [b.id, b.short]));
+  assert.deepEqual(byId, { 'pc-wizard': 'DYING', 'm-fanatic': 'DEAD', 'm-goblin': 'DOWN' });
+  const hidden = { ...view, tokens: view.tokens.map(t => (t.id === 'm-fanatic' ? { ...t, hidden: true } : t)) };
+  assert.equal(tokenBadges(hidden, enc).some(b => b.id === 'm-fanatic'), false);
+  assert.equal(tokenBadges(hidden, enc, { dm: { showHidden: true } }).some(b => b.id === 'm-fanatic'), true);
+  assert.deepEqual(tokenBadges(null, enc), []);
 });

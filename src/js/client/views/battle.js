@@ -17,6 +17,10 @@
  *     `promptReaction` in this view's container, with the countdown taken
  *     from the server's `deadlineAt`.
  *   - Waiting states: "Goblin is acting…", "DM is reviewing…", "Paused".
+ *   - Dying (E1 wave 5): a death-save banner on your downed creature's
+ *     card (the server rolls it at the start of your turn; the result and
+ *     the ✓ / ✗ tally show here), and Dying / Stable / Dead badges on the
+ *     initiative strip (the render adapter badges the tokens).
  *   - The DM drags any token as a free move (`dm.entity.patch {position,
  *     override: true}`), and clicks select an entity for the inspector.
  *
@@ -28,7 +32,7 @@
 import { h, replace, createScope, delegate, attempt, observeCanvasSize } from './dom.js';
 import { createRenderAdapter } from '../render-adapter.js';
 import {
-  myEntityIds, turnInfo, nameOf, conditionIds, slotsLeft, isDm
+  myEntityIds, turnInfo, nameOf, conditionIds, slotsLeft, isDm, statusBadge, deathSaveInfo
 } from '../selectors.js';
 import { previewMove, moveIntent, dmMoveIntent, attackIntent, castIntent, actionIntent } from '../intents.js';
 import { formatEvent } from '../log-format.js';
@@ -293,14 +297,42 @@ export function mount(root, ctx) {
       const e = enc.entities[id];
       if (!e) return null;
       const slots = slotsLeft(e);
-      return h(doc, 'div', { class: 'play-me' }, [
-        h(doc, 'h3', { text: e.name }),
+      const badge = statusBadge(e);
+      return h(doc, 'div', { class: `play-me${badge ? ` ${badge.cls}` : ''}` }, [
+        h(doc, 'h3', {}, [e.name, badge ? h(doc, 'span', { class: `play-badge ${badge.cls}`, text: badge.label }) : null]),
+        deathBanner(s, e),
         h(doc, 'div', { class: `play-hp${e.hp === 0 ? ' down' : ''}`, text: `HP ${e.hp} / ${e.hpMax}${e.hpTemp ? ` (+${e.hpTemp} temp)` : ''}` }),
         h(doc, 'div', { class: 'play-ac', text: `AC ${e.ac} · speed ${e.speedFt} ft` }),
         slots.length ? h(doc, 'div', { class: 'play-slots', text: `Slots ${slots.map(x => `L${x.level} ${x.left}/${x.max}`).join(' · ')}` }) : null,
         h(doc, 'div', { class: 'play-conditions' }, conditionIds(e).map(c => h(doc, 'span', { class: 'play-chip condition', text: c })))
       ]);
     }));
+  }
+
+  /** The death-save banner on a downed / stable / dead creature's card. */
+  function deathBanner(s, e) {
+    const info = deathSaveInfo(s, e.id);
+    if (!info || info.status === 'down') return null;
+    const pips = (n, cls) => Array.from({ length: 3 }, (_, i) => h(doc, 'span', { class: `play-pip ${cls}${i < n ? ' on' : ''}`, text: i < n ? '●' : '○' }));
+    const tally = h(doc, 'div', { class: 'play-death-tally' }, [
+      h(doc, 'span', { class: 'dim', text: 'Saves ' }), ...pips(info.successes, 'ok'),
+      h(doc, 'span', { class: 'dim', text: ' Fails ' }), ...pips(info.failures, 'bad')
+    ]);
+    let headline;
+    if (info.status === 'dead') headline = `${e.name} is dead.`;
+    else if (info.status === 'stable') headline = `${e.name} is stable — unconscious, no more death saves.`;
+    else if (info.last && info.last.thisTurn) {
+      const l = info.last;
+      headline = l.cause === 'damage'
+        ? `Hit while dying: ${l.crit ? 'two failures' : 'one failure'}.`
+        : `Death save: d20 = ${l.d20 ?? '?'} — ${l.crit && l.success ? 'natural 20, you regain 1 HP!' : l.crit ? 'natural 1, two failures.' : l.success ? 'success.' : 'failure.'}`;
+    } else headline = `${e.name} is dying — the server rolls a death save at the start of each turn.`;
+    const t = turnInfo(ctx.store.getState());
+    return h(doc, 'div', {
+      class: `play-death-banner ${info.status}${t.actorId === e.id ? ' my-turn' : ''}`,
+      attrs: { role: info.last?.thisTurn ? 'alert' : 'status' }
+    }, [h(doc, 'strong', { text: headline }), tally,
+      info.status === 'downed' ? h(doc, 'p', { class: 'hint-line', text: 'Allies can heal you back up; "Help / stabilize" comes in phase 2.' }) : null]);
   }
 
   function renderInitiative() {
@@ -311,9 +343,11 @@ export function mount(root, ctx) {
       h(doc, 'h3', { text: `Initiative · round ${Math.max(1, enc.round)}` }),
       ...enc.initiative.map((r, i) => {
         const e = enc.entities[r.entityId];
-        return h(doc, 'div', { class: `init-row${running && i === enc.turnIndex ? ' active' : ''}${e && e.hp === 0 ? ' down' : ''}` }, [
+        const badge = statusBadge(e);
+        return h(doc, 'div', { class: `init-row${running && i === enc.turnIndex ? ' active' : ''}${e && e.hp === 0 ? ' down' : ''}${badge ? ` ${badge.cls}` : ''}` }, [
           h(doc, 'span', { class: 'init-score', text: String(r.score) }),
           h(doc, 'span', { class: 'init-name', text: e?.name || r.entityId }),
+          badge ? h(doc, 'span', { class: `play-badge ${badge.cls}`, text: badge.label }) : null,
           h(doc, 'span', { class: 'init-kind', text: e?.kind === 'pc' ? 'PC' : 'M' })
         ]);
       })

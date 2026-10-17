@@ -35,6 +35,9 @@
 
 import { freshLegendaryBudget } from '../scene/monster-legendary.js';
 import { freshInnateState, consumeInnate } from '../scene/monster-spells.js';
+import { ENTITY_STATUSES } from '../shared/events.js';
+
+export { ENTITY_STATUSES };
 
 const clone = (v) => (v === undefined ? undefined : JSON.parse(JSON.stringify(v)));
 const conditionId = (c) => (typeof c === 'string' ? c : c?.id);
@@ -53,7 +56,6 @@ const PATCHABLE = new Set(PATCHABLE_FIELDS);
  * stable}` only while the status is not 'active'. Every death event
  * carries post-event values.
  */
-export const ENTITY_STATUSES = Object.freeze(['active', 'downed', 'stable', 'dead']);
 const FRESH_SAVES = () => ({ successes: 0, failures: 0, stable: false });
 
 function setActive(e) {

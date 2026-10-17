@@ -13,7 +13,9 @@
  *     (monster / AI rolls only — the server only asks for those); arm the
  *     next roll (`dm.roll.arm`).
  *   - Entity inspector: HP current / temp, condition chips (remove / add),
- *     remove the creature. Clicking a token on the map selects it.
+ *     remove the creature. Clicking a token on the map selects it. Dying
+ *     state (E1 wave 5): set the status and clear the death saves
+ *     (`dm.entity.patch {status, deathSaves}`, protocol v1.4).
  *   - "+ Monster": pick a preset, click a cell (`dm.entity.add`).
  *   - "End encounter" with an outcome picker and a confirmation step.
  *   - "DM adjudicates" (C11): cast a spell outside the engine registry —
@@ -27,7 +29,8 @@
  */
 
 import { h, replace, createScope, delegate, attempt, select } from './dom.js';
-import { nameOf, conditionIds } from '../selectors.js';
+import { nameOf, conditionIds, statusBadge } from '../selectors.js';
+import { ENTITY_STATUSES } from '../../shared/events.js';
 import { formatBreakdown } from '../../scene/ai/profile.js';
 import { entityFromPreset } from '../../scene/encounter-adapters.js';
 import { MONSTER_PRESETS } from '../../scene/monster-presets.js';
@@ -284,6 +287,16 @@ export function mount(root, ctx) {
       if (Number.isFinite(tmp) && tmp >= 0) p.hpTemp = tmp;
       attempt(() => send({ t: 'dm.entity.patch', p }), fail);
     },
+    'status-apply': () => {
+      const id = bridge.selected();
+      const sel = inspector.querySelector?.('[data-field="status"]');
+      if (!id || !sel?.value) return;
+      attempt(() => send({ t: 'dm.entity.patch', p: { entityId: id, status: sel.value } }).then(() => say(`${nameOf(enc(), id)}: ${sel.value}.`)), fail);
+    },
+    'saves-clear': () => {
+      const id = bridge.selected();
+      if (id) attempt(() => send({ t: 'dm.entity.patch', p: { entityId: id, deathSaves: { successes: 0, failures: 0, stable: false } } }).then(() => say('Death saves cleared.')), fail);
+    },
     'cond-remove': (el) => {
       const id = bridge.selected();
       if (id) attempt(() => send({ t: 'dm.entity.patch', p: { entityId: id, removeConditions: [el.dataset.condition] } }), fail);
@@ -519,6 +532,7 @@ export function mount(root, ctx) {
           h(doc, 'label', {}, ['temp ', h(doc, 'input', { type: 'number', min: 0, value: String(x.hpTemp || 0), dataset: { field: 'hp-temp' }, attrs: { 'aria-label': 'Temporary HP' } })]),
           h(doc, 'button', { type: 'button', class: 'play-btn small', dataset: { action: 'hp-apply' }, text: 'Set' })
         ]),
+        dyingControls(x),
         h(doc, 'div', { class: 'play-conditions' }, conditionIds(x).map(c => h(doc, 'span', { class: 'play-chip condition' }, [
           c, h(doc, 'button', { type: 'button', class: 'play-chip-x', dataset: { action: 'cond-remove', condition: c }, attrs: { 'aria-label': `Remove ${c}` }, text: '×' })
         ]))),
@@ -528,6 +542,19 @@ export function mount(root, ctx) {
         ]),
         h(doc, 'button', { type: 'button', class: 'play-btn danger', dataset: { action: 'remove-entity' }, text: `Remove ${x.name}` })
       ]) : null
+    ]);
+  }
+
+  /** Status picker + death-save tally / clear for the inspected creature. */
+  function dyingControls(x) {
+    const badge = statusBadge(x);
+    const ds = x.deathSaves;
+    return h(doc, 'div', { class: 'play-row play-dying' }, [
+      h(doc, 'span', { class: `play-badge ${badge ? badge.cls : 'is-active'}`, text: badge ? badge.label : 'Active' }),
+      ds ? h(doc, 'span', { class: 'dim', text: ` saves ${ds.successes ?? 0} ✓ / ${ds.failures ?? 0} ✗${ds.stable ? ' · stable' : ''} ` }) : null,
+      select(doc, { dataset: { field: 'status' }, attrs: { 'aria-label': 'Status' } }, ENTITY_STATUSES.map(v => ({ value: v, label: v })), x.status || 'active'),
+      h(doc, 'button', { type: 'button', class: 'play-btn small', dataset: { action: 'status-apply' }, text: 'Set status' }),
+      ds ? h(doc, 'button', { type: 'button', class: 'play-btn small', dataset: { action: 'saves-clear' }, text: 'Clear death saves' }) : null
     ]);
   }
 

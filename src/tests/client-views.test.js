@@ -305,6 +305,51 @@ test('C9 views: DM panel — plan review, inspector edits, + monster, end with c
   assertClean(hh, 'dm panel');
 });
 
+const evMsg = (seq, type, payload) => ({ v: 1, t: type, seq, ts: 1, p: { seq, type, round: 2, turnId: 't9', cinemaGroup: null, payload } });
+
+test('M64 1.5 views: dying — death-save banner with the tally on my card, Dying/Dead badges on the initiative strip', async () => {
+  const hh = harness('player');
+  const un = mountBattle(hh.root, hh.ctx);
+  hh.store.apply(evMsg(11, 'damage', { sourceId: 'm-goblin', targetId: 'pc-fighter', amount: 30, type: 'slashing', hpBefore: 30, hpAfter: 0 }));
+  hh.store.apply(evMsg(12, 'entity.downed', { entityId: 'pc-fighter', byId: 'm-goblin' }));
+  hh.store.apply(evMsg(13, 'turn.started', { actorId: 'm-fanatic' }));
+  hh.store.apply(evMsg(14, 'death.save', { entityId: 'pc-fighter', d20: 7, success: false, crit: false, successes: 0, failures: 1, cause: 'roll' }));
+  hh.store.presentUpTo(14);
+  await flush();
+  const banner = hh.dom.findAll(hh.root, n => /play-death-banner/.test(n.className))[0];
+  assert.ok(banner, 'banner shown');
+  assert.match(banner.textContent, /Death save: d20 = 7 — failure/);
+  assert.equal(hh.dom.findAll(banner, n => /play-pip bad on/.test(n.className)).length, 1, 'one failure pip lit');
+  const initBadges = hh.dom.findAll(hh.root, n => /init-row/.test(n.className) && /is-dying/.test(n.className));
+  assert.equal(initBadges.length, 1);
+  assert.ok(hh.dom.byText(hh.root, 'Dying').length);
+  assert.match(hh.dom.findAll(hh.root, n => /roll-death/.test(n.className))[0].textContent, /death save: d20=7 — failure \(0 ✓ \/ 1 ✗\)/);
+  hh.store.apply(evMsg(15, 'entity.died', { entityId: 'm-goblin', byId: 'pc-wizard', cause: 'monster' }));
+  hh.store.presentUpTo(15);
+  await flush();
+  assert.ok(hh.dom.findAll(hh.root, n => /init-row/.test(n.className) && /is-dead/.test(n.className)).length, 'dead badge');
+  un();
+  assertClean(hh, 'battle (dying)');
+});
+
+test('M64 1.5 views: DM inspector — set status and clear death saves (dm.entity.patch v1.4)', async () => {
+  const hh = harness('dm');
+  const un = mountDmPanel(hh.root, hh.ctx);
+  hh.store.apply(evMsg(11, 'entity.downed', { entityId: 'pc-wizard', byId: 'm-goblin' }));
+  hh.ctx.dmBridge.select('pc-wizard');
+  await flush();
+  assert.ok(hh.dom.byText(hh.root, 'saves 0 ✓ / 0 ✗').length, 'the tally shows');
+  hh.root.querySelector('[data-field="status"]').value = 'stable';
+  hh.dom.byAction(hh.root, 'status-apply')[0].click();
+  await flush();
+  assert.deepEqual(hh.sent.at(-1), { t: 'dm.entity.patch', p: { entityId: 'pc-wizard', status: 'stable' } });
+  hh.dom.byAction(hh.root, 'saves-clear')[0].click();
+  await flush();
+  assert.deepEqual(hh.sent.at(-1), { t: 'dm.entity.patch', p: { entityId: 'pc-wizard', deathSaves: { successes: 0, failures: 0, stable: false } } });
+  un();
+  assertClean(hh, 'dm panel (dying)');
+});
+
 test('C9: nothing under src/js/client imports main.js or runAttackPrompt', () => {
   const dir = new URL('../js/client/', import.meta.url);
   const files = [];

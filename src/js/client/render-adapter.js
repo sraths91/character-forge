@@ -26,6 +26,10 @@
  * setInterval anywhere; the only timer is the one-shot impact timeout
  * (injectable for tests).
  *
+ * Life-state badges (Dying / Stable / Dead, E1 wave 5; Down on older
+ * servers) are drawn over the tokens after E5's renderer, from the
+ * presented encounter (`tokenBadges`).
+ *
  * `local` is the per-viewer presentation object E5's renderer reads
  * (camera, ownEntityId, hover, pathPreview, selectionId, dm …); views
  * mutate it and call `redraw()`.
@@ -33,11 +37,12 @@
 
 import { renderBattleScene } from '../sprite/compositor.js';
 import { createRenderScheduler } from '../map/scheduler.js';
-import { createCamera } from '../map/camera.js';
+import { createCamera, cameraTransform, WORLD_CELL_PX } from '../map/camera.js';
 import { projectBattleView } from '../map/view.js';
 import { buildCinemaSequence } from '../anim/cinema-plan.js';
 import { createCinema, findHitPauseAt } from '../anim/cinema.js';
 import { MONSTER_PRESETS, buildMonsterCharacter } from '../scene/monster-presets.js';
+import { statusBadge } from './selectors.js';
 
 const DEFAULT_TIMERS = {
   setTimeout: (fn, ms) => globalThis.setTimeout(fn, ms),
@@ -68,6 +73,50 @@ export function cinemaActorFor(entity, appearanceCache = null) {
     hpMax: entity.hpMax,
     hp: { current: entity.hp, max: entity.hpMax, temp: entity.hpTemp || 0 }
   };
+}
+
+/**
+ * The life-state badge of every drawn token (hidden tokens only for a
+ * viewer who sees them). Pure.
+ * @param {object|null} view — RenderView (map/view.js)
+ * @param {object|null} enc — presented EncounterState
+ * @param {{dm?: {showHidden?: boolean}|null}} [local]
+ * @returns {{id: string, col: number, row: number, status: string, short: string}[]}
+ */
+export function tokenBadges(view, enc, local = {}) {
+  const out = [];
+  for (const t of view?.tokens || []) {
+    if (t.hidden && !local?.dm?.showHidden) continue;
+    const b = statusBadge(enc?.entities?.[t.id]);
+    if (b) out.push({ id: t.id, col: t.col, row: t.row, status: b.status, short: b.short });
+  }
+  return out;
+}
+
+const BADGE_COLORS = { down: '#9ca3af', downed: '#f87171', stable: '#60a5fa', dead: '#e5e7eb' };
+
+/** Draw the badges over the rendered map (a real 2D canvas only). */
+function drawTokenBadges(canvas, badges, camera) {
+  if (!badges.length || typeof canvas?.getContext !== 'function') return;
+  const ctx = canvas.getContext('2d');
+  if (!ctx || typeof ctx.fillText !== 'function' || typeof ctx.setTransform !== 'function') return;
+  const pixelRatio = camera?.viewW > 0 ? canvas.width / camera.viewW : 1;
+  const W = WORLD_CELL_PX;
+  ctx.save();
+  ctx.setTransform(...cameraTransform(camera, pixelRatio));
+  ctx.font = `bold ${Math.round(W * 0.17)}px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  for (const b of badges) {
+    const cx = b.col * W + W / 2;
+    const cy = b.row * W + W * 0.9;
+    const tw = Math.max(W * 0.5, (ctx.measureText?.(b.short)?.width || W * 0.5) + W * 0.12);
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.72)';
+    ctx.fillRect(cx - tw / 2, cy - W * 0.11, tw, W * 0.22);
+    ctx.fillStyle = BADGE_COLORS[b.status] || '#fff';
+    ctx.fillText(b.short, cx, cy);
+  }
+  ctx.restore();
 }
 
 /**
@@ -164,6 +213,11 @@ export function createRenderAdapter({
     const view = currentView();
     if (!view) return false;
     const res = await render(canvas, view, local);
+    try {
+      drawTokenBadges(canvas, tokenBadges(view, store.getPresented().encounter, local), local.camera);
+    } catch (error) {
+      logger.warn(JSON.stringify({ event: 'render_adapter.badges_failed', error: String(error?.message || error) }));
+    }
     return !!res?.needsRedraw;
   }, schedulerOpts);
 

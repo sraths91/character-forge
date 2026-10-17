@@ -60,6 +60,18 @@ export function formatEvent(ev, nameOf = (id) => String(id ?? '—')) {
     case 'concentration.broken': return { text: `${n(p.casterId)} loses concentration on ${p.spellId}.`, cls: 'roll-spell', dm: false };
     case 'feature.used': return { text: `${n(p.entityId)} uses ${p.featureId}.`, cls: 'roll-feature', dm: false };
     case 'entity.downed': return { text: `${n(p.entityId)} is down!`, cls: 'roll-crit', dm: false };
+    case 'death.save': {
+      const tally = `${p.successes} ✓ / ${p.failures} ✗`;
+      if (p.cause === 'damage') return { text: `${n(p.entityId)} is hit while dying — ${p.crit ? 'two failed' : 'a failed'} death save (${tally}).`, cls: 'roll-death', dm: false };
+      const word = p.crit && p.success ? 'NATURAL 20 — back on their feet' : p.crit ? 'NATURAL 1 — two failures' : p.success ? 'success' : 'failure';
+      return { text: `${n(p.entityId)} death save: d20=${p.d20 ?? '?'} — ${word} (${tally}).`, cls: 'roll-death', dm: false };
+    }
+    case 'entity.stabilized': return { text: `${n(p.entityId)} is stable.`, cls: 'roll-heal', dm: false };
+    case 'entity.revived': return { text: `${n(p.entityId)} is back up${Number.isInteger(p.hp) ? ` (${p.hp} HP)` : ''}${p.byId ? ` — thanks to ${n(p.byId)}` : ''}.`, cls: 'roll-heal', dm: false };
+    case 'entity.died': {
+      const why = p.cause === 'massive' ? ' (massive damage)' : p.cause === 'failures' ? ' (three failed death saves)' : '';
+      return { text: `${n(p.entityId)} dies${why}.`, cls: 'roll-crit roll-death', dm: false };
+    }
     case 'dm.override': {
       const what = p.kind === 'spell.adjudicate' ? `adjudicated ${p.after?.spellId || 'a spell'}`
         : p.kind === 'plan' ? 'changed the plan'

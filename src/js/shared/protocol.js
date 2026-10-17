@@ -57,6 +57,11 @@
  *        update, at least one key; persisted per room, encounter rules apply
  *        on the next dm.encounter.setup) and its broadcast
  *        `room.settings {settings}` carrying all four keys.
+ *   v1.4 (E2 M64 1.5, additive to E3's v1.4) — `dm.entity.patch.status` (events.js
+ *        ENTITY_STATUSES) and `dm.entity.patch.deathSaves {successes,
+ *        failures, stable?}`: the DM sets a creature's dying state or
+ *        clears its death saves (E1 wave 5's entity fields; the server
+ *        wires them).
  *
  * Client payloads are strict (unknown fields rejected); server payloads
  * enforce required fields and allow additive ones.
@@ -70,7 +75,7 @@ import {
   VALIDATION_CODES
 } from './check.js';
 import { CONTROLLER_TYPES, validateEncounterState } from './encounter-state.js';
-import { EVENT_TYPES, REACTION_KINDS, ENCOUNTER_OUTCOMES, validateEvent } from './events.js';
+import { EVENT_TYPES, REACTION_KINDS, ENCOUNTER_OUTCOMES, ENTITY_STATUSES, validateEvent } from './events.js';
 
 /** Wire protocol version; every message's `v` must equal this. */
 export const PROTOCOL_VERSION = 1;
@@ -230,7 +235,10 @@ const INTENT_PAYLOADS = {
     addConditions: optional(arrayOf(str({ maxLength: 64 }))),
     removeConditions: optional(arrayOf(str({ maxLength: 64 }))),
     position: optional(POS),
-    override: optional(bool())   // v1.1 — DM free move (teleport)
+    override: optional(bool()),   // v1.1 — DM free move (teleport)
+    // v1.4 — the dying state (E1 wave 5 entity fields).
+    status: optional(oneOf(ENTITY_STATUSES)),
+    deathSaves: optional(shape({ successes: int(0, 3), failures: int(0, 3), stable: optional(bool()) }))
   }),
   'dm.entity.add': shape({ entity: shape({}, LOOSE), initiativeScore: optional(num()) }),
   'dm.entity.remove': shape({ entityId: ID }),

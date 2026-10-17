@@ -667,6 +667,16 @@ export function createFakeServer({
       e.conditions = [...ids];
       patch.conditions = clone(e.conditions);
     }
+    if (p.status !== undefined || p.deathSaves !== undefined) {
+      // protocol v1.4 — only once the shared schema carries the dying state.
+      if (!DYING_SCHEMA) throw new IntentFail('E_INVALID_INTENT', 'this server does not track the dying state yet');
+      before.status = e.status ?? 'active';
+      before.deathSaves = clone(e.deathSaves ?? null);
+      if (p.status === 'active') { delete e.status; delete e.deathSaves; } else if (p.status) e.status = p.status;
+      if (p.deathSaves && e.status) e.deathSaves = { successes: p.deathSaves.successes, failures: p.deathSaves.failures, stable: !!p.deathSaves.stable };
+      patch.status = e.status ?? 'active';
+      if (e.deathSaves) patch.deathSaves = clone(e.deathSaves);
+    }
     if (p.position) {
       const g = state.grid;
       if (p.position.col >= g.cols || p.position.row >= g.rows) throw new IntentFail('E_INVALID_INTENT', 'off the grid');

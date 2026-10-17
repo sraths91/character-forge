@@ -11,6 +11,7 @@
  */
 
 import { currentTurn } from './intents.js';
+import { lifeStatus } from './mirror.js';
 
 /** Seats per room (E3 MAX_SEATS). */
 export const SEAT_COUNT = 6;
@@ -155,4 +156,52 @@ export function screenFor(s, local = {}) {
   if (status === 'setup') return dm ? 'setup' : 'waiting-setup';
   if (dm && local.wantSetup) return 'setup';
   return 'lobby';
+}
+
+/** Badge copy per life state (initiative strip, tokens, cards). */
+const STATUS_BADGES = Object.freeze({
+  down: { label: 'Down', short: 'DOWN', cls: 'is-down' },
+  downed: { label: 'Dying', short: 'DYING', cls: 'is-dying' },
+  stable: { label: 'Stable', short: 'STABLE', cls: 'is-stable' },
+  dead: { label: 'Dead', short: 'DEAD', cls: 'is-dead' }
+});
+
+/**
+ * The life-state badge for an entity, or null while it stands.
+ * @param {object|null} e — EncounterState entity
+ * @returns {{status: string, label: string, short: string, cls: string}|null}
+ */
+export function statusBadge(e) {
+  const status = lifeStatus(e);
+  const b = STATUS_BADGES[status];
+  return b ? { status, ...b } : null;
+}
+
+/**
+ * Death-save state of one creature for the dying banner: status, the
+ * tally, and the latest `death.save` in the history (with whether it
+ * was rolled in the current turn).
+ * @param {object} s — ClientState (presented)
+ * @param {string} entityId
+ * @returns {{status: string, successes: number, failures: number, stable: boolean,
+ *            last: {d20: number|null, success: boolean, crit: boolean, cause: string, seq: number, thisTurn: boolean}|null}|null}
+ *   null when the creature is standing
+ */
+export function deathSaveInfo(s, entityId) {
+  const e = s?.encounter?.entities?.[entityId];
+  if (!e) return null;
+  const status = lifeStatus(e);
+  if (status === 'active') return null;
+  const ds = e.deathSaves || {};
+  const hist = s.history || [];
+  let last = null;
+  for (let i = hist.length - 1; i >= 0; i--) {
+    const ev = hist[i];
+    if (ev.type !== 'death.save' || ev.payload?.entityId !== entityId) continue;
+    const turnStart = hist.slice(i + 1).some(x => (x.type === 'turn.started' || x.type === 'turn.skipped') && x.payload?.actorId !== entityId);
+    const p = ev.payload;
+    last = { d20: p.d20 ?? null, success: !!p.success, crit: !!p.crit, cause: p.cause || 'roll', seq: ev.seq, thisTurn: !turnStart };
+    break;
+  }
+  return { status, successes: ds.successes ?? 0, failures: ds.failures ?? 0, stable: !!ds.stable, last };
 }
