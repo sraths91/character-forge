@@ -48,7 +48,8 @@ const FLAG_FIELDS = Object.freeze([
   ['_extraActionThisTurn', 'extraAction'],
   ['_smiteSlotUsed', 'smiteSlotUsed'],
   ['_dodging', 'dodging'],
-  ['_disengaged', 'disengaged']
+  ['_disengaged', 'disengaged'],
+  ['_rageSustained', 'rageSustained']
 ]);
 
 /** PC slot pools always expose levels 1-5 (the planner's upcast range). */

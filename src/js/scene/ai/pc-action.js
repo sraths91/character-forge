@@ -7,7 +7,8 @@
  *
  * Plan shape (extends the monster plan shape with PC-specific fields):
  *   {
- *     kind:        'melee' | 'ranged' | 'cast' | 'heal' | 'dash' | 'disengage' | 'dodge',
+ *     kind:        'melee' | 'ranged' | 'cast' | 'heal' | 'dash' | 'disengage' | 'dodge' | 'feature',
+ *     featureId?:  string,        // kind 'feature' (M64 phase 1.5)
  *     targetId:    string | null,
  *     weapon?:     object,        // the chosen weapon for melee/ranged
  *     spellId?:    string,
@@ -101,6 +102,7 @@ export function choosePcAction({ self, enemies, allies, downedAllies = [], rng }
     weapon: best.weapon,
     spellId: best.spellId,
     castAtLevel: best.castAtLevel,
+    ...(best.kind === 'feature' ? { featureId: best.featureId } : {}),
     featuresFired: best.featuresFired,
     archetype,
     score: best.score,
@@ -153,10 +155,27 @@ function scoreActionsAgainst({ self, target, allies, enemies, profile, rng }) {
       continue;
     }
     const kindWeight = actionWeights[opt.kind] ?? 0;
-    if (kindWeight === 0 && opt.kind !== 'cast') continue;
+    if (kindWeight === 0 && opt.kind !== 'cast' && opt.kind !== 'feature') continue;
     let score = perTargetBase + opt.baseScore + kindWeight;
     const featuresFired = [];
     const featureBreakdown = [];
+    // M64 phase 1.5 — a feature option is worth only what its own
+    // feature says (Second Wind when bloodied); zero means never.
+    if (opt.kind === 'feature') {
+      const f = features.find(x => x.id === opt.featureId);
+      const boost = f ? f.scoreBoost(opt, ctx) * (featureWeights[f.id] ?? 1) : 0;
+      if (!(boost > 0)) continue;
+      score += boost;
+      if (!bestOption || score > bestOption.score) {
+        bestOption = {
+          kind: 'feature', featureId: opt.featureId, weapon: null,
+          spellId: null, castAtLevel: null, score,
+          featuresFired: [opt.featureId],
+          breakdown: [...baseBreakdown, { name: `feature:${opt.featureId}`, raw: 1, weighted: boost + opt.baseScore }]
+        };
+      }
+      continue;
+    }
     // Per-feature boost: features may add value to certain options.
     // M42.2 — Stash the rollout context on the PC so the feature's
     // consume() can run a shallow MCTS over slot-level choices.
@@ -169,6 +188,8 @@ function scoreActionsAgainst({ self, target, allies, enemies, profile, rng }) {
       };
     }
     for (const f of features) {
+      // Only bonus-action / passive features ride an attack plan.
+      if (f.action === 'action') continue;
       const boost = f.scoreBoost(opt, ctx) * (featureWeights[f.id] ?? 1);
       if (boost > 0) {
         score += boost;

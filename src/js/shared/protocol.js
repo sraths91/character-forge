@@ -58,6 +58,12 @@
  *        on the next dm.encounter.setup) and its broadcast
  *        `room.settings {settings}` carrying all four keys.
  *
+ *   v1.4 (2026-10-16, E1 M64 phase 1.5) — `turn.act.plan.featureId`
+ *        (optional): `{kind: 'feature', featureId: 'second-wind'|'rage'|…}`
+ *        uses a class feature as the turn (no move, no attack);
+ *        `features: [...]` on an attack plan still names bonus-action
+ *        features that ride the attack (Rage, then swing).
+ *
  * Client payloads are strict (unknown fields rejected); server payloads
  * enforce required fields and allow additive ones.
  *
@@ -192,7 +198,9 @@ const PLAN = shape({
   castAtLevel: optional(int(0, 9)),
   moveTo: optional(POS),
   path: optional(arrayOf(POS, { max: 64 })),
-  features: optional(arrayOf(str({ maxLength: 64 }), { max: 8, unique: true }))
+  features: optional(arrayOf(str({ maxLength: 64 }), { max: 8, unique: true })),
+  // v1.4 (additive, E1): the feature a `kind: 'feature'` plan uses.
+  featureId: optional(str({ maxLength: 64 }))
 });
 
 /** Client payload specs (strict). */

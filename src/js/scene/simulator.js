@@ -140,6 +140,7 @@ async function runOneIteration({ party, monsters, scene, maxRounds, rng, index =
     _features: featureLedgerFor(p),
     _sneakAttackUsedThisTurn: false,
     _cunningActionUsedThisTurn: false,
+    _rageSustained: false,
     // M64 R9 — dying: PCs at 0 HP make death saves instead of vanishing.
     status: 'active',
     deathSaves: { successes: 0, failures: 0, stable: false }

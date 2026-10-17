@@ -227,7 +227,9 @@ export function validateIntent(state, intent, opts = {}) {
   }
 
   // Features.
-  const features = plan.features || [];
+  // M64 phase 1.5 — `featureId` names the feature a 'feature' plan uses.
+  const features = plan.featureId && !(plan.features || []).includes(plan.featureId)
+    ? [plan.featureId, ...(plan.features || [])] : (plan.features || []);
   if (plan.kind === 'feature' && features.length === 0) return fail('no-feature', 'a feature plan names no feature');
   if (features.length) {
     if (actor.kind !== 'pc') return fail('bad-feature', 'only PCs use class features');
@@ -275,7 +277,9 @@ export function planFromIntent(state, intent, opts = {}) {
     ...(spell ? { spellId: plan.spellId, castAtLevel: Math.max(spell.level || 0, plan.castAtLevel ?? spell.level ?? 0) } : {}),
     ...(innate ? { isInnate: true } : {}),
     ...(plan.moveTo ? { moveTo: { col: plan.moveTo.col, row: plan.moveTo.row } } : {}),
-    featuresFired: [...(plan.features || [])],
+    ...(plan.kind === 'feature' ? { featureId: plan.featureId || plan.features?.[0] || null } : {}),
+    featuresFired: plan.featureId && !(plan.features || []).includes(plan.featureId)
+      ? [plan.featureId, ...(plan.features || [])] : [...(plan.features || [])],
     archetype: 'manual',
     score: 0,
     breakdown: []

@@ -14,6 +14,11 @@
  *     (Extra Attack). The engine takes the maximum over every entry
  *     (`attacksPerAction` below); Extra Attack from two classes does not
  *     stack (PHB p164).
+ *   - `action: 'bonus'|'action'` — the feature can be USED as an action
+ *     option ('feature' kind, ai/action-options.js) and by players
+ *     (`turn.act {plan: {kind: 'feature', featureId}}`); the engine runs
+ *     it through combat-engine `useFeature`. A bonus-action feature may
+ *     also ride an attack plan's featuresFired (Rage, then swing).
  *
  * Pure module; mutation is funneled through consume(). Feature presence
  * is detected from the parsed character (M14: feats, classes) plus a few
@@ -63,14 +68,19 @@ function pickSmiteSlot(pc, slots, rng) {
   return ranked[0].level;
 }
 
+/** Class list of a parsed character OR an engine wrapper (its `ref`). */
+function classesOf(pc) {
+  return pc?.classes || pc?.ref?.classes || [];
+}
+
 /** Does this PC have a given class at all? */
 function hasClass(pc, name) {
   const re = new RegExp(`^${name}$`, 'i');
-  return (pc?.classes || []).some(c => re.test(String(c?.name || '')));
+  return classesOf(pc).some(c => re.test(String(c?.name || '')));
 }
-function classLevel(pc, name) {
+export function classLevel(pc, name) {
   const re = new RegExp(`^${name}$`, 'i');
-  for (const c of (pc?.classes || [])) {
+  for (const c of classesOf(pc)) {
     if (re.test(String(c?.name || ''))) return c.level || 0;
   }
   return 0;
@@ -96,6 +106,41 @@ function sneakAttackEligible({ self, target, allies, weapon }) {
     if (chebyshevFeet(ap, tp) <= 5) return true;
   }
   return false;
+}
+
+/** Is the creature raging (condition 'raging')? */
+export function isRaging(pc) {
+  const list = pc?.conditions || [];
+  for (const c of list) if ((typeof c === 'string' ? c : c?.id) === 'raging') return true;
+  return false;
+}
+
+/**
+ * Rage's damage bonus by Barbarian level (PHB p48): +2, +3 at 9, +4 at 16.
+ * @param {object} pc — sheet or wrapper
+ * @returns {number}
+ */
+export function rageDamageBonus(pc) {
+  const lvl = classLevel(pc, 'Barbarian');
+  if (lvl >= 16) return 4;
+  if (lvl >= 9) return 3;
+  return lvl >= 1 ? 2 : 0;
+}
+
+/**
+ * Rages per long rest from the Barbarian table (PHB p48), used when the
+ * sheet carries no `featureUses.rage`. Level 20 is unlimited (99).
+ * @param {object} pc
+ * @returns {number}
+ */
+export function ragesPerLongRest(pc) {
+  const lvl = classLevel(pc, 'Barbarian');
+  if (lvl >= 20) return 99;
+  if (lvl >= 17) return 6;
+  if (lvl >= 12) return 5;
+  if (lvl >= 6) return 4;
+  if (lvl >= 3) return 3;
+  return lvl >= 1 ? 2 : 0;
 }
 
 /** Classes whose Extra Attack arrives at level 5 (PHB: Fighter, Barbarian, Paladin, Ranger, Monk). */
@@ -170,22 +215,51 @@ export const PC_FEATURES = {
     consume(pc) { pc._cunningActionUsedThisTurn = true; }
   },
 
+  // M64 phase 1.5 — Second Wind (PHB p72): bonus action, regain 1d10 +
+  // fighter level HP, once per short rest. Standalone ('feature' option)
+  // when bloodied, or riding a weapon attack.
   'second-wind': {
     id: 'second-wind',
     label: 'Second Wind',
+    action: 'bonus',
     available(pc) {
       return hasClass(pc, 'Fighter') && !pc._secondWindUsed;
     },
     scoreBoost(option, ctx) {
-      // Self-heal as a bonus action. We surface it as an option only
-      // when self is bloodied (< 50% hp).
-      if (option.kind !== 'feature' || option.featureId !== 'second-wind') return 0;
       const hp = typeof ctx.self?.hp === 'number' ? ctx.self.hp : ctx.self?.hp?.current;
       const max = ctx.self?.hpMax ?? ctx.self?.hp?.max ?? 1;
-      if (max > 0 && hp / max < 0.5) return 1.0;
+      const bloodied = max > 0 && hp / max < 0.5;
+      if (!bloodied) return 0;
+      if (option.kind === 'feature' && option.featureId === 'second-wind') return 1.0;
+      // The bonus action rides an attack (heal, then swing).
+      if (option.kind === 'melee' || option.kind === 'ranged') return 0.3;
       return 0;
     },
     consume(pc) { pc._secondWindUsed = true; }
+  },
+
+  // M64 phase 1.5 — Rage (PHB p48): bonus action, uses per long rest
+  // (sheet featureUses 'rage', else the Barbarian table). While raging:
+  // +2/+3/+4 damage on STR melee weapon attacks, resistance to
+  // bludgeoning / piercing / slashing, advantage on STR saves; no
+  // spellcasting or concentration. Ends after 10 rounds, when the
+  // barbarian drops, or at the end of a turn in which it neither attacked
+  // nor took damage since its last turn (combat-engine lifecycle).
+  rage: {
+    id: 'rage',
+    label: 'Rage',
+    action: 'bonus',
+    available(pc) {
+      if (classLevel(pc, 'Barbarian') < 1) return false;
+      if (isRaging(pc)) return false;
+      const l = pc._features?.rage;
+      return l ? (l.max ?? 0) - (l.spent ?? 0) > 0 : true;
+    },
+    scoreBoost(option) {
+      // Rage rides a melee attack; on its own it is worth nothing.
+      return option.kind === 'melee' ? 0.5 : 0;
+    },
+    consume() {}
   },
 
   // M64 R10 — Extra Attack (PHB p72 and each martial class). A passive
