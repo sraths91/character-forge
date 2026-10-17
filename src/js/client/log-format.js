@@ -17,9 +17,11 @@ const sign = (n) => (n >= 0 ? `+${n}` : String(n));
 /**
  * @param {object} ev — engine event {seq, type, round, payload}
  * @param {(id: string|null) => string} nameOf — entity id → display name
+ * @param {{swing?: number, retarget?: boolean}} [ctx] — Extra Attack: this
+ *   attack.rolled is swing N of its Attack action (and picked a new target)
  * @returns {{text: string, cls: string, dm: boolean}|null} null = not shown
  */
-export function formatEvent(ev, nameOf = (id) => String(id ?? '—')) {
+export function formatEvent(ev, nameOf = (id) => String(id ?? '—'), ctx = {}) {
   const p = ev?.payload || {};
   const n = (id) => nameOf(id ?? null);
   switch (ev?.type) {
@@ -38,8 +40,9 @@ export function formatEvent(ev, nameOf = (id) => String(id ?? '—')) {
     case 'attack.rolled': {
       const d20 = p.d20.length > 1 ? `d20=${p.kept} (${p.advantage} of ${p.d20.join(',')})` : `d20=${p.kept}`;
       const word = p.crit ? 'CRIT' : p.hit ? 'HIT' : p.shielded ? 'MISS (Shield)' : 'MISS';
+      const swing = ctx.swing > 1 ? `Swing ${ctx.swing}${ctx.retarget ? ' (new target)' : ''}: ` : '';
       return {
-        text: `${n(p.attackerId)} → ${n(p.targetId)}${p.weapon ? ` (${p.weapon})` : ''}: ${d20}${sign(p.bonus)}=${p.total} vs AC ${p.ac} — ${word}`,
+        text: `${swing}${n(p.attackerId)} → ${n(p.targetId)}${p.weapon ? ` (${p.weapon})` : ''}: ${d20}${sign(p.bonus)}=${p.total} vs AC ${p.ac} — ${word}`,
         cls: p.crit ? 'roll-crit' : p.hit ? 'roll-hit' : 'roll-miss',
         dm: false
       };

@@ -10,6 +10,7 @@ import {
   reachableFor, currentTurn, checkPlan, forcePlanFor, MAX_PLAN_PATH
 } from '../js/client/intents.js';
 import { validateClientMessage } from '../js/shared/protocol.js';
+import { featureActionsFor, featureIntent, FEATURE_ACTIONS } from '../js/client/intents.js';
 import { createTerrain, encodeTerrain, setFlag, TERRAIN_FLAGS } from '../js/map/terrain.js';
 import { projectedState, clone } from './helpers/client-fixtures.js';
 
@@ -119,4 +120,36 @@ test('M8: reachableFor and the forcePlan twin', () => {
   assert.equal(fp.kind, 'melee');
   assert.equal(fp.weapon.name, 'Quarterstaff');
   assert.equal(fp.targetId, 'm-goblin');
+});
+
+test('M64 1.5: featureActionsFor — Second Wind / Rage from the sheet, uses from the ledger, Rage blocked while raging', () => {
+  assert.deepEqual(FEATURE_ACTIONS.map(f => f.id), ['second-wind', 'rage']);
+  const fighter = { kind: 'pc', resources: { features: {} }, conditions: [] };
+  const sw = featureActionsFor(fighter, { classes: [{ name: 'Fighter', level: 5 }] });
+  assert.deepEqual(sw.map(f => [f.id, f.left, f.max, f.available]), [['second-wind', 1, 1, true]]);
+  const spent = featureActionsFor({ ...fighter, resources: { features: { 'second-wind': { max: 1, spent: 1 } } } }, { classes: [{ name: 'Fighter', level: 5 }] });
+  assert.deepEqual([spent[0].available, spent[0].reason], [false, 'no uses left']);
+  const barb = { kind: 'pc', resources: { features: { rage: { max: 3, spent: 1 } } }, conditions: [] };
+  const rage = featureActionsFor(barb, { classes: [{ name: 'Barbarian', level: 3 }] });
+  assert.deepEqual(rage.map(f => [f.id, f.left, f.max]), [['rage', 2, 3]]);
+  const raging = featureActionsFor({ ...barb, conditions: [{ id: 'raging', endsOn: 'encounter' }] }, { classes: [{ name: 'Barbarian', level: 3 }] });
+  assert.equal(raging[0].reason, 'already raging');
+  assert.deepEqual(featureActionsFor({ kind: 'monster' }, null), []);
+  assert.deepEqual(featureActionsFor(fighter, { classes: [{ name: 'Wizard', level: 5 }] }), []);
+});
+
+test('M64 1.5: featureIntent builds a protocol-valid feature turn.act (featureId + features)', () => {
+  const enc = projectedState();
+  enc.entities['pc-fighter'].resources.features['second-wind'].spent = 0;
+  enc.entities['pc-fighter'].conditions = [];
+  enc.turnIndex = 0;
+  const sheets = { 'fighter-l5': { id: 'fighter-l5', name: 'F', classes: [{ name: 'Fighter', level: 5 }], hp: { max: 44 }, abilityModifiers: { STR: 3, DEX: 1, CON: 2, INT: 0, WIS: 0, CHA: 0 }, proficiencyBonus: 3, equipment: {}, spells: [] } };
+  const r = featureIntent(enc, { actorId: 'pc-fighter', turnId: 't1', featureId: 'second-wind', sheets });
+  assert.equal(r.ok, true, r.reason);
+  assert.deepEqual(r.intent.p.plan, { kind: 'feature', featureId: 'second-wind', features: ['second-wind'] });
+  assert.equal(validateClientMessage({ v: 1, cid: '01J00000000000000000000000', ...r.intent }).ok, true);
+  assert.equal(featureIntent(enc, { actorId: 'pc-fighter', turnId: null, featureId: 'second-wind', sheets }).ok, false);
+  enc.entities['pc-fighter'].resources.features['second-wind'].spent = 1;
+  const used = featureIntent(enc, { actorId: 'pc-fighter', turnId: 't1', featureId: 'second-wind', sheets });
+  assert.deepEqual([used.ok, used.reason], [false, 'Second Wind: no uses left']);
 });

@@ -265,3 +265,61 @@ test('M64 1.5: tokenBadges marks downed / stable / dead tokens and keeps hidden 
   assert.equal(tokenBadges(hidden, enc, { dm: { showHidden: true } }).some(b => b.id === 'm-fanatic'), true);
   assert.deepEqual(tokenBadges(null, enc), []);
 });
+
+test('M64 1.5: Extra Attack — the swings of one cinemaGroup play as one cinema, HP presented at each impact, re-target swaps the defender', async () => {
+  const states = [];
+  const store = createStore();
+  store.apply(snapshotMsg(10));
+  const timers = manualTimers();
+  const cinema = fakeCinema();
+  const done = [];
+  const adapter = createRenderAdapter({ canvas: null, store, cinema, timers, onExchangeDone: (id) => done.push(id), onCinemaState: (st) => states.push(st.playing) });
+  const send = (msgs) => { for (const m of msgs) store.apply(m); return adapter.play(msgs.map(m => m.p)); };
+  // Swing 1 hits the goblin 7 → 3; swing 2 (same group, exchangeId g.s2) finishes it 3 → 0.
+  const swing1 = weaponExchange(11, { before: 7, after: 3, group: 'g' });
+  const swing2 = weaponExchange(14, { before: 3, after: 0, group: 'g' });
+  swing2[2].p.payload.exchangeId = 'g.s2';
+  const p1 = send(swing1);
+  await flush();
+  const impact = findHitPauseAt(cinema.rounds[0].seq);
+  timers.advance(impact);
+  assert.equal(goblinHp(store), 3, 'swing 1 presents its own HP at its impact');
+  cinema.rounds[0].resolve();
+  await p1;
+  assert.equal(adapter.cinemaShown, true, 'the cinema stays up between swings');
+  const p2 = send(swing2);
+  await flush();
+  assert.equal(cinema.rounds.length, 2);
+  assert.equal(cinema.actors.length, 1, 'same attacker and defender: actors kept');
+  assert.equal(goblinHp(store), 3);
+  timers.advance(findHitPauseAt(cinema.rounds[1].seq));
+  assert.equal(goblinHp(store), 0, 'swing 2 presents at its impact');
+  cinema.rounds[1].resolve();
+  await p2;
+  assert.deepEqual(done, ['g', 'g.s2']);
+  // A re-targeted swing 3 swaps the defender, still inside the same cinema.
+  const swing3 = weaponExchange(17, { before: 33, after: 30, max: 33, group: 'g', defenderId: 'm-fanatic' });
+  swing3[2].p.payload.exchangeId = 'g.s3';
+  const p3 = send(swing3);
+  await flush();
+  assert.equal(cinema.actors.length, 2, 're-target: new defender');
+  timers.advance(findHitPauseAt(cinema.rounds[2].seq));
+  cinema.rounds[2].resolve();
+  await p3;
+  // The next event outside the group closes the cinema; one open, one close.
+  await send([eventMsg(20, 'turn.ended', { actorId: 'pc-fighter' })]);
+  assert.equal(adapter.cinemaShown, false);
+  assert.deepEqual(states, [true, false]);
+});
+
+test('M64 1.5: a lingering multi-swing cinema closes on its own after swingLingerMs', async () => {
+  const { timers, cinema, send, adapter } = setup();
+  const p = send(weaponExchange(11));
+  await flush();
+  timers.advance(findHitPauseAt(cinema.rounds[0].seq));
+  cinema.rounds[0].resolve();
+  await p;
+  assert.equal(adapter.cinemaShown, true);
+  timers.advance(700);
+  assert.equal(adapter.cinemaShown, false);
+});
