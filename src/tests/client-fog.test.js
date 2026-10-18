@@ -92,7 +92,7 @@ test('fog: fogPaintIntent maps a brush stroke to dm.fog.paint', () => {
   assert.equal(fogPaintIntent({ cells: [{ col: 0, row: 0 }], op: 'clear' }).p.op, 'hide');
 });
 
-test('fog: the DM battle view shows the fog brush under fog; a stroke sends dm.fog.paint; an old server says so', async () => {
+test('fog: the DM battle view shows the fog brush under fog; a stroke sends dm.fog.paint; encounter.fog redraws and clears the error', async () => {
   const dom = createFakeDom();
   const root = dom.root();
   const enc = projectedState();
@@ -101,14 +101,15 @@ test('fog: the DM battle view shows the fog brush under fog; a stroke sends dm.f
   store.apply({ v: 1, t: 'hello.ok', ts: 1, p: { memberId: 'mem_dm', role: 'dm', seats: [], serverNow: 1, cfg: {} } });
   store.apply(snapshotMsg(10, enc, { code: 'ABC123', status: 'in-encounter', members: [], seats: [], turn: null }));
   const sent = [];
+  const drawn = [];
   let reject = false;
   const raf = manualRaf();
   const un = mountBattle(root, {
     store,
-    send: async (i) => { sent.push(i); if (reject) { const e = new Error('unknown'); e.code = 'E_UNKNOWN_TYPE'; throw e; } return { ok: true }; },
+    send: async (i) => { sent.push(i); if (reject) { const e = new Error('the paint failed'); e.code = 'E_INVALID_INTENT'; throw e; } return { ok: true }; },
     session: { serverNow: () => 1, setPlayback: () => () => {} },
     sheets: () => ({}),
-    deps: { render: async () => ({ needsRedraw: false }), raf: raf.raf, caf: raf.caf, timers: manualTimers(), cinema: { async setActors() {}, resetHp() {}, playRound: () => Promise.resolve() }, cinemaCanvas: false }
+    deps: { render: async (_c, view) => { drawn.push(view.fog); return { needsRedraw: false }; }, raf: raf.raf, caf: raf.caf, timers: manualTimers(), cinema: { async setActors() {}, resetHp() {}, playRound: () => Promise.resolve() }, cinemaCanvas: false }
   });
   const sel = dom.findAll(root, n => n.tagName === 'SELECT' && /play-fog-brush/.test(n.className))[0];
   assert.equal(sel.hidden, false, 'the DM sees the brush under fog');
@@ -124,9 +125,20 @@ test('fog: the DM battle view shows the fog brush under fog; a stroke sends dm.f
   dom.fire(canvas, 'pointerdown', { clientX: 320, clientY: 210, button: 0 });
   dom.fire(canvas, 'pointerup', { clientX: 320, clientY: 210, button: 0 });
   await flush();
-  assert.ok(dom.byText(root, 'does not support the fog brush').length);
-  store.apply({ v: 1, t: 'redacted', seq: 11, ts: 1, p: { type: 'attack.rolled' } });
+  assert.ok(dom.byText(root, 'the paint failed').length);
+  assert.equal(dom.byText(root, 'does not support the fog brush').length, 0, 'dm.fog.paint is live: no old-server notice');
+  // The server's encounter.fog (protocol v1.5) updates the store's fog and redraws the mask.
+  const painted = revealCells(enc.fog, enc.grid.cols, enc.grid.rows, [{ col: 0, row: 0 }], false);
+  assert.equal(store.apply({ v: 1, t: 'encounter.fog', seq: 11, ts: 1, p: { fog: painted } }), 'applied');
   store.presentUpTo(11);
+  assert.deepEqual(store.getState().encounter.fog, painted);
+  assert.deepEqual(store.getPresented().encounter.fog, painted);
+  await raf.frame();
+  await flush();
+  assert.deepEqual(drawn.at(-1), painted, 'the mask is redrawn with the new bitset');
+  assert.equal(dom.byText(root, 'the paint failed').length, 0, 'the brush error clears');
+  store.apply({ v: 1, t: 'redacted', seq: 12, ts: 1, p: { type: 'attack.rolled' } });
+  store.presentUpTo(12);
   await flush();
   assert.ok(dom.findAll(root, n => n.tagName === 'LI' && /roll-hidden/.test(n.className) && /out of sight/.test(n.textContent)).length, 'the log says something happens');
   un();

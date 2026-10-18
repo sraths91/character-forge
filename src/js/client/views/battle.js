@@ -24,7 +24,8 @@
  *     {type}` and log as "Something happens out of sight…"; masked events
  *     name the hidden creature 'Something'. The DM gets a Reveal / Hide
  *     fog brush (E5's terrain brush with a fog flag) that sends
- *     `dm.fog.paint {cells, op}` (protocol v1.4).
+ *     `dm.fog.paint {cells, op}` (protocol v1.4); the server answers every
+ *     seat with `encounter.fog {fog}` (v1.5), which redraws the mask.
  *   - Waiting states: "Goblin is acting…", "DM is reviewing…", "Paused".
  *   - Dying (E1 wave 5): a death-save banner on your downed creature's
  *     card (the server rolls it at the start of your turn; the result and
@@ -207,10 +208,14 @@ export function mount(root, ctx) {
     }
   };
   scope.add(attachTerrainBrush(canvas, local.camera, () => ctx.store.getState().encounter?.grid || { cols: 0, rows: 0 }, (paint) => {
-    attempt(() => send(fogPaintIntent(paint)).then(() => say('')), (e) => {
-      say(e?.code === 'E_UNKNOWN_TYPE' ? 'This server does not support the fog brush yet.' : (e?.message || String(e)), 'error');
-    });
+    attempt(() => send(fogPaintIntent(paint)).then(() => say('')), fail);
   }, fogBrush));
+  // encounter.fog (protocol v1.5): the new bitset reached the screen —
+  // redraw the mask and drop a stale brush error.
+  scope.add(ctx.store.subscribe((_a, p) => p.encounter?.fog?.revealed ?? null, () => {
+    if (status.dataset.kind === 'error') say('');
+    adapter.redraw();
+  }));
 
   scope.on(canvas, 'pointerdown', (e) => {
     if (fogBrush.enabled) return;

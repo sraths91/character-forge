@@ -874,6 +874,9 @@ export function createFakeServer({
         const st = room.enc.state;
         if (!st.fog) throw new IntentFail('E_INVALID_INTENT', 'this encounter has no fog');
         st.fog = revealCells(st.fog, st.grid.cols, st.grid.rows, p.cells, p.op === 'reveal');
+        // Like E3's room (protocol v1.5): every seat gets the bitset, then
+        // a fresh snapshot (player projections change under fog).
+        broadcast(room, 'encounter.fog', { fog: { revealed: st.fog.revealed } });
         snapshotAll(room);
         return {};
       }

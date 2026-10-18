@@ -138,6 +138,11 @@ function reduceBroadcast(s, msg) {
       };
     case 'entity.updated':
       return { ...next, encounter: applyEntityPatch(s.encounter, p.entityId, p.patch) };
+    case 'encounter.fog':
+      // Protocol v1.5: the fog bitset after a dm.fog.paint (players also
+      // get a fresh snapshot, since their projection changes).
+      if (!s.encounter || !p.fog || typeof p.fog.revealed !== 'string') return next;
+      return { ...next, encounter: { ...s.encounter, fog: { revealed: p.fog.revealed } } };
     case 'room.status':
       return { ...next, room: { ...(s.room || {}), status: p.status } };
     case 'room.closing':
