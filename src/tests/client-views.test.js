@@ -13,6 +13,8 @@ import { mount as mountLobby } from '../js/client/views/lobby.js';
 import { mount as mountClaim, derivedSeatStats } from '../js/client/views/claim.js';
 import { mount as mountSetup, setupPayload, calibratorInputs } from '../js/client/views/setup.js';
 import { statBlockLabel, statBlockInfo, setupAckMonsters, fightsAsLabel } from '../js/client/monster-match.js';
+import { tokenImageAllowed } from '../js/client/selectors.js';
+import { createApi } from '../js/client/api.js';
 import { mount as mountBattle, reactionCopy } from '../js/client/views/battle.js';
 import { mount as mountDmPanel, createDmBridge, pendingPlan } from '../js/client/views/dm-panel.js';
 import { createAppearanceCache } from '../js/map/view.js';
@@ -484,4 +486,81 @@ test('C9: nothing under src/js/client imports main.js or runAttackPrompt', () =>
     assert.doesNotMatch(src, /\.innerHTML\s*=/, `${f.pathname} writes innerHTML`);
     assert.doesNotMatch(src, /document\.addEventListener/, `${f.pathname} delegates on document`);
   }
+});
+
+// ---- E3/E5 wave 6: token image picker wiring ----------------------------
+
+const TOKEN_URL = `/api/maps/r1/${'a'.repeat(64)}.png`;
+const dragonize = (enc) => {
+  enc.entities['m-fanatic'].statBlock = { ...(enc.entities['m-fanatic'].statBlock || {}), slug: 'young-dragon', type: 'dragon', source: 'srd-2014' };
+  enc.entities['m-goblin'].statBlock = { ...(enc.entities['m-goblin'].statBlock || {}), type: 'humanoid' };
+};
+function tokenHarness(phase) {
+  const hh = harness('dm', { mutate: (enc) => { dragonize(enc); if (phase) enc.phase = phase; } });
+  const uploads = [];
+  hh.ctx.api.uploadTokenImage = async (roomId, bytes, meta) => { uploads.push({ roomId, bytes, meta }); return { mapId: 'tok1', kind: 'token', url: TOKEN_URL }; };
+  hh.ctx.deps.readFile = async (f) => `bytes:${f.name}`;
+  return { hh, uploads };
+}
+async function pickAndClear(hh, uploads, picker) {
+  const input = picker.querySelector('[data-action="token-image-file"]');
+  input.files = [{ type: 'image/png', size: 5, name: 'drake.png' }];
+  hh.dom.fire(input, 'change');
+  await new Promise(r => setTimeout(r, 0));
+  await flush();
+  assert.deepEqual(uploads, [{ roomId: 'r1', bytes: 'bytes:drake.png', meta: { filename: 'drake.png', mime: 'image/png' } }]);
+  assert.deepEqual(hh.sent.at(-1), { t: 'dm.entity.patch', p: { entityId: 'm-fanatic', imageUrl: TOKEN_URL } });
+  picker.querySelector('[data-action="token-image-clear"]').click();
+  await flush();
+  assert.deepEqual(hh.sent.at(-1), { t: 'dm.entity.patch', p: { entityId: 'm-fanatic', imageUrl: null } });
+}
+
+test('wave 6: tokenImageAllowed — non-humanoid monsters only; uploadTokenImage PUTs ?kind=token', async () => {
+  assert.equal(tokenImageAllowed({ kind: 'monster', statBlock: { type: 'dragon' } }), true);
+  assert.equal(tokenImageAllowed({ kind: 'monster', statBlock: { type: 'Humanoid' } }), false);
+  assert.equal(tokenImageAllowed({ kind: 'monster', statBlock: { slug: 'goblin' } }), false, 'a preset-only monster draws its sprite');
+  assert.equal(tokenImageAllowed({ kind: 'pc', statBlock: { type: 'dragon' } }), false);
+  assert.equal(tokenImageAllowed(null), false);
+  const calls = [];
+  const api = createApi({ token: () => 'tkn', fetch: async (url, init) => { calls.push({ url, init }); return { ok: true, json: async () => ({ url: TOKEN_URL }) }; } });
+  assert.deepEqual(await api.uploadTokenImage('r 1', 'B', { filename: 'a b.png', mime: 'image/png' }), { url: TOKEN_URL });
+  assert.equal(calls[0].url, '/api/rooms/r%201/maps?kind=token&filename=a%20b.png');
+  assert.equal(calls[0].init.method, 'PUT');
+  assert.deepEqual(calls[0].init.headers, { Authorization: 'Bearer tkn', 'Content-Type': 'image/png' });
+});
+
+test('wave 6: setup monster card — the dragon row gets the token picker (upload → dm.entity.patch {imageUrl}, Remove → null)', async () => {
+  const { hh, uploads } = tokenHarness('setup');
+  const un = mountSetup(hh.root, hh.ctx);
+  const rows = hh.dom.findAll(hh.root, n => n.tagName === 'LI' && /play-monster/.test(n.className));
+  const pickers = hh.dom.findAll(hh.root, n => n.getAttribute?.('data-token-picker') === '');
+  assert.equal(pickers.length, 1, 'only the non-humanoid monster has a picker');
+  let row = pickers[0].parentNode;
+  while (row && row.tagName !== 'LI') row = row.parentNode;
+  assert.ok(row && rows.includes(row), 'the picker sits in a monster row');
+  await pickAndClear(hh, uploads, pickers[0]);
+  // A re-render keeps the same picker (an upload in flight is not dropped).
+  hh.store.apply({ v: 1, t: 'entity.updated', seq: 11, ts: 1, p: { entityId: 'm-fanatic', patch: { imageUrl: TOKEN_URL }, cause: 'dm' } });
+  hh.store.presentUpTo(11);
+  await flush();
+  const again = hh.dom.findAll(hh.root, n => n.getAttribute?.('data-token-picker') === '');
+  assert.equal(again.length, 1);
+  assert.equal(again[0], pickers[0]);
+  un();
+  assertClean(hh, 'setup (token picker)');
+});
+
+test('wave 6: DM inspector — a non-humanoid monster gets the token picker; a humanoid does not', async () => {
+  const { hh, uploads } = tokenHarness(null);
+  const un = mountDmPanel(hh.root, hh.ctx);
+  const pickers = () => hh.dom.findAll(hh.root, n => n.getAttribute?.('data-token-picker') === '');
+  hh.ctx.dmBridge.select('m-goblin');
+  assert.equal(pickers().length, 0, 'humanoid: no picker');
+  hh.ctx.dmBridge.select('m-fanatic');
+  assert.equal(pickers().length, 1);
+  await pickAndClear(hh, uploads, pickers()[0]);
+  hh.ctx.dmBridge.select('pc-fighter');
+  assert.equal(pickers().length, 0, 'PCs draw their sheet look');
+  un();
+  assertClean(hh, 'dm panel (token picker)');
 });

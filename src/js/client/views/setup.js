@@ -16,6 +16,10 @@
  *     party too → `dm.review.set`), a live difficulty card that runs
  *     `calibrateEncounter` in the DM's browser debounced 400 ms, Start.
  *
+ * Once the encounter exists, each non-humanoid monster's row carries E5's
+ * token image picker (views/token-image.js: `PUT …/maps?kind=token`, then
+ * `dm.entity.patch {imageUrl}`).
+ *
  * Before "Create encounter" everything is a local draft; the setup is sent
  * as one `dm.encounter.setup`. Afterwards (phase 'setup' on the server)
  * edits become intents: token drags → `dm.entity.patch {position,
@@ -33,6 +37,7 @@ import { h, replace, clear, createScope, delegate, attempt, select, observeCanva
 import { seatsOf } from '../selectors.js';
 import { dmMoveIntent } from '../intents.js';
 import { matchPresetForOpen5e, fightsAsLabel, statBlockLabel, statBlockInfo, setupAckMonsters } from '../monster-match.js';
+import { createTokenPickers } from './token-image.js';
 import { createCamera, attachCameraControls, pickCell, fitToGrid, WORLD_CELL_PX } from '../../map/camera.js';
 import { createRenderScheduler } from '../../map/scheduler.js';
 import { projectBattleView } from '../../map/view.js';
@@ -225,6 +230,8 @@ export function mount(root, ctx) {
     return !!res?.needsRedraw;
   }, { raf: deps.raf, caf: deps.caf });
   scope.add(() => scheduler.stop());
+  const tokenPickers = createTokenPickers({ ...ctx, doc }, { onError: fail });
+  scope.add(() => tokenPickers.dispose());
   scope.add(observeCanvasSize(canvas, camera, () => { fittedFor = ''; scheduler.markDirty(); }));
   scope.add(attachCameraControls(canvas, camera, () => scheduler.markDirty(), { worldSize: () => ({ w: gridOf().cols * WORLD_CELL_PX, h: gridOf().rows * WORLD_CELL_PX }) }));
   brush.onPreview = (cells, op) => {
@@ -526,10 +533,13 @@ export function mount(root, ctx) {
 
   function renderLists() {
     const mons = monstersNow();
+    const ents = encounter()?.entities || {};
+    tokenPickers.prune(mons.map(m => m.id));
     replace(doc, monsterList, mons.length ? mons.map(m => h(doc, 'li', { class: 'play-monster' }, [
       h(doc, 'span', { text: `${m.name} (${m.pos.col}, ${m.pos.row})` }),
       h(doc, 'span', { class: `play-fights-as${m.info?.source === 'srd-2014' ? ' srd' : ''}`, text: statBlockLabel(m.info, m.slug) }),
-      h(doc, 'button', { type: 'button', class: 'play-btn small', dataset: { action: 'remove-monster', id: m.id }, attrs: { 'aria-label': `Remove ${m.name}` }, text: '×' })
+      h(doc, 'button', { type: 'button', class: 'play-btn small', dataset: { action: 'remove-monster', id: m.id }, attrs: { 'aria-label': `Remove ${m.name}` }, text: '×' }),
+      ents[m.id] ? tokenPickers.hostFor(ents[m.id]) : null
     ])) : [h(doc, 'li', { class: 'hint-line', text: 'No monsters yet: search or pick a preset, then click the map.' })]);
     const isCreated = created();
     replace(doc, startRow, [

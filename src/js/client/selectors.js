@@ -233,3 +233,16 @@ export function deathSaveInfo(s, entityId) {
   }
   return { status, successes: ds.successes ?? 0, failures: ds.failures ?? 0, stable: !!ds.stable, last };
 }
+
+/**
+ * Whether the DM may give a creature a token image (E3 wave 6): monsters
+ * whose stat block names a non-humanoid type (dragons, beasts, oozes —
+ * no LPC look). PCs and humanoid / preset-only monsters draw their sprite.
+ * @param {object|null|undefined} e — EncounterState entity
+ * @returns {boolean}
+ */
+export function tokenImageAllowed(e) {
+  if (!e || e.kind !== 'monster') return false;
+  const type = e.statBlock?.type;
+  return typeof type === 'string' && type !== '' && type.toLowerCase() !== 'humanoid';
+}

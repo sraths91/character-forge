@@ -16,6 +16,9 @@
  *     remove the creature. Clicking a token on the map selects it. Dying
  *     state (E1 wave 5): set the status and clear the death saves
  *     (`dm.entity.patch {status, deathSaves}`, protocol v1.4).
+ *   - Token image (E3/E5 wave 6): a non-humanoid monster in the inspector
+ *     gets E5's picker; the upload goes to `PUT /api/rooms/:id/maps?kind=token`
+ *     and lands as `dm.entity.patch {imageUrl}` (Remove → null).
  *   - "+ Monster": pick a preset, click a cell (`dm.entity.add`).
  *   - "End encounter" with an outcome picker and a confirmation step.
  *   - "DM adjudicates" (C11): cast a spell outside the engine registry —
@@ -27,13 +30,15 @@
  *   - Monster reaction prompts addressed to the DM are answered in the
  *     battle view's dialog.
  *
- * mount(root, ctx) → unmount. ctx: {store, send, dmBridge, sheets?() → Record<id, sheet>, deps: {timers}}
+ * mount(root, ctx) → unmount. ctx: {store, send, dmBridge, api?, room?: {roomId},
+ * sheets?() → Record<id, sheet>, deps: {timers, readFile?, mountTokenPicker?}}
  */
 
 import { h, replace, createScope, delegate, attempt, select } from './dom.js';
 import { nameOf, conditionIds, statusBadge } from '../selectors.js';
 import { ENTITY_STATUSES } from '../../shared/events.js';
 import { mount as mountRoomSettings } from './room-settings.js';
+import { createTokenPickers } from './token-image.js';
 import { formatBreakdown } from '../../scene/ai/profile.js';
 import { entityFromPreset } from '../../scene/encounter-adapters.js';
 import { MONSTER_PRESETS } from '../../scene/monster-presets.js';
@@ -172,6 +177,8 @@ export function mount(root, ctx) {
   for (const c of [statusCard, pendingCard, initCard, rollCard, inspector, monsterCard, adjCard, endCard]) view.appendChild(c);
   root.appendChild(view);
   scope.add(mountRoomSettings(view, { store: ctx.store, send }));
+  const tokenPickers = createTokenPickers({ ...ctx, doc }, { onError: fail });
+  scope.add(() => tokenPickers.dispose());
 
   // Static controls (built once so selections survive re-renders).
   const pauseSel = select(doc, { dataset: { action: 'pause-mode' }, attrs: { 'aria-label': 'Pause mode' } }, [
@@ -526,6 +533,7 @@ export function mount(root, ctx) {
     if (inspected.id === id && inspected.ref === x && inspected.count === count) return;
     inspected = { id, ref: x, count };
     const choices = Object.values(e?.entities || {}).map(o => ({ value: o.id, label: o.name }));
+    tokenPickers.prune(x ? [x.id] : []);
     replace(doc, inspector, [
       h(doc, 'h3', { text: 'Inspector' }),
       select(doc, { dataset: { action: 'inspect-select' }, attrs: { 'aria-label': 'Creature' } }, [{ value: '', label: 'Click a token or pick…' }, ...choices], id || ''),
@@ -544,6 +552,7 @@ export function mount(root, ctx) {
           select(doc, { dataset: { field: 'cond-add' }, attrs: { 'aria-label': 'Add condition' } }, CONDITION_CHOICES.filter(c => !conditionIds(x).includes(c))),
           h(doc, 'button', { type: 'button', class: 'play-btn small', dataset: { action: 'cond-add' }, text: 'Add condition' })
         ]),
+        tokenPickers.hostFor(x),
         h(doc, 'button', { type: 'button', class: 'play-btn danger', dataset: { action: 'remove-entity' }, text: `Remove ${x.name}` })
       ]) : null
     ]);
