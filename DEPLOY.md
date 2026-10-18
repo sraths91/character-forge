@@ -9,8 +9,8 @@ Single Express server that:
 - Proxies D&D Beyond's public character-service endpoint at import time
 - With `CF_MULTIPLAYER=1`: online tables (M64) — rooms HTTP API under
   `/api/rooms`, a WebSocket gateway at `/ws` on the same port, the
-  encounter event log in SQLite, and uploaded battle maps under
-  `<data dir>/maps/`
+  encounter event log in SQLite, and uploaded battle maps and DM token
+  images under `<data dir>/maps/`
 
 Rooms live in process memory and the volume forbids replicas, so this is
 **one instance** (`numReplicas: 1` in `railway.json`).
@@ -68,13 +68,16 @@ nullable `encounters.sheets_json`: the PC sheets an encounter was built with,
 so restart recovery no longer reads the seats or the character cache) and
 `0004_character_import_sessions` (which browser session imported which
 character; `GET /api/characters/:ddbId` serves rules prose only to that
-session, the room's DM / importer / seat, see below).
+session, the room's DM / importer / seat, see below) and `0005_map_kind`
+(additive: `uploaded_maps.kind TEXT NOT NULL DEFAULT 'map' CHECK (kind IN
+('map', 'token'))`; every existing upload becomes a `map`, and the first
+boot on a populated DB writes `<db>.pre-0005.bak`).
 
 ### 4. Health check
 Railway uses `GET /api/health` (configured in `railway.json`). It runs
 `SELECT 1` against the database and returns:
 ```json
-{ "ok": true, "time": 1715432100000, "migrationVersion": 4, "dataDir": "/app/data", "sockets": 0, "connections": 0, "rooms": 0 }
+{ "ok": true, "time": 1715432100000, "migrationVersion": 5, "dataDir": "/app/data", "sockets": 0, "connections": 0, "rooms": 0 }
 ```
 (`sockets` / `connections` / `rooms` only with `CF_MULTIPLAYER=1`.)
 `sockets` counts authenticated table members online; `connections` counts
@@ -103,6 +106,15 @@ Railway auto-restarts the service if this stops responding.
   encounter are reloaded from the room's seats (or the character cache).
   An encounter saved by a different engine version (`CF_ENGINE`) is
   marked `abandoned` and the room returns to the lobby.
+- **Map and token uploads**: `PUT /api/rooms/:id/maps` (DM only, raw
+  PNG / JPEG / WebP body ≤ 10 MB; type and extension must match the
+  bytes). `?kind=token` stores a DM token image for a non-humanoid
+  monster instead: ≤ 1024 px per side (maps ≤ 8192 px, 16.7 MP). A room
+  holds 20 maps and 20 token images, 100 MB in all, and uploads stop at
+  70 % volume use. Both kinds are served from the same immutable path,
+  `/api/maps/<roomId>/<sha256>.<ext>`; the DM puts a token image on a
+  monster with `dm.entity.patch {imageUrl}` (only this room's upload
+  paths are accepted). They are deleted with the room's maps.
 - **Janitor** (hourly): deletes event logs of encounters ended > 7 days
   ago, rooms idle 30 days (with their maps), and checkpoints the WAL
   above 64 MB.
