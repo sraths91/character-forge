@@ -39,7 +39,12 @@ test('granted spells: the cleric fixture\'s Fey Touched Misty Step is a uses led
   assert.equal(misty.source, 'feat');
   assert.deepEqual(misty.uses, { max: 1, used: 0, reset: 'long rest' });
   assert.equal(grantedSpellEntry(sheet, 'healing-word'), null, 'class spells use slots');
-  assert.deepEqual(featureLedgerFor(sheet), { 'spell:misty-step': { max: 1, spent: 0 } });
+  // E4's parser (R14 follow-up) also exposes class-feature uses, so the
+  // ledger carries Channel Divinity next to the feat spell.
+  assert.deepEqual(featureLedgerFor(sheet), {
+    'spell:misty-step': { max: 1, spent: 0 },
+    'channel-divinity': { max: 1, spent: 0 }
+  });
   const e = entityFromSheet(sheet, { id: 'cl', pos: { col: 0, row: 0 } });
   assert.deepEqual(e.resources.features['spell:misty-step'], { max: 1, spent: 0 });
   const w = wrapperFromEntity(e, sheet);

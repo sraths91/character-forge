@@ -255,7 +255,13 @@ test('R11: the engine swings the parsed Bite (+10, 2d10+1d6+6)', async () => {
   const sides = toEngineSides(state, { [fighter.id]: fighter }, 'm-dragon');
   const plan = { kind: 'attack', targetId: pc.id, targetSide: 'enemy', featuresFired: [] };
   // rng 0.5: d20 = 11 (+10 = 21, a hit); each die rolls floor(0.5 * sides) + 1 → 6 + 6 + 4 + 6 = 22.
-  await runOneAttack(sides.active, sides.enemies, sides.allies, sides.scene, () => 0.5, { forcePlan: plan });
+  // Since R10 the normalised dragon also Multiattacks, so the turn deals
+  // more than the Bite alone: pin the first swing via the event stream.
+  const events = [];
+  await runOneAttack(sides.active, sides.enemies, sides.allies, sides.scene, () => 0.5, { forcePlan: plan }, { emit: (e) => events.push(e) });
+  const damage = events.filter(e => e.type === 'damage').map(e => e.payload.amount);
+  assert.equal(damage[0], 22, 'the parsed Bite lands for 22');
+  assert.ok(events.filter(e => e.type === 'attack.rolled').length >= 2, 'Multiattack adds swings');
   const after = applyEngineSides(state, sides.wrappers);
-  assert.equal(pc.hp - after.entities[pc.id].hp, 22);
+  assert.ok(pc.hp - after.entities[pc.id].hp >= 22);
 });
