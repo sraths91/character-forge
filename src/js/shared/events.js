@@ -47,10 +47,16 @@ import { ABILITIES } from './encounter-state.js';
  * successes, failures, cause: 'roll'|'damage'} carries the tallies after
  * the save; `entity.died` {entityId, byId, cause: DEATH_CAUSES};
  * `entity.stabilized` {entityId}; `entity.revived` {entityId, hp, byId}.
+ * v1.3 (additive, 2026-10-18, E1 M64 phase 1.5 wave 6):
+ * `resource.recharged` {entityId, resource: 'innate', spellId, available}
+ * — a monster's start-of-turn recharge roll restored an innate spell;
+ * `available` is the post-event use count (1 for a recharge ability).
+ * Emitted only when the count changes. A legendary budget's reset needs
+ * no event: it is a turn.started reset (turn-manager beginTurnResets).
  */
 export const EVENT_CATALOGUE_VERSION = 1;
 /** Additive minor revision of catalogue v1. */
-export const EVENT_CATALOGUE_MINOR = 2;
+export const EVENT_CATALOGUE_MINOR = 3;
 
 /** Every event type, in catalogue order. */
 export const EVENT_TYPES = Object.freeze([
@@ -65,6 +71,8 @@ export const EVENT_TYPES = Object.freeze([
   'condition.applied', 'condition.removed',
   'concentration.started', 'concentration.broken',
   'resource.spent',
+  // v1.3 (additive, M64 phase 1.5 wave 6)
+  'resource.recharged',
   'feature.used',
   'entity.downed',
   // v1.2 (additive, M64 R9)
@@ -91,6 +99,8 @@ export const ENTITY_STATUSES = Object.freeze(['active', 'downed', 'stable', 'dea
 export const DEATH_CAUSES = Object.freeze(['failures', 'massive', 'monster']);
 /** What produced a death save result (v1.2). */
 export const DEATH_SAVE_CAUSES = Object.freeze(['roll', 'damage']);
+/** What a `resource.recharged` event restores (v1.3). */
+export const RECHARGE_RESOURCES = Object.freeze(['innate']);
 /** How an encounter ended. */
 export const ENCOUNTER_OUTCOMES = Object.freeze(['party-victory', 'hostile-victory', 'draw', 'dm-ended']);
 
@@ -176,6 +186,7 @@ export const EVENT_PAYLOAD_SPECS = Object.freeze({
   'concentration.started': shape({ casterId: ID, spellId: str() }, LOOSE),
   'concentration.broken': shape({ casterId: ID, spellId: str() }, LOOSE),
   'resource.spent': shape({ entityId: ID, resource: str(), level: nullable(int(0, 9)) }, LOOSE),
+  'resource.recharged': shape({ entityId: ID, resource: oneOf(RECHARGE_RESOURCES), spellId: str(), available: int(0) }, LOOSE),
   'feature.used': shape({ entityId: ID, featureId: str() }, LOOSE),
   'entity.downed': shape({ entityId: ID }, LOOSE),
   'death.save': shape({

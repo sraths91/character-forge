@@ -30,7 +30,7 @@ test('events: catalogue is frozen, versioned, and matches the M64 plan list', ()
     'reaction.offered', 'reaction.resolved', 'attack.rolled', 'damage', 'heal',
     'save.rolled', 'spell.cast', 'spell.countered', 'spell.fizzled',
     'condition.applied', 'condition.removed', 'concentration.started', 'concentration.broken',
-    'resource.spent', 'feature.used', 'entity.downed',
+    'resource.spent', 'resource.recharged', 'feature.used', 'entity.downed',   // recharged: v1.3
     'death.save', 'entity.died', 'entity.stabilized', 'entity.revived',   // v1.2
     'exchange', 'dm.override',
     'turn.rejected', 'encounter.ended'

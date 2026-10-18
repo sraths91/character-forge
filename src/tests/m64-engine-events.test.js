@@ -166,3 +166,44 @@ test('T4: cast exchanges carry the spell; cinemaInputs supplies seat style/swing
   assert.equal(cast.cinema.weapon, null);
   assert.ok(cast.cinema.outcome);
 });
+
+// ---- M64 phase 1.5 wave 6 — events v1.3 resource.recharged ----------
+
+const spentDragon = () => buildMonster({
+  id: 'drg', name: 'Young Dragon', presetSlug: 'young-dragon', hp: 80, hpMax: 80, ac: 17,
+  attack: { name: 'Bite', bonus: 7, dice: '2d10+4' }, position: { col: 2, row: 1 },
+  _innate: { atWill: [], recharges: { 'fire-breath': false }, perDay: {} }
+});
+const bitePlan = { kind: 'attack', targetId: 'pc1', targetSide: 'enemy', featuresFired: [] };
+
+test('wave 6: a spent recharge spell that recharges emits resource.recharged before the plan', async () => {
+  const { ctx, events, types } = collector();
+  const drg = spentDragon();
+  // rng 0.99 → d6 = 6 ≥ 5: Fire Breath recharges.
+  await runOneAttack(drg, [buildPc()], [drg], buildScene(), () => 0.99, { forcePlan: bitePlan }, ctx);
+  assert.equal(types()[0], 'resource.recharged');
+  assert.equal(types().filter(t => t === 'resource.recharged').length, 1);
+  assert.deepEqual(events[0].payload, { entityId: 'drg', resource: 'innate', spellId: 'fire-breath', available: 1 });
+  assert.equal(drg._innate.recharges['fire-breath'], true);
+});
+
+test('wave 6: a failed recharge roll, or an unspent spell, emits no resource.recharged', async () => {
+  const failed = collector();
+  const drg = spentDragon();
+  // rng 0 → d6 = 1 < 5: still cooling down.
+  await runOneAttack(drg, [buildPc()], [drg], buildScene(), () => 0, { forcePlan: bitePlan }, failed.ctx);
+  assert.ok(!failed.types().includes('resource.recharged'));
+  assert.equal(drg._innate.recharges['fire-breath'], false);
+
+  const ready = collector();
+  const fresh = spentDragon();
+  fresh._innate.recharges['fire-breath'] = true;
+  await runOneAttack(fresh, [buildPc()], [fresh], buildScene(), () => 0.99, { forcePlan: bitePlan }, ready.ctx);
+  assert.ok(!ready.types().includes('resource.recharged'), 'an available spell is not re-rolled');
+
+  const spawn = collector();
+  const vamp = buildMonster({ id: 'vs', presetSlug: 'vampire-spawn', hp: 82, hpMax: 82,
+    _innate: { atWill: ['charm-gaze'], recharges: {}, perDay: {} } });
+  await runOneAttack(vamp, [buildPc()], [vamp], buildScene(), () => 0.99, { forcePlan: bitePlan }, spawn.ctx);
+  assert.ok(!spawn.types().includes('resource.recharged'), 'an at-will innate never recharges');
+});

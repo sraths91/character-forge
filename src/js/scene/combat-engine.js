@@ -168,8 +168,13 @@ async function resolveTurn(attacker, enemies, allies, scene, rng, prompts, ctx) 
   // M37 — At the start of each monster's turn, roll d6 for any innate
   // spells that are cooling down. M64 T2 — this is the single source of
   // the per-turn recharge roll; callers must not roll it again.
+  // M64 phase 1.5 wave 6 — each restored use is reported (events v1.3
+  // `resource.recharged`) so a client mirror sees a recharge the monster
+  // does not spend this turn.
   if (attacker.kind === 'monster' && attacker._innate) {
-    rollInnateRecharges(attacker, rng);
+    for (const spellId of rollInnateRecharges(attacker, rng)) {
+      emitEvent(ctx, 'resource.recharged', { entityId: actorId, resource: 'innate', spellId, available: 1 });
+    }
   }
   // M32 — Monsters consult their AI profile.
   // M42 — PCs do too. choosePcAction picks weapon/spell/feature and
