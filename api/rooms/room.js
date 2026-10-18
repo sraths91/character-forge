@@ -48,7 +48,13 @@ const INTENT_SAFE = new Set(['dm.entity.patch', 'dm.entity.add', 'dm.entity.remo
 /** DM edits handled as state commands (safe point or queued). */
 const STATE_COMMANDS = new Set([...INTENT_SAFE, 'dm.initiative.roll', 'dm.initiative.set']);
 /** Entity fields compared to produce `entity.updated` patches. */
-const PATCH_FIELDS = ['name', 'controller', 'pos', 'hp', 'hpMax', 'hpTemp', 'ac', 'speedFt', 'conditions', 'concentration'];
+const PATCH_FIELDS = [
+  'name', 'controller', 'pos', 'hp', 'hpMax', 'hpTemp', 'ac', 'speedFt', 'conditions', 'concentration',
+  // W6: the dying state (stored only while not 'active') and the DM's token image.
+  'status', 'deathSaves', 'imageUrl'
+];
+/** A patch field's value with the storage defaults spelled out (absent status = 'active'). */
+const patchValue = (e, f) => (f === 'status' ? (e.status ?? 'active') : (f === 'deathSaves' || f === 'imageUrl') ? (e[f] ?? null) : e[f]);
 
 const clone = (v) => (v === undefined ? undefined : JSON.parse(JSON.stringify(v)));
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
@@ -814,9 +820,14 @@ export class Room {
       const b = next.entities[id];
       if (!a || !b) { structural = true; continue; }
       const patch = {};
-      for (const f of PATCH_FIELDS) if (!same(a[f], b[f])) patch[f] = clone(b[f]);
+      const before = {};
+      for (const f of PATCH_FIELDS) {
+        if (same(patchValue(a, f), patchValue(b, f))) continue;
+        patch[f] = clone(patchValue(b, f));
+        before[f] = clone(patchValue(a, f)) ?? null;
+      }
       if (Object.keys(patch).length) {
-        this.#emit({ type: 'dm.override', payload: { kind: cmd.type.slice(3), entityId: id, before: pick(a, Object.keys(patch)), after: patch } });
+        this.#emit({ type: 'dm.override', payload: { kind: cmd.type.slice(3), entityId: id, before, after: patch } });
         if (broadcast) updates.push({ id, patch });
       }
     }
@@ -1167,12 +1178,6 @@ function stripVolatile(payload) {
     rest.cinema = cinema;
   }
   return rest;
-}
-
-function pick(obj, keys) {
-  const out = {};
-  for (const k of keys) out[k] = clone(obj[k]) ?? null;
-  return out;
 }
 
 function mapRoomErrorCode(code) {

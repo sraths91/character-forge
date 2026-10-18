@@ -30,7 +30,8 @@ import { inferProfile } from '../../src/js/scene/ai/infer.js';
 import { runOneAttack, applyDamageToEntity } from '../../src/js/scene/combat-engine.js';
 import {
   entityFromSheet, entityFromPreset, toEngineSides, applyEngineSides, stripTransient,
-  setEntityHp, setEntityConditions, wrapperFromEntity, poolFromLedger, ledgerFromPool
+  setEntityHp, setEntityConditions, wrapperFromEntity, poolFromLedger, ledgerFromPool,
+  applyWrapperToEntity, normalizeDeathSaves
 } from '../../src/js/scene/encounter-adapters.js';
 import { spellById } from '../../src/js/scene/monster-spells.js';
 import { normalizeCreature, withEngineFields } from '../../src/js/scene/open5e-normalize.js';
@@ -497,7 +498,12 @@ export function createRealEngine({ resolveSheets = () => null, monsterLookup = (
           if (Object.values(s.entities).some(o => o.id !== e.id && o.pos.col === col && o.pos.row === row)) throw invalid('that cell is occupied');
           s.entities[e.id] = { ...s.entities[e.id], pos: { col, row } };
         }
-        return { state: s, events: [] };
+        const events = [];
+        if (p.status !== undefined || p.deathSaves !== undefined) {
+          s = setLifeState(s, e, p);
+          lifeEvents(e, s.entities[e.id], p, (type, payload) => { const ev = emit({ type, payload }); if (ev) events.push(ev); });
+        }
+        return { state: s, events };
       }
       case 'dm.entity.add': {
         const m = p.entity || {};
@@ -620,6 +626,76 @@ export function createRealEngine({ resolveSheets = () => null, monsterLookup = (
   }
 
   return { version, buildEncounter, startEncounter, runTurn, validateIntent, applyDmCommand, sheetsFor };
+}
+
+/**
+ * The status a `dm.entity.patch` asks for: `status` when given, else a
+ * `deathSaves.stable` flip on a dying PC (stable ↔ downed), else the
+ * current one.
+ */
+function targetStatus(cur, p) {
+  const from = cur.status || 'active';
+  if (p.status !== undefined) return p.status;
+  const stable = p.deathSaves?.stable;
+  if (stable === true && from === 'downed') return 'stable';
+  if (stable === false && from === 'stable') return 'downed';
+  return from;
+}
+
+/**
+ * Apply a DM `{status, deathSaves}` edit through the adapters (M64 1.5).
+ * HP and conditions follow the status (setEntityHp's rules): 'active'
+ * brings a creature at 0 HP back with 1 HP (unconscious removed);
+ * 'downed' / 'stable' / 'dead' set HP 0, and a PC there is unconscious.
+ * `deathSaves` edits the PC's tallies (no death.save is rolled); `stable`
+ * always matches the status. Monsters are only 'active' or 'dead' and
+ * carry no tallies.
+ * @param {object} state  EncounterState (the patch's working copy)
+ * @param {object} before the entity as the patch found it
+ * @param {object} p      dm.entity.patch payload
+ * @returns {object} new state
+ */
+function setLifeState(state, before, p) {
+  const id = before.id;
+  const pc = state.entities[id].kind === 'pc';
+  const to = targetStatus(state.entities[id], p);
+  if (!pc && (to === 'downed' || to === 'stable')) throw invalid('only PCs make death saves; a monster at 0 HP is dead');
+  if (!pc && p.deathSaves) throw invalid('monsters have no death saves');
+  if (to === 'active' && p.deathSaves) throw invalid('death saves need a creature that is not active');
+  let s = state;
+  if (to === 'active') {
+    // setEntityHp flips a creature above 0 HP back to active (unconscious off).
+    const cur = s.entities[id];
+    if (cur.hp <= 0) s = setEntityHp(s, id, 1).state;
+    if (s.entities[id].status) s = { ...s, entities: { ...s.entities, [id]: applyWrapperToEntity(s.entities[id], { status: 'active' }) } };
+    return s;
+  }
+  if (s.entities[id].hp > 0) s = setEntityHp(s, id, 0).state;
+  if (pc && !s.entities[id].conditions.some(c => (typeof c === 'string' ? c : c.id) === 'unconscious')) {
+    s = setEntityConditions(s, id, [...s.entities[id].conditions, 'unconscious']).state;
+  }
+  const cur = s.entities[id];
+  const fresh = (cur.status || 'active') === 'active';
+  const deathSaves = pc
+    ? normalizeDeathSaves({ ...(fresh ? {} : cur.deathSaves), ...(p.deathSaves || {}), stable: to === 'stable' })
+    : null;
+  return { ...s, entities: { ...s.entities, [id]: applyWrapperToEntity(cur, { status: to, deathSaves }) } };
+}
+
+/**
+ * The E1 life event for a DM status change (none for an HP-only edit,
+ * which flips the status silently, or a tally edit, which the room's
+ * entity.updated carries): died / stabilized / revived, or downed.
+ */
+function lifeEvents(before, after, p, out) {
+  if (p.status === undefined && p.deathSaves?.stable === undefined) return;
+  const from = before.status || 'active';
+  const to = after.status || 'active';
+  if (from === to) return;
+  if (to === 'active') out('entity.revived', { entityId: after.id, hp: after.hp, byId: null });
+  else if (to === 'dead') out('entity.died', { entityId: after.id, byId: null, cause: after.kind === 'pc' ? 'failures' : 'monster' });
+  else if (to === 'stable') out('entity.stabilized', { entityId: after.id });
+  else out('entity.downed', { entityId: after.id, byId: null });
 }
 
 /** The engine's internal plan as a protocol turn.act plan (ids and names only). */
