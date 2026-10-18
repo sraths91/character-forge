@@ -177,3 +177,38 @@ test('room: dm.fog.paint broadcasts encounter.fog and re-snapshots player seats 
     assert.equal(frames.player.find(f => f.t === 'room.snapshot').p.encounter.entities.gob, undefined);
   } finally { room.shutdown(); db.close(); }
 });
+
+// ------------------------------------------------------------ token images
+
+test('dm.entity.patch imageUrl: an uploaded path on a non-humanoid monster; null clears; this room only', async () => {
+  const engine = createRealEngine({ monsterLookup: (slug) => (slug === 'srd_bandit' ? { key: 'srd_bandit', name: 'Bandit', type: 'humanoid', hit_points: 11, armor_class: 12 } : null) });
+  const { ctx } = collect();
+  const s = engine.buildEncounter({
+    encounterId: 'e-img', seed: 1,
+    setup: { map: null, grid: { cols: 6, rows: 6 }, monsters: [{ id: 'gob', hp: 7 }, { id: 'ban', open5eSlug: 'srd_bandit' }], placements: {} },
+    party: [seat(1, 'fighter-l5')]
+  });
+  const url = `/api/maps/room_1/${'f'.repeat(64)}.png`;
+  const set = patch(engine, s, { entityId: 'gob', imageUrl: url }, ctx);
+  assert.equal(set.entities.gob.imageUrl, url);
+  assert.ok(validateEncounterState(set).ok);
+  assert.equal(patch(engine, set, { entityId: 'gob', imageUrl: null }, ctx).entities.gob.imageUrl, undefined);
+  for (const bad of [
+    { entityId: 'pc-1', imageUrl: url },
+    { entityId: 'ban', imageUrl: url },
+    { entityId: 'gob', imageUrl: '//evil.example/x.png' },
+    { entityId: 'gob', imageUrl: '/api/maps/room_1/../../app.db' }
+  ]) assert.throws(() => patch(engine, s, bad, ctx), { code: 'E_INVALID_INTENT' }, JSON.stringify(bad));
+
+  const { db, room, frames, send } = await liveRoom();
+  try {
+    const mine = `/api/maps/${room.id}/${'a'.repeat(64)}.webp`;
+    assert.equal((await send('dm.entity.patch', { entityId: 'gob', imageUrl: mine })).t, 'ack');
+    assert.equal(frames.player.find(m => m.t === 'entity.updated').p.patch.imageUrl, mine);
+    const other = await send('dm.entity.patch', { entityId: 'gob', imageUrl: `/api/maps/other/${'a'.repeat(64)}.png` });
+    assert.deepEqual([other.t, other.p.code], ['error', 'E_INVALID_INTENT']);
+    frames.player.length = 0;
+    await send('dm.entity.patch', { entityId: 'gob', imageUrl: null });
+    assert.equal(frames.player.find(m => m.t === 'entity.updated').p.patch.imageUrl, null);
+  } finally { room.shutdown(); db.close(); }
+});

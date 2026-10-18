@@ -75,9 +75,11 @@
  *   v1.5 (2026-10-18, E3 M64 1.5 W6) — broadcast `encounter.fog {fog:
  *        {revealed}}`: the encounter's fog bitset after a `dm.fog.paint`
  *        (player seats also get a fresh snapshot: the paint changes what
- *        their projection shows). `entity.updated` patches may carry
- *        `status` ('active' when cleared) and `deathSaves` (null when
- *        cleared).
+ *        their projection shows). `dm.entity.patch.imageUrl` (a path the
+ *        room's `PUT /api/rooms/:id/maps?kind=token` returned, or null to
+ *        clear it): a non-humanoid monster's token image. `entity.updated`
+ *        patches may carry `status` ('active' when cleared), `deathSaves`
+ *        and `imageUrl` (null when cleared).
  *
  * Client payloads are strict (unknown fields rejected); server payloads
  * enforce required fields and allow additive ones.
@@ -260,7 +262,9 @@ const INTENT_PAYLOADS = {
     override: optional(bool()),   // v1.1 — DM free move (teleport)
     // v1.4 — the dying state (E1 wave 5 entity fields).
     status: optional(oneOf(ENTITY_STATUSES)),
-    deathSaves: optional(shape({ successes: int(0, 3), failures: int(0, 3), stable: optional(bool()) }))
+    deathSaves: optional(shape({ successes: int(0, 3), failures: int(0, 3), stable: optional(bool()) })),
+    // v1.5 — the DM's token image (same-origin path; null clears it).
+    imageUrl: optional(nullable(str({ maxLength: 2048, pattern: /^\/(?![/\\])\S*$/ })))
   }),
   'dm.entity.add': shape({ entity: shape({}, LOOSE), initiativeScore: optional(num()) }),
   'dm.entity.remove': shape({ entityId: ID }),

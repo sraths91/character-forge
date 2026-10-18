@@ -499,6 +499,7 @@ export function createRealEngine({ resolveSheets = () => null, monsterLookup = (
           if (Object.values(s.entities).some(o => o.id !== e.id && o.pos.col === col && o.pos.row === row)) throw invalid('that cell is occupied');
           s.entities[e.id] = { ...s.entities[e.id], pos: { col, row } };
         }
+        if (p.imageUrl !== undefined) s = setTokenImage(s, e.id, p.imageUrl);
         const events = [];
         if (p.status !== undefined || p.deathSaves !== undefined) {
           s = setLifeState(s, e, p);
@@ -633,6 +634,29 @@ export function createRealEngine({ resolveSheets = () => null, monsterLookup = (
   }
 
   return { version, buildEncounter, startEncounter, runTurn, validateIntent, applyDmCommand, sheetsFor };
+}
+
+/** An uploaded image as maps.js serves it: /api/maps/<roomId>/<sha256>.<ext>. */
+const TOKEN_IMAGE_PATH = /^\/api\/maps\/[A-Za-z0-9_-]{1,128}\/[0-9a-f]{64}\.(?:png|jpg|webp)$/;
+
+/**
+ * Set (or, with null, clear) a monster's DM token image. Only for
+ * monsters without an LPC look: a stat block typed 'humanoid' is refused.
+ * The path must be one maps.js serves (same origin, content-addressed).
+ * @param {object} state  EncounterState (the patch's working copy)
+ * @param {string} id
+ * @param {string|null} url
+ * @returns {object} new state
+ */
+function setTokenImage(state, id, url) {
+  const cur = state.entities[id];
+  if (cur.kind !== 'monster') throw invalid('token images are for monsters; PCs draw their sheet\'s look');
+  if (cur.statBlock?.type === 'humanoid') throw invalid(`${cur.name} is humanoid and draws with its sprite`);
+  const next = { ...cur };
+  if (url === null) delete next.imageUrl;
+  else if (typeof url === 'string' && TOKEN_IMAGE_PATH.test(url)) next.imageUrl = url;
+  else throw invalid('imageUrl must be an uploaded image path (/api/maps/<room>/<sha256>.<ext>)');
+  return { ...state, entities: { ...state.entities, [id]: next } };
 }
 
 /**

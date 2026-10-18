@@ -1042,6 +1042,9 @@ export class Room {
 
   #stateCommand(m, cmd) {
     if (!this.enc || this.enc.status === 'ended') throw new IntentError('E_INVALID_INTENT', 'no live encounter');
+    // Token images must be this room's uploads (PUT /api/rooms/:id/maps?kind=token).
+    const img = cmd.type === 'dm.entity.patch' ? cmd.payload.imageUrl : null;
+    if (typeof img === 'string' && !img.startsWith(`/api/maps/${this.id}/`)) throw new IntentError('E_INVALID_INTENT', 'imageUrl must be an image uploaded to this room');
     const aw = this.turn?.awaiting;
     if (!this.turn) {
       this.#applyNow(cmd);

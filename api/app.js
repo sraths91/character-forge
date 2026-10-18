@@ -450,7 +450,7 @@ export function createApp({
   });
 
   mountRoomRoutes(app, { rooms: roomService, limiter });
-  mountMapRoutes(app, { rooms: roomService, conn: db.db, dataDir: healthDataDir, ...mapsOpts });
+  mountMapRoutes(app, { rooms: roomService, conn: db.db, dataDir: healthDataDir, log, ...mapsOpts });
   if (mount) mount(app, { rooms: roomService, roomStore, limiter, memberOf, HttpError, PROD, MULTIPLAYER });
 
   // Unknown /api routes are a JSON 404, never the SPA's index.html (F7).

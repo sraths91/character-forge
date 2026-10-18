@@ -1,7 +1,7 @@
 // Map upload and serving (M64 B10).
 //
-//   PUT    /api/rooms/:id/maps[?filename=x.png]  (DM)  raw image body ≤ 10 MB
-//            → 201 {mapId, url, mime, width, height, bytes, sha256}  (200 when already uploaded)
+//   PUT    /api/rooms/:id/maps[?filename=x.png][&kind=map|token]  (DM)  raw image body ≤ 10 MB
+//            → 201 {mapId, kind, url, mime, width, height, bytes, sha256}  (200 when already uploaded)
 //   GET    /api/rooms/:id/maps                   (member) → {maps: [...]}
 //   DELETE /api/rooms/:id/maps/:mapId            (DM)  → {ok}
 //   GET    /api/maps/<roomId>/<sha256>.<ext>     immutable static file
@@ -12,6 +12,12 @@
 // ≤ 8192 px per side and ≤ 16.7 MP (422), 20 maps / 100 MB per room and
 // ≤ 70 % volume use (409 / 507). Files are content-addressed, written to a
 // temp file and renamed into place, then recorded; a failed insert unlinks.
+//
+// Token images (M64 1.5 W6, `kind=token`, uploaded_maps.kind from
+// migration 0005): the DM's picture for a non-humanoid monster. Same
+// sniffing, ≤ 1024 px per side, 20 per room (counted apart from maps,
+// the 100 MB room budget shared), served at the same static path. The
+// same bytes uploaded twice return the first row whatever its kind.
 
 import express from 'express';
 import { createHash, randomBytes } from 'node:crypto';
@@ -24,6 +30,11 @@ import { RoomError } from './service.js';
 
 export const MAP_QUOTA = Object.freeze({ maxBytes: 10 * 1024 * 1024, maxMaps: 20, maxRoomBytes: 100 * 1024 * 1024, maxVolumeUse: 0.7 });
 
+/** Upload kinds (uploaded_maps.kind). */
+export const MAP_KINDS = Object.freeze(['map', 'token']);
+/** Token images: one creature's picture, ≤ 1024 px per side. */
+export const TOKEN_LIMITS = Object.freeze({ maxSide: 1024, maxPixels: 1024 * 1024 });
+
 const EXT_MIME = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp' };
 
 /**
@@ -35,21 +46,23 @@ const EXT_MIME = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp
  * @param {typeof MAP_QUOTA} [o.quota]
  * @param {(path: string) => {blocks: number, bavail: number}} [o.statfs]
  * @param {() => number} [o.now]
+ * @param {(level: string, msg: string, extra?: object) => void} [o.log]
  */
-export function mountMapRoutes(app, { rooms, conn, dataDir, quota = MAP_QUOTA, statfs = statfsSync, now = Date.now }) {
+export function mountMapRoutes(app, { rooms, conn, dataDir, quota = MAP_QUOTA, statfs = statfsSync, now = Date.now, log = () => {} }) {
   const mapsRoot = dataDir ? join(dataDir, 'maps') : null;
   const q = {
     usage: conn.prepare('SELECT COUNT(*) AS n, COALESCE(SUM(bytes), 0) AS bytes FROM uploaded_maps WHERE room_id = ?'),
+    kindCount: conn.prepare('SELECT COUNT(*) AS n FROM uploaded_maps WHERE room_id = ? AND kind = ?'),
     bySha: conn.prepare('SELECT * FROM uploaded_maps WHERE room_id = ? AND sha256 = ?'),
     byId: conn.prepare('SELECT * FROM uploaded_maps WHERE room_id = ? AND id = ?'),
     list: conn.prepare('SELECT * FROM uploaded_maps WHERE room_id = ? ORDER BY created_at, id'),
-    insert: conn.prepare(`INSERT INTO uploaded_maps (id, room_id, rel_path, mime, bytes, sha256, width, height, uploaded_by_participant_id, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
+    insert: conn.prepare(`INSERT INTO uploaded_maps (id, room_id, rel_path, mime, bytes, sha256, width, height, uploaded_by_participant_id, created_at, kind)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
     remove: conn.prepare('DELETE FROM uploaded_maps WHERE room_id = ? AND id = ?'),
     shaUsers: conn.prepare('SELECT COUNT(*) AS n FROM uploaded_maps WHERE room_id = ? AND sha256 = ?')
   };
   const publicMap = (r) => ({
-    mapId: r.id, url: `/api/${r.rel_path.replace(/^maps\//, 'maps/')}`, mime: r.mime,
+    mapId: r.id, kind: r.kind || 'map', url: `/api/${r.rel_path.replace(/^maps\//, 'maps/')}`, mime: r.mime,
     width: r.width, height: r.height, bytes: r.bytes, sha256: r.sha256, createdAt: r.created_at
   });
 
@@ -69,12 +82,15 @@ export function mountMapRoutes(app, { rooms, conn, dataDir, quota = MAP_QUOTA, s
   app.put('/api/rooms/:id/maps', requireDm, rawBody, (req, res, next) => {
     try {
       if (!mapsRoot) throw new RoomError(503, 'NO_STORAGE', 'Map storage is not configured');
+      const kind = req.query.kind === undefined ? 'map' : req.query.kind;
+      if (!MAP_KINDS.includes(kind)) throw new RoomError(400, 'BAD_KIND', `kind must be ${MAP_KINDS.join(' or ')}`);
+      const noun = kind === 'token' ? 'token image' : 'map';
       const body = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
       if (body.length === 0) throw new RoomError(400, 'EMPTY', 'Send the image bytes as the request body');
       const sniff = sniffImage(body);
       if (!sniff.ok) {
         const what = sniff.reason === 'gif' ? 'GIF' : sniff.reason === 'svg' ? 'SVG' : null;
-        throw new RoomError(415, 'UNSUPPORTED_MEDIA', what ? `${what} maps are not accepted; use PNG, JPEG or WebP`
+        throw new RoomError(415, 'UNSUPPORTED_MEDIA', what ? `${what} ${noun}s are not accepted; use PNG, JPEG or WebP`
           : `Not a readable PNG, JPEG or WebP image (${sniff.reason})`);
       }
       const declared = String(req.get('content-type') || '').split(';')[0].trim().toLowerCase();
@@ -86,7 +102,7 @@ export function mountMapRoutes(app, { rooms, conn, dataDir, quota = MAP_QUOTA, s
       if (filename && EXT_MIME[ext] !== sniff.mime) {
         throw new RoomError(415, 'UNSUPPORTED_MEDIA', `The file name ${filename} does not match the image bytes (${sniff.mime})`);
       }
-      const problem = dimensionProblem(sniff, MAP_LIMITS);
+      const problem = dimensionProblem(sniff, kind === 'token' ? TOKEN_LIMITS : MAP_LIMITS);
       if (problem) throw new RoomError(422, 'BAD_DIMENSIONS', problem);
 
       const roomId = req.params.id;
@@ -95,7 +111,7 @@ export function mountMapRoutes(app, { rooms, conn, dataDir, quota = MAP_QUOTA, s
       if (existing) return res.status(200).json(publicMap(existing));
 
       const use = q.usage.get(roomId);
-      if (use.n >= quota.maxMaps) throw new RoomError(409, 'QUOTA', `A room holds at most ${quota.maxMaps} maps`);
+      if (q.kindCount.get(roomId, kind).n >= quota.maxMaps) throw new RoomError(409, 'QUOTA', `A room holds at most ${quota.maxMaps} ${noun}s`);
       if (use.bytes + body.length > quota.maxRoomBytes) throw new RoomError(409, 'QUOTA', 'This room is out of map storage');
       const fs = statfs(dataDir);
       if (fs.blocks > 0 && 1 - fs.bavail / fs.blocks > quota.maxVolumeUse) {
@@ -112,12 +128,13 @@ export function mountMapRoutes(app, { rooms, conn, dataDir, quota = MAP_QUOTA, s
       renameSync(tmp, final);
       const id = newId('map_');
       try {
-        q.insert.run(id, roomId, relPath, sniff.mime, body.length, sha256, sniff.width, sniff.height, req.member.participantId, now());
+        q.insert.run(id, roomId, relPath, sniff.mime, body.length, sha256, sniff.width, sniff.height, req.member.participantId, now(), kind);
       } catch (err) {
         try { unlinkSync(final); } catch { /* already gone */ }
         throw err;
       }
       res.status(201).json(publicMap(q.byId.get(roomId, id)));
+      if (kind === 'token') log('info', 'maps: token image uploaded', { roomId, bytes: body.length, width: sniff.width, height: sniff.height });
     } catch (err) {
       next(err);
     }

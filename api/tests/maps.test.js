@@ -225,3 +225,33 @@ test('room byte quota: 100 MB per room → 409', async () => {
     assert.deepEqual([r.status, r.body.code], [409, 'QUOTA']);
   } finally { await s.close(); }
 });
+
+// ------------------------------------------------------- token images (W6)
+
+test('kind=token: ≤ 1024 px per side, same sniffing, served at the same path, counted apart from maps', async () => {
+  const s = await boot({ mapsOpts: { quota: { maxBytes: 10 * 1024 * 1024, maxMaps: 2, maxRoomBytes: 100 * 1024 * 1024, maxVolumeUse: 0.7 } } });
+  try {
+    const tok = await put(s, realPng(64, 64), { query: '?kind=token&filename=dragon.png' });
+    assert.equal(tok.status, 201, JSON.stringify(tok.body));
+    assert.equal(tok.body.kind, 'token');
+    assert.match(tok.body.url, new RegExp(`^/api/maps/${s.room.roomId}/[0-9a-f]{64}\\.png$`));
+    const got = await fetch(s.url + tok.body.url);
+    assert.deepEqual([got.status, got.headers.get('x-content-type-options')], [200, 'nosniff']);
+    assert.equal((await put(s, realPng(3, 3))).body.kind, 'map', 'no kind is a map');
+    const big = await put(s, pngHeader(1025, 10), { query: '?kind=token' });
+    assert.deepEqual([big.status, big.body.code], [422, 'BAD_DIMENSIONS']);
+    assert.match(big.body.error, /1024/);
+    assert.equal((await put(s, pngHeader(1025, 10))).status, 201, 'a map may be larger');
+    assert.deepEqual((await put(s, Buffer.from('GIF89a\x01\x00\x01\x00'), { type: 'image/gif', query: '?kind=token' })).status, 415);
+    assert.deepEqual((await put(s, realPng(5, 5), { query: '?kind=sprite' })).body.code, 'BAD_KIND');
+    // Two maps already: the map quota is full, the token quota is not.
+    assert.deepEqual((await put(s, realPng(6, 6))).body.code, 'QUOTA');
+    assert.equal((await put(s, realPng(7, 7), { query: '?kind=token' })).status, 201);
+    const r = await put(s, realPng(8, 8), { query: '?kind=token' });
+    assert.deepEqual([r.status, r.body.code], [409, 'QUOTA']);
+    assert.match(r.body.error, /token image/);
+    const list = await api(s.url, `/api/rooms/${s.room.roomId}/maps`, { token: s.player.token });
+    assert.deepEqual(list.body.maps.map(m => m.kind).sort(), ['map', 'map', 'token', 'token']);
+    assert.equal((await put(s, realPng(2, 2), { token: s.player.token, query: '?kind=token' })).status, 403);
+  } finally { await s.close(); }
+});
