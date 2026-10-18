@@ -16,6 +16,8 @@
  *     follow-up, clears sneak / cunning / extra-action);
  *   - resource.spent — reaction, spell slot (regular pool first, then
  *     the pact slot of that level), legendary cost, innate uses;
+ *   - resource.recharged (events v1.3) — a monster's start-of-turn
+ *     recharge roll restored an innate spell (Fire Breath);
  *   - feature.used — Sneak / Reckless / Action Surge / Second Wind /
  *     Divine Smite flags and the per-encounter feature ledger;
  *   - damage (incl. temp HP `absorbed`), heal, exchange effects, move,
@@ -29,10 +31,6 @@
  * naming a hidden creature arrive masked ('Something', a no-op here) or
  * `redacted`; the turn order then has several consistent outcomes, so
  * `turnEndedCandidates` lists them and the store keeps the hashed one.
- *
- * What it cannot see (and the resync safety net covers): an innate
- * spell's recharge roll at the start of a monster's turn emits no event,
- * so a recharge that is not spent the same turn drifts.
  *
  * Pure: the input is never mutated; an untouched entity keeps identity.
  * No DOM, no timers.
@@ -51,7 +49,9 @@ const conditionId = (c) => (typeof c === 'string' ? c : c?.id);
 export const PATCHABLE_FIELDS = Object.freeze([
   'name', 'controller', 'pos', 'hp', 'hpMax', 'hpTemp', 'ac', 'speedFt', 'conditions', 'concentration',
   // E1 wave 5 (dying) — additive; the server sends them once it tracks them.
-  'status', 'deathSaves'
+  'status', 'deathSaves',
+  // E3 wave 6 — a token image (dm.entity.patch {imageUrl}; null clears it).
+  'imageUrl'
 ]);
 const PATCHABLE = new Set(PATCHABLE_FIELDS);
 
@@ -263,6 +263,20 @@ function resourceSpent(e, p, prev) {
   }
 }
 
+/**
+ * events v1.3 `resource.recharged {resource: 'innate', spellId, available}`:
+ * the post-event availability of a recharge spell (seeded from the stat
+ * block when the mirror never held the innate state).
+ */
+function resourceRecharged(e, p) {
+  if (p.resource !== 'innate' || typeof p.spellId !== 'string') return;
+  const inn = e.resources.innate ? e.resources.innate : freshInnateState(e.statBlock?.slug);
+  if (!inn) return;
+  inn.recharges ||= {};
+  inn.recharges[p.spellId] = p.available > 0;
+  e.resources.innate = inn;
+}
+
 function addCondition(e, p, round) {
   if ((e.conditions || []).some(c => conditionId(c) === p.condition)) return;
   const lifecycle = p.endsOn != null || p.save != null;
@@ -289,6 +303,8 @@ function applyPatch(enc, id, raw) {
     else if (hp !== undefined) e.hp = hp;
     Object.assign(e, rest);
     if (rest.status === 'active') setActive(e);
+    // The server drops a cleared token image rather than storing null.
+    if ('imageUrl' in rest && rest.imageUrl == null) delete e.imageUrl;
   });
 }
 
@@ -392,6 +408,9 @@ export function applyEventToEncounter(enc, ev, opts = {}) {
       break;
     case 'resource.spent':
       next = editEntity(next, p.entityId, (e) => resourceSpent(e, p, prev));
+      break;
+    case 'resource.recharged':
+      next = editEntity(next, p.entityId, (e) => resourceRecharged(e, p));
       break;
     case 'feature.used':
       next = editEntity(next, p.entityId, (e) => featureUsed(e, p));

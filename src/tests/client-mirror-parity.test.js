@@ -58,8 +58,8 @@ function script(intents) {
 }
 
 /** Run `name` through a Room on the real engine; return its start state and event log. */
-async function runRoom(name, turns, { aiControlled = false } = {}) {
-  const { state: fixture, intents } = loadFixture(name);
+async function runRoom(name, turns, { aiControlled = false, fixture: given = null } = {}) {
+  const { state: fixture, intents } = given || loadFixture(name);
   const ts = TM.turnStateFromEncounter(fixture, fixtureSheets(fixture));
   TM.startEncounter(ts, { initiative: 'given' });
   const start = TM.encounterFromTurnState(ts);
@@ -139,3 +139,25 @@ for (const name of FIXTURE_NAMES) {
     });
   }
 }
+
+// ---- events v1.3 resource.recharged (E1 wave 6) ---------------------------
+
+test('mirror parity: a young dragon whose Fire Breath recharges unspent — the recharge is replayed', async () => {
+  const base = loadFixture('aoe-save-half');
+  const state = clone(base.state);
+  // Fire Breath starts spent; the dragon only ever claws, so a successful
+  // recharge roll leaves it available across the turn.ended hash.
+  state.entities['m-dragon'].resources.innate.recharges['fire-breath'] = false;
+  const claw = { t: 'turn.act', actorId: 'm-dragon', plan: { kind: 'melee', targetId: 'pc-fighter', weaponName: 'Claws' } };
+  const intents = Array.from({ length: 8 }, () => [{ t: 'round.start' }, claw]).flat();
+  const { start, events } = await runRoom('aoe-recharge', 24, { fixture: { state, intents } });
+  const at = events.findIndex(e => e.type === 'resource.recharged');
+  assert.ok(at >= 0, 'the recharge roll succeeded at least once');
+  assert.deepEqual(events[at].payload, { entityId: 'm-dragon', resource: 'innate', spellId: 'fire-breath', available: 1 });
+  const spentAfter = events.slice(at).find(e => e.type === 'resource.spent' && e.payload.resource === 'innate:fire-breath');
+  const endedAfter = events.slice(at).find(e => e.type === 'turn.ended');
+  assert.ok(endedAfter && (!spentAfter || spentAfter.seq > endedAfter.seq), 'a turn.ended hash is taken while the recharge is unspent');
+  const r = replay(start, events);
+  assert.ok(r.checked >= 2);
+  assert.equal(r.mismatch, null, r.mismatch ? `seq ${r.mismatch.seq}: ${JSON.stringify(r.mirror)}` : '');
+});

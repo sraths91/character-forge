@@ -149,3 +149,23 @@ test('mirror: lifeStatus reads status, or HP on servers without it', () => {
   const enc = clone(projectedState());
   assert.equal(lifeStatus(enc.entities['m-goblin']), 'active');
 });
+
+test('mirror: resource.recharged restores an innate recharge spell; imageUrl patches and clears', () => {
+  const s = projectedState();
+  const id = Object.keys(s.entities).find(k => s.entities[k].kind === 'monster');
+  s.entities[id].statBlock = { slug: 'young-dragon' };
+  s.entities[id].resources.innate = { atWill: [], recharges: { 'fire-breath': false }, perDay: {} };
+  let enc = fold(s, [ev('resource.recharged', { entityId: id, resource: 'innate', spellId: 'fire-breath', available: 1 })]);
+  assert.equal(enc.entities[id].resources.innate.recharges['fire-breath'], true);
+  assert.equal(s.entities[id].resources.innate.recharges['fire-breath'], false, 'input untouched');
+  delete s.entities[id].resources.innate;
+  enc = fold(s, [ev('resource.recharged', { entityId: id, resource: 'innate', spellId: 'fire-breath', available: 0 })]);
+  assert.deepEqual(enc.entities[id].resources.innate.recharges, { 'fire-breath': false }, 'seeded from the stat block');
+  assert.equal(fold(s, [ev('resource.recharged', { entityId: 'Something', resource: 'innate', spellId: 'x', available: 1 })]).entities, s.entities);
+
+  assert.ok(PATCHABLE_FIELDS.includes('imageUrl'));
+  enc = applyEntityPatch(s, id, { imageUrl: '/api/maps/r1/abc.png' });
+  assert.equal(enc.entities[id].imageUrl, '/api/maps/r1/abc.png');
+  enc = applyEntityPatch(enc, id, { imageUrl: null });
+  assert.ok(!('imageUrl' in enc.entities[id]), 'null clears the image');
+});
