@@ -55,9 +55,10 @@ import {
   resolveCounterspell
 } from './reactions.js';
 import {
-  consumeSlot, spellById, spellbookFor, freshInnateState,
+  consumeSlot, spellbookFor, freshInnateStateForEntity, spellForEntity,
   rollInnateRecharges, consumeInnate, applyUpcast
 } from './monster-spells.js';
+import { LEGENDARY_RESISTANCE_KEY } from './stat-block-kit.js';
 import {
   startConcentration, isConcentrating, dropConcentration,
   handleDamageOnConcentration
@@ -241,7 +242,7 @@ async function resolveTurn(attacker, enemies, allies, scene, rng, prompts, ctx) 
   // AI heal plans used to be looked up among the enemies and never landed.
   // M64 phase 1.5 wave 6 — a self-targeted spell (Misty Step) is decided
   // by the registry, not the plan: the turn.act plan has no 'self' side.
-  const selfSpell = plan?.kind === 'cast' && spellById(plan.spellId)?.targetSide === 'self';
+  const selfSpell = plan?.kind === 'cast' && spellForEntity(attacker, plan.spellId)?.targetSide === 'self';
   let target;
   if (selfSpell) target = attacker;
   else if (plan?.targetSide === 'ally') target = allies.find(a => sameId(a.id, plan.targetId));
@@ -864,7 +865,9 @@ async function runWeaponSwing(turn, target, weaponRef, index, shared, firstActio
 // =====================================================================
 
 export async function runMonsterSpell({ attacker, target, plan, scene, rng, witnesses = [], allEnemies = [], allies = [], prompts = {}, ctx = NO_CTX }) {
-  const baseSpell = spellById(plan.spellId);
+  // M64 phase 1.5 wave 6b — a stat-block recharge ability (breath weapon)
+  // resolves from the caster's kit; everything else from the registry.
+  const baseSpell = spellForEntity(attacker, plan.spellId);
   if (!baseSpell) return;
   // M64 phase 1.5 — a feat / race / item spell with its own uses (Fey
   // Touched Misty Step) spends `resources.features['spell:<id>']`, not a
@@ -892,6 +895,8 @@ export async function runMonsterSpell({ attacker, target, plan, scene, rng, witn
     ? pcSpellBook(attacker, baseSpell) : null;
   const effectiveBook = book || innateBook || pcBook;
   if (!effectiveBook) return;
+  // A stat-block action carries its own save DC.
+  const saveDc = Number.isFinite(baseSpell.dc) ? baseSpell.dc : effectiveBook.dc;
   const casterId = idOf(attacker);
   const group = nextCinemaGroup(ctx);
   const wasDying = isDying(target);
@@ -923,7 +928,7 @@ export async function runMonsterSpell({ attacker, target, plan, scene, rng, witn
     spendUse(attacker, useKey);
     emitEvent(ctx, 'resource.spent', { entityId: casterId, resource: `feature:${useKey}`, level: null }, group);
   } else if (plan.isInnate) {
-    if (!attacker._innate) attacker._innate = freshInnateState(attacker.presetSlug);
+    if (!attacker._innate) attacker._innate = freshInnateStateForEntity(attacker);
     consumeInnate(attacker, plan.spellId);
     emitEvent(ctx, 'resource.spent', { entityId: casterId, resource: `innate:${plan.spellId}`, level: null }, group);
   } else {
@@ -952,8 +957,9 @@ export async function runMonsterSpell({ attacker, target, plan, scene, rng, witn
     if (!spell.aoe && spell.kind !== 'heal' && !canHit(target, wasDying)) return;
   }
 
-  // M34.1 — Counterspell witness loop.
-  for (const witness of witnesses) {
+  // M34.1 — Counterspell witness loop. A stat-block action (a breath
+  // weapon) is not a spell and cannot be countered.
+  for (const witness of (baseSpell.notASpell ? [] : witnesses)) {
     // M64 N1 — only eligible witnesses are asked, and a `true` answer is
     // re-checked after the await.
     if (!canCastCounterspell(witness)) continue;
@@ -1138,7 +1144,7 @@ export async function runMonsterSpell({ attacker, target, plan, scene, rng, witn
         const eCover = scene?.terrain ? coverBetweenWrappers(scene, roster, attacker, e) : 'none';
         if (eCover === 'total') continue;
         const eBonus = saveBonusFor(e, spell.saveStat) + coverSaveBonus(eCover, spell.saveStat);
-        const eSave = rollSave({ bonus: eBonus, dc: effectiveBook.dc, advantage: saveModeFor(e, spell.saveStat) }, rng);
+        const eSave = legendaryResist(e, rollSave({ bonus: eBonus, dc: saveDc, advantage: saveModeFor(e, spell.saveStat) }, rng), ctx, group);
         emitSave(ctx, group, e, spell.saveStat, eSave, 'spell');
         const dmgRoll = rollDamage(spell.dice, { crit: false }, rng);
         let dmg = dmgRoll.total;
@@ -1167,8 +1173,9 @@ export async function runMonsterSpell({ attacker, target, plan, scene, rng, witn
   const saveStat = spell.saveStat;
   const targetSaveBonus = saveBonusFor(target, saveStat) +
     (scene?.terrain ? coverSaveBonus(coverBetweenWrappers(scene, roster, attacker, target), saveStat) : 0);
-  let save = rollSave({ bonus: targetSaveBonus, dc: effectiveBook.dc, advantage: saveModeFor(target, saveStat) }, rng);
+  let save = rollSave({ bonus: targetSaveBonus, dc: saveDc, advantage: saveModeFor(target, saveStat) }, rng);
   if (prompts.onRoll) save = await reviewRoll(prompts, ctx, group, 'save', target, attacker, save);
+  save = legendaryResist(target, save, ctx, group);
   emitSave(ctx, group, target, saveStat, save, 'spell');
   const before = target.hp;
   let saveDmg = 0;
@@ -1188,7 +1195,7 @@ export async function runMonsterSpell({ attacker, target, plan, scene, rng, witn
       id: spell.appliesCondition,
       sourceId: casterId,
       endsOn: spell.conditionEndsOn || (spell.concentration ? 'concentration' : 'encounter'),
-      save: spell.conditionSave ? { stat: spell.conditionSave, dc: effectiveBook.dc } : null,
+      save: spell.conditionSave ? { stat: spell.conditionSave, dc: saveDc } : null,
       appliedRound: Number.isInteger(ctx.round) ? ctx.round : null
     }, { ctx, group, roster });
     if (spell.concentration) {
@@ -1359,12 +1366,24 @@ async function applyLegendaryAction(monster, pick, scene, rng, prompts, ctx, gro
       if (!ep) continue;
       if (chebyshevFeet(center, ep) > action.range) continue;
       const eBonus = saveBonusFor(e, action.saveStat);
-      const save = rollSave({ bonus: eBonus, dc: action.dc, advantage: saveModeFor(e, action.saveStat) }, rng);
+      const save = legendaryResist(e, rollSave({ bonus: eBonus, dc: action.dc, advantage: saveModeFor(e, action.saveStat) }, rng), ctx, group);
       emitSave(ctx, group, e, action.saveStat, save, 'legendary');
-      const dmgRoll = rollDamage(action.dice, { crit: false }, rng);
-      let dmg = dmgRoll.total;
-      if (save.success) dmg = Math.floor(dmg / 2);
-      applyDamage(e, dmg, action.damageType ?? null, { attacker: monster, ctx, rng, group });
+      // M64 phase 1.5 wave 6b — a stat-block action may deal no damage on
+      // a save (`half: false`) and knock the target down on a failure.
+      if (action.dice) {
+        const dmgRoll = rollDamage(action.dice, { crit: false }, rng);
+        let dmg = dmgRoll.total;
+        if (save.success) dmg = action.half === false ? 0 : Math.floor(dmg / 2);
+        applyDamage(e, dmg, action.damageType ?? null, { attacker: monster, ctx, rng, group });
+      }
+      if (!save.success && action.condition && isAlive(e)) {
+        applyCondition(e, {
+          id: action.condition, sourceId: idOf(monster),
+          // Prone: the creature stands up at the start of its turn.
+          endsOn: action.condition === 'prone' ? 'turn-start' : 'encounter', save: null,
+          appliedRound: Number.isInteger(ctx.round) ? ctx.round : null
+        }, { ctx, group, roster: [monster, ...(pick.targets || [])] });
+      }
     }
   }
 }
@@ -1478,8 +1497,27 @@ function emitSave(ctx, group, entity, stat, save, reason) {
   emitEvent(ctx, 'save.rolled', {
     entityId: idOf(entity), stat, dc: save.dc,
     d20: save.dice ? [...save.dice] : [save.d20],
-    total: save.total, success: !!save.success, reason
+    total: save.total, success: !!save.success, reason,
+    ...(save.legendaryResistance ? { legendaryResistance: true } : {})
   }, group);
+}
+
+/**
+ * M64 phase 1.5 wave 6b — Legendary Resistance (MM p11): a creature with
+ * uses left (`resources.features['legendary-resistance']`, seeded from a
+ * normalised stat block) turns a failed save into a success. Emits
+ * feature.used + resource.spent. Spends no rng, so a creature without the
+ * ledger resolves exactly as before.
+ * @returns {object} the save to use
+ */
+function legendaryResist(entity, save, ctx, group) {
+  if (!save || save.success || !entity || entity.kind === 'pc') return save;
+  if (usesLeft(entity, LEGENDARY_RESISTANCE_KEY) <= 0) return save;
+  spendUse(entity, LEGENDARY_RESISTANCE_KEY);
+  const id = idOf(entity);
+  emitEvent(ctx, 'feature.used', { entityId: id, featureId: LEGENDARY_RESISTANCE_KEY }, group);
+  emitEvent(ctx, 'resource.spent', { entityId: id, resource: `feature:${LEGENDARY_RESISTANCE_KEY}`, level: null }, group);
+  return { ...save, success: true, legendaryResistance: true };
 }
 
 function spendShield(target, ctx, group) {
@@ -2177,7 +2215,7 @@ export function endOfTurnConditions(actor, roster, rng, ctx = NO_CTX) {
       continue;
     }
     if (!meta.save || !isAlive(actor)) continue;
-    const save = rollSave({ bonus: saveBonusFor(actor, meta.save.stat), dc: meta.save.dc, advantage: saveModeFor(actor, meta.save.stat) }, rng);
+    const save = legendaryResist(actor, rollSave({ bonus: saveBonusFor(actor, meta.save.stat), dc: meta.save.dc, advantage: saveModeFor(actor, meta.save.stat) }, rng), ctx, null);
     emitSave(ctx, null, actor, meta.save.stat, save, 'condition');
     if (!save.success) continue;
     removeCondition(actor, id, { ctx, reason: 'save' });

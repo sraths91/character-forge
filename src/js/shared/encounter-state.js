@@ -151,6 +151,10 @@ export const WRAPPER_FIELD_MAP = Object.freeze({
   // R11 normaliser). Static: read, never written back.
   attacks: 'statBlock.attacks',
   multiattack: 'statBlock.multiattack',
+  // v1 additive (M64 phase 1.5 wave 6b, E1): a normalised SRD block's
+  // derived recharge abilities / legendary menu / Legendary Resistance
+  // (stat-block-kit.js). Static: rebuilt from the block, never written back.
+  _statBlockKit: 'statBlock',
   // Transient — never persisted.
   weapon: null,
   _chosenWeapon: null,

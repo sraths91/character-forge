@@ -35,6 +35,18 @@ import { PC_FEATURES } from './ai/pc-features.js';
 import { nameToSpellId } from './ai/pc-action.js';
 import { wrapperFromEntity } from './encounter-adapters.js';
 import { spellUseKey } from './feature-uses.js';
+import { statBlockKitOf, kitInnateState } from './stat-block-kit.js';
+
+/**
+ * M64 phase 1.5 wave 6b — the spell `spellId` names for this entity: a
+ * normalised stat block's recharge ability (built from the action), else
+ * the registry entry.
+ */
+function spellOf(entity, spellId) {
+  const own = statBlockKitOf(entity)?.spells;
+  if (own && Object.prototype.hasOwnProperty.call(own, spellId)) return own[spellId];
+  return spellById(spellId);
+}
 
 const INCAPACITATED = ['incapacitated', 'paralyzed', 'stunned', 'unconscious', 'petrified'];
 const TARGETED = new Set(['melee', 'ranged', 'attack', 'cast']);
@@ -79,7 +91,8 @@ function knowsSpell(entity, sheet, spellId) {
   }
   const book = spellbookFor(entity.statBlock?.slug);
   if (book?.spells?.includes(spellId)) return { known: true, own: null };
-  const innate = entity.resources?.innate;
+  const kit = statBlockKitOf(entity);
+  const innate = kit ? kitInnateState(kit, entity.resources?.innate) : entity.resources?.innate;
   if (innate) {
     if (innate.atWill?.includes(spellId)) return { known: true, own: null, innate: 'at-will' };
     if (spellId in (innate.recharges || {})) return { known: true, own: null, innate: innate.recharges[spellId] ? 'ready' : 'spent' };
@@ -137,7 +150,7 @@ export function validateIntent(state, intent, opts = {}) {
   // Movement destination. M64 wave 6 — a teleport spell (Misty Step)
   // checks its own range and needs no walkable path.
   let from = actor.pos;
-  const teleportFt = plan.kind === 'cast' && plan.spellId ? spellById(plan.spellId)?.teleportFt : null;
+  const teleportFt = plan.kind === 'cast' && plan.spellId ? spellOf(actor, plan.spellId)?.teleportFt : null;
   if (plan.moveTo) {
     const mv = plan.moveTo;
     const g = state.grid || {};
@@ -165,7 +178,7 @@ export function validateIntent(state, intent, opts = {}) {
   let spell = null;
   if (plan.kind === 'cast') {
     if (!plan.spellId) return fail('no-spell', 'a cast needs spellId');
-    spell = spellById(plan.spellId);
+    spell = spellOf(actor, plan.spellId);
     if (!spell) return fail('unknown-spell', `${plan.spellId} is not in the engine's spell registry (DM adjudication)`);
     const k = knowsSpell(actor, sheet, plan.spellId);
     if (!k.known) return fail('unknown-spell', `${actor.name} does not know ${spell.name}`);
@@ -271,7 +284,7 @@ export function planFromIntent(state, intent, opts = {}) {
       weapon = clean;
     }
   }
-  const spell = plan.spellId ? spellById(plan.spellId) : null;
+  const spell = plan.spellId ? spellOf(actor, plan.spellId) : null;
   const innate = !!(spell && actor.kind === 'monster' && knowsSpell(actor, null, plan.spellId).innate);
   const kind = plan.kind === 'attack' && weapon && actor.kind === 'pc'
     ? (isRangedWeapon(weapon) ? 'ranged' : 'melee')

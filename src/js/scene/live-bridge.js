@@ -128,7 +128,9 @@ const LIVE_PC_FIELDS = [
 ];
 const LIVE_MONSTER_FIELDS = [
   '_reactionUsed', '_legendaryBudget', '_recklessUntilNextTurn', '_innate', '_concentrating',
-  '_conditionMeta', 'status'
+  '_conditionMeta', 'status',
+  // M64 phase 1.5 wave 6b — a stat-block monster's Legendary Resistance ledger.
+  '_features'
 ];
 
 const intOr = (v, d) => (Number.isFinite(v) ? Math.trunc(v) : d);

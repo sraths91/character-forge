@@ -27,8 +27,8 @@ import { profileFor } from './profiles.js';
 import { profileForEntity } from './infer.js';
 import { chebyshevFeet } from '../grid-rules.js';
 import {
-  spellbookFor, spellById,
-  innateBlockFor, canInnateCast
+  spellbookFor, spellById, spellForEntity,
+  innateBlockForEntity, canInnateCast
 } from '../monster-spells.js';
 import { requireRng } from '../rng.js';
 
@@ -142,7 +142,9 @@ export function chooseAction({ self, slug, enemies, allies, rng } = {}) {
 function considerCast({ self, profile, archetype, target, enemies }) {
   const slug = self?.presetSlug || self?.ref?._presetSlug;
   const book = spellbookFor(slug);
-  const innate = innateBlockFor(slug);
+  // M64 phase 1.5 wave 6b — a normalised stat block's recharge abilities
+  // replace the preset's innate block.
+  const innate = innateBlockForEntity(self);
   if (!book && !innate) return null;
   const castWeights = profile.castWeights || {};
   const slots = self?._slots;
@@ -164,10 +166,12 @@ function considerCast({ self, profile, archetype, target, enemies }) {
   // Magic Missile @ 3rd (5 darts).
   let bestSpell = null;
   for (const id of knownSpells) {
-    const weight = castWeights[id];
-    if (!weight) continue;             // profile didn't authorize this spell
-    const spell = spellById(id);
+    const spell = spellForEntity(self, id);
     if (!spell) continue;
+    // A stat-block recharge ability brings its own weight when the
+    // profile names none.
+    const weight = castWeights[id] ?? spell.aiWeight;
+    if (!weight) continue;             // profile didn't authorize this spell
     if (spell.targetSide === 'ally') continue;     // M34.2: heal spells handled separately
     // M37 — Pick the resource model. Innate first (no slot cost), then slots.
     const isInnate = innate && (

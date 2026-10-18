@@ -52,7 +52,7 @@ import {
 } from './combat-engine.js';
 import { wrapperConditions } from './conditions.js';
 import { resetReaction } from './reactions.js';
-import { isLegendary, resetLegendaryBudget } from './monster-legendary.js';
+import { isLegendaryEntity, resetLegendaryBudget } from './monster-legendary.js';
 import { resetPerTurnFlags } from './ai/pc-features.js';
 import { requireRng } from './rng.js';
 import { toEngineSides, applyEngineSides } from './encounter-adapters.js';
@@ -198,7 +198,7 @@ export function beginTurnResets(actor) {
     actor._recklessUntilNextTurn = false;
     resetPerTurnFlags(actor);
   }
-  if (actor.kind === 'monster' && isLegendary(actor.presetSlug)) resetLegendaryBudget(actor);
+  if (actor.kind === 'monster' && isLegendaryEntity(actor)) resetLegendaryBudget(actor);
 }
 
 /**
@@ -343,7 +343,7 @@ export async function runTurn(ts, ctx = {}) {
       // MM legendary actions: at the end of an opposing creature's turn.
       const actorSide = ts.sides[actorId];
       for (const [id, w] of Object.entries(ts.entities)) {
-        if (ts.sides[id] === actorSide || w.kind !== 'monster' || !isLegendary(w.presetSlug)) continue;
+        if (ts.sides[id] === actorSide || w.kind !== 'monster' || !isLegendaryEntity(w)) continue;
         if (!isAlive(w) || isIncapacitated(w)) continue;
         const foes = Object.entries(ts.entities).filter(([oid]) => ts.sides[oid] !== ts.sides[id]).map(([, o]) => o);
         await runLegendaryActions(w, foes, ts.scene, rng, reactionPrompts(ctx.prompts), engineCtx);

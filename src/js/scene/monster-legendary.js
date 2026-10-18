@@ -53,6 +53,27 @@ export const LEGENDARY_ACTIONS = {
 };
 
 export function isLegendary(slug) { return !!LEGENDARY_ACTIONS[slug]; }
+
+/**
+ * M64 phase 1.5 wave 6b — the legendary menu an engine wrapper fights
+ * with: a normalised stat block's (`_statBlockKit.legendary`,
+ * stat-block-kit.js) replaces the preset slug's entry — a block with no
+ * legendary actions has none, whatever its sprite preset.
+ * @param {object|null} self — engine wrapper
+ * @returns {{budget: number, actions: object[]}|null}
+ */
+export function legendaryBlockForEntity(self) {
+  if (!self) return null;
+  if (self._statBlockKit) return self._statBlockKit.legendary || null;
+  return LEGENDARY_ACTIONS[self.presetSlug || self._presetSlug] || null;
+}
+
+/**
+ * True when this wrapper has legendary actions.
+ * @param {object|null} self
+ * @returns {boolean}
+ */
+export function isLegendaryEntity(self) { return !!legendaryBlockForEntity(self); }
 export function legendaryBlockFor(slug) { return LEGENDARY_ACTIONS[slug] || null; }
 export function freshLegendaryBudget(slug) {
   const block = LEGENDARY_ACTIONS[slug];
@@ -66,8 +87,7 @@ export function freshLegendaryBudget(slug) {
  */
 export function resetLegendaryBudget(monster) {
   if (!monster) return;
-  const slug = monster.presetSlug || monster._presetSlug;
-  monster._legendaryBudget = freshLegendaryBudget(slug);
+  monster._legendaryBudget = legendaryBlockForEntity(monster)?.budget ?? 0;
 }
 
 /**
@@ -80,8 +100,7 @@ export function resetLegendaryBudget(monster) {
  */
 export function chooseLegendaryAction({ self, enemies = [] } = {}) {
   if (!self) return null;
-  const slug = self.presetSlug || self._presetSlug;
-  const block = LEGENDARY_ACTIONS[slug];
+  const block = legendaryBlockForEntity(self);
   if (!block) return null;
   if (isIncapacitated(self)) return null;
   const budget = self._legendaryBudget ?? 0;

@@ -245,12 +245,56 @@ export function isInnateCaster(slug) { return !!MONSTER_INNATE[slug]; }
 export function innateBlockFor(slug) { return MONSTER_INNATE[slug] || null; }
 
 /**
+ * M64 phase 1.5 wave 6b — the innate block an engine wrapper fights
+ * with: a normalised stat block's recharge abilities (`_statBlockKit`,
+ * stat-block-kit.js) replace the preset slug's MONSTER_INNATE entry.
+ * @param {object|null} self — engine wrapper
+ * @returns {object|null}
+ */
+export function innateBlockForEntity(self) {
+  if (self?._statBlockKit) return self._statBlockKit.innate || null;
+  return innateBlockFor(self?.presetSlug || self?.ref?._presetSlug);
+}
+
+/**
+ * A fresh innate ledger for an engine wrapper (kit first, then preset).
+ * @param {object|null} self — engine wrapper
+ * @returns {object|null}
+ */
+export function freshInnateStateForEntity(self) {
+  if (self?._statBlockKit) return freshInnateFromBlock(self._statBlockKit.innate);
+  return freshInnateState(self?.presetSlug);
+}
+
+/**
+ * The spell `id` resolves to for this caster: a stat-block runtime entry
+ * (a breath weapon built from the action) first, then the registry.
+ * @param {object|null} self — engine wrapper
+ * @param {string} id
+ * @returns {object|null}
+ */
+export function spellForEntity(self, id) {
+  const own = self?._statBlockKit?.spells;
+  if (own && Object.prototype.hasOwnProperty.call(own, id)) return own[id];
+  return MONSTER_SPELLS[id] || null;
+}
+
+/**
  * Seed the recharge state for an innate caster. Returns a map
  * { spellId: true } where `true` = available, `false` = waiting.
  * All recharge spells start available (a fresh fight gets a free use).
  */
 export function freshInnateState(slug) {
-  const block = MONSTER_INNATE[slug];
+  return freshInnateFromBlock(MONSTER_INNATE[slug]);
+}
+
+/**
+ * M64 phase 1.5 wave 6b — the innate ledger for any innate block (a
+ * MONSTER_INNATE entry or a stat-block kit's `innate`).
+ * @param {object|null} block — {atWill?, perDay?, recharge?}
+ * @returns {object|null}
+ */
+export function freshInnateFromBlock(block) {
   if (!block) return null;
   const state = { atWill: [...(block.atWill || [])], recharges: {}, perDay: {} };
   for (const id of Object.keys(block.recharge || {})) state.recharges[id] = true;
@@ -267,7 +311,7 @@ export function freshInnateState(slug) {
  */
 export function rollInnateRecharges(self, rng) {
   requireRng(rng, 'rollInnateRecharges');
-  const block = innateBlockFor(self?.presetSlug);
+  const block = innateBlockForEntity(self);
   const state = self?._innate;
   if (!block || !state || !block.recharge) return [];
   const restored = [];

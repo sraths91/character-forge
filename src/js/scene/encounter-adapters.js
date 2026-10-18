@@ -32,6 +32,9 @@ import { slotsForPc, pactForPc } from './reactions.js';
 import { wrapperConditions, normalizeCondition, hasLifecycle } from './conditions.js';
 import { withEngineFields } from './open5e-normalize.js';
 import { featureLedgerFor } from './feature-uses.js';
+import {
+  buildStatBlockKit, freshKitInnate, kitInnateState, kitLegendaryResistance, LEGENDARY_RESISTANCE_KEY
+} from './stat-block-kit.js';
 
 /** Wrapper fields that are recomputed per turn and never persisted. */
 export const TRANSIENT_WRAPPER_FIELDS = Object.freeze([
@@ -211,6 +214,16 @@ export function wrapperFromEntity(entity, sheet = null) {
     if (Array.isArray(sb[key]) && sb[key].length) w[key] = clone(sb[key]);
   }
   if (sb.profile) w._aiProfile = clone(sb.profile);
+  // M64 phase 1.5 wave 6b — a normalised SRD block drives recharge
+  // abilities, legendary actions and Legendary Resistance (the preset
+  // slug is then only the sprite). The kit is static and never persisted.
+  const kit = buildStatBlockKit(sb);
+  if (kit) {
+    w._statBlockKit = kit;
+    w._innate = kitInnateState(kit, res.innate);
+    const lr = kitLegendaryResistance(kit, res.features?.[LEGENDARY_RESISTANCE_KEY]);
+    if (lr) w._features = { ...featuresWithout(res.features, []), [LEGENDARY_RESISTANCE_KEY]: lr };
+  }
   return w;
 }
 
@@ -495,6 +508,10 @@ export function entityFromPreset(slug, opts) {
   if (!preset) throw new Error(`encounter-adapters: unknown monster preset "${slug}"`);
   const sb = opts?.statBlock ? withEngineFields(clone(opts.statBlock)) : {};
   const max = Math.max(1, Math.trunc(sb.hpMax ?? preset.defaultHp?.max ?? 1));
+  // M64 phase 1.5 wave 6b — a normalised block's own recharge abilities,
+  // legendary budget and Legendary Resistance replace the preset's.
+  const kit = buildStatBlockKit(sb);
+  const lr = kitLegendaryResistance(kit, null);
   return {
     id: String(opts.id),
     kind: 'monster',
@@ -513,9 +530,9 @@ export function entityFromPreset(slug, opts) {
       reactionUsed: false,
       slots: fullLedger(freshSlots(slug)),
       pact: {},
-      innate: freshInnateState(slug),
-      legendaryBudget: isLegendary(slug) ? freshLegendaryBudget(slug) : 0,
-      features: {}
+      innate: kit ? freshKitInnate(kit) : freshInnateState(slug),
+      legendaryBudget: kit ? (kit.legendary?.budget ?? 0) : (isLegendary(slug) ? freshLegendaryBudget(slug) : 0),
+      features: lr ? { [LEGENDARY_RESISTANCE_KEY]: lr } : {}
     },
     turnFlags: {},
     statBlock: { ...sb, slug }
