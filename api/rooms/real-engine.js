@@ -33,6 +33,7 @@ import {
   setEntityHp, setEntityConditions, wrapperFromEntity, poolFromLedger, ledgerFromPool
 } from '../../src/js/scene/encounter-adapters.js';
 import { spellById } from '../../src/js/scene/monster-spells.js';
+import { normalizeCreature, withEngineFields } from '../../src/js/scene/open5e-normalize.js';
 import * as TM from '../../src/js/scene/turn-manager.js';
 import { createPromptAdapter } from '../../src/js/scene/prompt-adapter.js';
 import { validateIntent as validateTurnIntent, planFromIntent } from '../../src/js/scene/intent-validation.js';
@@ -109,27 +110,32 @@ export function presetSlugFor(m, type = null) {
   if (n.includes('troll') || n.includes('ogre') || n.includes('giant')) return 'troll';
   if (n.includes('minotaur')) return 'minotaur';
   if (n.includes('wolf') || n.includes('gnoll')) return 'gnoll';
+  if (n.includes('dragon') || t === 'dragon') return 'young-dragon';
   return 'bandit';
 }
 
 /**
- * Stat-block overrides from a cached Open5e record (name, HP, AC and an
- * inferred AI profile); attacks stay the preset's (plan: Open5e attack
- * fields are unreliable).
+ * The stat block an Open5e monster fights with (M64 1.5): E4's
+ * normalised SRD block (`normalizeCreature`: real AC, HP, weapon attacks,
+ * saves, R/I/V, multiattack, recharge / legendary metadata) with the
+ * engine fields filled (`withEngineFields`: `hpMax`, `attacks[]`) and an
+ * inferred AI profile. `source: 'srd-2014'` marks it. The preset
+ * (presetSlugFor) stays the sprite and the fallback for anything the
+ * block lacks: no HP, an implausible AC or no parseable weapon attack.
  * @param {object|null} c  Open5e v2 creature payload
- * @returns {object}
+ * @returns {object} normalised stat block, or {} for no record
  */
 export function statBlockFromOpen5e(c) {
-  if (!c || typeof c !== 'object') return {};
-  const out = {};
-  if (c.name) out.name = String(c.name).slice(0, 128);
-  const hp = Number(c.hit_points ?? c.hp);
-  if (Number.isInteger(hp) && hp > 0) out.hpMax = hp;
+  const sb = normalizeCreature(c);
+  if (!sb) return {};
+  const out = withEngineFields(sb);
+  if (!(Number.isInteger(out.hpMax) && out.hpMax > 0)) delete out.hpMax;
   const ac = Number(c.armor_class ?? c.ac);
-  if (Number.isInteger(ac) && ac > 0 && ac <= 50) out.ac = ac;
-  const type = typeof c.type === 'object' && c.type ? (c.type.name || c.type.key) : c.type;
-  out.profile = inferProfile({ slug: c.key || c.slug, name: c.name, type, cr: c.challenge_rating_decimal ?? c.cr ?? c.challenge_rating, hp });
-  out.open5eSlug = String(c.key || c.slug || '');
+  if (!(Number.isInteger(ac) && ac > 0 && ac <= 50)) delete out.ac;
+  out.profile = inferProfile({
+    slug: sb.open5eSlug, name: sb.name, type: sb.type, cr: sb.cr, hp: sb.hp.average,
+    intelligence: sb.abilities?.INT, traits: sb.traits, actions: sb.actions
+  });
   return out;
 }
 

@@ -1087,7 +1087,13 @@ export class Room {
     this.#broadcastRoom('encounter.created', { encounterId, encounter: publicView(state) });
     this.#setStatus('setup');
     if (state.fog && this.dm?.conn) this.#sendSnapshot(this.dm);
-    return { encounterId };
+    // The builder's "fights as" line: the preset is the sprite; `source`
+    // says whether the real (normalised SRD) stat block is in use.
+    const monsters = Object.values(state.entities).filter(e => e.kind === 'monster').map(e => ({
+      id: e.id, name: e.name, preset: e.statBlock?.slug ?? null, source: e.statBlock?.source ?? null,
+      ac: e.ac, hpMax: e.hpMax, attacks: (e.statBlock?.attacks || []).map(a => ({ name: a.name, bonus: a.bonus, dice: a.dice }))
+    }));
+    return { encounterId, monsters };
   }
 
   async #start(p) {
