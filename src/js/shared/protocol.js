@@ -72,6 +72,12 @@
  *        uses a class feature as the turn (no move, no attack);
  *        `features: [...]` on an attack plan still names bonus-action
  *        features that ride the attack (Rage, then swing).
+ *   v1.5 (2026-10-18, E3 M64 1.5 W6) — broadcast `encounter.fog {fog:
+ *        {revealed}}`: the encounter's fog bitset after a `dm.fog.paint`
+ *        (player seats also get a fresh snapshot: the paint changes what
+ *        their projection shows). `entity.updated` patches may carry
+ *        `status` ('active' when cleared) and `deathSaves` (null when
+ *        cleared).
  *
  * Client payloads are strict (unknown fields rejected); server payloads
  * enforce required fields and allow additive ones.
@@ -156,6 +162,7 @@ const ROOM_MESSAGE_SCOPES = {
   'room.status': 'broadcast',
   'room.closing': 'broadcast',
   'room.settings': 'broadcast',   // v1.4
+  'encounter.fog': 'broadcast',   // v1.5
   redacted: 'broadcast'
 };
 
@@ -319,6 +326,7 @@ const SERVER_PAYLOADS = {
   'room.settings': shape({ settings: shape({
     reactionTimeoutMs: int(0), importLiveState: bool(), fudgeVisibility: oneOf(FUDGE_VISIBILITY), diagonalRule: oneOf(DIAGONAL_RULES)
   }, LOOSE) }, LOOSE),   // v1.4
+  'encounter.fog': shape({ fog: shape({ revealed: str({ allowEmpty: true, pattern: /^[A-Za-z0-9+/]*={0,2}$/ }) }, LOOSE) }, LOOSE),   // v1.5
   redacted: shape({ type: oneOf(REDACTABLE_TYPES) }, LOOSE)   // v1.4: + entity.updated
 };
 

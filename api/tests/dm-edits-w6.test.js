@@ -13,6 +13,7 @@ import { createRng } from '../../src/js/scene/rng.js';
 import { validateEncounterState } from '../../src/js/shared/encounter-state.js';
 import { validateEvent } from '../../src/js/shared/events.js';
 import { validateServerMessage } from '../../src/js/shared/protocol.js';
+import { createFog, revealCells, isRevealed } from '../../src/js/map/fog.js';
 import { parsedDdbFixture } from '../../src/tests/helpers/entities.js';
 import { tempRoot, tempDb, quiet, seedRoom, seedPlayer } from './helpers/server.js';
 
@@ -134,5 +135,45 @@ test('room: a status patch emits the life event, dm.override and entity.updated 
     assert.deepEqual([up2.status, up2.deathSaves, up2.hp], ['active', null, 1]);
     assert.ok(frames.dm.some(m => m.t === 'entity.revived'));
     assert.equal(room.enc.state.entities['pc-1'].status, undefined);
+  } finally { room.shutdown(); db.close(); }
+});
+
+// ------------------------------------------------------------ fog brush
+
+test('dm.fog.paint: the brush on state.fog; no fog is an invalid intent', () => {
+  const engine = createRealEngine();
+  const { ctx } = collect();
+  const fog = revealCells(createFog(8, 6), 8, 6, [{ col: 0, row: 0 }]);
+  const s = built(engine, { fog });
+  const cmd = (payload) => ({ type: 'dm.fog.paint', payload });
+  const shown = engine.applyDmCommand(s, cmd({ cells: [{ col: 6, row: 5 }, { col: 99, row: 0 }], op: 'reveal' }), ctx).state;
+  assert.equal(isRevealed(shown.fog, 8, 6, 5), true);
+  assert.equal(isRevealed(s.fog, 8, 6, 5), false, 'the input is not mutated');
+  const hidden = engine.applyDmCommand(shown, cmd({ cells: [{ col: 0, row: 0 }], op: 'hide' }), ctx).state;
+  assert.equal(isRevealed(hidden.fog, 8, 0, 0), false);
+  assert.throws(() => engine.applyDmCommand(built(engine), cmd({ cells: [{ col: 0, row: 0 }], op: 'reveal' }), ctx), { code: 'E_INVALID_INTENT' });
+});
+
+test('room: dm.fog.paint broadcasts encounter.fog and re-snapshots player seats with the revealed creature', async () => {
+  const fog = revealCells(createFog(8, 6), 8, 6, [{ col: 0, row: 0 }]);
+  const { db, room, frames, send } = await liveRoom({ fog });
+  try {
+    const r = await send('dm.fog.paint', { cells: [{ col: 6, row: 5 }], op: 'reveal' });
+    assert.equal(r.t, 'ack', JSON.stringify(r.p));
+    for (const k of ['dm', 'player']) {
+      const m = frames[k].find(f => f.t === 'encounter.fog');
+      assert.ok(m, `${k} got encounter.fog`);
+      assert.equal(isRevealed(m.p.fog, 8, 6, 5), true);
+      for (const f of frames[k]) assert.ok(validateServerMessage(f).ok, `${k} ${f.t}`);
+    }
+    const snap = frames.player.find(f => f.t === 'room.snapshot');
+    assert.ok(snap, 'the player seat is re-baselined');
+    assert.ok(snap.p.encounter.entities.gob, 'the goblin in the revealed cell is now in the player projection');
+    assert.ok(snap.p.seq >= frames.player.find(f => f.t === 'encounter.fog').seq, 'the snapshot covers the fog broadcast');
+    assert.equal(isRevealed(room.enc.state.fog, 8, 6, 5), true, 'persisted on the authoritative state');
+    // Hide it again: the player loses the goblin.
+    frames.player.length = 0;
+    await send('dm.fog.paint', { cells: [{ col: 6, row: 5 }], op: 'hide' });
+    assert.equal(frames.player.find(f => f.t === 'room.snapshot').p.encounter.entities.gob, undefined);
   } finally { room.shutdown(); db.close(); }
 });

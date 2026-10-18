@@ -44,7 +44,7 @@ export const FALLBACK_CINEMA_MS = 2500;
 export const ROLL_REVIEW_MS = 8000;
 
 /** DM edits that may apply while a turn waits for its intent. */
-const INTENT_SAFE = new Set(['dm.entity.patch', 'dm.entity.add', 'dm.entity.remove', 'dm.terrain.paint', 'dm.seat.setController', 'dm.spell.adjudicate']);
+const INTENT_SAFE = new Set(['dm.entity.patch', 'dm.entity.add', 'dm.entity.remove', 'dm.terrain.paint', 'dm.fog.paint', 'dm.seat.setController', 'dm.spell.adjudicate']);
 /** DM edits handled as state commands (safe point or queued). */
 const STATE_COMMANDS = new Set([...INTENT_SAFE, 'dm.initiative.roll', 'dm.initiative.set']);
 /** Entity fields compared to produce `entity.updated` patches. */
@@ -844,6 +844,13 @@ export class Room {
     if (structural) this.#emit({ type: 'dm.override', payload: { kind: cmd.type.slice(3), entityId: cmd.payload.entityId ?? null, before: null, after: null } });
     if (!same(state.initiative, next.initiative) && broadcast) this.#broadcastInitiative(next);
     if (!same(state.grid, next.grid)) structural = true;
+    // Fog brush: every seat gets the new bitset; player seats' projections
+    // (entities, initiative rows and terrain under fog) change, so they
+    // re-baseline with a snapshot after the flush.
+    if (next.fog && !same(state.fog ?? null, next.fog) && broadcast) {
+      this.#broadcastRoom('encounter.fog', { fog: clone(next.fog) });
+      this.fogResnap = true;
+    }
     if (structural && broadcast) this.pushSnapshots = true;
     return next;
   }
