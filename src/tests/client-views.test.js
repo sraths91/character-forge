@@ -297,6 +297,44 @@ test('C9 views: battle — my turn shows actions that send turn.act; a reaction 
   assertClean(hh, 'battle');
 });
 
+test('C9 views: battle — Misty Step picks a destination cell (teleport preview, no target) and sends the cast with moveTo', async () => {
+  const hh = harness('player', { myTurn: true, mutate: (enc) => { enc.entities['pc-fighter'].resources.slots = { 2: { max: 1, spent: 0 } }; } });
+  const sheet = { ...FIGHTER, spells: [{ name: 'Misty Step', level: 2 }] };
+  hh.ctx.sheets = () => ({ 'fighter-l5': sheet });
+  hh.store.apply({ v: 1, t: 'turn.started', seq: 11, ts: 1, p: { seq: 11, type: 'turn.started', round: 2, turnId: 't9', cinemaGroup: null, payload: { actorId: 'pc-fighter' } } });
+  const previews = [];
+  hh.ctx.deps.render = async (_c, _v, local) => { previews.push(local.pathPreview); return { needsRedraw: false }; };
+  const un = mountBattle(hh.root, hh.ctx);
+  hh.store.presentUpTo(11);
+  const pickBtn = hh.dom.byAction(hh.root, 'pick-teleport')[0];
+  assert.ok(pickBtn, 'Misty Step offers a destination pick, not targets');
+  assert.equal(hh.dom.byAction(hh.root, 'cast').filter(b => b.dataset.spell === 'misty-step').length, 0);
+  pickBtn.click();
+  assert.ok(hh.dom.byText(hh.root, 'within 30 ft to teleport').length);
+  const canvas = hh.dom.findAll(hh.root, n => n.tagName === 'CANVAS' && /play-map-canvas/.test(n.className))[0];
+  await hh.raf.frame();
+  const { fitToGrid, createCamera, worldToScreen } = await import('../js/map/camera.js');
+  const cam = fitToGrid(createCamera({ zoom: 1, minZoom: 0.1, maxZoom: 4, viewW: 640, viewH: 420 }), 12, 8, 64, { padding: 8 });
+  const at = (col, row) => { const p = worldToScreen(cam, col * 64 + 32, row * 64 + 32); return { clientX: p.x, clientY: p.y }; };
+  // The fighter stands at (2,3): (8,3) is 30 ft, (9,3) is 35 ft.
+  hh.dom.fire(canvas, 'pointermove', { ...at(9, 3), pointerId: 1 });
+  await hh.raf.frame();
+  assert.deepEqual(previews.at(-1), { cells: [{ col: 2, row: 3 }, { col: 9, row: 3 }], legal: false, costFt: 35, teleport: true });
+  hh.dom.fire(canvas, 'pointerdown', { ...at(9, 3), button: 0, pointerId: 1 });
+  await flush();
+  assert.equal(hh.sent.length, 0, 'out of range: nothing sent');
+  assert.ok(hh.dom.byText(hh.root, 'Too far: 35 ft of 30 ft.').length);
+  assert.ok(hh.dom.byText(hh.root, 'Picking a destination on the map').length, 'the pick survives a bad cell');
+  hh.dom.fire(canvas, 'pointermove', { ...at(8, 3), pointerId: 1 });
+  await hh.raf.frame();
+  assert.deepEqual(previews.at(-1), { cells: [{ col: 2, row: 3 }, { col: 8, row: 3 }], legal: true, costFt: 30, teleport: true });
+  hh.dom.fire(canvas, 'pointerdown', { ...at(8, 3), button: 0, pointerId: 1 });
+  await flush();
+  assert.deepEqual(hh.sent, [{ t: 'turn.act', p: { turnId: 't9', plan: { kind: 'cast', spellId: 'misty-step', castAtLevel: 2, moveTo: { col: 8, row: 3 } } } }]);
+  un();
+  assertClean(hh, 'battle (misty step)');
+});
+
 test('C9 views: battle — waiting states and the log (DM edits styled apart)', async () => {
   const hh = harness('player');
   const un = mountBattle(hh.root, hh.ctx);

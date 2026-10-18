@@ -7,6 +7,9 @@
  *   DM free move     → `dm.entity.patch {entityId, position, override: true}`
  *   attack / cast    → `turn.act {turnId, plan}`; `validateIntent` (E1's T9
  *                      validator, the same one the server runs) answers first
+ *   teleport cast    → previewMove with `teleport: true` (straight line, no
+ *                      path, no opportunity attacks) → `turn.act {plan:
+ *                      {kind: 'cast', spellId, castAtLevel, moveTo}}` (Misty Step)
  *
  * The server stays authoritative: these helpers only decide what is worth
  * sending and what to show while the user drags. `forcePlanFor` is the
@@ -19,6 +22,8 @@
 import { findPath, reachableCells, validateMove, buildOccupancy } from '../scene/grid-legality.js';
 import { validateIntent, planFromIntent } from '../scene/intent-validation.js';
 import { INTENT_PLAN_KINDS } from '../shared/protocol.js';
+import { chebyshevFeet } from '../scene/grid-rules.js';
+import { spellById } from '../scene/monster-spells.js';
 
 /** Longest path a `turn.act` plan may carry (protocol PLAN.path max). */
 export const MAX_PLAN_PATH = 64;
@@ -54,9 +59,13 @@ export function currentTurn(clientState) {
  * @param {object} state — EncounterState
  * @param {string} actorId
  * @param {{col: number, row: number}} dest
- * @param {{budgetFt?: number, ignoreBudget?: boolean}} [opts] — budget defaults to the actor's speedFt
+ * @param {{budgetFt?: number, ignoreBudget?: boolean, teleport?: boolean}} [opts] — budget
+ *   defaults to the actor's speedFt. `teleport`: a spell's straight-line
+ *   hop (Misty Step) — no path, terrain or opportunity attacks; the
+ *   distance is Chebyshev feet like the server's validator, and the
+ *   destination must be on the grid and empty.
  * @returns {{legal: boolean, reason: string|null, cells: {col: number, row: number}[],
- *            costFt: number|null, budgetFt: number, oaTriggers: object[]}}
+ *            costFt: number|null, budgetFt: number, oaTriggers: object[], teleport?: true}}
  *   `cells` is the preview (start included) for E5's `local.pathPreview`.
  */
 export function previewMove(state, actorId, dest, opts = {}) {
@@ -70,6 +79,7 @@ export function previewMove(state, actorId, dest, opts = {}) {
   if (from.col === dest.col && from.row === dest.row) return { legal: false, reason: 'no-move', cells: [], costFt: 0, budgetFt, oaTriggers: [] };
   const bounds = boundsOf(state);
   if (dest.col < 0 || dest.row < 0 || dest.col >= bounds.cols || dest.row >= bounds.rows) return none('out-of-bounds', [from]);
+  if (opts.teleport) return previewTeleport(state, actorId, from, dest, budgetFt);
   const terrain = state.grid?.terrain ?? null;
   const occ = buildOccupancy(state.entities, { excludeId: actorId });
   const findOpts = { moverSide: actor.side, bounds };
@@ -85,6 +95,65 @@ export function previewMove(state, actorId, dest, opts = {}) {
   if (any) return { legal: false, reason: 'over-budget', cells: any.path, costFt: any.costFt, budgetFt, oaTriggers: [] };
   const occupied = occ.cells.has(posKey(dest));
   return none(occupied ? 'destination-occupied' : 'unreachable', [from, { col: dest.col, row: dest.row }]);
+}
+
+function previewTeleport(state, actorId, from, dest, budgetFt) {
+  const cells = [from, { col: dest.col, row: dest.row }];
+  const costFt = chebyshevFeet(from, dest);
+  // intent-validation: any other creature's cell (down or not) is taken.
+  const taken = Object.values(state.entities || {}).some(e => String(e.id) !== String(actorId) && e.pos && e.pos.col === dest.col && e.pos.row === dest.row);
+  const reason = taken ? 'destination-occupied' : costFt > budgetFt ? 'over-budget' : null;
+  return { legal: !reason, reason, cells, costFt, budgetFt, oaTriggers: [], teleport: true };
+}
+
+/**
+ * The lowest spell-slot level >= `minLevel` the entity has left (regular
+ * pool, then its pact slot), or `minLevel` when none is (the validator
+ * then explains).
+ * @param {object|null} entity — EncounterState entity
+ * @param {number} minLevel
+ * @returns {number}
+ */
+export function lowestSlotLevel(entity, minLevel) {
+  const min = Math.max(0, minLevel | 0);
+  if (min === 0) return 0;
+  const res = entity?.resources || {};
+  const levels = [];
+  for (const [lvl, l] of Object.entries(res.slots || {})) if (Number(lvl) >= min && l && l.max - l.spent > 0) levels.push(Number(lvl));
+  const pact = res.pact;
+  if (pact && Number.isInteger(pact.level) && pact.level >= min && (pact.max ?? 0) - (pact.spent ?? 0) > 0) levels.push(pact.level);
+  return levels.length ? Math.min(...levels) : min;
+}
+
+/**
+ * Whether a registry spell is cast as a self-teleport to a picked cell.
+ * @param {string} spellId
+ * @returns {number|null} its range in feet, or null for any other spell
+ */
+export function teleportRangeFt(spellId) {
+  const reg = spellById(spellId);
+  return reg && reg.kind === 'teleport' ? (reg.teleportFt ?? 30) : null;
+}
+
+/**
+ * Teleport spell (Misty Step) + destination cell → `turn.act {plan:
+ * {kind: 'cast', spellId, castAtLevel, moveTo}}` — no target, no path.
+ * @param {object} state
+ * @param {{actorId: string, turnId: string|null, spellId: string, dest: {col: number, row: number},
+ *          castAtLevel?: number|null, sheets?: Record<string, object>}} args
+ * @returns {{ok: boolean, intent: object|null, preview: object, reason: string|null, code: string|null}}
+ */
+export function teleportIntent(state, { actorId, turnId, spellId, dest, castAtLevel = null, sheets }) {
+  const rangeFt = teleportRangeFt(spellId);
+  const preview = previewMove(state, actorId, dest, { teleport: true, budgetFt: rangeFt ?? 0 });
+  if (rangeFt == null) return { ok: false, intent: null, preview, reason: `${spellId} is not a teleport spell`, code: 'bad-plan' };
+  if (!preview.legal) {
+    const reason = preview.reason === 'over-budget' ? `Too far: ${preview.costFt} ft of ${rangeFt} ft.` : preview.reason;
+    return { ok: false, intent: null, preview, reason, code: preview.reason };
+  }
+  const level = Number.isInteger(castAtLevel) ? castAtLevel : lowestSlotLevel(state.entities[actorId], spellById(spellId).level || 0);
+  const plan = { kind: 'cast', spellId: String(spellId), castAtLevel: level, moveTo: { col: dest.col, row: dest.row } };
+  return { ...finish(state, actorId, turnId, plan, sheets), preview };
 }
 
 /**

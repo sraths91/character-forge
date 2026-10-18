@@ -10,7 +10,8 @@ import {
   reachableFor, currentTurn, checkPlan, forcePlanFor, MAX_PLAN_PATH
 } from '../js/client/intents.js';
 import { validateClientMessage } from '../js/shared/protocol.js';
-import { featureActionsFor, featureIntent, FEATURE_ACTIONS } from '../js/client/intents.js';
+import { featureActionsFor, featureIntent, FEATURE_ACTIONS, teleportIntent, teleportRangeFt, lowestSlotLevel } from '../js/client/intents.js';
+import { validateIntent } from '../js/scene/intent-validation.js';
 import { createTerrain, encodeTerrain, setFlag, TERRAIN_FLAGS } from '../js/map/terrain.js';
 import { projectedState, clone } from './helpers/client-fixtures.js';
 
@@ -152,4 +153,42 @@ test('M64 1.5: featureIntent builds a protocol-valid feature turn.act (featureId
   enc.entities['pc-fighter'].resources.features['second-wind'].spent = 1;
   const used = featureIntent(enc, { actorId: 'pc-fighter', turnId: 't1', featureId: 'second-wind', sheets });
   assert.deepEqual([used.ok, used.reason], [false, 'Second Wind: no uses left']);
+});
+
+test('wave 6: Misty Step — the teleport preview is a straight hop with no OA warning; the intent is the validator\'s cast shape', () => {
+  const s = projectedState();   // pc-wizard at (1,5); goblin adjacent to the fighter
+  const sheets = { ...SHEETS, 'wizard-l5': { ...WIZ_SHEET, spells: ['Misty Step'] } };
+  assert.equal(teleportRangeFt('misty-step'), 30);
+  assert.equal(teleportRangeFt('fire-bolt'), null);
+  // Walls do not matter to a teleport: block every cell between.
+  let t = createTerrain(12, 8);
+  for (let c = 2; c < 7; c++) t = setFlag(t, c, 5, TERRAIN_FLAGS.BLOCKED);
+  s.grid.terrain = encodeTerrain(t);
+  const p = previewMove(s, 'pc-wizard', { col: 7, row: 5 }, { teleport: true, budgetFt: 30 });
+  assert.deepEqual([p.legal, p.teleport, p.costFt, p.oaTriggers.length], [true, true, 30, 0]);
+  assert.deepEqual(p.cells, [{ col: 1, row: 5 }, { col: 7, row: 5 }], 'no path: start and destination only');
+  assert.equal(previewMove(s, 'pc-wizard', { col: 8, row: 5 }, { teleport: true, budgetFt: 30 }).reason, 'over-budget');
+  assert.equal(previewMove(s, 'pc-wizard', { col: 3, row: 3 }, { teleport: true, budgetFt: 30 }).reason, 'destination-occupied');
+
+  const ok = teleportIntent(s, { actorId: 'pc-wizard', turnId: 't7', spellId: 'misty-step', dest: { col: 7, row: 5 }, sheets });
+  assert.equal(ok.ok, true, ok.reason);
+  assert.deepEqual(ok.intent, { t: 'turn.act', p: { turnId: 't7', plan: { kind: 'cast', spellId: 'misty-step', castAtLevel: 2, moveTo: { col: 7, row: 5 } } } });
+  assert.deepEqual(validateClientMessage(wire(ok.intent)).errors, []);
+  assert.deepEqual(validateIntent(s, { actorId: 'pc-wizard', plan: ok.intent.p.plan }, { sheets }), { ok: true });
+  const far = teleportIntent(s, { actorId: 'pc-wizard', turnId: 't7', spellId: 'misty-step', dest: { col: 8, row: 5 }, sheets });
+  assert.deepEqual([far.ok, far.code, far.intent], [false, 'over-budget', null]);
+  assert.match(far.reason, /35 ft of 30 ft/);
+  assert.equal(teleportIntent(s, { actorId: 'pc-wizard', turnId: 't7', spellId: 'fire-bolt', dest: { col: 2, row: 5 }, sheets }).code, 'bad-plan');
+
+  // Slot choice: the lowest level >= 2 still left; none → the spell's level (the validator explains).
+  const w = s.entities['pc-wizard'];
+  assert.equal(lowestSlotLevel(w, 2), 2);
+  w.resources.slots['2'].spent = 3;
+  assert.equal(lowestSlotLevel(w, 2), 3);
+  assert.equal(teleportIntent(s, { actorId: 'pc-wizard', turnId: 't7', spellId: 'misty-step', dest: { col: 7, row: 5 }, sheets }).intent.p.plan.castAtLevel, 3);
+  w.resources.slots['3'].spent = 2;
+  assert.equal(lowestSlotLevel(w, 2), 2);
+  assert.equal(teleportIntent(s, { actorId: 'pc-wizard', turnId: 't7', spellId: 'misty-step', dest: { col: 7, row: 5 }, sheets }).code, 'no-slot');
+  assert.equal(lowestSlotLevel({ resources: { slots: {}, pact: { level: 3, max: 2, spent: 0 } } }, 2), 3);
+  assert.equal(lowestSlotLevel(null, 0), 0);
 });

@@ -16,6 +16,11 @@
  *   - Reaction dialogs (Shield, Counterspell, opportunity attack) reuse
  *     `promptReaction` in this view's container, with the countdown taken
  *     from the server's `deadlineAt`.
+ *   - Teleport spells (Misty Step, E1 wave 6): no target — the player
+ *     picks a destination cell; hovering previews the hop with the move
+ *     preview's teleport flag (straight line, no path, no OA warning) and
+ *     a click sends `turn.act {plan: {kind: 'cast', spellId, castAtLevel,
+ *     moveTo}}`.
  *   - Feature actions (E1 wave 5): Second Wind / Rage when the sheet has
  *     them, as `turn.act {plan: {kind: 'feature', featureId}}`. Extra
  *     Attack swings log as "Swing 2 (new target): …" (the server picks a
@@ -44,7 +49,10 @@ import { createRenderAdapter } from '../render-adapter.js';
 import {
   myEntityIds, turnInfo, nameOf, conditionIds, slotsLeft, isDm, statusBadge, deathSaveInfo
 } from '../selectors.js';
-import { previewMove, moveIntent, dmMoveIntent, attackIntent, castIntent, actionIntent, featureIntent, featureActionsFor } from '../intents.js';
+import {
+  previewMove, moveIntent, dmMoveIntent, attackIntent, castIntent, actionIntent, featureIntent, featureActionsFor,
+  teleportIntent, teleportRangeFt
+} from '../intents.js';
 import { formatEvent, formatRedacted } from '../log-format.js';
 import { attachTerrainBrush } from '../../map/terrain-brush.js';
 import { reactionCostLabel } from '../reaction-labels.js';
@@ -186,7 +194,7 @@ export function mount(root, ctx) {
   scope.add(attachCameraControls(canvas, local.camera, () => adapter.redraw(), { worldSize: () => ({ w: gridOf().cols * WORLD_CELL_PX, h: gridOf().rows * WORLD_CELL_PX }) }));
 
   // ---- pointer: drag to move, click to target / select ----
-  let pick = null;   // {kind: 'attack', weaponName} | {kind: 'cast', spellId, targetSide}
+  let pick = null;   // {kind: 'attack', weaponName} | {kind: 'cast', spellId, targetSide} | {kind: 'teleport', spellId, rangeFt}
   let drag = null;
   const sheets = () => (typeof ctx.sheets === 'function' ? ctx.sheets() : (ctx.sheets || {}));
   const cellOf = (e) => pickCell(e.clientX, e.clientY, local.camera, WORLD_CELL_PX, canvas.getBoundingClientRect());
@@ -227,6 +235,18 @@ export function mount(root, ctx) {
     if (ctx.dmBridge?.placing?.()) { ctx.dmBridge.place(cell); return; }
     const hit = entityAt(enc, cell);
     const t = turnInfo(s);
+    if (pick?.kind === 'teleport' && t.mine) {
+      const r = teleportIntent(enc, { actorId: t.actorId, turnId: t.turnId, spellId: pick.spellId, dest: cell, sheets: sheets() });
+      if (r.preview?.reason === 'no-move') return;
+      // A bad cell keeps the pick: the player tries another one.
+      if (!r.ok) { say(r.reason || 'Not allowed.', 'error'); return; }
+      pick = null;
+      local.pathPreview = null;
+      renderActions();
+      adapter.redraw();
+      sendTurn(r);
+      return;
+    }
     if (pick && t.mine && hit) {
       const p = pick;
       pick = null;
@@ -242,7 +262,19 @@ export function mount(root, ctx) {
     drag = { id: hit.id, pointerId: e.pointerId, to: null, dm: isDm(s) && !(t.mine && hit.id === t.actorId) };
     canvas.setPointerCapture?.(e.pointerId);
   });
+  let hoverCell = null;
   scope.on(canvas, 'pointermove', (e) => {
+    if (!drag && pick?.kind === 'teleport') {
+      // Teleport destination preview: the move preview's teleport flag.
+      const cell = cellOf(e);
+      if (hoverCell && hoverCell.col === cell.col && hoverCell.row === cell.row) return;
+      hoverCell = cell;
+      const t = turnInfo(ctx.store.getState());
+      const p = t.actorId ? previewMove(ctx.store.getState().encounter, t.actorId, cell, { teleport: true, budgetFt: pick.rangeFt }) : null;
+      local.pathPreview = p?.cells.length ? { cells: p.cells, legal: p.legal, costFt: p.costFt, teleport: true } : null;
+      adapter.redraw();
+      return;
+    }
     if (!drag || e.pointerId !== drag.pointerId) return;
     const cell = cellOf(e);
     if (drag.to && drag.to.col === cell.col && drag.to.row === cell.row) return;
@@ -297,7 +329,14 @@ export function mount(root, ctx) {
     },
     'pick-attack': (el) => { pick = { kind: 'attack', weaponName: el.dataset.weapon || null }; say('Click a target on the map.'); renderActions(); },
     'pick-cast': (el) => { pick = { kind: 'cast', spellId: el.dataset.spell, targetSide: el.dataset.side || undefined }; say('Click a target on the map.'); renderActions(); },
-    'cancel-pick': () => { pick = null; say(''); renderActions(); },
+    'pick-teleport': (el) => {
+      const rangeFt = teleportRangeFt(el.dataset.spell) ?? 30;
+      pick = { kind: 'teleport', spellId: el.dataset.spell, rangeFt };
+      hoverCell = null;
+      say(`Click an empty cell within ${rangeFt} ft to teleport.`);
+      renderActions();
+    },
+    'cancel-pick': () => { pick = null; local.pathPreview = null; hoverCell = null; say(''); renderActions(); adapter.redraw(); },
     action: (el) => {
       const s = ctx.store.getState();
       const t = turnInfo(s);
@@ -447,6 +486,15 @@ export function mount(root, ctx) {
       const id = nameToSpellId(sp.name);
       const reg = spellById(id);
       if (!reg) return h(doc, 'div', { class: 'play-action blocked' }, [h(doc, 'strong', { text: sp.name }), h(doc, 'span', { class: 'play-blocked', text: ' — ask the DM to adjudicate' })]);
+      const hopFt = teleportRangeFt(id);
+      if (hopFt != null) {
+        return h(doc, 'div', { class: 'play-action' }, [
+          h(doc, 'strong', { text: `${sp.name}${sp.level ? ` (L${sp.level})` : ''}` }),
+          h(doc, 'span', { class: 'play-targets' }, [
+            h(doc, 'button', { type: 'button', class: 'play-btn small', dataset: { action: 'pick-teleport', spell: id }, text: `pick a destination (${hopFt} ft)` })
+          ])
+        ]);
+      }
       const side = reg.targetSide === 'ally' || reg.kind === 'heal' ? 'ally' : 'enemy';
       const targets = side === 'ally' ? shapes.party : (sp.targetsInRange?.length ? sp.targetsInRange.map(x => x.entity) : shapes.monsters);
       return h(doc, 'div', { class: 'play-action' }, [
@@ -479,7 +527,7 @@ export function mount(root, ctx) {
     }
     replace(doc, actions, [
       h(doc, 'h3', { text: `Actions — ${t.actor.name}` }),
-      pick ? h(doc, 'div', { class: 'play-pick' }, [h(doc, 'span', { text: 'Picking a target on the map… ' }), h(doc, 'button', { type: 'button', class: 'play-btn small', dataset: { action: 'cancel-pick' }, text: 'Cancel' })]) : null,
+      pick ? h(doc, 'div', { class: 'play-pick' }, [h(doc, 'span', { text: pick.kind === 'teleport' ? 'Picking a destination on the map… ' : 'Picking a target on the map… ' }), h(doc, 'button', { type: 'button', class: 'play-btn small', dataset: { action: 'cancel-pick' }, text: 'Cancel' })]) : null,
       ...(built.blockers || []).map(b => h(doc, 'p', { class: 'play-blocked', text: b })),
       ...attackButtons(built.attacks || [], t),
       ...spellButtons(built.spells || [], shapes),
