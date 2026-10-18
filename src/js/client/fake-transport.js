@@ -808,7 +808,12 @@ export function createFakeServer({
         broadcast(room, 'encounter.created', { encounterId: state.encounterId, encounter: projected(room, { role: 'player' }) });
         if (state.fog) for (const m of room.members.values()) if (m.role === 'dm' && m.sock) privateTo(room, m, 'room.snapshot', snapshotFor(room, m));
         setStatus(room, 'setup');
-        return { encounterId: state.encounterId };
+        // E3 wave 6: each monster's preset and stat-block source ("fights as" / "SRD stat block").
+        const monsters = Object.values(state.entities).filter(e => e.kind === 'monster').map(e => ({
+          id: e.id, name: e.name, preset: e.statBlock?.slug ?? null, source: e.statBlock?.source ?? null,
+          ac: e.ac, hpMax: e.hpMax, attacks: (e.statBlock?.attacks || []).map(a => ({ name: a.name, bonus: a.bonus, dice: a.dice }))
+        }));
+        return { encounterId: state.encounterId, monsters };
       }
       case 'dm.encounter.start': {
         if (!room.enc || room.enc.state.phase !== 'setup') throw new IntentFail('E_INVALID_INTENT', 'set up an encounter first');

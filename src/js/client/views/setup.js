@@ -7,8 +7,11 @@
  *   - Map canvas with E5's camera controls; tools: Select (drag tokens),
  *     Paint (E5's `attachTerrainBrush`), Place (click a cell to drop the
  *     armed monster).
- *   - Monster search (`/api/monsters/search`) with the phase-1 proxy label
+ *   - Monster search (`/api/monsters/search`) with the proxy label
  *     "fights as: Bandit — AC 12, Scimitar +3", and preset quick-picks.
+ *     A searched monster carries its Open5e slug; once the server built
+ *     it from the real SRD stat block (the setup ack's `monsters[]`,
+ *     source 'srd-2014') its line reads "SRD stat block: AC 18, Bite +10 …".
  *   - Initiative mode, pause mode (Auto / Pause each monster / Pause AI
  *     party too → `dm.review.set`), a live difficulty card that runs
  *     `calibrateEncounter` in the DM's browser debounced 400 ms, Start.
@@ -29,7 +32,7 @@
 import { h, replace, clear, createScope, delegate, attempt, select, observeCanvasSize } from './dom.js';
 import { seatsOf } from '../selectors.js';
 import { dmMoveIntent } from '../intents.js';
-import { matchPresetForOpen5e, fightsAsLabel } from '../monster-match.js';
+import { matchPresetForOpen5e, fightsAsLabel, statBlockLabel, statBlockInfo, setupAckMonsters } from '../monster-match.js';
 import { createCamera, attachCameraControls, pickCell, fitToGrid, WORLD_CELL_PX } from '../../map/camera.js';
 import { createRenderScheduler } from '../../map/scheduler.js';
 import { projectBattleView } from '../../map/view.js';
@@ -80,7 +83,11 @@ export function setupPayload(draft) {
   return {
     map,
     grid: { cols: draft.cols, rows: draft.rows, ...(draft.terrain ? { terrain: draft.terrain } : {}) },
-    monsters: draft.monsters.map(m => ({ id: m.id, slug: m.slug, name: m.name, ...(Number.isInteger(m.hp) ? { hp: m.hp } : {}), ...(m.cr != null ? { cr: m.cr } : {}) })),
+    monsters: draft.monsters.map(m => ({
+      id: m.id, slug: m.slug, name: m.name,
+      ...(m.open5eSlug ? { open5eSlug: m.open5eSlug } : {}),
+      ...(Number.isInteger(m.hp) ? { hp: m.hp } : {}), ...(m.cr != null ? { cr: m.cr } : {})
+    })),
     placements,
     initiativeMode: draft.initiativeMode
   };
@@ -130,6 +137,8 @@ export function mount(root, ctx) {
   let drag = null;
   let calTimer = null;
   let calRun = 0;
+  /** id → the setup ack's stat-block summary (E3 wave 6). */
+  let ackMonsters = {};
 
   const encounter = () => {
     const e = ctx.store.getPresented().encounter;
@@ -287,7 +296,7 @@ export function mount(root, ctx) {
       } catch (err) { fail(err); return; }
       attempt(() => ctx.send({ t: 'dm.entity.add', p: { entity } }), fail);
     } else {
-      draft.monsters.push({ id, slug: armed.slug, name: armed.name, hp: Number.isInteger(armed.hp) ? armed.hp : null, cr: armed.cr ?? null, pos: { ...cell } });
+      draft.monsters.push({ id, slug: armed.slug, ...(armed.open5eSlug ? { open5eSlug: armed.open5eSlug } : {}), name: armed.name, hp: Number.isInteger(armed.hp) ? armed.hp : null, cr: armed.cr ?? null, pos: { ...cell } });
       changed();
     }
     say(`${armed.name} placed.`);
@@ -343,7 +352,12 @@ export function mount(root, ctx) {
   }
 
   function sendSetup() {
-    return ctx.send({ t: 'dm.encounter.setup', p: setupPayload(draft) });
+    return Promise.resolve(ctx.send({ t: 'dm.encounter.setup', p: setupPayload(draft) })).then((ack) => {
+      // E3 wave 6: which monsters fight with their real SRD stat block.
+      ackMonsters = setupAckMonsters(ack);
+      if (!disposed) renderLists();
+      return ack;
+    });
   }
 
   delegate(scope, view, 'click', {
@@ -355,7 +369,7 @@ export function mount(root, ctx) {
     search: () => runSearch(),
     'arm-preset': (el) => { armPlacement({ slug: el.dataset.slug, name: MONSTER_PRESETS[el.dataset.slug]?.name || el.dataset.slug, hp: null, cr: null }); },
     'arm-result': (el) => {
-      armPlacement({ slug: el.dataset.slug, name: el.dataset.name, hp: el.dataset.hp ? Number(el.dataset.hp) : null, cr: el.dataset.cr || null });
+      armPlacement({ slug: el.dataset.slug, open5eSlug: el.dataset.o5 || null, name: el.dataset.name, hp: el.dataset.hp ? Number(el.dataset.hp) : null, cr: el.dataset.cr || null });
     },
     'remove-monster': (el) => {
       const id = el.dataset.id;
@@ -420,7 +434,7 @@ export function mount(root, ctx) {
       const list = Array.isArray(res?.results) ? res.results.slice(0, 12) : [];
       replace(doc, results, list.length ? list.map((r) => {
         const slug = matchPresetForOpen5e(r.name, r.type);
-        return h(doc, 'button', { type: 'button', class: 'play-search-result', dataset: { action: 'arm-result', slug, name: r.name, hp: r.hp ?? '', cr: r.cr ?? '' } }, [
+        return h(doc, 'button', { type: 'button', class: 'play-search-result', dataset: { action: 'arm-result', slug, o5: r.slug || '', name: r.name, hp: r.hp ?? '', cr: r.cr ?? '' } }, [
           h(doc, 'strong', { text: r.name }),
           h(doc, 'span', { class: 'dim', text: ` ${r.type || ''}${r.cr != null ? ` · CR ${r.cr}` : ''}${r.hp ? ` · ${r.hp} hp` : ''}` }),
           h(doc, 'span', { class: 'play-fights-as', text: fightsAsLabel(slug) })
@@ -502,15 +516,19 @@ export function mount(root, ctx) {
 
   function monstersNow() {
     const e = encounter();
-    if (e) return Object.values(e.entities).filter(x => x.kind === 'monster').map(x => ({ id: x.id, slug: x.statBlock?.slug, name: x.name, hp: x.hpMax, pos: x.pos }));
-    return draft.monsters;
+    if (e) {
+      return Object.values(e.entities).filter(x => x.kind === 'monster').map(x => ({
+        id: x.id, slug: x.statBlock?.slug, name: x.name, hp: x.hpMax, pos: x.pos, info: ackMonsters[x.id] || statBlockInfo(x)
+      }));
+    }
+    return draft.monsters.map(m => ({ ...m, info: ackMonsters[m.id] || null }));
   }
 
   function renderLists() {
     const mons = monstersNow();
     replace(doc, monsterList, mons.length ? mons.map(m => h(doc, 'li', { class: 'play-monster' }, [
       h(doc, 'span', { text: `${m.name} (${m.pos.col}, ${m.pos.row})` }),
-      h(doc, 'span', { class: 'play-fights-as', text: fightsAsLabel(m.slug) }),
+      h(doc, 'span', { class: `play-fights-as${m.info?.source === 'srd-2014' ? ' srd' : ''}`, text: statBlockLabel(m.info, m.slug) }),
       h(doc, 'button', { type: 'button', class: 'play-btn small', dataset: { action: 'remove-monster', id: m.id }, attrs: { 'aria-label': `Remove ${m.name}` }, text: '×' })
     ])) : [h(doc, 'li', { class: 'hint-line', text: 'No monsters yet: search or pick a preset, then click the map.' })]);
     const isCreated = created();

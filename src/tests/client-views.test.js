@@ -12,6 +12,7 @@ import { createStore } from '../js/client/store.js';
 import { mount as mountLobby } from '../js/client/views/lobby.js';
 import { mount as mountClaim, derivedSeatStats } from '../js/client/views/claim.js';
 import { mount as mountSetup, setupPayload, calibratorInputs } from '../js/client/views/setup.js';
+import { statBlockLabel, statBlockInfo, setupAckMonsters, fightsAsLabel } from '../js/client/monster-match.js';
 import { mount as mountBattle, reactionCopy } from '../js/client/views/battle.js';
 import { mount as mountDmPanel, createDmBridge, pendingPlan } from '../js/client/views/dm-panel.js';
 import { createAppearanceCache } from '../js/map/view.js';
@@ -194,7 +195,7 @@ test('C9 views: setup — search shows "fights as", placing + start sends setup 
   await flush();
   assert.deepEqual(hh.sent.map(i => i.t), ['dm.encounter.setup', 'dm.encounter.start']);
   const setup = hh.sent[0].p;
-  assert.deepEqual(setup.monsters, [{ id: 'm-1', slug: 'bandit', name: 'Bandit Captain', hp: 65, cr: '2' }]);
+  assert.deepEqual(setup.monsters, [{ id: 'm-1', slug: 'bandit', open5eSlug: 'bandit-captain', name: 'Bandit Captain', hp: 65, cr: '2' }]);
   assert.deepEqual(setup.placements['m-1'], { col: 5, row: 4 });
   // Pause mode → dm.review.set.
   const pause = hh.dom.byAction(hh.root, 'pause-mode')[0];
@@ -204,6 +205,59 @@ test('C9 views: setup — search shows "fights as", placing + start sends setup 
   assert.deepEqual(hh.sent.at(-1), { t: 'dm.review.set', p: { plans: true, aiParty: true } });
   un();
   assertClean(hh, 'setup');
+});
+
+test('C9 views: setup — the dm.encounter.setup ack\'s SRD stat block replaces "fights as"', async () => {
+  const hh = harness('dm');
+  hh.store.apply(snapshotMsg(20, null, { id: 'r1', code: 'ABC123', status: 'lobby', members: [], seats: [] }));
+  const send = hh.ctx.send;
+  hh.ctx.send = async (intent) => {
+    await send(intent);
+    if (intent.t !== 'dm.encounter.setup') return { ok: true };
+    return {
+      encounterId: 'enc-1',
+      monsters: intent.p.monsters.map((m, i) => (i === 0
+        ? { id: m.id, name: m.name, preset: 'bandit', source: 'srd-2014', ac: 15, hpMax: 65, attacks: [{ name: 'Scimitar', bonus: 5, dice: '1d6+3' }, { name: 'Dagger', bonus: 5, dice: '1d4+3' }, { name: 'Parry', bonus: 0, dice: '0' }] }
+        : { id: m.id, name: m.name, preset: m.slug, source: null, ac: 12, hpMax: 11, attacks: [] }))
+    };
+  };
+  const un = mountSetup(hh.root, hh.ctx);
+  const search = hh.dom.findAll(hh.root, n => n.tagName === 'INPUT' && n.type === 'search')[0];
+  search.value = 'bandit';
+  hh.dom.byAction(hh.root, 'search')[0].click();
+  await flush();
+  const canvas = hh.dom.findAll(hh.root, n => n.tagName === 'CANVAS')[0];
+  await hh.raf.frame();
+  const { fitToGrid, createCamera, worldToScreen } = await import('../js/map/camera.js');
+  const cam = fitToGrid(createCamera({ zoom: 1, minZoom: 0.1, maxZoom: 4, viewW: 640, viewH: 420 }), 12, 8, 64, { padding: 8 });
+  const place = (col, row) => { const at = worldToScreen(cam, col * 64 + 32, row * 64 + 32); hh.dom.fire(canvas, 'pointerdown', { clientX: at.x, clientY: at.y, button: 0 }); };
+  hh.dom.byAction(hh.root, 'arm-result')[0].click();
+  place(5, 4);
+  hh.dom.byAction(hh.root, 'arm-preset').find(b => b.dataset.slug === 'goblin').click();
+  place(6, 4);
+  const lines = () => hh.dom.findAll(hh.root, n => n.tagName === 'SPAN' && /play-fights-as/.test(n.className) && n.parentNode?.tagName === 'LI').map(n => n.textContent);
+  const before = lines();
+  assert.equal(before.length, 2);
+  assert.equal(before[0], 'fights as: Bandit — AC 12, Scimitar +3', 'the proxy line before the server answers');
+  hh.dom.byAction(hh.root, 'create')[0].click();
+  await flush();
+  const after = lines();
+  assert.equal(after[0], 'SRD stat block: AC 15, Scimitar +5, Dagger +5 … · 65 hp');
+  assert.match(after[1], /^fights as: Goblin/, 'no stat block: the preset proxy');
+  un();
+  assertClean(hh, 'setup (srd)');
+});
+
+test('monster-match: statBlockLabel / statBlockInfo / setupAckMonsters', () => {
+  assert.equal(statBlockLabel({ source: 'srd-2014', ac: 18, hpMax: 178, attacks: [{ name: 'Bite', bonus: 10 }] }, 'young-dragon'), 'SRD stat block: AC 18, Bite +10 · 178 hp');
+  assert.equal(statBlockLabel({ source: null, ac: 18 }, 'bandit'), fightsAsLabel('bandit'));
+  assert.equal(statBlockLabel(null, 'bandit'), 'fights as: Bandit — AC 12, Scimitar +3');
+  assert.equal(statBlockLabel({ source: 'srd-2014', attacks: [] }, 'bandit'), 'SRD stat block: AC ?');
+  assert.equal(statBlockInfo({ kind: 'pc' }), null);
+  assert.deepEqual(statBlockInfo({ kind: 'monster', ac: 17, hpMax: 80, statBlock: { slug: 'young-dragon', source: 'srd-2014', attacks: [{ name: 'Bite', bonus: 7, dice: '2d10+4', extra: 1 }] } }),
+    { source: 'srd-2014', ac: 17, hpMax: 80, attacks: [{ name: 'Bite', bonus: 7, dice: '2d10+4' }] });
+  assert.deepEqual(Object.keys(setupAckMonsters({ monsters: [{ id: 'a' }, { name: 'no id' }, null] })), ['a']);
+  assert.deepEqual(setupAckMonsters(null), {});
 });
 
 test('C9 views: setup helpers build the protocol payload and calibrator inputs', () => {
