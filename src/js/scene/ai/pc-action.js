@@ -29,6 +29,7 @@ import { spellById, canCastSpell, applyUpcast } from '../monster-spells.js';
 import { mctsEvaluate, shallowRolloutForResource } from './mcts.js';
 import { requireRng } from '../rng.js';
 import { spellSlug, grantedSpellEntry, spellUseKey, usesLeft } from '../feature-uses.js';
+import { hasReactionAvailable } from '../reactions.js';
 
 function posOf(e) { return e?._position || e?.position || null; }
 function hpOf(e)  { return typeof e?.hp === 'number' ? e.hp : (e?.hp?.current ?? 0); }
@@ -71,6 +72,9 @@ export function choosePcAction({ self, enemies, allies, downedAllies = [], rng }
   if (!best) {
     return { kind: 'dodge', targetId: null, archetype, score: 0, breakdown: [], featuresFired: [] };
   }
+  // M64 phase 1.5 wave 6 — a caster pinned in melee teleports out.
+  const escape = considerMistyStep({ self, profile, enemies: liveEnemies, best });
+  if (escape) return { ...escape, archetype };
   // M42 — Fallback: if the chosen action is dash/dodge/disengage AND
   // the entity has a melee weapon, default to a mainhand melee attack
   // against the chosen target. The simulator's movement step closes
@@ -229,6 +233,7 @@ function scoreActionsAgainst({ self, target, allies, enemies, profile, rng }) {
     const spell = spellById(id);
     if (!spell) continue;
     if (spell.targetSide === 'ally') continue; // heal handled below
+    if (spell.targetSide === 'self') continue; // Misty Step: considerMistyStep
     const w = castWeights[id];
     if (w == null) continue;
     if (distance > (spell.range || 5)) continue;
@@ -475,6 +480,49 @@ function collectSpells(ref) {
  *  consistently with the AI planner. */
 export function nameToSpellId(name) {
   return spellSlug(name);
+}
+
+/**
+ * M64 phase 1.5 wave 6 — Misty Step as a disengage. Chosen over the best
+ * plan when the profile opts in (`castWeights['misty-step'] > 0`), the PC
+ * can cast it (a granted use, else a slot of level 2+, the lowest one),
+ * the best plan is not a melee swing, and a hostile within reach still
+ * has its reaction — walking away would provoke. The engine picks the
+ * landing cell (farthest from the hostiles) since the planner has no grid.
+ * @returns {object|null} plan
+ */
+function considerMistyStep({ self, profile, enemies, best }) {
+  const id = 'misty-step';
+  const w = profile.castWeights?.[id];
+  if (!(w > 0) || best.kind === 'melee' || best.kind === 'feature' || best.targetSide === 'ally') return null;
+  const ref = self.ref || self;
+  if (!collectSpells(ref).some(n => nameToSpellId(n) === id)) return null;
+  const spell = spellById(id);
+  if (!spell) return null;
+  const sp = posOf(self);
+  if (!sp) return null;
+  const pinned = enemies.some(e => {
+    const ep = posOf(e);
+    const reach = Math.max(5, Number(e.attack?.reachFt) || 5);
+    return ep && chebyshevFeet(sp, ep) <= reach && hasReactionAvailable(e);
+  });
+  if (!pinned) return null;
+  let castAtLevel = spell.level;
+  const granted = grantedUsable(self, id);
+  if (granted === false) return null;
+  if (granted === null) {
+    const slots = self._slots || ref._slots || null;
+    const lvl = slots ? [2, 3, 4, 5, 6, 7, 8, 9].find(l => (slots[l] ?? 0) > 0) : null;
+    if (!lvl) return null;
+    castAtLevel = lvl;
+  }
+  return {
+    kind: 'cast', targetId: self.id ?? ref.id ?? null, targetSide: 'self',
+    weapon: null, spellId: id, castAtLevel,
+    featuresFired: [],
+    score: best.score + w,
+    breakdown: [{ name: 'action:cast', raw: 1, weighted: 0 }, { name: `spell:${spell.name}`, raw: 1, weighted: w }, { name: 'escape:leave-oa', raw: 1, weighted: 0 }]
+  };
 }
 
 /**

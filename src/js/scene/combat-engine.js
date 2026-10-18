@@ -41,7 +41,8 @@ import {
 import { factionLists, chebyshevFeet, isRangedWeapon, meleeReachFt } from './grid-rules.js';
 import { planMovement, occupiedCellsOf } from './movement.js';
 import { straightPath, terrainPath, terrainApproach } from './pathing.js';
-import { coverBetween } from './grid-legality.js';
+import { coverBetween, lineOfSight } from './grid-legality.js';
+import { asTerrain, TERRAIN_FLAGS } from '../map/terrain.js';
 import { chooseAction, fleeTargetCell } from './ai/profile.js';
 import { choosePcAction } from './ai/pc-action.js';
 import {
@@ -238,8 +239,12 @@ async function resolveTurn(attacker, enemies, allies, scene, rng, prompts, ctx) 
   // Every plan (player, DM or AI) names its side: an ally-targeted plan
   // (Healing Word, Cure Wounds) resolves among the allies. M64 round 3 —
   // AI heal plans used to be looked up among the enemies and never landed.
+  // M64 phase 1.5 wave 6 — a self-targeted spell (Misty Step) is decided
+  // by the registry, not the plan: the turn.act plan has no 'self' side.
+  const selfSpell = plan?.kind === 'cast' && spellById(plan.spellId)?.targetSide === 'self';
   let target;
-  if (plan?.targetSide === 'ally') target = allies.find(a => sameId(a.id, plan.targetId));
+  if (selfSpell) target = attacker;
+  else if (plan?.targetSide === 'ally') target = allies.find(a => sameId(a.id, plan.targetId));
   else if (plan?.targetId != null) target = enemies.find(e => sameId(e.id, plan.targetId));
   else target = pickTarget(targetable);
   if (plan && canEmit(ctx)) {
@@ -287,6 +292,18 @@ async function resolveTurn(attacker, enemies, allies, scene, rng, prompts, ctx) 
   // death save); the dead and the fallen monsters are off the table.
   if (explicit && !isAlive(target) && !isDying(target) && !healsAlly && !NON_ATTACK_KINDS.has(plan.kind)) {
     emitEvent(ctx, 'turn.rejected', { actorId, code: 'target-down', reason: `${target.name || idOf(target)} is down` });
+    return;
+  }
+
+  // M64 phase 1.5 wave 6 — a teleport cast replaces the move: no walk, no
+  // opportunity attacks; runMonsterSpell places the caster.
+  if (selfSpell) {
+    if (attacker.kind === 'pc' && !attacker._slots) attacker._slots = slotsForPc(attacker.ref || attacker);
+    await runMonsterSpell({
+      attacker, target: attacker, plan, scene, rng,
+      witnesses: enemies.filter(isAlive).filter(e => e.kind === 'pc'),
+      allEnemies: enemies, allies, prompts, ctx
+    });
     return;
   }
 
@@ -887,6 +904,16 @@ export async function runMonsterSpell({ attacker, target, plan, scene, rng, witn
     emitEvent(ctx, 'turn.rejected', { actorId: casterId, code: 'no-line', reason: `${target.name || idOf(target)} has total cover` });
     return;
   }
+  // M64 phase 1.5 wave 6 — Misty Step: the destination is checked before
+  // anything is spent.
+  let teleport = null;
+  if (spell.kind === 'teleport') {
+    teleport = teleportDestination(attacker, plan.moveTo, spell.teleportFt || 30, scene, roster, allEnemies);
+    if (teleport.error) {
+      emitEvent(ctx, 'turn.rejected', { actorId: casterId, code: 'bad-move', reason: teleport.error });
+      return;
+    }
+  }
   if (spell.concentration && isConcentrating(attacker)) {
     endConcentration(attacker, 'recast', ctx, group, roster);
   }
@@ -963,6 +990,19 @@ export async function runMonsterSpell({ attacker, target, plan, scene, rng, witn
   const castCinema = (defender, outcome, extra = {}) => dispatchCinema(prompts, ctx, group, {
     attacker, defender, plan, spell, cast: true, outcome
   }, { reaction: false, cast: true, targetHpBefore: extra.hpBefore ?? defender?.hp, spell, outcome, effects: extra.effects, exchangeId: extra.exchangeId });
+
+  if (teleport) {
+    const at = attacker._position || attacker.position;
+    const from = { col: at.col, row: at.row };
+    const to = { col: teleport.cell.col, row: teleport.cell.row };
+    if (attacker.kind === 'pc') attacker._position = to;
+    else attacker.position = to;
+    emitEvent(ctx, 'move', { actorId: casterId, from, to, path: [from, to], teleport: true }, group);
+    if (typeof prompts.onMove === 'function') {
+      await prompts.onMove({ mover: attacker, from, to, path: [from, to], teleport: true });
+    }
+    return;
+  }
 
   if (spell.kind === 'heal') {
     const dmgRoll = rollDamage(spell.dice, { crit: false }, rng);
@@ -2367,6 +2407,60 @@ export function coverSaveBonus(cover, stat) {
 }
 
 /** The sheet's own spell entry (parsed spells[]) for a registry id, or null. */
+/**
+ * M64 phase 1.5 wave 6 — where a teleport (Misty Step) lands. An explicit
+ * `moveTo` must be on the grid, unoccupied, not blocked terrain, within
+ * `rangeFt` and (with terrain) in line of sight. Without one (the AI), the
+ * legal cell farthest from the nearest living hostile wins; ties go to the
+ * shorter hop, then scan order (rows, then columns).
+ * @param {object} caster — wrapper
+ * @param {{col: number, row: number}|undefined} moveTo
+ * @param {number} rangeFt
+ * @param {object} scene
+ * @param {object[]} roster — every wrapper in the encounter
+ * @param {object[]} hostiles — the caster's enemies
+ * @returns {{cell: {col: number, row: number}}|{error: string}}
+ */
+function teleportDestination(caster, moveTo, rangeFt, scene, roster, hostiles) {
+  const from = caster._position || caster.position;
+  if (!from) return { error: 'the caster has no position' };
+  const terrain = scene?.terrain ? asTerrain(scene.terrain) : null;
+  const cols = terrain ? terrain.cols : (scene?.cols || 99);
+  const rows = terrain ? terrain.rows : (scene?.rows || 99);
+  const taken = new Set();
+  for (const w of roster) {
+    if (w === caster || sameId(w.id, caster.id) || (w.kind === 'monster' && !isAlive(w))) continue;
+    const p = w._position || w.position;
+    if (p) taken.add(`${p.col},${p.row}`);
+  }
+  const legal = (c) => {
+    if (!(c.col >= 0 && c.row >= 0 && c.col < cols && c.row < rows)) return 'destination is off the grid';
+    if (taken.has(`${c.col},${c.row}`)) return 'destination is occupied';
+    if (chebyshevFeet(from, c) > rangeFt) return `destination is beyond ${rangeFt} ft`;
+    if (terrain && (terrain.cells[c.row * terrain.cols + c.col] & TERRAIN_FLAGS.BLOCKED) !== 0) return 'destination is blocked';
+    if (terrain && !lineOfSight(scene.terrain, from, c)) return 'destination is out of sight';
+    return null;
+  };
+  if (moveTo) {
+    const cell = { col: moveTo.col, row: moveTo.row };
+    const error = legal(cell);
+    return error ? { error } : { cell };
+  }
+  const threats = hostiles.filter(isAlive).map(h => h._position || h.position).filter(Boolean);
+  const reach = Math.floor(rangeFt / 5);
+  let best = null;
+  for (let row = from.row - reach; row <= from.row + reach; row++) {
+    for (let col = from.col - reach; col <= from.col + reach; col++) {
+      const cell = { col, row };
+      if ((col === from.col && row === from.row) || legal(cell)) continue;
+      const away = threats.length ? Math.min(...threats.map(t => chebyshevFeet(cell, t))) : 0;
+      const hop = chebyshevFeet(from, cell);
+      if (!best || away > best.away || (away === best.away && hop < best.hop)) best = { cell, away, hop };
+    }
+  }
+  return best ? { cell: best.cell } : { error: `no free cell within ${rangeFt} ft` };
+}
+
 function ownSpellEntry(ref, spellId) {
   for (const sp of Array.isArray(ref?.spells) ? ref.spells : []) {
     if (sp && typeof sp === 'object' && spellSlug(sp.name) === spellId) return sp;

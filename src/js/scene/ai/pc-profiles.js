@@ -66,7 +66,8 @@ export const PC_PROFILES = {
       'fire-bolt':     0.8,
       'magic-missile': 1.1,
       'sacred-flame':  0.6,
-      'shield':        0.0    // reactive, picked by M33.1 not by chooseAction
+      'shield':        0.0,   // reactive, picked by M33.1 not by chooseAction
+      'misty-step':    0.9    // M64 wave 6: teleport out of melee (considerMistyStep)
     }
   },
 

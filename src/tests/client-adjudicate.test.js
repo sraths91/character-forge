@@ -56,7 +56,7 @@ test('C11: every off-registry spell of the fixture casters is castable through a
     }
   }
   assert.ok(checked >= 4);
-  assert.deepEqual(adjudicableSpells(ddb('cleric-l5')).map(s => s.name), ['Bless', 'Misty Step', 'Spirit Guardians']);
+  assert.deepEqual(adjudicableSpells(ddb('cleric-l5')).map(s => s.name), ['Bless', 'Spirit Guardians']);
 });
 
 test('C11: the DM-panel form sends the adjudication; the server result reaches the table', async () => {
@@ -81,7 +81,7 @@ test('C11: the DM-panel form sends the adjudication; the server result reaches t
   const caster = root.querySelector('[data-action="adj-caster"]');
   caster.value = 'pc-1';
   dom.fire(caster, 'change');
-  assert.match(dom.byText(root, 'Off-registry spells on this sheet')[0].textContent, /Bless, Misty Step, Spirit Guardians/);
+  assert.match(dom.byText(root, 'Off-registry spells on this sheet')[0].textContent, /Bless, Spirit Guardians/);
   dom.findAll(root, n => n.attrs?.get('aria-label') === 'Spell')[0].value = 'Spirit Guardians';
   dom.findAll(root, n => n.attrs?.get('aria-label') === 'Slot level')[0].value = '3';
   const row = root.querySelector('[data-adj-row="1"]');

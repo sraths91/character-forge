@@ -134,14 +134,21 @@ export function validateIntent(state, intent, opts = {}) {
   const sheet = sheetOf(actor, opts.sheets);
   if (actor.kind === 'pc' && !sheet) return fail('no-sheet', `no character sheet for ${actor.name}`);
 
-  // Movement destination.
+  // Movement destination. M64 wave 6 — a teleport spell (Misty Step)
+  // checks its own range and needs no walkable path.
   let from = actor.pos;
+  const teleportFt = plan.kind === 'cast' && plan.spellId ? spellById(plan.spellId)?.teleportFt : null;
   if (plan.moveTo) {
     const mv = plan.moveTo;
     const g = state.grid || {};
     if (!(mv.col >= 0 && mv.row >= 0 && mv.col < g.cols && mv.row < g.rows)) return fail('bad-move', 'destination is off the grid');
     const taken = Object.values(state.entities).some(e => e.id !== actorId && e.pos.col === mv.col && e.pos.row === mv.row);
     if (taken) return fail('bad-move', 'destination is occupied');
+    if (teleportFt && chebyshevFeet(actor.pos, mv) > teleportFt) return fail('bad-move', `destination is beyond ${teleportFt} ft`);
+  }
+  if (plan.moveTo && !teleportFt) {
+    const mv = plan.moveTo;
+    const g = state.grid || {};
     // M64 R7 — grappled / restrained: speed 0.
     const speed = conds.includes('grappled') || conds.includes('restrained') ? 0 : (actor.speedFt ?? 30);
     if (chebyshevFeet(actor.pos, mv) > speed) return fail('bad-move', `destination is beyond ${speed} ft`);
@@ -184,7 +191,7 @@ export function validateIntent(state, intent, opts = {}) {
   // Target.
   let target = null;
   const side = plan.targetSide || (spell && (spell.targetSide === 'ally' || spell.kind === 'heal') ? 'ally' : 'enemy');
-  if (TARGETED.has(plan.kind) && !(spell?.aoe && plan.targetId == null)) {
+  if (TARGETED.has(plan.kind) && !(spell?.aoe && plan.targetId == null) && spell?.targetSide !== 'self') {
     if (plan.targetId == null) return fail('no-target', 'the plan names no target');
     target = state.entities[String(plan.targetId)];
     if (!target) return fail('no-target', `unknown target ${plan.targetId}`);

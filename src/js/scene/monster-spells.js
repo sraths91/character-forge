@@ -164,6 +164,38 @@ export const MONSTER_SPELLS = {
     aoe: true,
     description: '15ft cone — 5d6 fire, DEX half. Recharge 5-6.',
     pageRef: 'MM Young Red Dragon'
+  },
+
+  // M64 phase 1.5 wave 6 (E1, granted to E1 by E4) — two PC staples.
+  // Misty Step: `kind: 'teleport'` targets the caster itself; the engine
+  // moves it to `plan.moveTo` (or, for the AI, the free cell within
+  // `teleportFt` farthest from every hostile) without provoking
+  // opportunity attacks. The cast is the whole turn (no attack).
+  'misty-step': {
+    id: 'misty-step', name: 'Misty Step',
+    kind: 'teleport',
+    targetSide: 'self',
+    level: 2,
+    school: 'conjuration',
+    range: 0,
+    teleportFt: 30,
+    bonusAction: true,
+    description: 'Bonus action: teleport up to 30 ft to an unoccupied space you can see.',
+    pageRef: 'PHB p260'
+  },
+  // Eldritch Blast: one 1d10 force ranged spell attack per beam; the
+  // beam count (2 / 3 / 4 at character level 5 / 11 / 17) comes from
+  // cantrip-scaling.js (`mode: 'beams'`).
+  'eldritch-blast': {
+    id: 'eldritch-blast', name: 'Eldritch Blast',
+    kind: 'spell-attack',
+    level: 0,
+    school: 'evocation',
+    range: 120,
+    dice: '1d10',
+    damageType: 'Force',
+    description: 'Ranged spell attack per beam. On hit: 1d10 force. More beams at levels 5, 11 and 17.',
+    pageRef: 'PHB p237'
   }
 };
 

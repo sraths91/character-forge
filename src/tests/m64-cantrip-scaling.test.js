@@ -67,10 +67,7 @@ test('engine: a Wizard 5 Fire Bolt rolls 2d10, a Wizard 4 1d10 (every die max at
 });
 
 test('engine: Eldritch Blast fires one attack per beam, re-targeting when the first target drops', async () => {
-  MONSTER_SPELLS['eldritch-blast'] = {
-    id: 'eldritch-blast', name: 'Eldritch Blast', kind: 'spell-attack', level: 0, range: 120, dice: '1d10', damageType: 'Force'
-  };
-  try {
+  {
     const lock = buildPc({
       id: 'lock', _position: { col: 1, row: 1 },
       ref: { name: 'Lock', classes: [{ name: 'Warlock', level: 11 }], spells: ['Eldritch Blast'], abilityModifiers: { STR: 0, DEX: 1, CON: 1, INT: 0, WIS: 0, CHA: 4 }, equipment: {} }
@@ -88,9 +85,31 @@ test('engine: Eldritch Blast fires one attack per beam, re-targeting when the fi
     const ex = events.filter(e => e.type === 'exchange').map(e => e.payload.exchangeId);
     assert.deepEqual(ex, [ex[0], `${ex[0]}.s2`, `${ex[0]}.s3`]);
     assert.equal(events.filter(e => e.type === 'spell.cast').length, 1, 'one cast');
-  } finally {
-    delete MONSTER_SPELLS['eldritch-blast'];
   }
+});
+
+test('registry: Eldritch Blast is a 120 ft 1d10 force spell-attack cantrip that scales by beams', () => {
+  const eb = MONSTER_SPELLS['eldritch-blast'];
+  assert.equal(spellById('eldritch-blast'), eb);
+  assert.deepEqual([eb.kind, eb.level, eb.range, eb.dice, eb.damageType], ['spell-attack', 0, 120, '1d10', 'Force']);
+  assert.deepEqual([4, 5, 11, 17].map(l => scaleCantrip(eb, l).beams ?? 1), [1, 2, 3, 4]);
+});
+
+test('engine: a Warlock 4 Eldritch Blast is one 1d10 force beam at 120 ft', async () => {
+  const lock = buildPc({
+    id: 'lock', _position: { col: 0, row: 0 }, speedFt: 0,
+    ref: { name: 'Lock', classes: [{ name: 'Warlock', level: 4 }], spells: ['Eldritch Blast'], abilityModifiers: { STR: 0, DEX: 1, CON: 1, INT: 0, WIS: 0, CHA: 4 }, equipment: {} }
+  });
+  const far = buildMonster({ id: 'far', hp: 200, hpMax: 200, ac: 1, position: { col: 24, row: 0 } });
+  const events = [];
+  await runOneAttack(lock, [far], [lock], buildScene({ cols: 30 }), () => 0.9, {
+    forcePlan: { kind: 'cast', spellId: 'eldritch-blast', castAtLevel: 0, targetId: 'far', targetSide: 'enemy', featuresFired: [] }
+  }, { emit: (e) => events.push(e), turnId: 't' });
+  assert.ok(!events.some(e => e.type === 'move'), 'speed 0: cast from 120 ft');
+  assert.equal(events.filter(e => e.type === 'attack.rolled').length, 1, 'in range: rolled, not auto-missed');
+  const dmg = events.find(e => e.type === 'damage').payload;
+  assert.equal(dmg.rolled, 10, '1d10 at max');
+  assert.equal(dmg.type, 'Force');
 });
 
 test('engine: monster cantrips never scale', async () => {
