@@ -23,7 +23,6 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { performance } from 'node:perf_hooks';
 import { spawn } from 'node:child_process';
-import { createServer as createNetServer } from 'node:net';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -73,8 +72,27 @@ function tableClient(name, wsUrl, token, WebSocketCtor) {
       w.resolve(msg);
     }
   });
-  session.ws.on('close', (e) => c.closes.push(e.code));
+  session.ws.on('close', (e) => {
+    c.closes.push(e.code);
+    for (const w of c.closeWaiters.splice(0)) w(e.code);
+  });
+  c.closeWaiters = [];
   return c;
+}
+
+/** The client's first socket close code (already seen or future). */
+function closedWith(c, { timeoutMs = 10_000 } = {}) {
+  if (c.closes.length) return Promise.resolve(c.closes[0]);
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`${c.name}: no socket close within ${timeoutMs} ms`)), timeoutMs);
+    c.closeWaiters.push((code) => { clearTimeout(timer); resolve(code); });
+  });
+}
+
+/** Resolve once the client holds every broadcast up to `seq` (frames arrive in order). */
+async function untilSeq(c, seq, opts) {
+  if (lastSeq(c) >= seq) return;
+  await until(c, f => (f.t === 'room.snapshot' ? f.p.seq : f.seq) >= seq, { ...opts, since: c.frames.length });
 }
 
 /** The first frame (already received or future) matching `pred`. */
@@ -148,7 +166,7 @@ async function playFirstPlayerTurn(base, sockets) {
   await send(dm, 'resync');
   const snapshot = await until(dm, m => m.t === 'room.snapshot', { since: resyncFrom });
   for (const c of [dm, player]) {
-    for (let i = 0; i < 200 && lastSeq(c) < snapshot.p.seq; i++) await new Promise(r => setTimeout(r, 5));
+    await untilSeq(c, snapshot.p.seq);
     assert.equal(lastSeq(c), snapshot.p.seq, `${c.name} holds every broadcast`);
   }
   return { room, join, dm, player, from, turnId, snapshot };
@@ -247,48 +265,47 @@ test('S1 smoke: DM + player play one turn on the real engine, in-process, under 
 
 // ------------------------------------------------------------ restart
 
-function freePort() {
-  return new Promise((resolve, reject) => {
-    const s = createNetServer();
-    s.once('error', reject);
-    s.listen(0, '127.0.0.1', () => { const { port } = s.address(); s.close(() => resolve(port)); });
-  });
-}
-
 /**
- * Spawn `node api/server.js` (multiplayer, real engine) on `dataDir` and
- * resolve once its startup log line names the bound port.
- *
- * api/server.js maps PORT=0 to its 3101 default (`Number(env.PORT) || 3101`),
- * so the child gets a free port picked here; the port is still read back
- * from the "API listening" log line.
+ * Spawn `node api/server.js` (multiplayer, real engine) on `dataDir` with
+ * PORT=0 and resolve once its "API listening" log line names the port the
+ * kernel bound. Only complete stdout lines are parsed (a chunk can end
+ * mid-line), and an exit before that line rejects with the child's output.
+ * Picking a "free" port up front and handing it over raced with every
+ * other test file binding ephemeral ports in parallel.
  */
 async function spawnServer(dataDir) {
-  const port = await freePort();
   const child = spawn(process.execPath, [join(HERE, '..', 'server.js')], {
     env: {
       ...process.env, NODE_ENV: 'test', CF_MULTIPLAYER: '1', CF_ENGINE: 'real',
-      CF_DATA_DIR: dataDir, CF_DB_PATH: '', PORT: String(port)
+      CF_DATA_DIR: dataDir, CF_DB_PATH: '', PORT: '0'
     },
     stdio: ['ignore', 'pipe', 'pipe']
   });
   const exited = new Promise((resolve) => child.once('exit', (code, signal) => resolve({ code, signal, at: performance.now() })));
   let out = '';
+  let pending = '';
   const bound = await new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(`server did not start: ${out}`)), 20_000);
+    const timer = setTimeout(() => reject(new Error(`server did not start within 20 s: ${out}`)), 20_000);
+    const onExit = (code, signal) => { clearTimeout(timer); reject(new Error(`server exited ${code ?? signal} before listening: ${out}`)); };
+    child.once('exit', onExit);
     child.stdout.on('data', (d) => {
       out += d;
-      for (const line of out.split('\n')) {
+      pending += d;
+      const lines = pending.split('\n');
+      pending = lines.pop();   // the unterminated tail waits for the next chunk
+      for (const line of lines) {
         if (!line.includes('API listening')) continue;
+        let port;
+        try { port = JSON.parse(line).port; } catch { continue; }
         clearTimeout(timer);
-        resolve(JSON.parse(line).port);
+        child.off('exit', onExit);
+        resolve(port);
         return;
       }
     });
     child.stderr.on('data', (d) => { out += d; });
-    child.once('exit', (code) => { clearTimeout(timer); reject(new Error(`server exited ${code}: ${out}`)); });
   });
-  assert.equal(bound, port, 'the startup log names the bound port');
+  assert.ok(Number.isInteger(bound) && bound > 0, `the startup log names the bound port (${bound})`);
   return { child, url: `http://127.0.0.1:${bound}`, exited };
 }
 
@@ -312,9 +329,14 @@ test('S1 restart: SIGTERM mid-encounter closes 1012 and exits; a restart on the 
 
     // Mid-encounter: resume; the goblin's AI turn runs and pc-1's next
     // turn starts and waits for its intent.
+    // Both clients are waited on, from marks taken before the resume: the
+    // two sockets drain independently, so the DM's frames may trail the
+    // player's (reading the DM's last turn.ended after waiting only on the
+    // player raced).
     const before = dm.frames.length;
+    const marks = new Map([dm, player].map(c => [c, c.frames.length]));
     await send(dm, 'dm.resume');
-    await until(player, isEvent('turn.started', p => p.payload.actorId === 'pc-1'), { since: player.frames.length });
+    for (const c of [dm, player]) await until(c, isEvent('turn.started', p => p.payload.actorId === 'pc-1'), { since: marks.get(c) });
     const durable = sequenced(dm, 0).filter(f => f.t === 'turn.ended').at(-1).p.payload.stateHash;
     assert.ok(dm.frames.slice(before).some(f => f.t === 'turn.ended' && f.p.payload.actorId === 'gob'), 'the goblin took its turn');
     assert.equal((await (await fetch(`${a.url}/api/health`)).json()).connections, 2);
@@ -328,8 +350,7 @@ test('S1 restart: SIGTERM mid-encounter closes 1012 and exits; a restart on the 
     assert.ok(ms < 5000, `exited in ${ms.toFixed(0)} ms`);
     if (process.env.SMOKE_TIMING) console.log(`restart: SIGTERM → exit ${ms.toFixed(0)} ms`);
     for (const c of [dm, player]) {
-      for (let i = 0; i < 200 && c.closes.length === 0; i++) await new Promise(r => setTimeout(r, 5));
-      assert.equal(c.closes[0], 1012, `${c.name} closed 1012`);
+      assert.equal(await closedWith(c), 1012, `${c.name} closed 1012`);
       assert.ok(c.frames.some(f => f.t === 'room.closing'), `${c.name} saw room.closing`);
       c.session.close();   // stop the client's reconnect backoff
     }
