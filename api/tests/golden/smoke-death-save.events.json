@@ -1,0 +1,189 @@
+{
+  "about": "M64 phase 1.5 R9 over the wire: fighter-l5 (player) + wizard-l5 (AI seat) vs a 200-HP preset goblin, seed 42; after pc-1's first turn the DM sets pc-1 to 1 HP and arms the goblin's attack d20 at 19; the broadcasts from the resume to the goblin's next plan prompt, compacted.",
+  "seed": 42,
+  "events": [
+    [
+      "dm.override"
+    ],
+    [
+      "entity.updated"
+    ],
+    [
+      "room.status"
+    ],
+    [
+      "turn.started",
+      {
+        "actorId": "pc-2"
+      }
+    ],
+    [
+      "plan.chosen"
+    ],
+    [
+      "spell.cast"
+    ],
+    [
+      "attack.rolled",
+      {
+        "attackerId": "pc-2",
+        "targetId": "gob",
+        "weapon": null,
+        "kept": 5,
+        "total": 11,
+        "ac": 15,
+        "hit": false,
+        "crit": false
+      }
+    ],
+    [
+      "exchange",
+      {
+        "exchangeId": "r1t2.x1",
+        "attackerId": "pc-2",
+        "defenderId": "gob"
+      }
+    ],
+    [
+      "turn.ended",
+      {
+        "actorId": "pc-2"
+      }
+    ],
+    [
+      "turn.started",
+      {
+        "actorId": "gob"
+      }
+    ],
+    [
+      "plan.chosen"
+    ],
+    [
+      "dm.override"
+    ],
+    [
+      "attack.rolled",
+      {
+        "attackerId": "gob",
+        "targetId": "pc-1",
+        "weapon": "Scimitar",
+        "kept": 19,
+        "total": 23,
+        "ac": 18,
+        "hit": true,
+        "crit": false
+      }
+    ],
+    [
+      "damage",
+      {
+        "sourceId": "gob",
+        "targetId": "pc-1",
+        "amount": 1,
+        "hpAfter": 0
+      }
+    ],
+    [
+      "entity.downed",
+      {
+        "entityId": "pc-1",
+        "byId": "gob"
+      }
+    ],
+    [
+      "condition.applied",
+      {
+        "entityId": "pc-1",
+        "condition": "unconscious",
+        "sourceId": null,
+        "endsOn": "encounter",
+        "save": null
+      }
+    ],
+    [
+      "exchange",
+      {
+        "exchangeId": "r2t0.x1",
+        "attackerId": "gob",
+        "defenderId": "pc-1"
+      }
+    ],
+    [
+      "turn.ended",
+      {
+        "actorId": "gob"
+      }
+    ],
+    [
+      "death.save",
+      {
+        "entityId": "pc-1",
+        "d20": 7,
+        "success": false,
+        "crit": false,
+        "successes": 0,
+        "failures": 1,
+        "cause": "roll"
+      }
+    ],
+    [
+      "turn.skipped",
+      {
+        "actorId": "pc-1",
+        "reason": "down"
+      }
+    ],
+    [
+      "turn.ended",
+      {
+        "actorId": "pc-1"
+      }
+    ],
+    [
+      "turn.started",
+      {
+        "actorId": "pc-2"
+      }
+    ],
+    [
+      "plan.chosen"
+    ],
+    [
+      "spell.cast"
+    ],
+    [
+      "attack.rolled",
+      {
+        "attackerId": "pc-2",
+        "targetId": "gob",
+        "weapon": null,
+        "kept": 4,
+        "total": 10,
+        "ac": 15,
+        "hit": false,
+        "crit": false
+      }
+    ],
+    [
+      "exchange",
+      {
+        "exchangeId": "r2t2.x1",
+        "attackerId": "pc-2",
+        "defenderId": "gob"
+      }
+    ],
+    [
+      "turn.ended",
+      {
+        "actorId": "pc-2"
+      }
+    ],
+    [
+      "turn.started",
+      {
+        "actorId": "gob"
+      }
+    ]
+  ]
+}

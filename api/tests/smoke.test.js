@@ -11,6 +11,11 @@
 // stateHash against a resync snapshot, the goblin's HP story, and the
 // health endpoint's connection count. Teardown leaves no handles.
 //
+// Phase 1.5 rules over the wire (goldens smoke-extra-attack / smoke-death-save):
+// fighter-l5's one Attack action arrives as two `attack.rolled` in one
+// turn (R10); a PC dropped to 0 by the goblin makes its death save on its
+// next turn and the `death.save` frame is identical on both clients (R9).
+//
 // Restart variant: the same table against `node api/server.js` as a child
 // process; SIGTERM mid-encounter (1012 to every client, exit 0 < 5 s),
 // then a restart on the same DB brings the DM back to a paused table
@@ -57,14 +62,16 @@ function trackedWebSocket(sockets) {
  * One table seat: an E2 session plus a frame recorder and auto-responders
  * (cinema.done for every exchange; reaction prompts take their autoAnswer).
  */
-function tableClient(name, wsUrl, token, WebSocketCtor) {
+function tableClient(name, wsUrl, token, WebSocketCtor, { hold = null } = {}) {
   const session = createSession({ url: wsUrl, token, WebSocketCtor, wsOptions: { logger: { warn: () => {} } } });
-  const c = { name, session, frames: [], closes: [], waiters: [], failures: [] };
+  const c = { name, session, frames: [], closes: [], waiters: [], failures: [], held: [] };
   const answer = (intent) => session.send(intent).catch((err) => c.failures.push(`${intent.t}: ${err.code} ${err.message}`));
   session.ws.on('message', (msg) => {
     c.frames.push(msg);
     if (msg.t === 'exchange') answer({ t: 'cinema.done', p: { exchangeId: msg.p.payload.exchangeId } });
-    if (msg.t === 'prompt.open') answer({ t: 'prompt.answer', p: { promptId: msg.p.promptId, answer: msg.p.autoAnswer ?? false } });
+    // `hold(msg)` keeps a prompt open (unanswered) so the table stops there.
+    if (msg.t === 'prompt.open' && hold?.(msg, c)) c.held.push(msg);
+    else if (msg.t === 'prompt.open') answer({ t: 'prompt.answer', p: { promptId: msg.p.promptId, answer: msg.p.autoAnswer ?? false } });
     for (const w of [...c.waiters]) {
       if (!w.pred(msg)) continue;
       c.waiters.splice(c.waiters.indexOf(w), 1);
@@ -129,8 +136,9 @@ const send = async (c, t, p = {}) => {
  * Ends with a DM resync once both clients hold every broadcast.
  * @param {string} base  http(s) origin of the server
  * @param {Set<WebSocket>} sockets  filled with every client socket
+ * @param {{dmHold?: function}} [opts]  dmHold(msg, client): leave that DM prompt open
  */
-async function playFirstPlayerTurn(base, sockets) {
+async function playFirstPlayerTurn(base, sockets, { dmHold = null, goblinHp = 30, aiAlly = null } = {}) {
   const WebSocketCtor = trackedWebSocket(sockets);
   const wsUrl = `${base.replace(/^http/, 'ws')}/ws`;
   const anon = createApi({ fetch: globalThis.fetch, base });
@@ -140,7 +148,7 @@ async function playFirstPlayerTurn(base, sockets) {
   const imp = await playerApi.importCharacter(room.roomId, { json: ddbFixture('fighter-l5') });
   assert.match(imp.character.id, /^paste:/, 'a room paste never collides with a url import');
 
-  const dm = tableClient('dm', wsUrl, room.dmToken, WebSocketCtor);
+  const dm = tableClient('dm', wsUrl, room.dmToken, WebSocketCtor, { hold: dmHold });
   await dm.session.connect();
   await until(dm, m => m.t === 'room.snapshot');
   const player = tableClient('player', wsUrl, join.token, WebSocketCtor);
@@ -150,9 +158,14 @@ async function playFirstPlayerTurn(base, sockets) {
 
   const claim = await send(player, 'seat.claim', { characterId: imp.character.id });
   assert.equal(claim.seat, 1);
+  if (aiAlly) {
+    const dmApi = createApi({ fetch: globalThis.fetch, base, token: () => room.dmToken });
+    const ally = await dmApi.importCharacter(room.roomId, { json: ddbFixture(aiAlly) });
+    await dmApi.aiSeat(room.roomId, 2, ally.character.id, 'auto');
+  }
   await send(dm, 'dm.encounter.setup', {
     map: null, grid: { cols: 6, rows: 4 },
-    monsters: [{ id: 'gob', preset: 'goblin', name: 'Goblin', hp: 30 }], placements: {}
+    monsters: [{ id: 'gob', preset: 'goblin', name: 'Goblin', hp: goblinHp }], placements: {}
   });
   await send(dm, 'dm.encounter.start', { seed: SEED });
 
@@ -261,6 +274,153 @@ test('S1 smoke: DM + player play one turn on the real engine, in-process, under 
   const ms = performance.now() - t0;
   assert.ok(ms < SMOKE_BUDGET_MS, `smoke took ${ms.toFixed(0)} ms`);
   if (process.env.SMOKE_TIMING) console.log(`smoke: ${ms.toFixed(0)} ms`);
+});
+
+
+// ------------------------------------------------- phase 1.5 rules (R9, R10)
+
+/** Check (or, with UPDATE_GOLDEN=1, write) a golden file under golden/. */
+function checkGoldenFile(name, about, data) {
+  const file = join(HERE, 'golden', name);
+  if (UPDATE) {
+    mkdirSync(dirname(file), { recursive: true });
+    writeFileSync(file, `${JSON.stringify({ about, seed: SEED, ...data }, null, 2)}\n`);
+    return;
+  }
+  assert.ok(existsSync(file), `no golden ${name}; run UPDATE_GOLDEN=1 node --test api/tests/smoke.test.js and commit the reason`);
+  const { about: _a, seed: _s, ...want } = JSON.parse(readFileSync(file, 'utf8'));
+  assert.deepEqual(data, want, `${name}: the event story diverged from its golden`);
+}
+
+/** The broadcast frames after `from`, as [seq, t, p] (what both clients must agree on). */
+const frames = (c, from) => sequenced(c, from).map(f => [f.seq, f.t, f.p]);
+
+/** A compact, stable projection of one event for the goldens. */
+function brief({ type, payload: p }) {
+  switch (type) {
+    case 'attack.rolled': return [type, { attackerId: p.attackerId, targetId: p.targetId, weapon: p.weapon, kept: p.kept, total: p.total, ac: p.ac, hit: p.hit, crit: p.crit }];
+    case 'damage': return [type, { sourceId: p.sourceId, targetId: p.targetId, amount: p.amount, hpAfter: p.hpAfter }];
+    case 'exchange': return [type, { exchangeId: p.exchangeId, attackerId: p.attackerId, defenderId: p.defenderId }];
+    case 'death.save': return [type, p];
+    case 'entity.downed': case 'turn.skipped': case 'condition.applied': case 'turn.started': return [type, p];
+    case 'turn.ended': return [type, { actorId: p.actorId }];
+    default: return [type];
+  }
+}
+
+/** Boot the in-process real-engine server, run `fn(srv, sockets)`, tear down. */
+async function withServer(dbName, fn) {
+  const { db } = await tempDb(root, dbName);
+  const env = { NODE_ENV: 'test', CF_MULTIPLAYER: '1', CF_ENGINE: 'real' };
+  const srv = await startMultiplayerServer({ db, env, port: 0, host: '127.0.0.1', log: quiet, gatewayOpts: { heartbeatMs: 60_000 } });
+  const sockets = new Set();
+  const clients = [];
+  try {
+    await fn(srv, sockets, clients);
+  } finally {
+    for (const c of clients) c.session.close();
+    for (const ws of sockets) ws.terminate();
+    await srv.close();
+    srv.httpServer.closeAllConnections();
+  }
+}
+
+test('S1 rules: Extra Attack (R10) — fighter-l5\'s one Attack action is two attack.rolled in one turn, identical on both clients', async () => {
+  await withServer('smoke-extra.db', async (srv, sockets, clients) => {
+    const table = await playFirstPlayerTurn(srv.url, sockets, { goblinHp: 200 });
+    const { dm, player, from, turnId } = table;
+    clients.push(dm, player);
+    for (const c of [dm, player]) assert.deepEqual(c.failures, [], `${c.name}: auto-answers failed`);
+    assert.deepEqual(frames(player, from), frames(dm, from), 'both clients hold the same frames, payloads included');
+
+    const turn = sequenced(dm, from).filter(f => f.p?.turnId === turnId).map(f => f.p);
+    const attacks = turn.filter(e => e.type === 'attack.rolled' && e.payload.attackerId === 'pc-1');
+    assert.equal(attacks.length, 2, 'Extra Attack: two attack rolls in pc-1\'s turn');
+    assert.ok(attacks.every(a => a.payload.targetId === 'gob' && a.payload.weapon === 'Longsword' && !a.payload.isReaction));
+    assert.equal(turn.filter(e => e.type === 'plan.chosen').length, 1, 'one Attack action, one plan');
+    const exchanges = turn.filter(e => e.type === 'exchange').map(e => e.payload.exchangeId);
+    assert.equal(exchanges.length, 2, 'one cinema exchange per swing');
+    assert.match(exchanges[1], /\.s2$/, 'the second swing is the same exchange\'s swing 2');
+    const hp = turn.filter(e => e.type === 'damage' && e.payload.targetId === 'gob').map(e => e.payload.hpAfter);
+    assert.equal(table.snapshot.p.encounter.entities.gob.hp, hp.at(-1) ?? 200, 'the snapshot HP is the last damage hpAfter');
+
+    checkGoldenFile('smoke-extra-attack.events.json',
+      'M64 phase 1.5 R10 over the wire: pc-1 (fixture fighter-l5, Extra Attack) takes one melee turn.act against a preset goblin at 200 HP, seed 42; the events of that turn, compacted.',
+      { turn: turn.map(brief) });
+  });
+});
+
+test('S1 rules: dying (R9) — a PC dropped to 0 makes its death save, and the death.save reaches both clients identically', async () => {
+  // pc-1 (player, fighter-l5) + pc-2 (AI seat, wizard-l5) vs a 200-HP
+  // goblin, seed 42. After pc-1's first turn the DM sets pc-1 to 1 HP,
+  // arms the goblin's next attack d20 at 19 and turns plan review on; the
+  // DM's client holds the goblin's plan prompt once a death save has been
+  // seen, so the table stops at a known point.
+  const deathSeen = (c) => c.frames.some(f => f.t === 'death.save');
+  const dmHold = (m, c) => m.p.kind === 'plan' && m.p.payload?.entityId === 'gob' && deathSeen(c);
+  await withServer('smoke-dying.db', async (srv, sockets, clients) => {
+    const table = await playFirstPlayerTurn(srv.url, sockets, { dmHold, goblinHp: 200, aiAlly: 'wizard-l5' });
+    const { dm, player, room } = table;
+    clients.push(dm, player);
+    const mark = table.snapshot.p.seq;
+
+    await send(dm, 'dm.review.set', { plans: true });
+    await send(dm, 'dm.entity.patch', { entityId: 'pc-1', hp: 1 });
+    await send(dm, 'dm.roll.arm', { entityId: 'gob', rollKind: 'attack', value: 19 });
+    await send(dm, 'dm.resume');
+    await until(dm, m => m.t === 'prompt.open' && dm.held.includes(m));
+    // The broker flushes before it prompts: every broadcast so far is out.
+    const head = srv.registry.get(room.roomId).seq;
+    for (const c of [dm, player]) {
+      await untilSeq(c, head);
+      assert.equal(lastSeq(c), head, `${c.name} holds every broadcast`);
+      assert.deepEqual(c.failures, [], `${c.name}: auto-answers failed`);
+    }
+
+    const dmFrames = frames(dm, mark);
+    assert.deepEqual(frames(player, mark), dmFrames, 'both clients hold the same frames, payloads included');
+    dmFrames.forEach(([seq], i) => assert.equal(seq, mark + 1 + i, 'seq is gap-free'));
+    // Engine events carry {type, payload}; room broadcasts (room.status,
+    // entity.updated) only their frame type.
+    const events = dmFrames.map(([, t, p]) => ({ type: t, payload: p.payload ?? p }));
+
+    // The goblin's armed hit takes pc-1 from 1 HP to 0: downed, unconscious.
+    const drop = events.find(e => e.type === 'damage' && e.payload.targetId === 'pc-1');
+    assert.equal(drop?.payload.sourceId, 'gob');
+    assert.equal(drop.payload.hpAfter, 0, 'pc-1 drops to 0');
+    assert.ok(events.some(e => e.type === 'entity.downed' && e.payload.entityId === 'pc-1'));
+    assert.ok(events.some(e => e.type === 'condition.applied' && e.payload.entityId === 'pc-1' && e.payload.condition === 'unconscious'));
+    assert.ok(!events.some(e => e.type === 'entity.died' || e.type === 'encounter.ended'), 'dying is not dead; the table plays on');
+
+    // pc-1's next turn is its death save, then the skip.
+    const saves = events.filter(e => e.type === 'death.save');
+    assert.equal(saves.length, 1);
+    const save = saves[0];
+    assert.equal(save.payload.entityId, 'pc-1');
+    assert.equal(save.payload.cause, 'roll');
+    assert.equal(save.payload.success, save.payload.d20 >= 10);
+    const at = events.indexOf(save);
+    assert.deepEqual([events[at + 1].type, events[at + 1].payload], ['turn.skipped', { actorId: 'pc-1', reason: 'down' }]);
+    const saveFrame = (c) => sequenced(c, mark).find(f => f.t === 'death.save');
+    assert.deepEqual(saveFrame(player), saveFrame(dm), 'the death.save frame is identical on both clients');
+
+    // The authoritative state agrees: downed, the tallies of that save.
+    const resyncFrom = dm.frames.length;
+    await send(dm, 'resync');
+    const snap = await until(dm, m => m.t === 'room.snapshot', { since: resyncFrom });
+    const pc1 = snap.p.encounter.entities['pc-1'];
+    assert.equal(pc1.hp, 0);
+    assert.equal(pc1.status, 'downed');
+    assert.equal(pc1.deathSaves.successes, save.payload.successes);
+    assert.equal(pc1.deathSaves.failures, save.payload.failures);
+    assert.equal(stateHash(snap.p.encounter), snap.p.stateHash);
+    const mirror = player.session.store.getState().encounter.entities['pc-1'];
+    assert.equal(mirror.hp, 0, 'the player\'s mirror shows pc-1 at 0 HP');
+
+    checkGoldenFile('smoke-death-save.events.json',
+      'M64 phase 1.5 R9 over the wire: fighter-l5 (player) + wizard-l5 (AI seat) vs a 200-HP preset goblin, seed 42; after pc-1\'s first turn the DM sets pc-1 to 1 HP and arms the goblin\'s attack d20 at 19; the broadcasts from the resume to the goblin\'s next plan prompt, compacted.',
+      { events: events.map(brief) });
+  });
 });
 
 // ------------------------------------------------------------ restart

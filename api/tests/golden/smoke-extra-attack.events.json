@@ -1,0 +1,75 @@
+{
+  "about": "M64 phase 1.5 R10 over the wire: pc-1 (fixture fighter-l5, Extra Attack) takes one melee turn.act against a preset goblin at 200 HP, seed 42; the events of that turn, compacted.",
+  "seed": 42,
+  "turn": [
+    [
+      "turn.started",
+      {
+        "actorId": "pc-1"
+      }
+    ],
+    [
+      "plan.chosen"
+    ],
+    [
+      "move"
+    ],
+    [
+      "attack.rolled",
+      {
+        "attackerId": "pc-1",
+        "targetId": "gob",
+        "weapon": "Longsword",
+        "kept": 18,
+        "total": 24,
+        "ac": 15,
+        "hit": true,
+        "crit": false
+      }
+    ],
+    [
+      "damage",
+      {
+        "sourceId": "pc-1",
+        "targetId": "gob",
+        "amount": 9,
+        "hpAfter": 191
+      }
+    ],
+    [
+      "exchange",
+      {
+        "exchangeId": "r1t0.x1",
+        "attackerId": "pc-1",
+        "defenderId": "gob"
+      }
+    ],
+    [
+      "attack.rolled",
+      {
+        "attackerId": "pc-1",
+        "targetId": "gob",
+        "weapon": "Longsword",
+        "kept": 4,
+        "total": 10,
+        "ac": 15,
+        "hit": false,
+        "crit": false
+      }
+    ],
+    [
+      "exchange",
+      {
+        "exchangeId": "r1t0.x1.s2",
+        "attackerId": "pc-1",
+        "defenderId": "gob"
+      }
+    ],
+    [
+      "turn.ended",
+      {
+        "actorId": "pc-1"
+      }
+    ]
+  ]
+}
