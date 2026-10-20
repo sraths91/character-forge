@@ -113,7 +113,9 @@ for (const p of PARTIES) {
   for (const lu of LINEUPS) {
     const monsters = buildMonsterInstances(lu.slugs, SCENE);
     const partyClone = p.party.map(stockToSimShape);
-    const r = calibrateEncounter({
+    // calibrateEncounter is async since M64 T1 (the simulator awaits every
+    // engine turn); without the await every row read a pending Promise.
+    const r = await calibrateEncounter({
       party: partyClone,
       monsters,
       scene: SCENE,
