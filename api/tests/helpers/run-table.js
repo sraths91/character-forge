@@ -126,6 +126,30 @@ export async function openRunTable(base, sockets) {
   return t;
 }
 
+/**
+ * Reconnect the whole table (same tokens) to `base` — after a restart.
+ * The old sessions must be closed already. Resolves once every client
+ * holds its room.snapshot and run.snapshot.
+ */
+export async function reconnectTable(t, base) {
+  t.base = base;
+  t.wsUrl = `${base.replace(/^http/, 'ws')}/ws`;
+  t.dm = tableClient('dm', t.wsUrl, t.run.dmToken, t.WS);
+  t.clients.push(t.dm);
+  await t.dm.session.connect();
+  for (const { name } of RUN_PARTY) {
+    const c = seatClient(t, name, t.players[name].join.token);
+    t.clients.push(c);
+    t.players[name].c = c;
+    await c.session.connect();
+  }
+  for (const c of tableClients(t)) {
+    await until(c, m => m.t === 'room.snapshot');
+    await until(c, m => m.t === 'run.snapshot');
+  }
+  return t;
+}
+
 /** Every table client: DM first, then the players in seat order. */
 export const tableClients = (t) => [t.dm, ...RUN_PARTY.map(p => t.players[p.name].c)];
 
