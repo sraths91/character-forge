@@ -24,7 +24,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { mkdirSync, writeFileSync, renameSync, unlinkSync, statfsSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { sniffImage, dimensionProblem, IMAGE_TYPES, MAP_LIMITS } from '../lib/image-sniff.js';
+import { checkImageUpload, IMAGE_TYPES, TOKEN_LIMITS } from '../lib/image-sniff.js';
 import { bearerToken, newId } from './tokens.js';
 import { RoomError } from './service.js';
 
@@ -33,9 +33,7 @@ export const MAP_QUOTA = Object.freeze({ maxBytes: 10 * 1024 * 1024, maxMaps: 20
 /** Upload kinds (uploaded_maps.kind). */
 export const MAP_KINDS = Object.freeze(['map', 'token']);
 /** Token images: one creature's picture, ≤ 1024 px per side. */
-export const TOKEN_LIMITS = Object.freeze({ maxSide: 1024, maxPixels: 1024 * 1024 });
-
-const EXT_MIME = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp' };
+export { TOKEN_LIMITS };
 
 /**
  * @param {import('express').Express} app
@@ -86,24 +84,11 @@ export function mountMapRoutes(app, { rooms, conn, dataDir, quota = MAP_QUOTA, s
       if (!MAP_KINDS.includes(kind)) throw new RoomError(400, 'BAD_KIND', `kind must be ${MAP_KINDS.join(' or ')}`);
       const noun = kind === 'token' ? 'token image' : 'map';
       const body = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
-      if (body.length === 0) throw new RoomError(400, 'EMPTY', 'Send the image bytes as the request body');
-      const sniff = sniffImage(body);
-      if (!sniff.ok) {
-        const what = sniff.reason === 'gif' ? 'GIF' : sniff.reason === 'svg' ? 'SVG' : null;
-        throw new RoomError(415, 'UNSUPPORTED_MEDIA', what ? `${what} ${noun}s are not accepted; use PNG, JPEG or WebP`
-          : `Not a readable PNG, JPEG or WebP image (${sniff.reason})`);
-      }
-      const declared = String(req.get('content-type') || '').split(';')[0].trim().toLowerCase();
-      if (declared && declared !== 'application/octet-stream' && declared !== sniff.mime) {
-        throw new RoomError(415, 'UNSUPPORTED_MEDIA', `Content-Type ${declared} does not match the image bytes (${sniff.mime})`);
-      }
-      const filename = typeof req.query.filename === 'string' ? req.query.filename : '';
-      const ext = /\.([A-Za-z0-9]+)$/.exec(filename)?.[1]?.toLowerCase();
-      if (filename && EXT_MIME[ext] !== sniff.mime) {
-        throw new RoomError(415, 'UNSUPPORTED_MEDIA', `The file name ${filename} does not match the image bytes (${sniff.mime})`);
-      }
-      const problem = dimensionProblem(sniff, kind === 'token' ? TOKEN_LIMITS : MAP_LIMITS);
-      if (problem) throw new RoomError(422, 'BAD_DIMENSIONS', problem);
+      const checked = checkImageUpload(body, {
+        kind, declaredType: req.get('content-type'), filename: typeof req.query.filename === 'string' ? req.query.filename : ''
+      });
+      if (!checked.ok) throw new RoomError(checked.status, checked.code, checked.message);
+      const { sniff } = checked;
 
       const roomId = req.params.id;
       const sha256 = createHash('sha256').update(body).digest('hex');

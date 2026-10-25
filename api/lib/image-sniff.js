@@ -99,3 +99,41 @@ export function dimensionProblem({ width, height }, limits = MAP_LIMITS) {
   if (width * height > limits.maxPixels) return `at most ${limits.maxPixels} pixels (got ${width * height})`;
   return null;
 }
+
+/** Token images (M64 1.5 W6): one creature's picture, ≤ 1024 px per side. */
+export const TOKEN_LIMITS = Object.freeze({ maxSide: 1024, maxPixels: 1024 * 1024 });
+
+const EXT_MIME = Object.freeze({ png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp' });
+
+/**
+ * The upload rules shared by room maps and campaign assets: magic bytes
+ * (PNG / JPEG / WebP; GIF and SVG refused by name), a declared
+ * Content-Type or file name that disagrees with the bytes, and the
+ * per-kind dimension caps.
+ * @param {Uint8Array} body
+ * @param {{kind?: 'map'|'token', declaredType?: string, filename?: string}} [opts]
+ * @returns {{ok: true, sniff: SniffResult} | {ok: false, status: number, code: string, message: string}}
+ */
+export function checkImageUpload(body, { kind = 'map', declaredType = '', filename = '' } = {}) {
+  const noun = kind === 'token' ? 'token image' : 'map';
+  if (!body || body.length === 0) return { ok: false, status: 400, code: 'EMPTY', message: 'Send the image bytes as the request body' };
+  const sniff = sniffImage(body);
+  if (!sniff.ok) {
+    const what = sniff.reason === 'gif' ? 'GIF' : sniff.reason === 'svg' ? 'SVG' : null;
+    return {
+      ok: false, status: 415, code: 'UNSUPPORTED_MEDIA',
+      message: what ? `${what} ${noun}s are not accepted; use PNG, JPEG or WebP` : `Not a readable PNG, JPEG or WebP image (${sniff.reason})`
+    };
+  }
+  const declared = String(declaredType || '').split(';')[0].trim().toLowerCase();
+  if (declared && declared !== 'application/octet-stream' && declared !== sniff.mime) {
+    return { ok: false, status: 415, code: 'UNSUPPORTED_MEDIA', message: `Content-Type ${declared} does not match the image bytes (${sniff.mime})` };
+  }
+  const ext = /\.([A-Za-z0-9]+)$/.exec(filename || '')?.[1]?.toLowerCase();
+  if (filename && EXT_MIME[ext] !== sniff.mime) {
+    return { ok: false, status: 415, code: 'UNSUPPORTED_MEDIA', message: `The file name ${filename} does not match the image bytes (${sniff.mime})` };
+  }
+  const problem = dimensionProblem(sniff, kind === 'token' ? TOKEN_LIMITS : MAP_LIMITS);
+  if (problem) return { ok: false, status: 422, code: 'BAD_DIMENSIONS', message: problem };
+  return { ok: true, sniff };
+}

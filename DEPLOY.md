@@ -11,6 +11,8 @@ Single Express server that:
   `/api/rooms`, a WebSocket gateway at `/ws` on the same port, the
   encounter event log in SQLite, and uploaded battle maps and DM token
   images under `<data dir>/maps/`
+- Campaign authoring (M65, every mode): `/api/campaigns/**`, with campaign
+  maps and token images under `<data dir>/campaigns/`
 
 Rooms live in process memory and the volume forbids replicas, so this is
 **one instance** (`numReplicas: 1` in `railway.json`).
@@ -71,7 +73,12 @@ character; `GET /api/characters/:ddbId` serves rules prose only to that
 session, the room's DM / importer / seat, see below) and `0005_map_kind`
 (additive: `uploaded_maps.kind TEXT NOT NULL DEFAULT 'map' CHECK (kind IN
 ('map', 'token'))`; every existing upload becomes a `map`, and the first
-boot on a populated DB writes `<db>.pre-0005.bak`).
+boot on a populated DB writes `<db>.pre-0005.bak`) and `0006_campaign_loop`
+(M65, additive: campaigns, campaign_nodes, encounter_templates,
+campaign_assets, runs, run_events, run_snapshots, run_items, level_ups,
+run_roster_archive, items_cache; new nullable/defaulted columns on
+`party_slots` and `encounters`; the `run_characters` view. No table is
+rebuilt; the first boot on a populated DB writes `<db>.pre-0006.bak`).
 
 ### 4. Health check
 Railway uses `GET /api/health` (configured in `railway.json`). It runs
@@ -115,6 +122,14 @@ Railway auto-restarts the service if this stops responding.
   `/api/maps/<roomId>/<sha256>.<ext>`; the DM puts a token image on a
   monster with `dm.entity.patch {imageUrl}` (only this room's upload
   paths are accepted). They are deleted with the room's maps.
+- **Campaigns** (M65): `POST /api/campaigns` returns a campaign key once
+  (only its sha256 is stored; a lost key cannot be recovered). Campaign
+  assets follow the map caps (10 MB, 8192 px / 1024 px for tokens) with
+  40 assets / 200 MB per campaign, are served from
+  `/api/campaign-assets/<campaignId>/<sha256>.<ext>`, and are copied into
+  a room's uploads when a template is used there. Exports carry the SRD
+  5.1 attribution (also at `/api/licenses`) and no D&D Beyond prose;
+  imports are capped at 64 MB.
 - **Janitor** (hourly): deletes event logs of encounters ended > 7 days
   ago, rooms idle 30 days (with their maps), and checkpoints the WAL
   above 64 MB.

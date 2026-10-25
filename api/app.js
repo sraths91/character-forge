@@ -22,6 +22,7 @@ import { searchOpen5eCreatures, fetchOpen5eCreature, toSummary } from './lib/ope
 import { createRoomService } from './rooms/service.js';
 import { mountRoomRoutes } from './rooms/http.js';
 import { mountMapRoutes } from './rooms/maps.js';
+import { mountCampaignRoutes, CAMPAIGN_IMPORT_PATH } from './campaigns/http.js';
 import { bearerToken, generateToken, hashToken } from './rooms/tokens.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -42,7 +43,9 @@ export const DEFAULT_LIMITS = Object.freeze({
   monsterGet: { windowMs: 60_000, max: 120 },
   items: { windowMs: 60_000, max: 200 },
   roomCreate: { windowMs: 3_600_000, max: 5 },
-  roomJoin: { windowMs: 60_000, max: 10 }
+  roomJoin: { windowMs: 60_000, max: 10 },
+  campaignCreate: { windowMs: 3_600_000, max: 20 },
+  srd: { windowMs: 60_000, max: 60 }
 });
 
 /**
@@ -124,12 +127,13 @@ export const CSP_REPORT_ONLY = [
  * @param {ReturnType<typeof createRoomService>} [opts.rooms]  Room service shared
  *   with the ws gateway (default: a new one over `db`).
  * @param {object} [opts.mapsOpts]  quota / statfs overrides for map uploads (tests).
+ * @param {object} [opts.campaignOpts]  assetQuota / statfs / now overrides for campaign routes (tests).
  * @returns {import('express').Express}
  */
 export function createApp({
   db, env = process.env, dataDir, log = defaultLog,
   fetchImpl = (...a) => fetch(...a), upstreamTimeoutMs = UPSTREAM_TIMEOUT_MS,
-  limits = {}, mount, distPath = join(__dirname, '..', 'dist'), rooms, mapsOpts = {}
+  limits = {}, mount, distPath = join(__dirname, '..', 'dist'), rooms, mapsOpts = {}, campaignOpts = {}
 } = {}) {
   if (!db) throw new Error('createApp: db handle (from openDb) is required');
   const healthDataDir = dataDir !== undefined
@@ -191,7 +195,9 @@ export function createApp({
     origin: PROD ? (ALLOWED_ORIGINS.length ? ALLOWED_ORIGINS : false) : true,
     credentials: true
   }));
-  app.use('/api', express.json({ limit: '2mb' }));
+  // The campaign import route parses its own, larger body (64 MB, assets inline).
+  const json2mb = express.json({ limit: '2mb' });
+  app.use('/api', (req, res, next) => (req.originalUrl.split('?')[0] === CAMPAIGN_IMPORT_PATH ? next() : json2mb(req, res, next)));
   app.use(cookieParser());
 
   // Import sessions (migration 0004): which browser imported which sheet.
@@ -451,6 +457,11 @@ export function createApp({
 
   mountRoomRoutes(app, { rooms: roomService, limiter });
   mountMapRoutes(app, { rooms: roomService, conn: db.db, dataDir: healthDataDir, log, ...mapsOpts });
+  // Campaign authoring needs schema 0006; a DB opened without migrating
+  // (tests holding an older schema) simply has no campaign routes.
+  const hasCampaigns = !!db.db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'campaigns'").get();
+  if (hasCampaigns) app.locals.campaigns = mountCampaignRoutes(app, { conn: db.db, rooms: roomService, dataDir: healthDataDir, limiter, log, ...campaignOpts });
+  else log('warn', 'campaign routes disabled: the database predates migration 0006');
   if (mount) mount(app, { rooms: roomService, roomStore, limiter, memberOf, HttpError, PROD, MULTIPLAYER });
 
   // Unknown /api routes are a JSON 404, never the SPA's index.html (F7).
