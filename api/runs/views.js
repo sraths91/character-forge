@@ -109,7 +109,7 @@ export function viewForRun(ctx, viewer) {
   const seatOf = new Map((ctx.seats || []).map(s => [s.id, s]));
   return {
     run: {
-      id: run.id, status: run.status, outcome: run.outcome ?? null, currentNodeId: progress.currentNodeId,
+      id: run.id, campaignId: run.campaignId ?? null, status: run.status, outcome: run.outcome ?? null, currentNodeId: progress.currentNodeId,
       seq: run.seq, settings: clone(run.settings), stash: clone(run.stash),
       completed: progress.completed, result: clone(progress.result), visitedNodeIds: [...progress.visited],
       ...(current?.kind === 'shop' ? { bought: clone(progress.bought) } : {})

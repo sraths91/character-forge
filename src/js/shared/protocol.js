@@ -107,9 +107,14 @@
  *        `room.settings` broadcast accept it.
  *   v1.6 (2026-10-25, E3 M65 B24, additive) — `error.code` gains
  *        'E_ENCOUNTER_LIVE' (a between-node intent while an encounter is
- *        live) and 'E_NO_RUN' (a run intent in a room without an open
- *        run), and may be a campaign rule code (RULE_ERROR_CODE: a
+ *        live), 'E_NO_RUN' (a run intent in a room without an open
+ *        run) and 'E_NODE_NOT_BEGUN' (dm.encounter.setup / start in a
+ *        run outside a begun encounter node), and may be a campaign rule code (RULE_ERROR_CODE: a
  *        CampaignRuleError's kebab `.code`, with `details`).
+ *        `dm.node.begin.nodeId` (optional): the node to begin — from the
+ *        run lobby any node (default the start node), later an offered
+ *        edge; an encounter node is built in 'setup' for the DM to tweak
+ *        (dm.encounter.setup) and start (dm.encounter.start).
  *
  * Client payloads are strict (unknown fields rejected); server payloads
  * enforce required fields and allow additive ones.
@@ -249,7 +254,9 @@ export const ERROR_CODES = Object.freeze([
   'E_STALE', 'E_NOT_YOUR_TURN', 'E_INVALID_INTENT', 'E_ROOM_FULL', 'E_SEAT_TAKEN',
   'E_RATE_LIMITED', 'E_INTERNAL',
   // v1.6 (E3 M65 B24): a between-node intent while an encounter is live; a run intent in a room without an open run.
-  'E_ENCOUNTER_LIVE', 'E_NO_RUN'
+  'E_ENCOUNTER_LIVE', 'E_NO_RUN',
+  // v1.6 (E3 M65 B24): dm.encounter.setup / start in a run outside a begun encounter node.
+  'E_NODE_NOT_BEGUN'
 ]);
 /**
  * v1.6 (E3 M65 B24): an `error` frame may instead carry a campaign rule
@@ -378,7 +385,7 @@ const INTENT_PAYLOADS = {
   // v1.6 (M65) — the DM's run controls.
   'dm.run.advance': shape({ toNodeId: ID, override: optional(bool()) }),   // override: "go to any node"
   'dm.run.end': shape({ outcome: oneOf(RUN_OUTCOMES) }),
-  'dm.node.begin': shape({ setup: optional(ENCOUNTER_SETUP_SPEC) }),       // the DM's tweak of an encounter node
+  'dm.node.begin': shape({ setup: optional(ENCOUNTER_SETUP_SPEC), nodeId: optional(ID) }),   // the DM's tweak of an encounter node; nodeId (E3 B24): the node to enter
   'dm.rest.grant': shape({ type: oneOf(RUN_REST_TYPES), slotIds: optional(arrayOf(SLOT_ID, { min: 1, max: 6, unique: true })) }),
   'dm.loot.assign': shape({ itemId: ID, toSlotId: nullable(SLOT_ID), qty: optional(QTY) }),
   'dm.story.resolve': shape({ nodeId: ID, choiceId: ID }),

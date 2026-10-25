@@ -166,6 +166,9 @@ export class Room {
       members: () => this.members,
       encounterLive: () => this.#encounterLive(),
       seats: () => this.seats,
+      roomStore: () => this.store,
+      encounter: () => this.enc,
+      seatsChanged: () => this.seatsChanged(),
       controllerFor: (seat) => this.#seatController(seat),
       setupEncounter: ({ encounterId, seed, setup, party, runId, nodeId }) => this.#setup(setup, { encounterId, seed, party, runId, nodeId }),
       startEncounter: () => this.#start({})
@@ -1040,11 +1043,13 @@ export class Room {
         throw new IntentError('E_INVALID_INTENT', 'bad answer for that prompt');
       }
 
+      // In a run, setup / start act on the begun encounter node (dm.node.begin);
+      // anywhere else in the run they are refused with E_NODE_NOT_BEGUN.
       case 'dm.encounter.setup':
-        if (this.run?.active) throw new IntentError('E_INVALID_INTENT', 'this room runs a campaign: begin the encounter node with dm.node.begin');
+        if (this.run?.active) return this.run.setupInRun(p);
         return this.#setup(p);
       case 'dm.encounter.start':
-        if (this.run?.active) throw new IntentError('E_INVALID_INTENT', 'this room runs a campaign: begin the encounter node with dm.node.begin');
+        if (this.run?.active) { this.run.assertBegun(); return this.#start({}); }
         return this.#start(p);
       case 'dm.encounter.end': {
         if (!this.enc || (this.enc.status !== 'setup' && this.enc.status !== 'active')) throw new IntentError('E_INVALID_INTENT', 'no live encounter');

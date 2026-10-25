@@ -3,10 +3,14 @@
 // `Authorization: Bearer`; a room's DM token, where a route also touches
 // a room, in `X-Room-Token` (the campaigns API's convention).
 //
-//   POST /api/campaigns/:cid/runs   (campaign key + X-Room-Token: DM)
-//        {seed?, xp?: {slotId: n}, importLiveState?}   → 201 {runId, status, currentNodeId}
+//   POST /api/campaigns/:cid/runs   (campaign key; X-Room-Token: DM of an existing room, optional)
+//        {seed?, xp?: {slotId: n}, importLiveState?, roomName?}
+//        → 201 {runId, roomId, code, dmToken, status, currentNodeId}
 //        Freezes the campaign (nodes + templates) into runs.campaign_json
-//        and starts the run in that room with its seated party.
+//        and starts the run in that room with its seated party (entering
+//        the start node), or — with no X-Room-Token — creates a room for
+//        it (the DM token is returned once) where the run waits in the
+//        lobby until the party is seated and the DM sends dm.node.begin.
 
 import { bearerToken } from '../rooms/tokens.js';
 import { RoomError as ApiError } from '../rooms/service.js';
@@ -67,11 +71,20 @@ export function mountRunRoutes(app, { registry, rooms, campaigns, log = () => {}
 
   app.post('/api/campaigns/:cid/runs', wrap((req, res) => {
     const c = owned(req);
-    const dm = roomDm(req);
     const b = body(req);
     const campaign = frozenCampaign(campaigns, c);
     const v = validateCampaign(campaign);
     if (!v.ok) throw Object.assign(new ApiError(422, 'INVALID_GRAPH', `The campaign is not playable: ${v.errors[0].path} ${v.errors[0].message}`), { errors: v.errors });
+    let dm;
+    let dmToken;
+    if (req.get('x-room-token') !== undefined) {
+      dm = roomDm(req);
+      dmToken = req.get('x-room-token');
+    } else {
+      const made = rooms.createRoom({ name: typeof b.roomName === 'string' ? b.roomName : c.name.slice(0, 32) });
+      dm = { roomId: made.roomId };
+      dmToken = made.dmToken;
+    }
     const room = registry.get(dm.roomId);
     if (!room?.run) throw new ApiError(503, 'RUNS_UNAVAILABLE', 'This server does not host runs');
     const xp = isObj(b.xp) ? Object.fromEntries(Object.entries(b.xp).filter(([, n]) => Number.isInteger(n) && n >= 0)) : {};
@@ -86,6 +99,6 @@ export function mountRunRoutes(app, { registry, rooms, campaigns, log = () => {}
       throw asHttp(err);
     }
     log('info', 'runs: started over HTTP', { campaignId: c.id, roomId: dm.roomId, runId: out.runId });
-    res.status(201).json(out);
+    res.status(201).json({ ...out, roomId: dm.roomId, code: rooms.store.getRoom(dm.roomId).code, dmToken });
   }));
 }

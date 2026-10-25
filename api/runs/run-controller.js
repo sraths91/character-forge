@@ -41,8 +41,14 @@ import { sheetLevel } from '../../src/js/campaign/util.js';
 import { encounterXp, levelsCrossed, levelForXp, xpForLevel } from '../../src/js/campaign/xp.js';
 import { applyRest } from '../../src/js/campaign/rest.js';
 import { settleAfterEncounter, onNodeEntry, lifeStatusOf } from '../../src/js/campaign/death.js';
-import { itemsFromInventory } from '../../src/js/campaign/items.js';
-import { itemsLedgerFor } from '../../src/js/campaign/consumables.js';
+import {
+  itemsFromInventory, itemFromOpen5e, makeItem, equipItem, unequipItem, attuneItem,
+  priceOf, purseToCp, addCurrency, payFromPurse
+} from '../../src/js/campaign/items.js';
+import { itemsLedgerFor, drinkPotion } from '../../src/js/campaign/consumables.js';
+import { revive } from '../../src/js/campaign/death.js';
+import { planLevelUp, applyLevelUp, revertLevelUp, reconcileDiff, applyReconcile } from '../../src/js/campaign/level-up.js';
+import { newId } from '../rooms/tokens.js';
 import { nextNodes } from '../../src/js/shared/campaign.js';
 import { emptyProgress, reduceProgress, viewForRun, stripProse } from './views.js';
 
@@ -139,7 +145,7 @@ export class RunController {
 
   /** The room status a run room shows when no encounter is live. */
   get idleRoomStatus() {
-    return this.active ? 'between' : 'lobby';
+    return this.active && this.row.status !== 'lobby' ? 'between' : 'lobby';
   }
 
   /** Does this controller handle intent `t`? */
@@ -257,8 +263,7 @@ export class RunController {
     if (!v.ok) throw new RunIntentError('E_INVALID_INTENT', `the campaign is not playable: ${v.errors[0].path} ${v.errors[0].message}`, { errors: v.errors });
     const start = startNodeId(campaign.nodes);
     if (!start) throw new RunIntentError('E_INVALID_INTENT', 'the campaign has no start node');
-    const seats = this.port.seats().filter(s => s.seed).sort(bySeat);
-    if (!seats.length) throw new RunIntentError('E_INVALID_INTENT', 'seat at least one character before starting a run');
+    const seats = this.#unjoinedSeats();
     const live = importLiveState ?? this.room.settings?.importLiveState === true;
     const settings = campaignSettings(campaign.settings);
     const rngSeed = Number.isInteger(seed) ? seed >>> 0 : randomInt(0, 0x100000000);
@@ -274,29 +279,13 @@ export class RunController {
         this.row = this.store.getRun(id);
         this.seq = 0;
         this.progress = emptyProgress();
-        const joined = seats.map((s) => {
-          const sheet = clone(s.seed);
-          const level = sheetLevel(sheet);
-          const state = initialRunState(sheet, { importDdbState: live });
-          const sv = validateRunState(state, { sheet });
-          if (!sv.ok) throw new RunIntentError('E_INVALID_INTENT', `seat ${s.seat}: ${sv.errors[0].path} ${sv.errors[0].message}`);
-          const ddbXp = Number.isInteger(sheet.currentXp) && levelForXp(sheet.currentXp) === level ? sheet.currentXp : null;
-          const startXp = Number.isInteger(xp[s.id]) ? xp[s.id] : (ddbXp ?? xpForLevel(level));
-          this.store.attachSeat(id, s.id, { sheet, state, level, xp: startXp, lifeStatus: 'active' });
-          return { s, sheet, state, level, xp: startXp };
-        });
         this.#emit('run.started', {
           campaignId: campaign.id, startNodeId: start,
-          seats: joined.map(j => ({ slotId: j.s.id, seat: j.s.seat, characterId: String(j.sheet.id) }))
+          seats: seats.map(st => ({ slotId: st.id, seat: st.seat, characterId: String(st.seed.id) }))
         }, { nodeId: null });
-        for (const j of joined) {
-          const ev = this.#emit('character.joined', {
-            slotId: j.s.id, characterId: String(j.sheet.id), level: j.level, before: null,
-            after: { state: j.state, xp: j.xp, level: j.level, lifeStatus: 'active' }
-          }, { nodeId: null });
-          this.#seedItems(j.s.id, j.sheet, ev.seq);
-        }
-        this.#enterNode(start, { override: false });
+        // With a seated party the run enters its start node now; an empty
+        // room stays in the lobby until dm.node.begin (players seat first).
+        if (seats.length) this.#enterNode(start, { override: false, join: { live, xp } });
       })();
     } catch (err) {
       this.row = null;
@@ -315,6 +304,35 @@ export class RunController {
     return { runId: this.row.id, status: this.row.status, currentNodeId: this.progress.currentNodeId };
   }
 
+  /** Seated characters not yet in the run (room store, fresh), by seat. */
+  #unjoinedSeats() {
+    return this.port.roomStore().listSeats(this.room.id).filter(s => s.seed && !s.runId).sort(bySeat);
+  }
+
+  /**
+   * Bring every seated character not yet in the run into it (inside #tx):
+   * sheet_json = its seed, state_json = initialRunState (rested unless
+   * `live`), XP from D&D Beyond when it matches the level, else the
+   * level's threshold; one character.joined each, items from the inventory.
+   */
+  #joinSeated({ live = this.room.settings?.importLiveState === true, xp = {} } = {}) {
+    for (const s of this.#unjoinedSeats()) {
+      const sheet = clone(s.seed);
+      const level = sheetLevel(sheet);
+      const state = initialRunState(sheet, { importDdbState: live });
+      const sv = validateRunState(state, { sheet });
+      if (!sv.ok) throw new RunIntentError('E_INVALID_INTENT', `seat ${s.seat}: ${sv.errors[0].path} ${sv.errors[0].message}`);
+      const ddbXp = Number.isInteger(sheet.currentXp) && levelForXp(sheet.currentXp) === level ? sheet.currentXp : null;
+      const startXp = Number.isInteger(xp[s.id]) ? xp[s.id] : (ddbXp ?? xpForLevel(level));
+      this.store.attachSeat(this.#runId(), s.id, { sheet, state, level, xp: startXp, lifeStatus: 'active' });
+      const ev = this.#emit('character.joined', {
+        slotId: s.id, characterId: String(sheet.id), level, before: null,
+        after: { state, xp: startXp, level, lifeStatus: 'active' }
+      });
+      this.#seedItems(s.id, sheet, ev.seq);
+    }
+  }
+
   /** A seat's DDB inventory as run items (ids `<runId>.<seq>.<k>`). */
   #seedItems(slotId, sheet, seq) {
     itemsFromInventory(sheet, { ownerSlotId: slotId }).forEach((it, k) => {
@@ -328,9 +346,11 @@ export class RunController {
    * Enter a node (inside #tx): a stable PC regains 1 HP (owner default 7),
    * node.entered, then the run is in-node (encounter) or between.
    */
-  #enterNode(nodeId, { override }) {
+  #enterNode(nodeId, { override, join } = {}) {
     const node = this.#node(nodeId);
     if (!node) throw new RunIntentError('E_INVALID_INTENT', `no node ${nodeId} in this campaign`);
+    this.#joinSeated(join);
+    if (!this.#characters().length) throw new RunIntentError('E_INVALID_INTENT', 'seat at least one character first');
     const from = this.progress.currentNodeId;
     const before = {};
     const after = {};
@@ -350,17 +370,100 @@ export class RunController {
     this.#onEnter(node);
   }
 
-  /** Per-kind effects of entering a node (extended by the between kinds). */
-  #onEnter(_node) {}
+  /** Per-kind effects of entering a node: a loot node fills the party stash. */
+  #onEnter(node) {
+    if (node.kind === 'loot') this.#grantLoot(node.payload, node.id);
+  }
+
+  /**
+   * Loot into the party stash (items owner NULL; coins into
+   * runs.stash_json) with one loot.granted. Open5e SRD items take their
+   * data from the items cache (never fetched here).
+   */
+  #grantLoot(loot, nodeId) {
+    const items = loot?.items || [];
+    const coins = loot?.currency || null;
+    if (!items.length && !coins) return;
+    const seq = this.seq + 1;
+    const stashBefore = clone(this.#stash());
+    const granted = items.map((l, k) => {
+      const id = `${this.#runId()}.${seq}.${k}`;
+      const qty = l.qty ?? 1;
+      const rec = l.origin === 'open5e' && l.ref ? this.store.srdRecord(l.ref) : null;
+      const it = rec
+        ? itemFromOpen5e(rec.payload, { id, ownerSlotId: null, qty })
+        : makeItem({ id, origin: l.origin, refKey: l.ref ?? null, name: l.name || l.ref || 'Item', qty, data: l.data || {} });
+      this.store.addItem(this.#runId(), { ...it, id, ownerSlotId: null });
+      return { itemId: id, name: it.name, qty };
+    });
+    const stashAfter = coins ? { ...stashBefore, currency: addCurrency(stashBefore.currency, coins) } : stashBefore;
+    if (coins) this.store.setStash(this.#runId(), stashAfter);
+    this.#emit('loot.granted', { items: granted, ...(coins ? { currency: clone(coins) } : {}), before: { stash: stashBefore }, after: { stash: stashAfter } }, { nodeId });
+  }
+
+  #stash() {
+    const st = this.store.getRun(this.#runId()).stash || {};
+    return { ...st, currency: { cp: 0, sp: 0, ep: 0, gp: 0, pp: 0, ...(st.currency || {}) } };
+  }
 
   // --------------------------------------------------------- encounters
 
-  /** dm.node.begin: build the current encounter node from the run states and start it. */
+  /**
+   * dm.node.begin {nodeId?, setup?}: begin a node. From the lobby it
+   * enters `nodeId` (default: the start node) with the seated party; with
+   * a `nodeId` other than the current one it takes that offered edge. An
+   * encounter node is then built in 'setup' from the run states (the DM's
+   * `setup` tweak, else the node's setup or template); the DM may tweak it
+   * again with dm.encounter.setup and starts it with dm.encounter.start.
+   */
   async #beginNode(p) {
+    const cur = this.#current();
+    if (this.row.status === 'lobby' || !cur) {
+      const to = p.nodeId ?? startNodeId(this.#campaign().nodes);
+      this.#tx(() => this.#enterNode(to, { override: to !== startNodeId(this.#campaign().nodes) }));
+    } else if (p.nodeId && p.nodeId !== cur.id) {
+      this.#advance({ toNodeId: p.nodeId, override: false });
+    }
     const node = this.#current();
-    if (!node || node.kind !== 'encounter') throw new RunIntentError('E_INVALID_INTENT', 'the current node is not an encounter');
-    if (this.progress.completed || this.progress.result.outcome) throw new RunIntentError('E_INVALID_INTENT', 'this encounter has been fought; advance the run');
-    let setup = p.setup ? clone(p.setup) : clone(node.payload.setup ?? (this.#campaign().templates || []).find(t => t.id === node.payload.templateId)?.setup);
+    let encounterId = null;
+    if (node.kind === 'encounter') {
+      if (this.progress.completed || this.progress.result.outcome) throw new RunIntentError('E_INVALID_INTENT', 'this encounter has been fought; advance the run');
+      encounterId = this.#buildEncounter(node, p.setup ?? null, null);
+    }
+    this.#afterChange();
+    return { currentNodeId: node.id, kind: node.kind, ...(encounterId ? { encounterId } : {}) };
+  }
+
+  /**
+   * dm.encounter.setup inside a run: rebuild the begun encounter node with
+   * the DM's tweak (same seed, run states, linked to the node).
+   * @param {object} setup  dm.encounter.setup payload
+   * @returns {{encounterId: string}}
+   */
+  setupInRun(setup) {
+    const enc = this.#begun();
+    const node = this.#current();
+    return { encounterId: this.#buildEncounter(node, setup, enc.state.rng?.s ?? null) };
+  }
+
+  /** dm.encounter.start inside a run: only a begun encounter node starts. */
+  assertBegun() {
+    this.#begun();
+  }
+
+  /** The room's setup-phase encounter for the current node, or E_NODE_NOT_BEGUN. */
+  #begun() {
+    const enc = this.port.encounter();
+    const node = this.#current();
+    if (!enc || enc.status !== 'setup' || enc.state.runId !== this.row?.id || !node || enc.state.nodeId !== node.id) {
+      throw new RunIntentError('E_NODE_NOT_BEGUN', 'begin the encounter node first (dm.node.begin)');
+    }
+    return enc;
+  }
+
+  /** Build the encounter node in 'setup'; a fresh build draws its seed from the run RNG. */
+  #buildEncounter(node, tweak, reuseSeed) {
+    let setup = tweak ? clone(tweak) : clone(node.payload.setup ?? (this.#campaign().templates || []).find(t => t.id === node.payload.templateId)?.setup);
     if (!setup) throw new RunIntentError('E_INVALID_INTENT', `node ${node.id} has no encounter setup`);
     const named = setup.map?.assetId || (setup.monsters || []).some(m => m?.tokenAssetId);
     if (named) {
@@ -389,15 +492,14 @@ export class RunController {
     let encounterId = `${this.#runId()}:${node.id}`;
     for (let k = 2; this.store.encounterExists(encounterId); k++) encounterId = `${this.#runId()}:${node.id}:${k}`;
     const rng = this.#rng();
-    const seed = Math.floor(rng() * 0x100000000) >>> 0;
+    const seed = Number.isInteger(reuseSeed) ? reuseSeed : Math.floor(rng() * 0x100000000) >>> 0;
     // The seed draw and the encounter row commit together.
     this.store.tx(() => {
-      this.store.setRng(this.#runId(), rng.state());
+      if (!Number.isInteger(reuseSeed)) this.store.setRng(this.#runId(), rng.state());
       this.port.setupEncounter({ encounterId, seed, setup, party, runId: this.#runId(), nodeId: node.id });
     })();
     this.row = this.store.getRun(this.row.id);
-    await this.port.startEncounter();
-    return { encounterId };
+    return encounterId;
   }
 
   /**
@@ -482,7 +584,7 @@ export class RunController {
         const it = this.store.getItem(this.#runId(), itemId);
         if (!it) continue;
         const qty = Math.max(0, it.qty - spent);
-        this.store.updateItem(this.#runId(), itemId, { qty });
+        this.#setQty(it, qty);
         this.#emit('item.used', { itemId, slotId: e.controller.seatId, targetSlotId: null, spent, before: { qty: it.qty }, after: { qty } }, { nodeId: node.id });
       }
     }
@@ -512,15 +614,17 @@ export class RunController {
     return true;
   }
 
-  /** Victory loot and other per-outcome effects (extended by the between kinds). */
-  #onEncounterResult(_node, _outcome) {}
+  /** An encounter node's victory loot goes to the party stash. */
+  #onEncounterResult(node, outcome) {
+    if (outcome === 'party-victory' && node.kind === 'encounter' && node.payload?.loot) this.#grantLoot(node.payload.loot, node.id);
+  }
 
   /** level_ups rows (and level.queued) for the thresholds between two XP totals. */
-  #queueLevels(c, fromXp, toXp, nodeId) {
+  #queueLevels(c, fromXp, toXp, nodeId, opts = {}) {
     const settings = this.#settings();
-    const pending = this.store.pendingLevelUps(c.slotId);
+    const pending = this.store.pendingLevelUps(c.slotId).filter(l => l.mode !== 'reconcile');
     const top = pending.length ? pending[pending.length - 1].toLevel : (c.level ?? sheetLevel(c.sheet));
-    for (const to of levelsCrossed(fromXp, toXp, { mode: settings.xpMode, currentLevel: top })) {
+    for (const to of levelsCrossed(fromXp, toXp, { mode: opts.mode ?? settings.xpMode, currentLevel: top })) {
       const local = this.#nextLevelUpId();
       this.store.addLevelUp(this.#runId(), {
         id: this.#luDb(local), slotId: c.slotId, fromLevel: to - 1, mode: settings.levelUpMode,
@@ -530,8 +634,51 @@ export class RunController {
     }
   }
 
-  /** levelup.offer to each pending level-up's seat (and the DM). Extended in B25. */
-  #offerLevelUps() {}
+  /**
+   * The level-ups a seat can act on now: its lowest pending level row
+   * (levels apply one at a time) and any pending reconcile rows.
+   */
+  #actionableLevelUps() {
+    const out = [];
+    const seen = new Set();
+    for (const l of this.store.listLevelUps(this.#runId()).sort((a, b) => a.fromLevel - b.fromLevel)) {
+      if (l.status !== 'pending_player' && l.status !== 'pending_dm') continue;
+      if (l.mode === 'reconcile') { out.push(l); continue; }
+      if (seen.has(l.slotId)) continue;
+      seen.add(l.slotId);
+      out.push(l);
+    }
+    return out;
+  }
+
+  /** The levelup.offer payload for a level-up row (plan computed by level-up.js). */
+  #offerOf(l) {
+    const local = this.#luLocal(l.id);
+    const base = { levelUpId: local, slotId: l.slotId, fromLevel: l.fromLevel, toLevel: l.toLevel, mode: l.mode, status: l.status, ...(l.choices ? { picked: clone(l.choices) } : {}) };
+    if (l.mode === 'reconcile') return { ...base, fromLevel: l.fromLevel, auto: { proposals: clone(l.auto?.diff?.proposals || []) } };
+    const c = this.store.getCharacter(l.slotId);
+    try {
+      const plan = planLevelUp(c.sheet, c.state, { toLevel: l.toLevel, settings: { hpOnLevel: this.#settings().hpOnLevel } });
+      return { ...base, auto: clone(plan.auto || {}), choices: clone(plan.choices), reconcile: clone(plan.reconcile), missing: clone(plan.missing), requiresDm: plan.requiresDm };
+    } catch (err) {
+      if (!(err instanceof CampaignRuleError)) throw err;
+      return { ...base, auto: {}, blocked: err.code };
+    }
+  }
+
+  /** levelup.offer to each actionable level-up's seat controller (the DM for AI seats) and the DM. */
+  #offerLevelUps(only = null) {
+    const members = [...this.port.members().values()].filter(m => m.conn);
+    if (!members.length) return;
+    const seats = new Map(this.port.seats().map(s => [s.id, s]));
+    for (const l of this.#actionableLevelUps()) {
+      const owner = seats.get(l.slotId)?.controllerParticipantId ?? null;
+      const to = members.filter(m => (m.role === 'dm' || m.id === owner) && (!only || only.id === m.id));
+      if (!to.length) continue;
+      const offer = this.#offerOf(l);
+      for (const m of to) this.port.sendPrivate(m, 'levelup.offer', offer);
+    }
+  }
 
   // --------------------------------------------------------- broadcasts
 
@@ -556,7 +703,9 @@ export class RunController {
   /** Send a member its run.snapshot (no-op without a run). */
   sendSnapshot(member) {
     const p = this.snapshotFor(member);
-    if (p) this.port.sendPrivate(member, 'run.snapshot', p);
+    if (!p) return;
+    this.port.sendPrivate(member, 'run.snapshot', p);
+    if (this.active) this.#offerLevelUps(member);
   }
 
   // ------------------------------------------------------------ intents
@@ -593,9 +742,508 @@ export class RunController {
     }
   }
 
+  /** The between-node intents (M65 B25). */
+  #more(member, t, p, actor) {
+    switch (t) {
+      case 'loot.claim': return this.#lootClaim(member, p, actor);
+      case 'dm.loot.assign': return this.#lootAssign(p, actor);
+      case 'item.equip': return this.#itemEquip(member, p, actor);
+      case 'item.give': return this.#itemGive(member, p, actor);
+      case 'item.use': return this.#itemUse(member, p, actor);
+      case 'shop.buy': return this.#shopBuy(member, p, actor);
+      case 'shop.sell': return this.#shopSell(member, p, actor);
+      case 'story.choose':
+      case 'dm.story.resolve': return this.#storyChoose(p, actor);
+      case 'dm.xp.adjust': return this.#xpAdjust(p, actor);
+      case 'levelup.choose': return this.#levelChoose(member, p);
+      case 'levelup.reconcile': return this.#levelReconcile(member, p, actor);
+      case 'dm.levelup.confirm': return this.#levelConfirm(p, actor);
+      case 'dm.levelup.revert': return this.#levelRevert(p, actor);
+      case 'dm.character.revive': return this.#revive(p, actor);
+      case 'dm.character.retire': return this.#retire(p, actor);
+      case 'dm.seat.fill': return this.#seatFill(p, actor);
+      default: return this.#later(member, t, p, actor);
+    }
+  }
+
   /** Intents added by later tasks. */
-  #more(_member, t) {
+  #later(_member, t) {
     throw new RunIntentError('E_UNKNOWN_TYPE', `${t} is not available yet`);
+  }
+
+  // -------------------------------------------------------------- items
+
+  /** A run item, or E_INVALID_INTENT. */
+  #item(itemId) {
+    const it = this.store.getItem(this.#runId(), itemId);
+    if (!it) throw new RunIntentError('E_INVALID_INTENT', `no item ${itemId} in this run`);
+    return it;
+  }
+
+  /** Set an item's quantity; an item that runs out is removed (ids are never reused). */
+  #setQty(it, qty) {
+    if (qty <= 0) this.store.deleteItem(this.#runId(), it.id);
+    else this.store.updateItem(this.#runId(), it.id, { qty });
+  }
+
+  /**
+   * Move `qty` of an unequipped item to a seat or the stash (null), with
+   * one item.moved. A partial move splits the row (new id from the event seq).
+   */
+  #moveItem(it, toSlotId, qty, actor) {
+    if (it.equipped || it.attuned) throw new RunIntentError('E_INVALID_INTENT', `unequip ${it.name} first`);
+    const n = qty ?? it.qty;
+    if (!(n >= 1 && n <= it.qty)) throw new RunIntentError('E_INVALID_INTENT', `only ${it.qty} ${it.name} to move`);
+    if (toSlotId) this.#character(toSlotId);
+    if ((it.ownerSlotId ?? null) === (toSlotId ?? null)) throw new RunIntentError('E_INVALID_INTENT', `${it.name} is already there`);
+    let movedId = it.id;
+    this.#tx(() => {
+      if (n === it.qty) {
+        this.store.updateItem(this.#runId(), it.id, { ownerSlotId: toSlotId ?? null });
+      } else {
+        movedId = `${this.#runId()}.${this.seq + 1}.0`;
+        this.store.updateItem(this.#runId(), it.id, { qty: it.qty - n });
+        this.store.addItem(this.#runId(), { ...it, id: movedId, ownerSlotId: toSlotId ?? null, qty: n });
+      }
+      this.#emit('item.moved', {
+        itemId: it.id, ...(movedId !== it.id ? { newItemId: movedId } : {}), name: it.name,
+        fromSlotId: it.ownerSlotId ?? null, toSlotId: toSlotId ?? null, qty: n,
+        before: { ownerSlotId: it.ownerSlotId ?? null, qty: it.qty },
+        after: { ownerSlotId: toSlotId ?? null, qty: n, remaining: it.qty - n }
+      }, actor);
+    });
+    this.#afterChange();
+    return { itemId: movedId };
+  }
+
+  #lootClaim(member, { slotId, itemId, qty }, actor) {
+    this.#ownSeat(member, slotId);
+    const it = this.#item(itemId);
+    if (it.ownerSlotId !== null) throw new RunIntentError('E_INVALID_INTENT', `${it.name} is not in the party stash`);
+    const node = this.#current();
+    if (node?.kind === 'loot' && node.payload.assign === 'dm') throw new RunIntentError('E_FORBIDDEN', 'the DM hands out this loot');
+    return this.#moveItem(it, slotId, qty, actor);
+  }
+
+  #lootAssign({ itemId, toSlotId, qty }, actor) {
+    return this.#moveItem(this.#item(itemId), toSlotId, qty, actor);
+  }
+
+  #itemGive(member, { slotId, itemId, toSlotId, qty }, actor) {
+    this.#ownSeat(member, slotId);
+    const it = this.#item(itemId);
+    if (it.ownerSlotId !== slotId) throw new RunIntentError('E_FORBIDDEN', `${it.name} is not yours`);
+    return this.#moveItem(it, toSlotId, qty, actor);
+  }
+
+  /** item.equip: equip / unequip / attune through items.js; the sheet's equipment is rewritten. */
+  #itemEquip(member, { slotId, itemId, equipped, attuned }, actor) {
+    const c = this.#ownSeat(member, slotId);
+    const it = this.#item(itemId);
+    if (it.ownerSlotId !== slotId) throw new RunIntentError('E_FORBIDDEN', `${it.name} is not yours`);
+    const mine = this.store.listItems(this.#runId(), { ownerSlotId: slotId });
+    let sheet = c.sheet;
+    let list = mine;
+    if (equipped) {
+      if (!it.equipped) ({ sheet, items: list } = equipItem(sheet, list, itemId));
+      if (attuned !== undefined && attuned !== it.attuned) ({ sheet, items: list } = attuneItem(sheet, list, itemId, attuned));
+    } else {
+      if (it.attuned) ({ sheet, items: list } = attuneItem(sheet, list, itemId, false));
+      ({ sheet, items: list } = unequipItem(sheet, list, itemId));
+    }
+    const was = new Map(mine.map(i => [i.id, i]));
+    const changed = list.filter(i => was.get(i.id) && (was.get(i.id).equipped !== i.equipped || was.get(i.id).attuned !== i.attuned));
+    this.#tx(() => {
+      for (const i of changed) this.store.updateItem(this.#runId(), i.id, { equipped: i.equipped, attuned: i.attuned });
+      this.#write(c, { sheet });
+      const flags = (arr) => arr.map(i => ({ id: i.id, equipped: !!i.equipped, attuned: !!i.attuned }));
+      this.#emit('item.moved', {
+        itemId, name: it.name, fromSlotId: slotId, toSlotId: slotId, qty: Math.max(1, it.qty), equip: true,
+        before: { equipment: clone(c.sheet.equipment ?? null), items: flags(changed.map(i => was.get(i.id))) },
+        after: { equipment: clone(sheet.equipment ?? null), items: flags(changed) }
+      }, actor);
+    });
+    this.#afterChange();
+    return { equipped: !!list.find(i => i.id === itemId)?.equipped, attuned: !!list.find(i => i.id === itemId)?.attuned };
+  }
+
+  /** item.use between nodes: a potion through consumables.js (run RNG), on the user or a target seat. */
+  #itemUse(member, { slotId, itemId, targetSlotId }, actor) {
+    this.#ownSeat(member, slotId);
+    const it = this.#item(itemId);
+    if (it.ownerSlotId !== slotId) throw new RunIntentError('E_FORBIDDEN', `${it.name} is not yours`);
+    const target = this.#character(targetSlotId ?? slotId);
+    let out;
+    this.#tx(() => {
+      const rng = this.#rng();
+      const r = drinkPotion(target.sheet, target.state, it, rng, { lifeStatus: target.lifeStatus });
+      const life = target.lifeStatus === 'dead' ? 'dead' : lifeStatusOf(r.state);
+      this.#write(target, life !== target.lifeStatus ? { state: r.state, lifeStatus: life } : { state: r.state });
+      this.#setQty(it, it.qty - 1);
+      this.store.setRng(this.#runId(), rng.state());
+      this.#emit('item.used', {
+        itemId, slotId, targetSlotId: target.slotId, healed: r.healed, rolls: r.rolls,
+        before: { qty: it.qty, state: target.state, lifeStatus: target.lifeStatus },
+        after: { qty: it.qty - 1, state: r.state, lifeStatus: life }
+      }, actor);
+      out = { healed: r.healed };
+    });
+    this.#afterChange();
+    return out;
+  }
+
+  // --------------------------------------------------------------- shop
+
+  #shopNode() {
+    const node = this.#current();
+    if (node?.kind !== 'shop') throw new RunIntentError('E_INVALID_INTENT', 'there is no shop here');
+    return node;
+  }
+
+  /** Coins for a copper amount (gp / sp / cp). */
+  static coinsOf(cp) {
+    return { gp: Math.floor(cp / 100), sp: Math.floor((cp % 100) / 10), cp: cp % 10 };
+  }
+
+  static #delta(before, after) {
+    const d = {};
+    for (const k of ['cp', 'sp', 'ep', 'gp', 'pp']) if ((after[k] ?? 0) !== (before[k] ?? 0)) d[k] = (after[k] ?? 0) - (before[k] ?? 0);
+    return d;
+  }
+
+  /** shop.buy: priced from the stock entry or the Open5e SRD cost (items.js priceOf); the seat pays, else the stash. */
+  #shopBuy(member, { slotId, refKey, qty }, actor) {
+    const c = this.#ownSeat(member, slotId);
+    const node = this.#shopNode();
+    const entry = (node.payload.stock || []).find(s => s.ref === refKey);
+    if (!entry) throw new RunIntentError('E_INVALID_INTENT', `${refKey} is not for sale here`);
+    const left = entry.qty - (this.progress.bought[refKey] || 0);
+    if (qty > left) throw new RunIntentError('E_INVALID_INTENT', `only ${Math.max(0, left)} ${refKey} left`);
+    const rec = this.store.srdRecord(refKey);
+    const unit = entry.price ? purseToCp(entry.price) : (rec ? priceOf(rec.payload).buyCp : null);
+    if (!(unit > 0)) throw new RunIntentError('E_INVALID_INTENT', `${refKey} has no price; the DM sets one in the shop's stock`);
+    const total = unit * qty;
+    const purse = c.state.currency || {};
+    let paidFrom = 'seat';
+    let after;
+    try {
+      after = payFromPurse(purse, total);
+    } catch (err) {
+      if (!(err instanceof CampaignRuleError)) throw err;
+      try { after = payFromPurse(this.#stash().currency, total); paidFrom = 'stash'; } catch { throw err; }
+    }
+    let itemId;
+    this.#tx(() => {
+      itemId = `${this.#runId()}.${this.seq + 1}.0`;
+      const it = rec ? itemFromOpen5e(rec.payload, { id: itemId, ownerSlotId: slotId, qty }) : makeItem({ id: itemId, origin: 'dm', refKey, name: refKey, qty });
+      this.store.addItem(this.#runId(), { ...it, id: itemId, ownerSlotId: slotId });
+      const before = paidFrom === 'seat' ? clone(purse) : clone(this.#stash().currency);
+      if (paidFrom === 'seat') this.#write(c, { state: { ...c.state, currency: after } });
+      else this.store.setStash(this.#runId(), { ...this.#stash(), currency: after });
+      this.#emit('shop.bought', {
+        slotId, refKey, qty, itemId, name: it.name, paidFrom, price: RunController.#delta(before, after),
+        before: { [paidFrom === 'seat' ? 'currency' : 'stash']: before }, after: { [paidFrom === 'seat' ? 'currency' : 'stash']: after }
+      }, actor);
+    });
+    this.#afterChange();
+    return { itemId, paidFrom, costCp: total };
+  }
+
+  /** shop.sell: at the shop's buyback (default half the cost); unpriced items are refused. */
+  #shopSell(member, { slotId, itemId, qty }, actor) {
+    const c = this.#ownSeat(member, slotId);
+    const node = this.#shopNode();
+    const it = this.#item(itemId);
+    if (it.ownerSlotId !== slotId) throw new RunIntentError('E_FORBIDDEN', `${it.name} is not yours`);
+    if (it.equipped || it.attuned) throw new RunIntentError('E_INVALID_INTENT', `unequip ${it.name} first`);
+    if (qty > it.qty) throw new RunIntentError('E_INVALID_INTENT', `only ${it.qty} ${it.name}`);
+    const price = priceOf(it);
+    if (!price.priced) throw new RunIntentError('E_INVALID_INTENT', `${it.name} has no price; the DM buys it back by hand`);
+    const buyback = node.payload.buyback ?? 0.5;
+    const total = Math.floor(price.buyCp * buyback) * qty;
+    const before = clone(c.state.currency || {});
+    const after = addCurrency(before, RunController.coinsOf(total));
+    this.#tx(() => {
+      this.#write(c, { state: { ...c.state, currency: after } });
+      this.#setQty(it, it.qty - qty);
+      this.#emit('shop.sold', {
+        slotId, itemId, qty, name: it.name, price: RunController.#delta(before, after),
+        before: { currency: before, qty: it.qty }, after: { currency: after, qty: it.qty - qty }
+      }, actor);
+    });
+    this.#afterChange();
+    return { gainedCp: total };
+  }
+
+  // -------------------------------------------------------------- story
+
+  #storyChoose({ nodeId, choiceId }, actor) {
+    const node = this.#current();
+    if (node?.kind !== 'story' || node.id !== nodeId) throw new RunIntentError('E_STALE', 'that story is not the current node');
+    if (!(node.payload.choices || []).some(ch => ch.id === choiceId)) throw new RunIntentError('E_INVALID_INTENT', `no choice ${choiceId}`);
+    this.#tx(() => this.#emit('story.chosen', { nodeId, choiceId }, actor));
+    this.#afterChange();
+    return { choiceId };
+  }
+
+  // ----------------------------------------------------------------- XP
+
+  /** dm.xp.adjust: a logged override; crossing a threshold queues level-ups (also the milestone-mode grant). */
+  #xpAdjust({ slotId, delta, reason = null }, actor) {
+    const c = this.#character(slotId);
+    const xp = Math.max(0, c.xp + delta);
+    this.#tx(() => {
+      this.#emit('dm.override', { kind: 'xp', slotId, reason, before: { xp: c.xp }, after: { xp } }, { ...actor, override: true });
+      this.#write(c, { xp });
+      if (xp > c.xp) this.#queueLevels(c, c.xp, xp, undefined, { mode: 'xp' });
+    });
+    this.#afterChange();
+    this.#offerLevelUps();
+    return { xp };
+  }
+
+  // ---------------------------------------------------------- level-ups
+
+  #levelUp(local) {
+    const l = this.store.getLevelUp(this.#runId(), this.#luDb(local));
+    if (!l) throw new RunIntentError('E_INVALID_INTENT', `no level-up ${local}`);
+    return l;
+  }
+
+  /** The level row a seat must take next (levels apply one at a time). */
+  #assertNext(l) {
+    if (l.mode === 'reconcile') return;
+    const next = this.#actionableLevelUps().find(x => x.slotId === l.slotId && x.mode !== 'reconcile');
+    if (!next || next.id !== l.id) throw new RunIntentError('E_INVALID_INTENT', `apply level ${next ? next.toLevel : '?'} first`);
+  }
+
+  /** Protocol choices → level-up.js picks (spell names resolved through the SRD cache). */
+  #picks(choices = {}) {
+    const picks = {};
+    if (choices.className) picks.className = choices.className;
+    if (choices.asi) picks.asi = clone(choices.asi);
+    if (choices.spells?.length) {
+      picks.spells = choices.spells.map(name => {
+        const rec = this.store.srdRecord(name, 'spell');
+        const level = Number(rec?.payload?.level);
+        if (!rec || !Number.isInteger(level)) throw new RunIntentError('unknown-spell', `${name} is not a known SRD spell (search it first)`);
+        return { name: rec.payload.name || rec.name, level, school: rec.payload.school?.name ?? rec.payload.school ?? null };
+      });
+    }
+    return picks;
+  }
+
+  #plan(c, l, picks) {
+    return planLevelUp(c.sheet, c.state, { toLevel: l.toLevel, className: picks.className, settings: { hpOnLevel: this.#settings().hpOnLevel } });
+  }
+
+  /** levelup.choose: the player's picks, checked by a dry run of applyLevelUp; the row waits for the DM. */
+  #levelChoose(member, { slotId, levelUpId, choices }) {
+    const c = this.#ownSeat(member, slotId);
+    const l = this.#levelUp(levelUpId);
+    if (l.slotId !== slotId) throw new RunIntentError('E_FORBIDDEN', 'that level-up is not yours');
+    if (l.status !== 'pending_player' || l.mode === 'reconcile') throw new RunIntentError('E_STALE', `level-up ${levelUpId} is ${l.status}`);
+    this.#assertNext(l);
+    const picks = this.#picks(choices);
+    applyLevelUp(c.sheet, c.state, this.#plan(c, l, picks), picks, { rng: createRng({ s: 1 }) });
+    if (!this.store.decideLevelUp(this.#runId(), l.id, { fromStatus: 'pending_player', status: 'pending_dm', choices })) {
+      throw new RunIntentError('E_STALE', 'that level-up moved on');
+    }
+    this.#afterChange();
+    this.#offerLevelUps();
+    return { status: 'pending_dm' };
+  }
+
+  /** levelup.reconcile: diff the run sheet against the latest D&D Beyond import (level-up.js reconcileDiff). */
+  #levelReconcile(member, { slotId }, actor) {
+    const c = this.#ownSeat(member, slotId);
+    const fresh = c.characterRowId ? this.store.characterParsed(c.characterRowId) : null;
+    if (!fresh) throw new RunIntentError('E_INVALID_INTENT', 're-import the character first');
+    const level = c.level ?? sheetLevel(c.sheet);
+    if (level >= 20) throw new RunIntentError('E_INVALID_INTENT', 'a level-20 sheet cannot queue a reconcile');
+    const diff = reconcileDiff(c.sheet, fresh, level);
+    if (!diff.ok) throw new RunIntentError(diff.code || 'reconcile-refused', diff.reason, { ddbLevel: diff.ddbLevel, grantedLevel: diff.grantedLevel });
+    if (!diff.proposals.length) throw new RunIntentError('nothing-to-reconcile', 'D&D Beyond has no structural change to bring in');
+    let local;
+    this.#tx(() => {
+      local = this.#nextLevelUpId();
+      this.store.addLevelUp(this.#runId(), { id: this.#luDb(local), slotId, fromLevel: level, mode: 'reconcile', status: 'pending_dm', auto: { diff, fresh } });
+      this.#emit('level.queued', { levelUpId: local, slotId, fromLevel: level, toLevel: level, mode: 'reconcile', proposals: diff.proposals.length }, actor);
+    });
+    this.#afterChange();
+    this.#offerLevelUps();
+    return { levelUpId: local, proposals: diff.proposals.length };
+  }
+
+  /** dm.levelup.confirm: apply (level-up.js applyLevelUp / applyReconcile), recording `granted` for revert. */
+  #levelConfirm({ levelUpId, choices }, actor) {
+    const l = this.#levelUp(levelUpId);
+    if (l.status !== 'pending_dm' && l.status !== 'pending_player') throw new RunIntentError('E_STALE', `level-up ${levelUpId} is ${l.status}`);
+    this.#assertNext(l);
+    const c = this.#character(l.slotId);
+    const picked = choices ?? l.choices ?? {};
+    this.#tx(() => {
+      let sheet;
+      let state = c.state;
+      let granted;
+      let level;
+      if (l.mode === 'reconcile') {
+        const ids = (l.auto?.diff?.proposals || []).map(x => x.id);
+        ({ sheet, granted } = applyReconcile(c.sheet, l.auto.fresh, l.auto.diff, ids));
+        level = sheetLevel(sheet);
+      } else {
+        const picks = this.#picks(picked);
+        const rng = this.#rng();
+        ({ sheet, state, granted } = applyLevelUp(c.sheet, c.state, this.#plan(c, l, picks), picks, { rng }));
+        this.store.setRng(this.#runId(), rng.state());
+        level = l.toLevel;
+      }
+      if (!this.store.decideLevelUp(this.#runId(), l.id, { fromStatus: l.status, status: 'applied', choices: picked, granted, decidedBy: actor.actorId })) {
+        throw new RunIntentError('E_STALE', 'that level-up moved on');
+      }
+      this.#write(c, { sheet, state, level });
+      this.#emit('level.applied', {
+        levelUpId, slotId: c.slotId, fromLevel: l.mode === 'reconcile' ? c.level : l.fromLevel, toLevel: level, mode: l.mode, granted,
+        before: { state: c.state, level: c.level }, after: { state, level }
+      }, { ...actor, override: l.status === 'pending_player' });
+    });
+    this.#afterChange();
+    this.#offerLevelUps();
+    return { level: this.store.getCharacter(c.slotId).level };
+  }
+
+  /** dm.levelup.revert: the latest applied level-up, back byte for byte (level-up.js revertLevelUp). */
+  #levelRevert({ levelUpId }, actor) {
+    const l = this.#levelUp(levelUpId);
+    if (l.status !== 'applied') throw new RunIntentError('E_STALE', `level-up ${levelUpId} is ${l.status}`);
+    const c = this.#character(l.slotId);
+    const r = revertLevelUp(c.sheet, c.state, l.granted);
+    const level = sheetLevel(r.sheet);
+    this.#tx(() => {
+      if (!this.store.decideLevelUp(this.#runId(), l.id, { fromStatus: 'applied', status: 'reverted', decidedBy: actor.actorId })) {
+        throw new RunIntentError('E_STALE', 'that level-up moved on');
+      }
+      this.#write(c, { sheet: r.sheet, state: r.state, level });
+      this.#emit('level.reverted', {
+        levelUpId, slotId: c.slotId, fromLevel: c.level, toLevel: level, mode: l.mode,
+        before: { state: c.state, level: c.level }, after: { state: r.state, level }
+      }, actor);
+    });
+    this.#afterChange();
+    return { level };
+  }
+
+  // -------------------------------------------------- revive and retire
+
+  /** dm.character.revive: Revivify / Raise Dead (a caster seat, a slot, a diamond) or a DM override (death.js revive). */
+  #revive({ slotId, method, casterSlotId }, actor) {
+    const c = this.#character(slotId);
+    const settings = this.#settings();
+    const caster = casterSlotId ? this.#character(casterSlotId) : null;
+    if (method !== 'dm' && !caster) throw new RunIntentError('no-caster', `${method} needs casterSlotId`);
+    const pool = method === 'dm' ? [] : this.store.listItems(this.#runId()).filter(i => i.ownerSlotId === null || i.ownerSlotId === casterSlotId || i.ownerSlotId === slotId);
+    const since = this.progress.deathsAt[slotId] === undefined ? 0 : this.progress.entries - this.progress.deathsAt[slotId];
+    const r = revive(c.state, {
+      method, deathMode: settings.deathMode, lifeStatus: c.lifeStatus, betweensSinceDeath: since, items: pool,
+      ...(caster ? { caster: { id: caster.slotId, sheet: caster.sheet, state: caster.state, lifeStatus: caster.lifeStatus } } : {})
+    });
+    this.#tx(() => {
+      this.#write(c, { state: r.state, lifeStatus: r.lifeStatus });
+      if (r.casterState && caster) this.#write(caster, { state: r.casterState });
+      for (const s of r.spent.items) { const it = this.#item(s.id); this.#setQty(it, it.qty - s.qty); }
+      this.#emit('character.revived', {
+        slotId, method, lifeStatus: r.lifeStatus, casterSlotId: casterSlotId ?? null, spent: r.spent,
+        before: { state: c.state, lifeStatus: c.lifeStatus, ...(caster ? { casterState: caster.state } : {}) },
+        after: { state: r.state, lifeStatus: r.lifeStatus, ...(r.casterState ? { casterState: r.casterState } : {}) }
+      }, { ...actor, override: r.override });
+    });
+    this.#afterChange();
+    return { lifeStatus: r.lifeStatus };
+  }
+
+  /** Copy a seat's run row into the roster archive (always before the seat is reused). */
+  #archive(c, reason) {
+    return this.store.archiveSeat(this.#runId(), c.slotId, reason);
+  }
+
+  /** dm.character.retire: archive the character, return its items to the stash, empty the seat. */
+  #retire({ slotId, reason = 'retired' }, actor) {
+    const c = this.#character(slotId);
+    this.#tx(() => {
+      const archiveId = this.#archive(c, reason.slice(0, 64) || 'retired');
+      for (const it of this.store.listItems(this.#runId(), { ownerSlotId: slotId })) {
+        this.store.updateItem(this.#runId(), it.id, { ownerSlotId: null, equipped: false, attuned: false });
+      }
+      this.port.roomStore().deleteSeat(this.room.id, c.seat);
+      this.#emit('character.retired', {
+        slotId, archiveId, reason, seat: c.seat,
+        before: { level: c.level, xp: c.xp, lifeStatus: c.lifeStatus, characterId: String(c.sheet?.id ?? '') }, after: null
+      }, actor);
+    });
+    this.port.seatsChanged();
+    this.#afterChange();
+    return {};
+  }
+
+  /**
+   * dm.seat.fill: seat a room character in a run seat. A run character
+   * already there is archived first (upsertSeat nulls the row's sheet and
+   * state); the newcomer joins as imported, and the DM may grant levels
+   * up to the party's highest (queued level-ups).
+   */
+  #seatFill({ seat, characterId, controller, memberId = null, level }, actor) {
+    if (characterId === null) throw new RunIntentError('E_INVALID_INTENT', 'a run seat needs a character');
+    const rs = this.port.roomStore();
+    const ch = rs.getRoomCharacter(this.room.id, characterId);
+    if (!ch) throw new RunIntentError('E_INVALID_INTENT', 'import the character into this room first');
+    let pid = null;
+    if (controller === 'player') {
+      const p = memberId ? rs.getParticipant(this.room.id, memberId) : null;
+      if (!p || p.status !== 'active' || p.role !== 'player') throw new RunIntentError('E_INVALID_INTENT', 'name an active player to seat');
+      const other = rs.listSeats(this.room.id).find(s => s.controllerParticipantId === p.id && s.seat !== seat);
+      if (other) throw new RunIntentError('E_SEAT_TAKEN', 'that player already holds a seat');
+      pid = p.id;
+    }
+    const sheet = clone(ch.parsed);
+    const imported = sheetLevel(sheet);
+    const partyMax = Math.max(imported, ...this.#characters().map(c => c.level ?? 1));
+    const target = level ?? imported;
+    if (target < imported || target > partyMax) throw new RunIntentError('E_INVALID_INTENT', `level must be ${imported}–${partyMax}`);
+    const prev = rs.getSeat(this.room.id, seat);
+    const prevChar = prev?.runId === this.#runId() ? this.store.getCharacter(prev.id) : null;
+    let slotId;
+    this.#tx(() => {
+      let archiveId = null;
+      if (prevChar) {
+        archiveId = this.#archive(prevChar, 'replaced');
+        for (const l of this.store.pendingLevelUps(prevChar.slotId)) {
+          this.store.decideLevelUp(this.#runId(), l.id, { fromStatus: l.status, status: 'reverted', decidedBy: actor.actorId });
+        }
+        for (const it of this.store.listItems(this.#runId(), { ownerSlotId: prevChar.slotId })) {
+          this.store.updateItem(this.#runId(), it.id, { ownerSlotId: null, equipped: false, attuned: false });
+        }
+      }
+      slotId = prev?.id || newId('s_');
+      rs.upsertSeat({ id: slotId, roomId: this.room.id, seat, characterRowId: ch.id, seedParsed: ch.parsed, controller: pid, archetype: 'auto' });
+      const state = initialRunState(sheet);
+      const xp = xpForLevel(imported);
+      const row = this.store.resetSeat(this.#runId(), slotId, { sheet, state, level: imported, xp, lifeStatus: 'active' });
+      this.#emit('seat.filled', {
+        slotId, seat, controller,
+        before: prevChar ? { characterId: String(prevChar.sheet?.id ?? ''), level: prevChar.level, archiveId } : null,
+        after: { characterId: String(sheet.id), level: imported, memberId: pid }
+      }, actor);
+      const ev = this.#emit('character.joined', {
+        slotId, characterId: String(sheet.id), level: imported, before: null,
+        after: { state, xp, level: imported, lifeStatus: 'active' }
+      }, actor);
+      this.#seedItems(slotId, sheet, ev.seq);
+      if (target > imported) this.#queueLevels(row, xp, xpForLevel(target), undefined, { mode: 'xp' });
+    });
+    this.port.seatsChanged();
+    this.#afterChange();
+    this.#offerLevelUps();
+    return { slotId };
   }
 
   /**

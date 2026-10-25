@@ -9,7 +9,7 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { tempRoot, tempDb } from './helpers/server.js';
-import { makeRunRoom, runLog, runHash } from './helpers/runs.js';
+import { makeRunRoom, runLog, runHash, seedSeat } from './helpers/runs.js';
 import { installTripwires } from '../../src/tests/helpers/tripwires.js';
 import { readFileSync } from 'node:fs';
 import { loadRunScript, runScript, replayRunEvents, realRunAdapter } from '../../src/tests/helpers/run-driver.js';
@@ -44,7 +44,7 @@ async function started() {
 
 /** The script's steps after `start`, as intents; `upTo` stops before that step index. */
 const STEPS = [
-  async (r) => { ok(await r.dm('dm.node.begin', {})); await r.settle(); },
+  async (r) => { ok(await r.dm('dm.node.begin', {})); ok(await r.dm('dm.encounter.start', {})); await r.settle(); },
   async (r) => ok(await r.dm('dm.run.advance', { toNodeId: 'n-camp' })),
   async (r) => {
     ok(await r.dm('rest.spend', { slotId: 'slot-1', hitDice: { Cleric: 1 } }));
@@ -52,7 +52,7 @@ const STEPS = [
     ok(await r.dm('dm.rest.grant', { type: 'short' }));
   },
   async (r) => ok(await r.dm('dm.run.advance', { toNodeId: 'n-den' })),
-  async (r) => { ok(await r.dm('dm.node.begin', {})); await r.settle(); },
+  async (r) => { ok(await r.dm('dm.node.begin', {})); ok(await r.dm('dm.encounter.start', {})); await r.settle(); },
   async (r) => ok(await r.dm('dm.run.end', { outcome: 'victory' }))
 ];
 
@@ -119,7 +119,8 @@ test('B24: start freezes the campaign, seats the party rested, and enters the st
   // A second run in the same room is refused; plain encounter setup too.
   assert.throws(() => r.room.run.start({ campaign: SCRIPT.campaign }), { code: 'E_INVALID_INTENT' });
   const bad = await r.dm('dm.encounter.setup', { map: null, grid: { cols: 6, rows: 6 }, monsters: [], placements: {} });
-  assert.equal(bad.p.code, 'E_INVALID_INTENT');
+  assert.equal(bad.p.code, 'E_NODE_NOT_BEGUN');
+  assert.equal((await r.dm('dm.encounter.start', {})).p.code, 'E_NODE_NOT_BEGUN');
   void db;
 });
 
@@ -128,6 +129,7 @@ test('B24: branching — only offered edges, unless the DM overrides; the encoun
   let e = await r.dm('dm.run.advance', { toNodeId: 'n-camp' });
   assert.equal(e.p.code, 'E_INVALID_INTENT', 'an unfought encounter cannot be left without override');
   ok(await r.dm('dm.node.begin', {}));
+  ok(await r.dm('dm.encounter.start', {}));
   await r.settle();
   e = await r.dm('dm.run.advance', { toNodeId: 'n-den' });
   assert.equal(e.p.code, 'E_INVALID_INTENT', 'n-den is not on offer from n-ambush');
@@ -142,6 +144,7 @@ test('B24: between intents are refused while the encounter is live (E_ENCOUNTER_
   const { r, ctx } = await started();
   r.connect(ctx.dmId, 'dm');
   ok(await r.dm('dm.node.begin', {}));
+  ok(await r.dm('dm.encounter.start', {}));
   assert.ok(r.room.loopRunning);
   const e = await r.dm('dm.rest.grant', { type: 'short' });
   assert.equal(e.p.code, 'E_ENCOUNTER_LIVE');
@@ -152,6 +155,7 @@ test('B24: between intents are refused while the encounter is live (E_ENCOUNTER_
 test('B24: the write-back is applied exactly once (both end paths, replays, boot sweeps)', async () => {
   const { r } = await started();
   ok(await r.dm('dm.node.begin', {}));
+  ok(await r.dm('dm.encounter.start', {}));
   await r.settle();
   const encId = `${SCRIPT.runId}:n-ambush`;
   const results = () => runLog(r.runStore, SCRIPT.runId).filter(e => e.type === 'encounter.result').length;
@@ -166,6 +170,7 @@ test('B24: a DM-ended encounter goes through the same hook', async () => {
   const { r, ctx } = await started();
   r.connect(ctx.dmId, 'dm');
   ok(await r.dm('dm.node.begin', {}));
+  ok(await r.dm('dm.encounter.start', {}));
   ok(await r.dm('dm.encounter.end', { outcome: 'dm-ended' }));
   await r.settle();
   const log = runLog(r.runStore, SCRIPT.runId);
@@ -196,6 +201,7 @@ test('B24: SIGTERM mid-transition (encounter ended, write-back not yet applied) 
   // The process dies after the encounter's end is journaled, before the run hook runs.
   r.room.run.onEncounterEnded = () => false;
   ok(await r.dm('dm.node.begin', {}));
+  ok(await r.dm('dm.encounter.start', {}));
   await r.settle();
   assert.equal(runLog(r.runStore, SCRIPT.runId).filter(e => e.type === 'encounter.result').length, 0);
   assert.equal(r.runStore.unappliedEncounters().length, 1);
@@ -212,6 +218,7 @@ test('B24: SIGTERM mid-encounter → the turn replays, the encounter ends once, 
   const { ctx, r } = await started();
   const frames = r.connect(ctx.dmId, 'dm');
   ok(await r.dm('dm.node.begin', {}));
+  ok(await r.dm('dm.encounter.start', {}));
   // Let the fight run until a few exchanges have been broadcast, then die.
   while (frames.filter(f => f.t === 'exchange').length < 3) await new Promise(res => setImmediate(res));
   r.room.shutdown();   // the in-flight turn is left to boot recovery
@@ -281,7 +288,40 @@ test('B24: death path — a dying PC is stabilised by a victory and stands at 1 
 
   ok(await r.dm('dm.run.advance', { toNodeId: 'n-den' }));
   ok(await r.dm('dm.node.begin', {}));
+  ok(await r.dm('dm.encounter.start', {}));
   const pcs = Object.values(r.room.enc.state.entities).filter(e => e.kind === 'pc').map(e => e.id);
   assert.deepEqual(pcs, ['pc-1'], 'the dead fighter is left out of the next encounter');
   await r.settle();
+});
+
+test('B24: dm.node.begin builds the encounter in setup; dm.encounter.setup tweaks it (same seed); dm.encounter.start runs it', async () => {
+  const { r } = await started();
+  const { cid: _c, ok: _o, ...begun } = ok(await r.dm('dm.node.begin', {}));
+  assert.deepEqual(begun, { currentNodeId: 'n-ambush', kind: 'encounter', encounterId: `${SCRIPT.runId}:n-ambush` });
+  assert.equal(r.room.status, 'setup');
+  const seed = r.room.enc.state.rng.s;
+  const setup = { ...SCRIPT.campaign.nodes[0].payload.setup, monsters: [{ slug: 'goblin', id: 'gob-1' }] };
+  const tweaked = ok(await r.dm('dm.encounter.setup', setup));
+  assert.equal(tweaked.encounterId, `${SCRIPT.runId}:n-ambush:2`);
+  assert.equal(r.room.enc.state.rng.s, seed, 'a tweak keeps the seed');
+  assert.deepEqual(Object.keys(r.room.enc.state.entities).sort(), ['gob-1', 'pc-1', 'pc-2']);
+  assert.equal(r.room.enc.state.nodeId, 'n-ambush');
+  ok(await r.dm('dm.encounter.start', {}));
+  await r.settle();
+  assert.equal(runLog(r.runStore, SCRIPT.runId).filter(e => e.type === 'encounter.result').length, 1);
+});
+
+test('B24: a run started in an empty room waits in the lobby; dm.node.begin seats the party and enters the start node', async () => {
+  const { db } = await tempDb(root);
+  const ctx = makeRunRoom(db, { seats: [] });
+  const r = ctx.open();
+  const out = r.room.run.start({ campaign: SCRIPT.campaign, runId: 'run-lobby', seed: 3 });
+  assert.deepEqual(out, { runId: 'run-lobby', status: 'lobby', currentNodeId: null });
+  assert.equal(r.room.status, 'lobby');
+  assert.equal((await r.dm('dm.node.begin', {})).p.message.includes('seat'), true);
+  seedSeat(db, ctx.roomId, { seat: 1, fixture: 'fighter-l5' });
+  r.room.seatsChanged();
+  ok(await r.dm('dm.node.begin', {}));
+  assert.deepEqual(runLog(r.runStore, 'run-lobby').map(e => e.type), ['run.started', 'character.joined', 'node.entered']);
+  assert.equal(r.room.status, 'setup');
 });
