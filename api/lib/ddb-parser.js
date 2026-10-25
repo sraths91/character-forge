@@ -1120,16 +1120,17 @@ const RESET_PERIOD = { 'short rest': 'sr', 'long rest': 'lr', 'dawn': 'dawn', 'd
 
 /**
  * DDB `resetType` (numeric or string) or a parsed reset label → the
- * state_json `recovery` list (`[{period}]`; empty when unknown, i.e. DM-managed).
+ * state_json v1 `recovery` list of periods (`['sr']`; empty when unknown,
+ * i.e. DM-managed). Matches shared/run-state.js RECOVERY_PERIODS.
  * @param {string|number|null} reset
- * @returns {{period: string}[]}
+ * @returns {string[]}
  */
 export function recoveryFor(reset) {
   if (reset == null || reset === '') return [];
   const key = String(reset).toLowerCase();
   const label = RESET_PERIOD[key] ? key : RESET_TYPE_LABEL[key];
   const period = RESET_PERIOD[label];
-  return period ? [{ period }] : [];
+  return period ? [period] : [];
 }
 
 const numberArrayOrNull = (a) => (Array.isArray(a) && a.length
@@ -1276,7 +1277,7 @@ const titleFromSlug = (slug) => String(slug).split('-').filter(Boolean).map(w =>
 
 /**
  * Every limited-use pool, in the state_json v1 `resources` shape
- * `{ [key]: {label, max, spent, recovery: [{period}], source} }`:
+ * `{ [key]: {label, max, spent, recovery: ['sr'|'lr'|…], source} }`:
  *   'feat:<slug>'        — class features in `featureUses` (the engine's
  *                          `resources.features` keys: 'action-surge',
  *                          'second-wind', 'rage', 'channel-divinity', …)
@@ -1288,7 +1289,7 @@ const titleFromSlug = (slug) => String(slug).split('-').filter(Boolean).map(w =>
  * `recovery` comes from DDB `resetType` (sr / lr / dawn / dusk / turn).
  * @param {object} raw — DDB character
  * @param {{classFeatures: object[], featureUses: object, spells: object[]}} parsed
- * @returns {Record<string, {label: string, max: number, spent: number, recovery: {period: string}[], source: string}>}
+ * @returns {Record<string, {label: string, max: number, spent: number, recovery: string[], source: string}>}
  */
 export function parseResources(raw, { classFeatures = [], featureUses = {}, spells = [] } = {}) {
   const out = {};

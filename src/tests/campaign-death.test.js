@@ -10,6 +10,7 @@ import { makeItem } from '../js/campaign/items.js';
 import { CampaignRuleError } from '../js/campaign/errors.js';
 import { parsedDdbFixture } from './helpers/entities.js';
 import { restedState, faceFloat, scriptedRng } from './helpers/campaign-state.js';
+import { validateRunState } from '../js/shared/run-state.js';
 
 const throwsCode = (fn, code) => assert.throws(fn, (e) => e instanceof CampaignRuleError && e.code === code);
 const deadState = (sheet) => restedState(sheet, { hp: { current: 0, temp: 0 }, deathSaves: { successes: 0, failures: 3, stable: false } });
@@ -93,6 +94,8 @@ test('standard Revivify → 1 HP; a 3rd-level slot and a 300 gp diamond spent', 
   assert.equal(r.items.find(i => i.id === 'd1').qty, 0);
   assert.equal(r.override, false);
   assert.equal(items[0].qty, 1, 'input items not mutated');
+  assert.deepEqual(validateRunState(r.state, { sheet: target }).errors, []);
+  assert.deepEqual(validateRunState(r.casterState, { sheet: c.sheet }).errors, []);
 });
 
 test('permadeath refuses Revivify; the DM override still works (logged)', () => {
@@ -163,6 +166,7 @@ test('downtime Healing Word on a dying ally stands them up; the caster can heal 
   const r = castDowntimeHeal({ caster: c, spell: 'Healing Word', targets: [down], rng: () => 0 });
   assert.equal(r.targets[0].state.hp.current, 1 + 3 + 3);
   assert.deepEqual(r.targets[0].state.deathSaves, { successes: 0, failures: 0, stable: false });
+  assert.deepEqual(validateRunState(r.targets[0].state, { sheet: fighter }).errors, []);
   const self = castDowntimeHeal({ caster: c, spell: 'Healing Word', targets: [{ id: 'cleric', sheet: c.sheet, state: c.state }], rng: () => 0 });
   assert.equal(self.casterState.hp.current, 27);
   assert.equal(self.casterState.slots.spell[1].spent, 1, 'slot and healing on one state');

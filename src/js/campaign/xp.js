@@ -45,8 +45,8 @@ export const PRESET_XP = Object.freeze({
   'cult-fanatic': 450, 'kobold-sorcerer': 100
 });
 
-/** The XP modes a campaign can run in (`settings.xpMode`). */
-export const XP_MODES = Object.freeze(['xp', 'milestone']);
+/** The XP modes a campaign can run in (`settings.xpMode`; the shared contract's list). */
+export { XP_MODES } from '../shared/campaign.js';
 
 const FRACTIONS = { 0.125: '1/8', 0.25: '1/4', 0.5: '1/2' };
 

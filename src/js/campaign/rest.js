@@ -16,6 +16,7 @@ import { requireRng } from '../scene/rng.js';
 import { CampaignRuleError, ruleAssert } from './errors.js';
 import { clone, sheetMod, hitDieOf, pushDelta } from './util.js';
 import { effectiveHpMax } from './exhaustion.js';
+import { DEFAULT_CAMPAIGN_SETTINGS } from '../shared/campaign.js';
 
 /**
  * Rest definitions. `recoverPeriods` are the resource recovery periods
@@ -91,7 +92,8 @@ function isDead(state, lifeStatus) {
  * @param {object} state — state_json v1
  * @param {'short'|'long'} type — a REST_TYPES key
  * @param {{spend?: number|Record<string, number>, rng?: function(): number,
- *   dawnIsLongRest?: boolean, lifeStatus?: string}} [opts]
+ *   dawnIsLongRest?: boolean, lifeStatus?: string}} [opts] — dawnIsLongRest
+ *   defaults to the campaign default (DEFAULT_CAMPAIGN_SETTINGS)
  * @returns {{state: object, deltas: {path: string, before: unknown, after: unknown}[],
  *   rolls: {className: string, die: number, roll: number, con: number, healed: number}[],
  *   preparedSwap: boolean, type: string}}
@@ -177,10 +179,12 @@ export function applyRest(sheet, state, type, opts = {}) {
   }
 
   // --- Resources ---
-  const periods = new Set([...def.recoverPeriods, ...(opts.dawnIsLongRest ? def.dawnPeriods : [])]);
+  const dawnIsLongRest = opts.dawnIsLongRest ?? DEFAULT_CAMPAIGN_SETTINGS.dawnIsLongRest;
+  const periods = new Set([...def.recoverPeriods, ...(dawnIsLongRest ? def.dawnPeriods : [])]);
   for (const [key, r] of Object.entries(next.resources || {})) {
+    // state_json v1 stores periods as strings ('sr'); {period} objects are accepted too.
     const rec = Array.isArray(r?.recovery) ? r.recovery : [];
-    if (rec.some(x => periods.has(x?.period))) next.resources[key] = { ...r, spent: 0 };
+    if (rec.some(x => periods.has(typeof x === 'string' ? x : x?.period))) next.resources[key] = { ...r, spent: 0 };
   }
 
   // --- Exhaustion, death saves ---

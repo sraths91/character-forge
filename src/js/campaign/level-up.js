@@ -31,8 +31,8 @@ import { CampaignRuleError, ruleAssert } from './errors.js';
 import { clone, abilityMod, sheetLevel, hitDieOf } from './util.js';
 import { MAX_LEVEL } from './xp.js';
 
-/** HP-on-level modes (`settings.hpOnLevel`). */
-export const HP_ON_LEVEL_MODES = Object.freeze(['average', 'roll']);
+/** HP-on-level modes (`settings.hpOnLevel`; the shared contract's list). */
+export { HP_ON_LEVEL_MODES } from '../shared/campaign.js';
 
 /** Ability score cap for an ASI. */
 export const ASI_CAP = 20;

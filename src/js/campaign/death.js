@@ -21,11 +21,11 @@
 import { ruleAssert } from './errors.js';
 import { clone, lowestSlotAtLeast, spendSlotIn, sheetSpell, pushDelta } from './util.js';
 
-/** party_slots.life_status values. */
-export const LIFE_STATUSES = Object.freeze(['active', 'dying', 'stable', 'dead']);
+import { DEATH_MODES } from '../shared/campaign.js';
+import { LIFE_STATUSES } from '../shared/run-state.js';
 
-/** Campaign `settings.deathMode` values. */
-export const DEATH_MODES = Object.freeze(['standard', 'permadeath', 'lenient']);
+/** party_slots.life_status values and campaign `settings.deathMode` values (shared contracts). */
+export { LIFE_STATUSES, DEATH_MODES };
 
 /** Revival methods. */
 export const REVIVE_METHODS = Object.freeze(['revivify', 'raise-dead', 'dm']);

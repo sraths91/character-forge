@@ -9,6 +9,7 @@ import {
 import { POTIONS, potionFor, itemEffectOf, itemsLedgerFor, rollPotion, drinkPotion } from '../js/campaign/consumables.js';
 import { CampaignRuleError } from '../js/campaign/errors.js';
 import { deriveAC, deriveWeaponAttack } from '../js/scene/pc-stats.js';
+import { itemEffectOf as engineItemEffectOf } from '../js/scene/item-effects.js';
 import { createRng } from '../js/scene/rng.js';
 import { parsedDdbFixture } from './helpers/entities.js';
 import { restedState } from './helpers/campaign-state.js';
@@ -217,7 +218,11 @@ test('itemsLedgerFor: the entity resources.items ledger for usable items', () =>
     makeItem({ id: 'p2', origin: 'dm', name: 'Potion of Greater Healing', qty: 0 }),
     makeItem({ id: 'r', origin: 'dm', name: 'Rope' })
   ];
-  assert.deepEqual(itemsLedgerFor(items), { p1: { name: 'Potion of Healing', effect: { kind: 'heal', dice: '2d4+2' }, max: 2, spent: 0 } });
+  const ledger = itemsLedgerFor(items);
+  assert.deepEqual(ledger, { p1: { name: 'Potion of Healing', effect: 'potion-of-healing', max: 2, spent: 0 } });
+  // The engine resolves the same key to the same dice (one SRD table).
+  assert.deepEqual(engineItemEffectOf(ledger.p1), { kind: 'heal', dice: '2d4+2' });
+  for (const p of Object.values(POTIONS)) assert.deepEqual(engineItemEffectOf({ effect: p.id }), itemEffectOf(p.name));
 });
 
 test('coin purse: total, add, pay with change', () => {

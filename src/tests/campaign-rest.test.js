@@ -6,6 +6,7 @@ import { CampaignRuleError } from '../js/campaign/errors.js';
 import { createRng } from '../js/scene/rng.js';
 import { parsedDdbFixture } from './helpers/entities.js';
 import { restedState, scriptedRng, faceFloat } from './helpers/campaign-state.js';
+import { validateRunState } from '../js/shared/run-state.js';
 
 const cleric = () => parsedDdbFixture('cleric-l5');
 const fighter = () => parsedDdbFixture('fighter-l5');
@@ -63,6 +64,7 @@ test('3-node run: fight → short rest (hit dice, sr + pact) → fight → long 
   assert.ok(short.deltas.some(d => d.path === 'hp.current' && d.before === 10 && d.after === 27));
   assert.ok(short.deltas.some(d => d.path === 'resources.feat:channel-divinity.spent' && d.before === 1 && d.after === 0));
   assert.equal(state.hp.current, 10, 'input state not mutated');
+  assert.deepEqual(validateRunState(short.state, { sheet: s }).errors, [], 'state_json v1 (H22 validator)');
 
   // Node 3 (fight) then a long rest.
   state = short.state;
@@ -78,6 +80,7 @@ test('3-node run: fight → short rest (hit dice, sr + pact) → fight → long 
   assert.equal(long.state.exhaustion, 1);
   assert.equal(long.preparedSwap, true);
   assert.deepEqual(long.rolls, []);
+  assert.deepEqual(validateRunState(long.state, { sheet: s }).errors, []);
 });
 
 test('short rest: pact slots recover', () => {
@@ -146,9 +149,10 @@ test('long rest: half the total hit dice back (min 1), largest dice first', () =
 test('long rest: dawn / day resources need dawnIsLongRest', () => {
   const s = cleric();
   const state = restedState(s);
-  state.resources['ddb:item-charges'] = { label: 'Wand', max: 3, spent: 3, recovery: [{ period: 'dawn' }] };
+  state.resources['ddb:item-charges'] = { label: 'Wand', max: 3, spent: 3, recovery: ['dawn'] };
   state.resources['ddb:dm'] = { label: 'DM-managed', max: 1, spent: 1, recovery: [] };
-  assert.equal(applyRest(s, state, 'long').state.resources['ddb:item-charges'].spent, 3);
+  assert.equal(applyRest(s, state, 'long', { dawnIsLongRest: false }).state.resources['ddb:item-charges'].spent, 3);
+  assert.equal(applyRest(s, state, 'long').state.resources['ddb:item-charges'].spent, 0, 'campaign default: dawn = long rest');
   const r = applyRest(s, state, 'long', { dawnIsLongRest: true });
   assert.equal(r.state.resources['ddb:item-charges'].spent, 0);
   assert.equal(r.state.resources['ddb:dm'].spent, 1, 'no recovery period: DM-managed');

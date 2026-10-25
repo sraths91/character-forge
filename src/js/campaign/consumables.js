@@ -2,10 +2,12 @@
  * M65 R27 — consumables: the SRD potion registry and its effects.
  *
  * Open5e gives potion healing only as prose, so the amounts come from
- * the SRD 5.1 "Potions of Healing" table here. Between nodes a potion is
- * drunk through `drinkPotion` (state_json); during an encounter it is an
- * engine action (plan kind `item`, E1) that reads the same registry via
- * `itemEffectOf` / `itemsLedgerFor`.
+ * the SRD 5.1 "Potions of Healing" table — one table, the engine's
+ * `ITEM_EFFECTS` (scene/item-effects.js, T23); this registry adds names,
+ * rarities and Open5e keys. Between nodes a potion is drunk through
+ * `drinkPotion` (state_json); during an encounter it is the engine's item
+ * action, fed by `itemsLedgerFor` (entity `resources.items`, `effect` =
+ * the registry key).
  *
  * Pure module (Node + browser): no DOM, no `node:` imports, no
  * Math.random — rolls draw from the injected run rng.
@@ -16,13 +18,18 @@ import { requireRng } from '../scene/rng.js';
 import { ruleAssert } from './errors.js';
 import { clone, pushDelta } from './util.js';
 import { effectiveHpMax } from './exhaustion.js';
+import { ITEM_EFFECTS } from '../scene/item-effects.js';
 
-/** SRD 5.1 Potions of Healing (rarity → HP regained). */
+const potion = (id, name, rarity) => Object.freeze({
+  id, name, rarity, dice: ITEM_EFFECTS[id].dice, refKeys: Object.freeze([`srd_${id}`])
+});
+
+/** SRD 5.1 Potions of Healing (2d4+2, 4d4+4, 8d4+8, 10d4+20 via ITEM_EFFECTS). */
 export const POTIONS = Object.freeze({
-  'potion-of-healing': Object.freeze({ id: 'potion-of-healing', name: 'Potion of Healing', rarity: 'common', dice: '2d4+2', refKeys: Object.freeze(['srd_potion-of-healing']) }),
-  'potion-of-greater-healing': Object.freeze({ id: 'potion-of-greater-healing', name: 'Potion of Greater Healing', rarity: 'uncommon', dice: '4d4+4', refKeys: Object.freeze(['srd_potion-of-greater-healing']) }),
-  'potion-of-superior-healing': Object.freeze({ id: 'potion-of-superior-healing', name: 'Potion of Superior Healing', rarity: 'rare', dice: '8d4+8', refKeys: Object.freeze(['srd_potion-of-superior-healing']) }),
-  'potion-of-supreme-healing': Object.freeze({ id: 'potion-of-supreme-healing', name: 'Potion of Supreme Healing', rarity: 'very rare', dice: '10d4+20', refKeys: Object.freeze(['srd_potion-of-supreme-healing']) })
+  'potion-of-healing': potion('potion-of-healing', 'Potion of Healing', 'common'),
+  'potion-of-greater-healing': potion('potion-of-greater-healing', 'Potion of Greater Healing', 'uncommon'),
+  'potion-of-superior-healing': potion('potion-of-superior-healing', 'Potion of Superior Healing', 'rare'),
+  'potion-of-supreme-healing': potion('potion-of-supreme-healing', 'Potion of Supreme Healing', 'very rare')
 });
 
 const slug = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
@@ -55,23 +62,24 @@ export function potionFor(itemOrName) {
  */
 export function itemEffectOf(item) {
   const p = potionFor(item);
-  return p ? { kind: 'heal', dice: p.dice } : null;
+  return p ? { ...ITEM_EFFECTS[p.id] } : null;
 }
 
 /**
- * The entity ledger for an owner's usable items (EncounterState entity
- * `resources.items`): `{ [runItemId]: {name, effect, max, spent: 0} }`,
- * max = quantity. Items without an effect or with no quantity are skipped.
+ * The entity ledger for an owner's usable items (EncounterState v1 entity
+ * `resources.items`): `{ [runItemId]: {name, effect: <registry key>, max,
+ * spent: 0} }`, max = quantity. Items without a known effect or with no
+ * quantity are skipped.
  * @param {{id: string|number, name: string, qty: number}[]} items — run items
- * @returns {Record<string, {name: string, effect: object, max: number, spent: number}>}
+ * @returns {Record<string, {name: string, effect: string, max: number, spent: number}>}
  */
 export function itemsLedgerFor(items) {
   const out = {};
   for (const it of (Array.isArray(items) ? items : [])) {
-    const effect = itemEffectOf(it);
+    const p = potionFor(it);
     const qty = Math.trunc(Number(it?.qty) || 0);
-    if (!effect || qty <= 0 || it.id == null) continue;
-    out[String(it.id)] = { name: it.name, effect, max: qty, spent: 0 };
+    if (!p || qty <= 0 || it.id == null) continue;
+    out[String(it.id)] = { name: it.name, effect: p.id, max: qty, spent: 0 };
   }
   return out;
 }

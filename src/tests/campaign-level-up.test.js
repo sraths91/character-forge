@@ -10,6 +10,7 @@ import { parseCharacter } from '../../api/lib/ddb-parser.js';
 import { proficiencyBonus } from '../js/scene/pc-stats.js';
 import { loadDdbFixture, parsedDdbFixture } from './helpers/entities.js';
 import { restedState, faceFloat } from './helpers/campaign-state.js';
+import { validateRunState } from '../js/shared/run-state.js';
 
 const throwsCode = (fn, code) => assert.throws(fn, (e) => e instanceof CampaignRuleError && e.code === code);
 
@@ -58,6 +59,7 @@ test('Saris-like cleric 4→5: slots {1:4, 2:3, 3:2}, HP +5 + CON, Destroy Undea
   assert.ok(s5.classFeatures.some(f => f.name === 'Destroy Undead' && f.level === 5));
   assert.equal(s5.progression.Cleric.level, 5);
   assert.equal(granted.hp.gain, 7);
+  assert.deepEqual(validateRunState(st5, { sheet: s5 }).errors, [], 'state_json v1 against the leveled sheet');
   assert.deepEqual(granted.features, ['Destroy Undead']);
   // The leveled sheet matches a fresh parse of the level-5 fixture where it matters.
   const fresh = parsedDdbFixture('cleric-l5');
@@ -182,6 +184,7 @@ test('fighter 16→17: Action Surge uses go to 2 (SRD table) on sheet and state'
   assert.equal(up.sheet.featureUses['action-surge'].max, 2);
   assert.equal(up.sheet.resources['feat:action-surge'].max, 2);
   assert.equal(up.state.resources['feat:action-surge'].max, 2);
+  assert.deepEqual(validateRunState(up.state, { sheet: up.sheet }).errors, []);
   const back = revertLevelUp(up.sheet, up.state, up.granted);
   assert.equal(back.state.resources['feat:action-surge'].max, 1);
   assert.equal(JSON.stringify(back.sheet), JSON.stringify(sheet));

@@ -20,12 +20,11 @@
 import { CampaignRuleError, ruleAssert } from './errors.js';
 import { clone } from './util.js';
 import { potionFor } from './consumables.js';
+import { ITEM_ORIGINS } from '../shared/campaign.js';
+import { MAX_ATTUNED } from '../shared/run-state.js';
 
-/** Where a run item came from. */
-export const ITEM_ORIGINS = Object.freeze(['ddb', 'open5e', 'dm']);
-
-/** Attunement limit per creature (SRD). */
-export const MAX_ATTUNED = 3;
+/** Where a run item came from; the attunement limit (shared contracts). */
+export { ITEM_ORIGINS, MAX_ATTUNED };
 
 /** Ring slots on the sheet. */
 export const MAX_RINGS = 2;

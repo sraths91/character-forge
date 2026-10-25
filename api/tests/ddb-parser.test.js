@@ -1274,7 +1274,7 @@ test('R23: progression keeps the full ladder (features above the current level i
   assert.ok(pr.features.find(f => f.name === 'Ability Score Improvement').asi);
   // Unlocked limited feature: uses from the DDB action; locked: the definition's table.
   assert.deepStrictEqual(pr.features.find(f => f.name === 'Channel Divinity').limitedUse,
-    { max: 1, reset: 'short rest', recovery: [{ period: 'sr' }], resourceKey: 'feat:channel-divinity' });
+    { max: 1, reset: 'short rest', recovery: ['sr'], resourceKey: 'feat:channel-divinity' });
   assert.deepStrictEqual(pr.features.find(f => f.name === 'Divine Intervention').limitedUse,
     { byLevel: [{ level: null, uses: 1 }], max: null, reset: null, recovery: [], resourceKey: 'feat:divine-intervention' });
   assert.deepStrictEqual(pr.levelScales['destroy-undead'].map(s => [s.level, s.value]), [[5, 1], [8, 1], [11, 2], [14, 3], [17, 4]]);
@@ -1326,18 +1326,21 @@ test('R23: every inventory row carries its DDB id and an equippable summary', ()
 test('R23: resources map keys feat:/ddb:/spell: with recovery periods', () => {
   const cleric = parsedDdbFixture('cleric-l5');
   assert.deepStrictEqual(cleric.resources['feat:channel-divinity'],
-    { label: 'Channel Divinity', max: 1, spent: 0, recovery: [{ period: 'sr' }], source: 'feature' });
-  // An optional class feature with uses but no classFeatures row → ddb:<componentId>.
-  assert.deepStrictEqual(cleric.resources['ddb:5299'],
-    { label: 'Harness Divine Power', max: 1, spent: 0, recovery: [{ period: 'lr' }], source: 'class' });
+    { label: 'Channel Divinity', max: 1, spent: 0, recovery: ['sr'], source: 'feature' });
   assert.strictEqual(cleric.resources['ddb:5202'], undefined, 'Channel Divinity is keyed once, as feat:');
+  // An optional class feature with uses but no classFeatures row → ddb:<componentId>
+  // (a real export's "Harness Divine Power").
+  const raw = loadDdbFixture('cleric-l5');
+  raw.actions.class.push({ componentId: 5299, name: 'Harness Divine Power', limitedUse: { maxUses: 1, numberUsed: 0, resetType: 2 } });
+  assert.deepStrictEqual(parseCharacter(raw).resources['ddb:5299'],
+    { label: 'Harness Divine Power', max: 1, spent: 0, recovery: ['lr'], source: 'class' });
   // Feat-granted Misty Step: the engine ledger key.
   assert.deepStrictEqual(cleric.resources['spell:misty-step'],
-    { label: 'Misty Step', max: 1, spent: 0, recovery: [{ period: 'lr' }], source: 'feat' });
+    { label: 'Misty Step', max: 1, spent: 0, recovery: ['lr'], source: 'feat' });
   const fighter = parsedDdbFixture('fighter-l5');
   assert.deepStrictEqual(Object.keys(fighter.resources).sort(), ['feat:action-surge', 'feat:second-wind']);
-  assert.deepStrictEqual(fighter.resources['feat:second-wind'].recovery, [{ period: 'sr' }]);
-  assert.deepStrictEqual(parsedDdbFixture('wizard-l5').resources['feat:arcane-recovery'].recovery, [{ period: 'lr' }]);
+  assert.deepStrictEqual(fighter.resources['feat:second-wind'].recovery, ['sr']);
+  assert.deepStrictEqual(parsedDdbFixture('wizard-l5').resources['feat:arcane-recovery'].recovery, ['lr']);
   // Race / item actions; string and numeric reset types; spent from numberUsed.
   const p = parseCharacter(rawFixture({
     actions: {
@@ -1345,16 +1348,16 @@ test('R23: resources map keys feat:/ddb:/spell: with recovery periods', () => {
       item: [{ componentId: 88, name: 'Wand Burst', limitedUse: { maxUses: 3, numberUsed: 0, resetType: 'Dawn' } }]
     }
   }));
-  assert.deepStrictEqual(p.resources['ddb:77'], { label: 'Breath Weapon', max: 1, spent: 1, recovery: [{ period: 'sr' }], source: 'race' });
-  assert.deepStrictEqual(p.resources['ddb:88'].recovery, [{ period: 'dawn' }]);
+  assert.deepStrictEqual(p.resources['ddb:77'], { label: 'Breath Weapon', max: 1, spent: 1, recovery: ['sr'], source: 'race' });
+  assert.deepStrictEqual(p.resources['ddb:88'].recovery, ['dawn']);
 });
 
 test('R23: recoveryFor maps DDB reset types to periods', async () => {
   const { recoveryFor } = await import('../lib/ddb-parser.js');
-  assert.deepStrictEqual(recoveryFor(1), [{ period: 'sr' }]);
-  assert.deepStrictEqual(recoveryFor('2'), [{ period: 'lr' }]);
-  assert.deepStrictEqual(recoveryFor('Dawn'), [{ period: 'dawn' }]);
-  assert.deepStrictEqual(recoveryFor('long rest'), [{ period: 'lr' }]);
+  assert.deepStrictEqual(recoveryFor(1), ['sr']);
+  assert.deepStrictEqual(recoveryFor('2'), ['lr']);
+  assert.deepStrictEqual(recoveryFor('Dawn'), ['dawn']);
+  assert.deepStrictEqual(recoveryFor('long rest'), ['lr']);
   assert.deepStrictEqual(recoveryFor(null), []);
   assert.deepStrictEqual(recoveryFor('whenever'), []);
 });

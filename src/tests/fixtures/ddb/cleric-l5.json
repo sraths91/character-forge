@@ -741,24 +741,6 @@
         "componentId": 5202,
         "name": "Channel Divinity: Turn Undead",
         "limitedUse": null
-      },
-      {
-        "componentId": 5299,
-        "componentTypeId": 12168134,
-        "name": "Harness Divine Power",
-        "limitedUse": {
-          "name": null,
-          "statModifierUsesId": null,
-          "resetType": 2,
-          "numberUsed": 0,
-          "minNumberConsumed": 1,
-          "maxNumberConsumed": 1,
-          "maxUses": 1,
-          "operator": 1,
-          "useProficiencyBonus": false,
-          "proficiencyBonusOperator": 1,
-          "resetDice": null
-        }
       }
     ]
   },

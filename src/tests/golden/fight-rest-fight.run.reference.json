@@ -98,7 +98,7 @@
               "cp": 0,
               "sp": 0,
               "ep": 0,
-              "gp": 0,
+              "gp": 165,
               "pp": 0
             },
             "concentration": null
@@ -168,11 +168,11 @@
             "exhaustion": 0,
             "inspiration": false,
             "currency": {
-              "cp": 0,
-              "sp": 0,
+              "cp": 12,
+              "sp": 30,
               "ep": 0,
-              "gp": 0,
-              "pp": 0
+              "gp": 40,
+              "pp": 1
             },
             "concentration": null
           },
@@ -267,7 +267,7 @@
                 "cp": 0,
                 "sp": 0,
                 "ep": 0,
-                "gp": 0,
+                "gp": 165,
                 "pp": 0
               },
               "concentration": null
@@ -321,11 +321,11 @@
               "exhaustion": 0,
               "inspiration": false,
               "currency": {
-                "cp": 0,
-                "sp": 0,
+                "cp": 12,
+                "sp": 30,
                 "ep": 0,
-                "gp": 0,
-                "pp": 0
+                "gp": 40,
+                "pp": 1
               },
               "concentration": null
             },
@@ -393,7 +393,7 @@
                 "cp": 0,
                 "sp": 0,
                 "ep": 0,
-                "gp": 0,
+                "gp": 165,
                 "pp": 0
               },
               "concentration": null
@@ -447,11 +447,11 @@
               "exhaustion": 0,
               "inspiration": false,
               "currency": {
-                "cp": 0,
-                "sp": 0,
+                "cp": 12,
+                "sp": 30,
                 "ep": 0,
-                "gp": 0,
-                "pp": 0
+                "gp": 40,
+                "pp": 1
               },
               "concentration": null
             },
@@ -616,7 +616,7 @@
               "cp": 0,
               "sp": 0,
               "ep": 0,
-              "gp": 0,
+              "gp": 165,
               "pp": 0
             },
             "concentration": null
@@ -667,11 +667,11 @@
             "exhaustion": 0,
             "inspiration": false,
             "currency": {
-              "cp": 0,
-              "sp": 0,
+              "cp": 12,
+              "sp": 30,
               "ep": 0,
-              "gp": 0,
-              "pp": 0
+              "gp": 40,
+              "pp": 1
             },
             "concentration": null
           }
@@ -736,7 +736,7 @@
               "cp": 0,
               "sp": 0,
               "ep": 0,
-              "gp": 0,
+              "gp": 165,
               "pp": 0
             },
             "concentration": null
@@ -787,11 +787,11 @@
             "exhaustion": 0,
             "inspiration": false,
             "currency": {
-              "cp": 0,
-              "sp": 0,
+              "cp": 12,
+              "sp": 30,
               "ep": 0,
-              "gp": 0,
-              "pp": 0
+              "gp": 40,
+              "pp": 1
             },
             "concentration": null
           }
@@ -895,7 +895,7 @@
                 "cp": 0,
                 "sp": 0,
                 "ep": 0,
-                "gp": 0,
+                "gp": 165,
                 "pp": 0
               },
               "concentration": null
@@ -949,11 +949,11 @@
               "exhaustion": 0,
               "inspiration": false,
               "currency": {
-                "cp": 0,
-                "sp": 0,
+                "cp": 12,
+                "sp": 30,
                 "ep": 0,
-                "gp": 0,
-                "pp": 0
+                "gp": 40,
+                "pp": 1
               },
               "concentration": null
             },
@@ -1021,7 +1021,7 @@
                 "cp": 0,
                 "sp": 0,
                 "ep": 0,
-                "gp": 0,
+                "gp": 165,
                 "pp": 0
               },
               "concentration": null
@@ -1075,11 +1075,11 @@
               "exhaustion": 0,
               "inspiration": false,
               "currency": {
-                "cp": 0,
-                "sp": 0,
+                "cp": 12,
+                "sp": 30,
                 "ep": 0,
-                "gp": 0,
-                "pp": 0
+                "gp": 40,
+                "pp": 1
               },
               "concentration": null
             },
@@ -1259,7 +1259,7 @@
           "cp": 0,
           "sp": 0,
           "ep": 0,
-          "gp": 0,
+          "gp": 165,
           "pp": 0
         },
         "concentration": null
@@ -1316,11 +1316,11 @@
         "exhaustion": 0,
         "inspiration": false,
         "currency": {
-          "cp": 0,
-          "sp": 0,
+          "cp": 12,
+          "sp": 30,
           "ep": 0,
-          "gp": 0,
-          "pp": 0
+          "gp": 40,
+          "pp": 1
         },
         "concentration": null
       },
@@ -1332,5 +1332,5 @@
       ]
     }
   },
-  "runHash": "126c9f8abe2965"
+  "runHash": "074792e7353fc5"
 }

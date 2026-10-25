@@ -6,7 +6,8 @@ import {
   exhaustedSpeed, effectiveHpMax, applyExhaustionToEntity
 } from '../js/campaign/exhaustion.js';
 import { resolveAttack } from '../js/scene/combat-resolver.js';
-import { entityFromSheet } from '../js/scene/encounter-adapters.js';
+import { entityFromSheet, wrapperFromEntity } from '../js/scene/encounter-adapters.js';
+import { initialRunState } from '../js/shared/run-state.js';
 import { parsedDdbFixture } from './helpers/entities.js';
 
 const seed = () => entityFromSheet(parsedDdbFixture('fighter-l5'), { pos: { col: 1, row: 1 } });
@@ -55,6 +56,20 @@ test('exhaustion 3: disadvantage on attack rolls (combat-resolver) and saves', (
   // Also read from a condition object, and cancelled by advantage as usual.
   const viaCondition = { id: 'p', conditions: [{ id: 'exhaustion', level: 4 }, 'invisible'], _position: { col: 1, row: 1 } };
   assert.equal(attackWith(viaCondition).d20.mode, 'normal');
+});
+
+test('exhaustion 3 end to end: run state → entity → engine wrapper → resolver disadvantage', () => {
+  const sheet = parsedDdbFixture('fighter-l5');
+  const entity = entityFromSheet(sheet, { pos: { col: 1, row: 1 }, runState: { ...initialRunState(sheet), exhaustion: 3 } });
+  const w = wrapperFromEntity(entity, sheet);
+  assert.equal(exhaustionLevelOf(w), 3);
+  assert.equal(attackWith({ ...w, _position: { col: 1, row: 1 } }).d20.mode, 'disadvantage');
+  // The engine's seeding and applyExhaustionToEntity agree on speed and HP max.
+  for (const lv of [2, 4, 5, 6]) {
+    const seeded = entityFromSheet(sheet, { pos: { col: 1, row: 1 }, runState: { ...initialRunState(sheet), exhaustion: lv } });
+    const mine = applyExhaustionToEntity(seed(), lv);
+    assert.deepEqual([seeded.speedFt, seeded.hpMax, seeded.status], [mine.speedFt, mine.hpMax, mine.status], `level ${lv}`);
+  }
 });
 
 test('exhaustion 4: HP maximum halved (hp clamped)', () => {
