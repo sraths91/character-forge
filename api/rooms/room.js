@@ -267,6 +267,20 @@ export class Room {
     this.#broadcastRoom('member.left', { memberId: participantId, reason: 'kicked' });
   }
 
+  /**
+   * The DM token was replaced (campaign-key DM recovery, M65 B26): the
+   * socket opened with the old token is closed; the DM reconnects with
+   * the new one.
+   */
+  dmTokenRotated() {
+    const m = this.dm;
+    if (m?.conn) {
+      const c = m.conn;
+      m.conn = null;
+      c.close(CLOSE_CODES.REVOKED, 'the DM token was replaced');
+    }
+  }
+
   /** Service event: seats changed; broadcast a `seat.updated` per changed seat. */
   seatsChanged() {
     const before = new Map(this.seats.map(s => [s.seat, s]));

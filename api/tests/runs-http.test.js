@@ -72,3 +72,22 @@ test('B24 HTTP: with X-Room-Token the run starts in that room with its seated pa
     assert.deepEqual(run.row.campaign.nodes.map(n => n.id), ['n-ambush', 'n-camp']);
   } finally { await srv.close(); }
 });
+
+test('B26 HTTP: DM recovery — the campaign key mints a fresh DM token; the old one stops working', async () => {
+  const { srv, url } = await boot();
+  try {
+    const { cid, key } = await campaign(url);
+    const run = (await api(url, `/api/campaigns/${cid}/runs`, { method: 'POST', token: key, body: {} })).body;
+    const other = await campaign(url);
+    assert.equal((await api(url, `/api/campaigns/${cid}/runs/${run.runId}/dm-token`, { method: 'POST', token: other.key })).status, 401);
+    assert.equal((await api(url, `/api/campaigns/${other.cid}/runs/${run.runId}/dm-token`, { method: 'POST', token: other.key })).status, 404);
+    const rec = await api(url, `/api/campaigns/${cid}/runs/${run.runId}/dm-token`, { method: 'POST', token: key });
+    assert.equal(rec.status, 201, JSON.stringify(rec.body));
+    assert.deepEqual([rec.body.roomId, rec.body.code], [run.roomId, run.code]);
+    assert.notEqual(rec.body.dmToken, run.dmToken);
+    assert.equal((await api(url, `/api/rooms/${run.roomId}`, { token: run.dmToken })).status, 401);
+    const me = await api(url, `/api/rooms/${run.roomId}`, { token: rec.body.dmToken });
+    assert.equal(me.status, 200);
+    assert.equal(me.body.me.role, 'dm');
+  } finally { await srv.close(); }
+});

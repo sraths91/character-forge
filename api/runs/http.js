@@ -11,8 +11,11 @@
 //        the start node), or — with no X-Room-Token — creates a room for
 //        it (the DM token is returned once) where the run waits in the
 //        lobby until the party is seated and the DM sends dm.node.begin.
+//   POST /api/campaigns/:cid/runs/:runId/dm-token   (campaign key)
+//        → 201 {dmToken, roomId, code}   DM recovery (B26): a fresh DM token for the
+//        run's room; the old one stops working and its socket is closed.
 
-import { bearerToken } from '../rooms/tokens.js';
+import { bearerToken, generateToken, hashToken } from '../rooms/tokens.js';
 import { RoomError as ApiError } from '../rooms/service.js';
 import { validateCampaign } from '../../src/js/shared/campaign.js';
 
@@ -40,9 +43,10 @@ export function frozenCampaign(store, c) {
  * @param {{get: (roomId: string) => import('../rooms/room.js').Room|null}} o.registry
  * @param {{authenticate: (token: string|null) => object|null}} o.rooms  room service
  * @param {ReturnType<import('../campaigns/store.js').createCampaignStore>} o.campaigns
+ * @param {ReturnType<import('./store.js').createRunStore>} o.runs
  * @param {(level: string, msg: string, extra?: object) => void} [o.log]
  */
-export function mountRunRoutes(app, { registry, rooms, campaigns, log = () => {} }) {
+export function mountRunRoutes(app, { registry, rooms, campaigns, runs, log = () => {} }) {
   const wrap = (fn) => (req, res, next) => {
     Promise.resolve().then(() => fn(req, res)).catch(next);
   };
@@ -100,5 +104,18 @@ export function mountRunRoutes(app, { registry, rooms, campaigns, log = () => {}
     }
     log('info', 'runs: started over HTTP', { campaignId: c.id, roomId: dm.roomId, runId: out.runId });
     res.status(201).json({ ...out, roomId: dm.roomId, code: rooms.store.getRoom(dm.roomId).code, dmToken });
+  }));
+
+  app.post('/api/campaigns/:cid/runs/:runId/dm-token', wrap((req, res) => {
+    const c = owned(req);
+    const run = runs.getRun(req.params.runId);
+    if (!run || run.campaignId !== c.id) throw new ApiError(404, 'NOT_FOUND', 'No such run in this campaign');
+    const room = rooms.store.getRoom(run.roomId);
+    if (!room || room.status === 'closed') throw new ApiError(409, 'ROOM_CLOSED', 'The run\'s room is closed');
+    const dmToken = generateToken();
+    rooms.store.setDmTokenHash(run.roomId, hashToken(dmToken));
+    registry.get(run.roomId)?.dmTokenRotated();
+    log('info', 'runs: DM token recovered with the campaign key', { campaignId: c.id, runId: run.id, roomId: run.roomId });
+    res.status(201).json({ dmToken, roomId: run.roomId, code: room.code });
   }));
 }

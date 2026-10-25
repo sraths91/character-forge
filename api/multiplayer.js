@@ -62,7 +62,7 @@ export async function startMultiplayerServer({
   app = createApp({
     db, env, dataDir, log, rooms: service, ...appOpts,
     mount: (a, ctx) => {
-      if (runs) mountRunRoutes(a, { registry, rooms: service, campaigns: a.locals.campaigns?.store ?? createCampaignStore(db.db), log });
+      if (runs) mountRunRoutes(a, { registry, rooms: service, campaigns: a.locals.campaigns?.store ?? createCampaignStore(db.db), runs: runs.store, log });
       userMount?.(a, ctx);
     }
   });

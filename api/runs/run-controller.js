@@ -34,7 +34,9 @@ import { createRng } from '../../src/js/scene/rng.js';
 import * as TM from '../../src/js/scene/turn-manager.js';
 import { runStateFromEntity, itemSpendFromEntity } from '../../src/js/scene/encounter-adapters.js';
 import { validateCampaign, startNodeId, campaignSettings } from '../../src/js/shared/campaign.js';
-import { initialRunState, validateRunState, settleOutcomeOf } from '../../src/js/shared/run-state.js';
+import {
+  initialRunState, validateRunState, settleOutcomeOf, validateRunSnapshot, RUN_SNAPSHOT_VERSION, SNAPSHOT_RUN_STATUSES
+} from '../../src/js/shared/run-state.js';
 import { makeRunEvent, validateRunEvent } from '../../src/js/shared/run-events.js';
 import { CampaignRuleError } from '../../src/js/campaign/errors.js';
 import { sheetLevel } from '../../src/js/campaign/util.js';
@@ -766,9 +768,154 @@ export class RunController {
     }
   }
 
-  /** Intents added by later tasks. */
-  #later(_member, t) {
-    throw new RunIntentError('E_UNKNOWN_TYPE', `${t} is not available yet`);
+  /** Save / load and rejoin (M65 B26). */
+  #later(member, t, p, actor) {
+    switch (t) {
+      case 'dm.snapshot.save': return this.#snapshotSave(p, actor);
+      case 'dm.snapshot.load': return this.#snapshotLoad(p, actor);
+      case 'seat.reclaim': return this.#reclaim(member, p);
+      case 'dm.seat.reclaim.approve': return this.#reclaimApprove(p, actor);
+      default: throw new RunIntentError('E_UNKNOWN_TYPE', `unhandled ${t}`);
+    }
+  }
+
+  // ---------------------------------------------------------- snapshots
+
+  /** The run snapshot blob v1 (run-state.js validateRunSnapshot) as of now. */
+  #blob() {
+    const chars = this.#characters();
+    const seats = new Map(this.port.seats().map(x => [x.id, x]));
+    const slots = new Set(chars.map(c => c.slotId));
+    return {
+      v: RUN_SNAPSHOT_VERSION, runId: this.#runId(), atSeq: this.seq,
+      run: {
+        status: this.row.status, currentNodeId: this.progress.currentNodeId, visitedNodeIds: [...this.progress.visited],
+        settings: clone(this.row.settings), stash: { currency: clone(this.#stash().currency) }, rng: clone(this.row.rng)
+      },
+      characters: chars.map(c => ({
+        slotId: c.slotId, seat: c.seat, characterId: c.sheet?.id !== undefined ? String(c.sheet.id) : null, name: String(c.sheet?.name || 'PC').slice(0, 128),
+        level: c.level ?? 1, xp: c.xp, lifeStatus: c.lifeStatus, version: c.version,
+        controllerParticipantId: seats.get(c.slotId)?.controllerParticipantId ?? null, sheet: clone(c.sheet), state: clone(c.state)
+      })),
+      items: this.store.listItems(this.#runId()).filter(i => i.ownerSlotId === null || slots.has(i.ownerSlotId)).map(i => ({
+        id: i.id, ownerSlotId: i.ownerSlotId, origin: i.origin, refKey: i.refKey, name: i.name, qty: i.qty,
+        equipped: i.equipped, attuned: i.attuned, chargesSpent: i.chargesSpent, data: clone(i.data)
+      })),
+      levelUps: this.store.listLevelUps(this.#runId()).filter(l => slots.has(l.slotId)).map(l => ({
+        id: l.id, slotId: l.slotId, fromLevel: l.fromLevel, toLevel: l.toLevel, className: l.className, mode: l.mode, status: l.status,
+        ...(l.auto != null ? { auto: clone(l.auto) } : {}), ...(l.choices != null ? { choices: clone(l.choices) } : {}),
+        ...(l.granted != null ? { granted: clone(l.granted) } : {})
+      })),
+      campaign: clone(this.#campaign())
+    };
+  }
+
+  /** dm.snapshot.save: between nodes only (decision: no turn-level rewind). */
+  #snapshotSave({ label = null }, actor) {
+    if (!SNAPSHOT_RUN_STATUSES.includes(this.row.status)) throw new RunIntentError('E_INVALID_INTENT', `save between nodes (the run is ${this.row.status})`);
+    const blob = this.#blob();
+    const v = validateRunSnapshot(blob);
+    if (!v.ok) throw new Error(`run snapshot invalid: ${v.errors.slice(0, 3).map(e => `${e.path} ${e.message}`).join('; ')}`);
+    let snapshotId;
+    this.#tx(() => {
+      snapshotId = this.store.saveSnapshot(this.#runId(), { label, atSeq: blob.atSeq, blob, createdBy: actor.actorId });
+      this.#emit('snapshot.saved', { snapshotId, label, atSeq: blob.atSeq }, actor);
+    });
+    this.#afterChange();
+    return { snapshotId, atSeq: blob.atSeq };
+  }
+
+  /**
+   * dm.snapshot.load: characters, items, level-ups, stash, RNG and the node
+   * walk go back to the save point; the log only grows (snapshot.restored
+   * carries the walk as of the save, rebuilt from the events up to it).
+   */
+  #snapshotLoad({ snapshotId }, actor) {
+    const snap = this.store.getSnapshot(this.#runId(), snapshotId);
+    if (!snap) throw new RunIntentError('E_INVALID_INTENT', `no snapshot ${snapshotId}`);
+    const blob = snap.blob;
+    const v = validateRunSnapshot(blob);
+    if (!v.ok) throw new RunIntentError('E_INVALID_INTENT', `snapshot ${snapshotId} is not loadable: ${v.errors[0].path} ${v.errors[0].message}`);
+    let progress = emptyProgress();
+    for (const ev of this.store.listEvents(this.#runId(), { afterSeq: 0, limit: blob.atSeq })) progress = reduceProgress(progress, ev);
+    const live = new Map(this.#characters().map(c => [c.slotId, c]));
+    const missing = blob.characters.filter(c => !live.has(c.slotId)).map(c => c.slotId);
+    const kept = new Set(blob.characters.map(c => c.slotId).filter(id => live.has(id)));
+    const before = { currentNodeId: this.progress.currentNodeId, seq: this.seq, status: this.row.status };
+    this.#tx(() => {
+      for (const c of blob.characters) {
+        if (!kept.has(c.slotId)) continue;
+        this.#write(live.get(c.slotId), { sheet: c.sheet, state: c.state, level: c.level, xp: c.xp, lifeStatus: c.lifeStatus });
+      }
+      this.store.replaceItems(this.#runId(), blob.items.filter(i => i.ownerSlotId === null || kept.has(i.ownerSlotId)));
+      this.store.replaceLevelUps(this.#runId(), blob.levelUps.filter(l => kept.has(l.slotId)));
+      this.store.setStash(this.#runId(), blob.run.stash);
+      this.store.setRng(this.#runId(), blob.run.rng);
+      this.store.setCurrentNode(this.#runId(), blob.run.currentNodeId);
+      this.store.setStatus(this.#runId(), blob.run.status);
+      this.#emit('snapshot.restored', {
+        snapshotId, atSeq: blob.atSeq, ...(missing.length ? { missing } : {}),
+        before, after: { currentNodeId: blob.run.currentNodeId, status: blob.run.status, progress }
+      }, { ...actor, override: true });
+    });
+    this.pendingRest = {};
+    this.#afterChange();
+    this.#offerLevelUps();
+    return { currentNodeId: this.progress.currentNodeId, ...(missing.length ? { missing } : {}) };
+  }
+
+  // --------------------------------------------------------------- seats
+
+  /**
+   * seat.reclaim: a player (a new browser joined by code) takes back a run
+   * seat. Automatic when the seat's old controller left or was kicked (or
+   * there is none); otherwise the DM approves.
+   */
+  #reclaim(member, { slotId }) {
+    const c = this.#character(slotId);
+    const rs = this.port.roomStore();
+    const seat = rs.getSeatById(this.room.id, slotId);
+    if (seat.controllerParticipantId === member.id) return { reclaimed: true };
+    if (rs.listSeats(this.room.id).some(x => x.controllerParticipantId === member.id)) throw new RunIntentError('E_SEAT_TAKEN', 'you already hold a seat');
+    const old = seat.controllerParticipantId ? rs.getParticipant(this.room.id, seat.controllerParticipantId) : null;
+    if (!old || old.status !== 'active') {
+      this.#handSeat(c, seat, member.id, { actorKind: 'player', actorId: member.id }, 'reclaimed');
+      return { reclaimed: true };
+    }
+    this.reclaims = this.reclaims.filter(x => !(x.slotId === slotId && x.memberId === member.id));
+    this.reclaims.push({ slotId, memberId: member.id, displayName: member.displayName ?? null, from: old.id });
+    const dm = [...this.port.members().values()].find(m => m.role === 'dm');
+    if (dm?.conn) this.sendSnapshot(dm);
+    return { reclaimed: false, pending: true };
+  }
+
+  #reclaimApprove({ slotId, memberId, approve }, actor) {
+    const i = this.reclaims.findIndex(x => x.slotId === slotId && x.memberId === memberId);
+    if (i < 0) throw new RunIntentError('E_STALE', 'no such reclaim request');
+    this.reclaims.splice(i, 1);
+    if (approve) {
+      const rs = this.port.roomStore();
+      const p = rs.getParticipant(this.room.id, memberId);
+      if (!p || p.status !== 'active') throw new RunIntentError('E_STALE', 'that player has left');
+      if (rs.listSeats(this.room.id).some(x => x.controllerParticipantId === memberId)) throw new RunIntentError('E_SEAT_TAKEN', 'that player already holds a seat');
+      this.#handSeat(this.#character(slotId), rs.getSeatById(this.room.id, slotId), memberId, actor, 'reclaim-approved');
+    } else {
+      this.#afterChange();
+    }
+    return { approved: !!approve };
+  }
+
+  /** Give a run seat to `memberId` (seat.filled with the controller change). */
+  #handSeat(c, seat, memberId, actor, reason) {
+    this.#tx(() => {
+      this.port.roomStore().setSeatController(this.room.id, c.slotId, memberId);
+      this.#emit('seat.filled', {
+        slotId: c.slotId, seat: c.seat, controller: 'player', reason,
+        before: { memberId: seat.controllerParticipantId ?? null }, after: { memberId }
+      }, actor);
+    });
+    this.port.seatsChanged();
+    this.#afterChange();
   }
 
   // -------------------------------------------------------------- items
