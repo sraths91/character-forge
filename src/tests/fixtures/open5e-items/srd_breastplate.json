@@ -1,0 +1,43 @@
+{
+  "key": "srd_breastplate",
+  "name": "Breastplate",
+  "desc": "This armor consists of a fitted metal chest piece worn with supple leather. Although it leaves the legs and arms relatively unprotected, this armor provides good protection for the wearer's vital organs while leaving the wearer relatively unencumbered.",
+  "category": {
+    "name": "Armor",
+    "key": "armor"
+  },
+  "weapon": null,
+  "armor": {
+    "name": "Breastplate",
+    "key": "srd_breastplate",
+    "category": "medium",
+    "ac_base": 14,
+    "ac_display": "14 + Dex modifier (max 2)",
+    "ac_add_dexmod": true,
+    "ac_cap_dexmod": 2,
+    "grants_stealth_disadvantage": false,
+    "strength_score_required": null
+  },
+  "size": {
+    "name": "Tiny",
+    "key": "tiny"
+  },
+  "weight": "20.000",
+  "weight_unit": "lb",
+  "cost": "400.00",
+  "document": {
+    "name": "System Reference Document 5.1",
+    "key": "srd-2014",
+    "type": "SOURCE",
+    "display_name": "5e 2014 Rules",
+    "publisher": {
+      "name": "Wizards of the Coast",
+      "key": "wizards-of-the-coast"
+    },
+    "gamesystem": {
+      "name": "5th Edition 2014",
+      "key": "5e-2014"
+    },
+    "permalink": "https://dnd.wizards.com/resources/systems-reference-document"
+  }
+}

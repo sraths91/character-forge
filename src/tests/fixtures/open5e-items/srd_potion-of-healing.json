@@ -1,0 +1,40 @@
+{
+  "key": "srd_potion-of-healing",
+  "name": "Potion of Healing",
+  "desc": "You regain hit points when you drink this potion. The number of hit points depends on the potion's rarity, as shown in the Potions of Healing table. Whatever its potency, the potion's red liquid glimmers when agitated.\\n\\n**Potions of Healing (table)**\\n\\n| Potion of ...    | Rarity    | HP Regained |\\n|------------------|-----------|-------------|\\n| Healing          | Common    | 2d4 + 2     |\\n| Greater healing  | Uncommon  | 4d4 + 4     |\\n| Superior healing | Rare      | 8d4 + 8     |\\n| Supreme healing  | Very rare | 10d4 + 20   |",
+  "category": {
+    "name": "Potion",
+    "key": "potion"
+  },
+  "rarity": {
+    "name": "Common",
+    "key": "common",
+    "rank": 1
+  },
+  "weapon": null,
+  "armor": null,
+  "size": {
+    "name": "Tiny",
+    "key": "tiny"
+  },
+  "weight": "0.500",
+  "weight_unit": "lb",
+  "cost": "50.00",
+  "requires_attunement": false,
+  "attunement_detail": null,
+  "document": {
+    "name": "System Reference Document 5.1",
+    "key": "srd-2014",
+    "type": "SOURCE",
+    "display_name": "5e 2014 Rules",
+    "publisher": {
+      "name": "Wizards of the Coast",
+      "key": "wizards-of-the-coast"
+    },
+    "gamesystem": {
+      "name": "5th Edition 2014",
+      "key": "5e-2014"
+    },
+    "permalink": "https://dnd.wizards.com/resources/systems-reference-document"
+  }
+}

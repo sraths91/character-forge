@@ -1,0 +1,61 @@
+{
+  "key": "srd_longbow",
+  "name": "Longbow",
+  "desc": "A longbow.",
+  "category": {
+    "name": "Weapon",
+    "key": "weapon"
+  },
+  "weapon": {
+    "name": "Longbow",
+    "key": "srd_longbow",
+    "damage_type": {
+      "name": "Piercing",
+      "key": "piercing"
+    },
+    "damage_dice": "1d8",
+    "properties": [
+      {
+        "property": {
+          "name": "Ammunition",
+          "type": null
+        },
+        "detail": "range 150/600"
+      },
+      {
+        "property": {
+          "name": "Two-Handed",
+          "type": null
+        },
+        "detail": null
+      }
+    ],
+    "is_simple": false,
+    "is_martial": true,
+    "is_improvised": false,
+    "distance_unit": "feet"
+  },
+  "armor": null,
+  "size": {
+    "name": "Tiny",
+    "key": "tiny"
+  },
+  "weight": "2.000",
+  "weight_unit": "lb",
+  "cost": "50.00",
+  "document": {
+    "name": "System Reference Document 5.1",
+    "key": "srd-2014",
+    "type": "SOURCE",
+    "display_name": "5e 2014 Rules",
+    "publisher": {
+      "name": "Wizards of the Coast",
+      "key": "wizards-of-the-coast"
+    },
+    "gamesystem": {
+      "name": "5th Edition 2014",
+      "key": "5e-2014"
+    },
+    "permalink": "https://dnd.wizards.com/resources/systems-reference-document"
+  }
+}

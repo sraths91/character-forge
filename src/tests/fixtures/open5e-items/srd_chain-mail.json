@@ -1,0 +1,43 @@
+{
+  "key": "srd_chain-mail",
+  "name": "Chain mail",
+  "desc": "Made of interlocking metal rings, chain mail includes a layer of quilted fabric worn underneath the mail to prevent chafing and to cushion the impact of blows. The suit includes gauntlets.",
+  "category": {
+    "name": "Armor",
+    "key": "armor"
+  },
+  "weapon": null,
+  "armor": {
+    "name": "Chain mail",
+    "key": "srd_chain-mail",
+    "category": "heavy",
+    "ac_base": 16,
+    "ac_display": "16",
+    "ac_add_dexmod": false,
+    "ac_cap_dexmod": null,
+    "grants_stealth_disadvantage": true,
+    "strength_score_required": 13
+  },
+  "size": {
+    "name": "Tiny",
+    "key": "tiny"
+  },
+  "weight": "55.000",
+  "weight_unit": "lb",
+  "cost": "75.00",
+  "document": {
+    "name": "System Reference Document 5.1",
+    "key": "srd-2014",
+    "type": "SOURCE",
+    "display_name": "5e 2014 Rules",
+    "publisher": {
+      "name": "Wizards of the Coast",
+      "key": "wizards-of-the-coast"
+    },
+    "gamesystem": {
+      "name": "5th Edition 2014",
+      "key": "5e-2014"
+    },
+    "permalink": "https://dnd.wizards.com/resources/systems-reference-document"
+  }
+}

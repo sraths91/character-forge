@@ -1,0 +1,54 @@
+{
+  "key": "srd_longsword",
+  "name": "Longsword",
+  "desc": "A longsword",
+  "category": {
+    "name": "Weapon",
+    "key": "weapon"
+  },
+  "weapon": {
+    "name": "Longsword",
+    "key": "srd_longsword",
+    "damage_type": {
+      "name": "Slashing",
+      "key": "slashing"
+    },
+    "damage_dice": "1d8",
+    "properties": [
+      {
+        "property": {
+          "name": "Versatile",
+          "type": null
+        },
+        "detail": "1d10"
+      }
+    ],
+    "is_simple": false,
+    "is_martial": true,
+    "is_improvised": false,
+    "distance_unit": "feet"
+  },
+  "armor": null,
+  "size": {
+    "name": "Tiny",
+    "key": "tiny"
+  },
+  "weight": "3.000",
+  "weight_unit": "lb",
+  "cost": "15.00",
+  "document": {
+    "name": "System Reference Document 5.1",
+    "key": "srd-2014",
+    "type": "SOURCE",
+    "display_name": "5e 2014 Rules",
+    "publisher": {
+      "name": "Wizards of the Coast",
+      "key": "wizards-of-the-coast"
+    },
+    "gamesystem": {
+      "name": "5th Edition 2014",
+      "key": "5e-2014"
+    },
+    "permalink": "https://dnd.wizards.com/resources/systems-reference-document"
+  }
+}

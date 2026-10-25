@@ -1,0 +1,68 @@
+{
+  "key": "srd_dagger",
+  "name": "Dagger",
+  "desc": "A dagger.",
+  "category": {
+    "name": "Weapon",
+    "key": "weapon"
+  },
+  "weapon": {
+    "name": "Dagger",
+    "key": "srd_dagger",
+    "damage_type": {
+      "name": "Piercing",
+      "key": "piercing"
+    },
+    "damage_dice": "1d4",
+    "properties": [
+      {
+        "property": {
+          "name": "Finesse",
+          "type": null
+        },
+        "detail": null
+      },
+      {
+        "property": {
+          "name": "Light",
+          "type": null
+        },
+        "detail": null
+      },
+      {
+        "property": {
+          "name": "Thrown",
+          "type": null
+        },
+        "detail": "range 20/60"
+      }
+    ],
+    "is_simple": true,
+    "is_martial": false,
+    "is_improvised": false,
+    "distance_unit": "feet"
+  },
+  "armor": null,
+  "size": {
+    "name": "Tiny",
+    "key": "tiny"
+  },
+  "weight": "1.000",
+  "weight_unit": "lb",
+  "cost": "2.00",
+  "document": {
+    "name": "System Reference Document 5.1",
+    "key": "srd-2014",
+    "type": "SOURCE",
+    "display_name": "5e 2014 Rules",
+    "publisher": {
+      "name": "Wizards of the Coast",
+      "key": "wizards-of-the-coast"
+    },
+    "gamesystem": {
+      "name": "5th Edition 2014",
+      "key": "5e-2014"
+    },
+    "permalink": "https://dnd.wizards.com/resources/systems-reference-document"
+  }
+}
