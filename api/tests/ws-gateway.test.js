@@ -874,7 +874,7 @@ test('[real] dm.room.settings: DM-only, persisted, broadcast; encounter rules ap
     assert.equal((await dm.send('dm.room.settings', { reactionTimeoutMs: 10 })).p.code, 'E_BAD_MESSAGE');
     await dm.send('dm.encounter.setup', SETUP);
     assert.deepEqual(builds[0], { importLiveState: false, diagonalRule: '5ft' });
-    const want = { reactionTimeoutMs: 5000, importLiveState: true, fudgeVisibility: 'dm-only', diagonalRule: '5ft' };
+    const want = { reactionTimeoutMs: 5000, importLiveState: true, fudgeVisibility: 'dm-only', diagonalRule: '5ft', dmDrivesAiSeats: false, autoFight: false };
     const r = await dm.send('dm.room.settings', { reactionTimeoutMs: 5000, importLiveState: true, fudgeVisibility: 'dm-only' });
     assert.equal(r.t, 'ack', JSON.stringify(r.p));
     assert.deepEqual(r.p.settings, want);
@@ -899,7 +899,7 @@ test('normalizeRoomSettings reads the pre-W5 names', async () => {
   const { normalizeRoomSettings, DEFAULT_ROOM_SETTINGS } = await import('../rooms/service.js');
   assert.deepEqual(normalizeRoomSettings(null), { ...DEFAULT_ROOM_SETTINGS });
   assert.deepEqual(normalizeRoomSettings({ reactionTimeoutMs: 20000, importDdbState: true, dmOverrideVisibility: 'dm-only' }),
-    { reactionTimeoutMs: 20000, importLiveState: true, fudgeVisibility: 'dm-only', diagonalRule: '5ft' });
+    { reactionTimeoutMs: 20000, importLiveState: true, fudgeVisibility: 'dm-only', diagonalRule: '5ft', dmDrivesAiSeats: false, autoFight: false });
 });
 
 test('dm-only overrides reach players as redacted with the same seq', async () => {

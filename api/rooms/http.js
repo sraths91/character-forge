@@ -1,7 +1,8 @@
 // Rooms HTTP API (M64 B6). Tokens travel only in `Authorization: Bearer`
 // headers (never in URLs) and are returned exactly once.
 //
-//   POST   /api/rooms                         {name?}                   → 201 {roomId, code, dmToken, participantId}
+//   POST   /api/rooms                         {name?, mode?: 'table'|'solo'} → 201 {roomId, code, dmToken, participantId, mode}
+//          (M65 B28: 'solo' — the DM drives the AI seats, setting dmDrivesAiSeats)
 //   POST   /api/rooms/join                    {code, displayName}       → 201 {roomId, participantId, token, displayName}
 //   GET    /api/rooms/:id                     (member)                  → {room, me, members, seats}
 //   POST   /api/rooms/:id/kick                (DM) {participantId}      → {ok}
@@ -29,7 +30,8 @@ export function mountRoomRoutes(app, { rooms, limiter }) {
   const body = (req) => (req.body && typeof req.body === 'object' ? req.body : {});
 
   app.post('/api/rooms', limiter('roomCreate'), wrap((req, res) => {
-    res.status(201).json(rooms.createRoom({ name: body(req).name ?? null }));
+    const b = body(req);
+    res.status(201).json(rooms.createRoom({ name: b.name ?? null, ...(b.mode !== undefined ? { mode: b.mode } : {}) }));
   }));
 
   app.post('/api/rooms/join', limiter('roomJoin'), wrap((req, res) => {

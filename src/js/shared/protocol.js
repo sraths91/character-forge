@@ -111,6 +111,9 @@
  *        run) and 'E_NODE_NOT_BEGUN' (dm.encounter.setup / start in a
  *        run outside a begun encounter node), and may be a campaign rule code (RULE_ERROR_CODE: a
  *        CampaignRuleError's kebab `.code`, with `details`).
+ *        `dm.room.settings` (and the `room.settings` broadcast) gain
+ *        `dmDrivesAiSeats` and `autoFight` (B28 solo rooms: AI seats are
+ *        controller 'dm' unless auto-fight is on).
  *        `dm.node.begin.nodeId` (optional): the node to begin — from the
  *        run lobby any node (default the start node), later an offered
  *        edge; an encounter node is built in 'setup' for the DM to tweak
@@ -366,7 +369,9 @@ const INTENT_PAYLOADS = {
     reactionTimeoutMs: optional(int(REACTION_TIMEOUT_RANGE.min, REACTION_TIMEOUT_RANGE.max)),
     importLiveState: optional(bool()),
     fudgeVisibility: optional(oneOf(FUDGE_VISIBILITY)),
-    diagonalRule: optional(oneOf(DIAGONAL_RULES))
+    diagonalRule: optional(oneOf(DIAGONAL_RULES)),
+    dmDrivesAiSeats: optional(bool()),   // v1.6 (E3 M65 B28): solo rooms — the DM drives every seat no player holds
+    autoFight: optional(bool())          // v1.6 (E3 M65 B28): hand those seats to the AI (also mid-encounter)
   }),
   // v1.4 — the DM's fog reveal / hide brush.
   'dm.fog.paint': shape({ cells: arrayOf(POS, { min: 1, max: 4096 }), op: oneOf(FOG_PAINT_OPS) }),

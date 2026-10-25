@@ -61,7 +61,7 @@ export function openRoom(ctx, { log = quiet } = {}) {
   const conns = new Map();
   let cid = 0;
   /** Attach a member's socket; every outbound frame is protocol-checked and recorded. */
-  const connect = (memberId, role, name = role) => {
+  const connect = (memberId, role, name = role, { autoDelegate = true } = {}) => {
     const list = [];
     frames.set(memberId, list);
     const conn = {
@@ -76,7 +76,7 @@ export function openRoom(ctx, { log = quiet } = {}) {
         // A seated player hands every turn to the AI.
         setImmediate(() => {
           const aw = room.turn?.awaiting;
-          if (aw && aw.ownerId === memberId && !aw.delegated) {
+          if (autoDelegate && aw && aw.ownerId === memberId && !aw.delegated) {
             aw.delegated = true;
             room.handle(conn, memberId, { t: 'turn.delegate', cid: `td${++cid}`, p: { turnId: room.turn.turnId } });
           }

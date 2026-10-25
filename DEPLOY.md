@@ -130,6 +130,18 @@ Railway auto-restarts the service if this stops responding.
   a room's uploads when a template is used there. Exports carry the SRD
   5.1 attribution (also at `/api/licenses`) and no D&D Beyond prose;
   imports are capped at 64 MB.
+- **Campaign runs** (M65): `POST /api/campaigns/:cid/runs` (campaign key;
+  `X-Room-Token` names an existing room, else a room is created and its
+  DM token returned once) freezes the campaign into the run. Each
+  encounter's result is written back to the run exactly once
+  (`encounters.run_applied_at`); after a crash or redeploy the boot sweep
+  applies any ended run encounter not yet written back, so a SIGTERM is
+  safe at any point. A DM who lost the token gets a new one with
+  `POST /api/campaigns/:cid/runs/:runId/dm-token` (the old token stops
+  working). Seat sheets are served from `GET /api/rooms/:id/seats/:slotId/sheet`
+  (prose only to the seat and the DM). `POST /api/rooms {mode: 'solo'}`
+  makes a solo room: the DM drives every AI seat (`dmDrivesAiSeats`) until
+  `dm.room.settings {autoFight: true}`.
 - **SRD items and spells** (M65): `GET /api/srd/items?q=` (`&kind=item|magicitem`),
   `/api/srd/items/:key`, `/api/srd/spells?q=`, `/api/srd/spells/:key` proxy
   Open5e with `document__key__in=srd-2014` and cache in `items_cache`, which

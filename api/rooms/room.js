@@ -175,9 +175,33 @@ export class Room {
     };
   }
 
-  /** How a seat's PC is driven: its player, else the AI (B28 extends this). */
+  /**
+   * How a seat's PC is driven: its player; else, in a solo room
+   * (dmDrivesAiSeats, M65 B28), the DM unless auto-fight is on; else the AI.
+   */
   #seatController(seat) {
-    return seat?.controllerParticipantId ? 'player' : 'ai';
+    if (seat?.controllerParticipantId) return 'player';
+    return this.settings.dmDrivesAiSeats && !this.settings.autoFight ? 'dm' : 'ai';
+  }
+
+  /**
+   * After a solo-room settings change: every live PC entity whose seat no
+   * player holds follows the new mapping (dm ↔ ai) through
+   * dm.seat.setController; a turn waiting for the DM on such a PC is
+   * handed to the AI at once when auto-fight comes on.
+   */
+  #retargetAiSeats(dmMember) {
+    if (!this.#encounterLive()) return;
+    const st = this.#currentState();
+    for (const e of Object.values(st?.entities || {})) {
+      if (e.kind !== 'pc' || e.controller.type === 'player') continue;
+      const seat = this.seats.find(s => s.id === e.controller.seatId);
+      const want = this.#seatController(seat);
+      if (want === 'player' || want === e.controller.type) continue;
+      this.#stateCommand(dmMember, { type: 'dm.seat.setController', payload: { entityId: e.id, controller: want } });
+    }
+    const aw = this.turn?.awaiting;
+    if (aw && aw.ownerId === dmMember.id && aw.state.entities[aw.actorId]?.controller.type === 'ai') aw.resolve({ kind: 'delegate' });
   }
 
   /** The single run hook for both encounter-end paths (never throws into the turn lane). */
@@ -1146,9 +1170,11 @@ export class Room {
   #updateSettings(p) {
     if (Object.keys(p).length === 0) throw new IntentError('E_INVALID_INTENT', 'name at least one setting');
     const next = normalizeRoomSettings({ ...this.settings, ...p });
+    const prev = this.settings;
     this.store.setRoomSettings(this.id, next);
     this.settings = next;
     this.#broadcastRoom('room.settings', { settings: { ...next } });
+    if (prev.dmDrivesAiSeats !== next.dmDrivesAiSeats || prev.autoFight !== next.autoFight) this.#retargetAiSeats(this.dm);
     this.log('info', 'room: settings changed', { roomId: this.id, keys: Object.keys(p) });
     return { settings: { ...next } };
   }

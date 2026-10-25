@@ -22,14 +22,21 @@ export const DEFAULT_ROOM_SETTINGS = Object.freeze({
   reactionTimeoutMs: 20_000,
   importLiveState: false,
   fudgeVisibility: 'public',
-  diagonalRule: '5ft'
+  diagonalRule: '5ft',
+  // M65 B28 — solo rooms: the DM drives every seat no player holds
+  // (controller 'dm'), unless auto-fight hands them to the AI.
+  dmDrivesAiSeats: false,
+  autoFight: false
 });
+/** Room modes `POST /api/rooms {mode}` accepts (M65 B28). */
+export const ROOM_MODES = Object.freeze(['table', 'solo']);
 
 /**
  * The four room settings from a stored settings_json object, reading the
  * pre-W5 names (`importDdbState`, `dmOverrideVisibility`) as aliases.
  * @param {object|null|undefined} raw
- * @returns {{reactionTimeoutMs: number, importLiveState: boolean, fudgeVisibility: 'public'|'dm-only', diagonalRule: '5ft'}}
+ * @returns {{reactionTimeoutMs: number, importLiveState: boolean, fudgeVisibility: 'public'|'dm-only', diagonalRule: '5ft',
+ *   dmDrivesAiSeats: boolean, autoFight: boolean}}
  */
 export function normalizeRoomSettings(raw) {
   const r = raw && typeof raw === 'object' ? raw : {};
@@ -39,7 +46,9 @@ export function normalizeRoomSettings(raw) {
     reactionTimeoutMs: Number.isInteger(ms) && ms > 0 ? ms : DEFAULT_ROOM_SETTINGS.reactionTimeoutMs,
     importLiveState: r.importLiveState === true || r.importDdbState === true,
     fudgeVisibility: fudge === 'dm-only' ? 'dm-only' : 'public',
-    diagonalRule: r.diagonalRule === '5ft' ? '5ft' : DEFAULT_ROOM_SETTINGS.diagonalRule
+    diagonalRule: r.diagonalRule === '5ft' ? '5ft' : DEFAULT_ROOM_SETTINGS.diagonalRule,
+    dmDrivesAiSeats: r.dmDrivesAiSeats === true,
+    autoFight: r.autoFight === true
   };
 }
 /** AI archetypes a DM may assign to an AI seat ('auto' infers from class). */
@@ -71,10 +80,14 @@ export function createRoomService({ db, now = Date.now, codeRand } = {}) {
 
   /**
    * Create a room and its DM. The DM token is returned exactly once.
-   * @param {{name?: string|null}} [args]
-   * @returns {{roomId: string, code: string, dmToken: string, participantId: string}}
+   * `mode: 'solo'` (M65 B28) is a server-hosted solo room: the DM drives
+   * the AI seats (setting `dmDrivesAiSeats`).
+   * @param {{name?: string|null, mode?: 'table'|'solo'}} [args]
+   * @returns {{roomId: string, code: string, dmToken: string, participantId: string, mode: string}}
    */
-  function createRoom({ name = null } = {}) {
+  function createRoom({ name = null, mode = 'table' } = {}) {
+    if (!ROOM_MODES.includes(mode)) throw new RoomError(400, 'BAD_MODE', `mode must be one of ${ROOM_MODES.join(', ')}`);
+    const settings = mode === 'solo' ? { ...DEFAULT_ROOM_SETTINGS, dmDrivesAiSeats: true } : DEFAULT_ROOM_SETTINGS;
     let roomName = null;
     if (name !== null && name !== undefined) {
       const r = sanitizeDisplayName(name);
@@ -88,10 +101,10 @@ export function createRoomService({ db, now = Date.now, codeRand } = {}) {
       const code = generateRoomCode(codeRand);
       try {
         store.tx(() => {
-          store.insertRoom({ id: roomId, code, dmTokenHash: hashToken(dmToken), name: roomName, settings: DEFAULT_ROOM_SETTINGS, now: now() });
+          store.insertRoom({ id: roomId, code, dmTokenHash: hashToken(dmToken), name: roomName, settings, now: now() });
           store.insertParticipant({ id: participantId, roomId, displayName: 'DM', role: 'dm' });
         })();
-        return { roomId, code, dmToken, participantId };
+        return { roomId, code, dmToken, participantId, mode };
       } catch (err) {
         if (/UNIQUE constraint failed: rooms\.code/.test(err.message)) continue; // open-code collision: retry
         throw err;
