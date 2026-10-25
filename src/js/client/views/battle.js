@@ -51,7 +51,7 @@ import {
 } from '../selectors.js';
 import {
   previewMove, moveIntent, dmMoveIntent, attackIntent, castIntent, actionIntent, featureIntent, featureActionsFor,
-  teleportIntent, teleportRangeFt
+  teleportIntent, teleportRangeFt, diagonalRuleOf
 } from '../intents.js';
 import { formatEvent, formatRedacted } from '../log-format.js';
 import { attachTerrainBrush } from '../../map/terrain-brush.js';
@@ -284,7 +284,7 @@ export function mount(root, ctx) {
       const from = enc.entities[drag.id]?.pos;
       local.pathPreview = from ? { cells: [from, cell], legal: dmMoveIntent(enc, drag.id, cell).ok, costFt: null } : null;
     } else {
-      const p = previewMove(enc, drag.id, cell);
+      const p = previewMove(enc, drag.id, cell, { diagonalRule: diagonalRuleOf(ctx.store.getState()) });
       local.pathPreview = p.cells.length ? { cells: p.cells, legal: p.legal, costFt: p.costFt } : null;
     }
     adapter.redraw();
@@ -305,7 +305,7 @@ export function mount(root, ctx) {
       return;
     }
     const t = turnInfo(s);
-    const r = moveIntent(s.encounter, { actorId: d.id, turnId: t.turnId, dest: d.to, sheets: sheets() });
+    const r = moveIntent(s.encounter, { actorId: d.id, turnId: t.turnId, dest: d.to, sheets: sheets(), diagonalRule: diagonalRuleOf(s) });
     if (r.ok) { say(''); attempt(() => send(r.intent), fail); }
     else if (r.preview.reason !== 'no-move') {
       say(r.preview.reason === 'over-budget' ? `Too far: ${r.preview.costFt} ft of ${r.preview.budgetFt} ft.` : `Can't move there: ${r.reason || r.preview.reason}.`, 'error');

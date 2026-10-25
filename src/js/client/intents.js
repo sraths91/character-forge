@@ -12,14 +12,20 @@
  *                      {kind: 'cast', spellId, castAtLevel, moveTo}}` (Misty Step)
  *
  * The server stays authoritative: these helpers only decide what is worth
- * sending and what to show while the user drags. `forcePlanFor` is the
+ * sending and what to show while the user drags.
+ *
+ * Diagonals (M65 1.5 leftover B): every `findPath` / `reachableCells` /
+ * `validateMove` call takes the room's `dm.room.settings.diagonalRule`
+ * ('5ft' PHB, '5-10' DMG alternating), passed as `opts.diagonalRule`
+ * (`diagonalRuleOf(clientState)` reads it). A teleport stays Chebyshev
+ * feet, as the server's validator measures it. `forcePlanFor` is the
  * engine-side twin (`planFromIntent`) for the forge's local versus page,
  * which has no server.
  *
  * Pure: no DOM, no clock. Works on an EncounterState (full or projected).
  */
 
-import { findPath, reachableCells, validateMove, buildOccupancy } from '../scene/grid-legality.js';
+import { findPath, reachableCells, validateMove, buildOccupancy, normaliseDiagonalRule } from '../scene/grid-legality.js';
 import { validateIntent, planFromIntent } from '../scene/intent-validation.js';
 import { INTENT_PLAN_KINDS } from '../shared/protocol.js';
 import { chebyshevFeet } from '../scene/grid-rules.js';
@@ -29,6 +35,16 @@ import { spellById } from '../scene/monster-spells.js';
 export const MAX_PLAN_PATH = 64;
 
 const posKey = (p) => `${p.col},${p.row}`;
+
+/**
+ * The room's diagonal rule from a client store state (`room.settings`),
+ * normalised by grid-legality ('5-10-5' → '5-10'; anything unknown → '5ft').
+ * @param {object} clientState — client/store.js state
+ * @returns {'5ft'|'5-10'}
+ */
+export function diagonalRuleOf(clientState) {
+  return normaliseDiagonalRule(clientState?.room?.settings?.diagonalRule);
+}
 
 function boundsOf(state) {
   return { cols: state?.grid?.cols || 1, rows: state?.grid?.rows || 1 };
@@ -59,8 +75,8 @@ export function currentTurn(clientState) {
  * @param {object} state — EncounterState
  * @param {string} actorId
  * @param {{col: number, row: number}} dest
- * @param {{budgetFt?: number, ignoreBudget?: boolean, teleport?: boolean}} [opts] — budget
- *   defaults to the actor's speedFt. `teleport`: a spell's straight-line
+ * @param {{budgetFt?: number, ignoreBudget?: boolean, teleport?: boolean, diagonalRule?: string}} [opts] — budget
+ *   defaults to the actor's speedFt; `diagonalRule` is the room's rule. `teleport`: a spell's straight-line
  *   hop (Misty Step) — no path, terrain or opportunity attacks; the
  *   distance is Chebyshev feet like the server's validator, and the
  *   destination must be on the grid and empty.
@@ -82,10 +98,11 @@ export function previewMove(state, actorId, dest, opts = {}) {
   if (opts.teleport) return previewTeleport(state, actorId, from, dest, budgetFt);
   const terrain = state.grid?.terrain ?? null;
   const occ = buildOccupancy(state.entities, { excludeId: actorId });
-  const findOpts = { moverSide: actor.side, bounds };
+  const diagonalRule = normaliseDiagonalRule(opts.diagonalRule);
+  const findOpts = { moverSide: actor.side, bounds, diagonalRule };
   const within = findPath(terrain, occ, from, dest, { ...findOpts, budgetFt });
   if (within) {
-    const v = validateMove(state, actorId, within.path, { budgetFt });
+    const v = validateMove(state, actorId, within.path, { budgetFt, diagonalRule });
     return {
       legal: v.legal, reason: v.reason, cells: within.path, costFt: v.costFt,
       budgetFt, oaTriggers: v.oaTriggers
@@ -160,7 +177,7 @@ export function teleportIntent(state, { actorId, turnId, spellId, dest, castAtLe
  * Every cell the actor could end a move in this turn (for a reach overlay).
  * @param {object} state
  * @param {string} actorId
- * @param {{budgetFt?: number}} [opts]
+ * @param {{budgetFt?: number, diagonalRule?: string}} [opts]
  * @returns {{col: number, row: number}[]}
  */
 export function reachableFor(state, actorId, opts = {}) {
@@ -168,7 +185,9 @@ export function reachableFor(state, actorId, opts = {}) {
   if (!actor?.pos) return [];
   const budgetFt = Number.isFinite(opts.budgetFt) ? opts.budgetFt : (actor.speedFt ?? 30);
   const occ = buildOccupancy(state.entities, { excludeId: actorId });
-  const cells = reachableCells(state.grid?.terrain ?? null, occ, actor.pos, { budgetFt, moverSide: actor.side, bounds: boundsOf(state) });
+  const cells = reachableCells(state.grid?.terrain ?? null, occ, actor.pos, {
+    budgetFt, moverSide: actor.side, bounds: boundsOf(state), diagonalRule: normaliseDiagonalRule(opts.diagonalRule)
+  });
   return [...cells.keys()].map(k => { const [col, row] = k.split(',').map(Number); return { col, row }; });
 }
 
@@ -253,11 +272,11 @@ function turnAct(turnId, plan) {
  * Drag → move intent. Nothing is built when the preview is not legal.
  * @param {object} state
  * @param {{actorId: string, turnId: string|null, dest: {col: number, row: number},
- *          budgetFt?: number, sheets?: Record<string, object>}} args
+ *          budgetFt?: number, sheets?: Record<string, object>, diagonalRule?: string}} args
  * @returns {{ok: boolean, intent: object|null, preview: object, reason: string|null}}
  */
-export function moveIntent(state, { actorId, turnId, dest, budgetFt, sheets }) {
-  const preview = previewMove(state, actorId, dest, { budgetFt });
+export function moveIntent(state, { actorId, turnId, dest, budgetFt, sheets, diagonalRule }) {
+  const preview = previewMove(state, actorId, dest, { budgetFt, diagonalRule });
   if (!preview.legal) return { ok: false, intent: null, preview, reason: preview.reason };
   if (!turnId) return { ok: false, intent: null, preview, reason: 'no-turn' };
   const plan = { kind: 'move', moveTo: { col: dest.col, row: dest.row } };

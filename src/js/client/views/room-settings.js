@@ -2,7 +2,8 @@
  * M64 phase 1.5 (E2 task 4) — the DM's room settings card: reaction
  * timeout, "import live state" (characters import their current D&D
  * Beyond HP / slots / used features instead of starting rested) and who
- * sees the DM's fudges. Sent as `dm.room.settings` (protocol v1.4, E3's
+ * sees the DM's fudges, plus the grid's diagonal rule ('5ft' PHB, or
+ * '5-10' DMG alternating 5/10-ft diagonals; protocol v1.6). Sent as `dm.room.settings` (protocol v1.4, E3's
  * names; a partial update with only the changed keys) and confirmed by
  * the `room.settings` broadcast the store folds into `room.settings`.
  *
@@ -14,12 +15,18 @@
 
 import { h, replace, createScope, delegate, attempt, select } from './dom.js';
 import { isDm, roomSettingsOf } from '../selectors.js';
-import { REACTION_TIMEOUT_RANGE, FUDGE_VISIBILITY } from '../../shared/protocol.js';
+import { REACTION_TIMEOUT_RANGE, FUDGE_VISIBILITY, DIAGONAL_RULES } from '../../shared/protocol.js';
+
+/** The diagonal rules the room offers, with their labels. */
+export const DIAGONAL_RULE_OPTIONS = Object.freeze([
+  { value: '5ft', label: 'Diagonals: every square 5 ft (PHB)' },
+  { value: '5-10', label: 'Diagonals: alternate 5 / 10 ft (DMG)' }
+].filter(o => DIAGONAL_RULES.includes(o.value)));
 
 /**
  * The `dm.room.settings` payload for the keys that changed, or null.
- * @param {{reactionTimeoutMs: number, importLiveState: boolean, fudgeVisibility: string}} current
- * @param {{seconds: number, importLiveState: boolean, fudgeVisibility: string}} form
+ * @param {{reactionTimeoutMs: number, importLiveState: boolean, fudgeVisibility: string, diagonalRule?: string}} current
+ * @param {{seconds: number, importLiveState: boolean, fudgeVisibility: string, diagonalRule?: string}} form
  * @returns {{ok: boolean, payload: object|null, reason: string|null}}
  */
 export function settingsPatch(current, form) {
@@ -31,6 +38,7 @@ export function settingsPatch(current, form) {
   if (ms !== current.reactionTimeoutMs) p.reactionTimeoutMs = ms;
   if (!!form.importLiveState !== current.importLiveState) p.importLiveState = !!form.importLiveState;
   if (FUDGE_VISIBILITY.includes(form.fudgeVisibility) && form.fudgeVisibility !== current.fudgeVisibility) p.fudgeVisibility = form.fudgeVisibility;
+  if (DIAGONAL_RULES.includes(form.diagonalRule) && form.diagonalRule !== (current.diagonalRule || '5ft')) p.diagonalRule = form.diagonalRule;
   return Object.keys(p).length ? { ok: true, payload: p, reason: null } : { ok: false, payload: null, reason: 'Nothing changed.' };
 }
 
@@ -50,6 +58,7 @@ export function mount(root, ctx) {
   const fudge = select(doc, { dataset: { field: 'fudge' }, attrs: { 'aria-label': 'Fudge visibility' } }, [
     { value: 'public', label: 'Players see DM edits' }, { value: 'dm-only', label: 'DM edits hidden from players' }
   ], 'public');
+  const diagonal = select(doc, { dataset: { field: 'diagonal' }, attrs: { 'aria-label': 'Diagonal movement rule' } }, DIAGONAL_RULE_OPTIONS, '5ft');
   const effect = h(doc, 'p', { class: 'hint-line' });
   replace(doc, card, [
     h(doc, 'h3', { text: 'Room settings' }),
@@ -57,6 +66,7 @@ export function mount(root, ctx) {
     h(doc, 'label', {}, [importLive, ' Import current D&D Beyond HP / slots / used features']),
     effect,
     h(doc, 'label', {}, ['Fudges ', fudge]),
+    h(doc, 'label', {}, [diagonal]),
     h(doc, 'button', { type: 'button', class: 'play-btn', dataset: { action: 'settings-save' }, text: 'Save settings' }),
     note
   ]);
@@ -73,6 +83,7 @@ export function mount(root, ctx) {
     seconds.value = String(Math.round(cur.reactionTimeoutMs / 1000));
     importLive.checked = cur.importLiveState;
     fudge.value = cur.fudgeVisibility;
+    diagonal.value = cur.diagonalRule === '5-10' || cur.diagonalRule === '5-10-5' ? '5-10' : '5ft';
     effect.textContent = cur.importLiveState
       ? 'Characters import their current state at the next encounter build.'
       : 'Characters start fully rested at the next encounter build.';
@@ -80,7 +91,7 @@ export function mount(root, ctx) {
 
   delegate(scope, card, 'click', {
     'settings-save': () => {
-      const r = settingsPatch(roomSettingsOf(ctx.store.getState()), { seconds: seconds.value, importLiveState: importLive.checked, fudgeVisibility: fudge.value });
+      const r = settingsPatch(roomSettingsOf(ctx.store.getState()), { seconds: seconds.value, importLiveState: importLive.checked, fudgeVisibility: fudge.value, diagonalRule: diagonal.value });
       if (!r.ok) { say(r.reason, r.reason === 'Nothing changed.' ? 'info' : 'error'); return; }
       attempt(() => ctx.send({ t: 'dm.room.settings', p: r.payload }).then(() => say('Settings saved.')), (e) => say(e?.message || String(e), 'error'));
     }
