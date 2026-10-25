@@ -33,7 +33,7 @@ import { isLegendary, freshLegendaryBudget } from './monster-legendary.js';
 import { createRng } from './rng.js';
 import { featureLedgerFor } from './feature-uses.js';
 import { createTurnState, startEncounter, runEncounter } from './turn-manager.js';
-import { entityFromPreset, wrapperFromEntity } from './encounter-adapters.js';
+import { entityFromPreset, wrapperFromEntity, runItemsLedger } from './encounter-adapters.js';
 // M45 Phase 4 — Combat resolution moved to a shared engine module so
 // the live runner can dispatch through the same spine without
 // re-implementing rules. Per-attack logic, spell casting, reactions,
@@ -58,7 +58,11 @@ export function seedRng(seed) {
 /**
  * Run a Monte Carlo simulation of the encounter.
  *
- *   party     — array of PC characters (with _position resolved)
+ *   party     — array of PC characters (with _position resolved). M65: an
+ *               entry may carry `items` — run items as entityFromSheet takes
+ *               them (`{[runItemId]: {name, effect?, max, spent?}}`) or a
+ *               run-item list (`[{id, name, qty}]`) — so the PC drinks /
+ *               administers potions (the calibrator then reflects them)
  *   monsters  — array of monster instances (with .position + .hp + .conditions);
  *               M65 (phase 1.5 leftover A): a monster with a `statBlock`
  *               (an imported / Open5e-normalised block) and a known
@@ -119,6 +123,12 @@ export async function simulateEncounter({ party = [], monsters = [], scene = {},
 
 // ---------- One iteration ----------
 
+/** `{_items}` for a party entry's `items` (run-item map or list), else `{}`. */
+function itemsFor(p) {
+  const items = p?.items ? runItemsLedger(p.items) : null;
+  return items ? { _items: items } : {};
+}
+
 async function runOneIteration({ party, monsters, scene, maxRounds, rng, index = 0, onIterationEnd = null }) {
   // Per-iteration ENTITY STATE — shallow copies so we don't mutate inputs.
   // hp is the live counter; the resolver reads conditions for adv/disadv
@@ -150,7 +160,10 @@ async function runOneIteration({ party, monsters, scene, maxRounds, rng, index =
     _rageSustained: false,
     // M64 R9 — dying: PCs at 0 HP make death saves instead of vanishing.
     status: 'active',
-    deathSaves: { successes: 0, failures: 0, stable: false }
+    deathSaves: { successes: 0, failures: 0, stable: false },
+    // M65 — run items (potions) the PC carries, a fresh ledger per
+    // iteration; absent → no `_items` key (preset-only runs unchanged).
+    ...itemsFor(p)
   }));
   const mons = monsters.map(m => {
     if (m.statBlock && MONSTER_PRESETS[m.presetSlug]) return statBlockMonster(m);

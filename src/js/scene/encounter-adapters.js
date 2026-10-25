@@ -62,6 +62,7 @@ import { withEngineFields } from './open5e-normalize.js';
 import { featureLedgerFor } from './feature-uses.js';
 import { ledgerKeyForResource, resourceKeyForLedger } from '../shared/run-state.js';
 import { applyExhaustionToEntity, exhaustionEffects } from '../campaign/exhaustion.js';
+import { itemsLedgerFor } from '../campaign/consumables.js';
 import {
   buildStatBlockKit, freshKitInnate, kitInnateState, kitLegendaryResistance, LEGENDARY_RESISTANCE_KEY
 } from './stat-block-kit.js';
@@ -513,7 +514,7 @@ function fighterLevel(sheet) {
  */
 export function entityFromSheet(sheet, opts) {
   const entity = restedEntityFromSheet(sheet, opts);
-  const items = normalizeItems(opts?.items);
+  const items = runItemsLedger(opts?.items);
   if (items) entity.resources.items = items;
   return opts?.runState ? seedFromRunState(entity, opts.runState) : entity;
 }
@@ -623,11 +624,17 @@ function itemKeyOf(name) {
 }
 
 /**
- * `resources.items` from a run-item map (null when empty / absent).
- * `effect` is a consumables-registry key (EncounterState v1, H23); a
- * missing one is the item name's key.
+ * `resources.items` (wrapper `_items`) from a run-item map
+ * `{[runItemId]: {name, effect?, max, spent?}}` — or from a list of run
+ * items `[{id, name, qty}]`, through E4's consumables `itemsLedgerFor` —
+ * as fresh objects; null when empty / absent. `effect` is a
+ * consumables-registry key (EncounterState v1, H23); a missing one is the
+ * item name's key. Used by entityFromSheet and the simulator.
+ * @param {Record<string, {name: string, effect?: string, max: number, spent?: number}>|{id: string|number, name: string, qty: number}[]|null} items
+ * @returns {Record<string, {name: string, effect: string, max: number, spent: number}>|null}
  */
-function normalizeItems(items) {
+export function runItemsLedger(items) {
+  if (Array.isArray(items)) return runItemsLedger(itemsLedgerFor(items));
   if (!items || typeof items !== 'object') return null;
   const out = {};
   for (const [id, it] of Object.entries(items)) {
