@@ -170,6 +170,10 @@ export const WRAPPER_FIELD_MAP = Object.freeze({
   // derived recharge abilities / legendary menu / Legendary Resistance
   // (stat-block-kit.js). Static: rebuilt from the block, never written back.
   _statBlockKit: 'statBlock',
+  // v1 additive (M65 T21 / T23, E1): exhaustion level (static) and the
+  // run items a PC carries.
+  exhaustion: 'exhaustion',
+  _items: 'resources.items',
   // Transient — never persisted.
   weapon: null,
   _chosenWeapon: null,

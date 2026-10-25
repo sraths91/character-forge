@@ -21,6 +21,22 @@
  * plus `_pact: {level, max, spent}|null` — persisted as
  * `resources.slots{lvl:{max, spent}}` and `resources.pact`.
  *
+ * M65 T21 — the run-state seam. Between encounters a run character's
+ * mutable state lives in `party_slots.state_json` (state_json v1, M64 data
+ * model; "spent, not remaining"). `entityFromSheet(sheet, {runState})`
+ * seeds an entity from it and `runStateFromEntity(entity, prev)` writes the
+ * encounter's result back, preserving every key the engine does not own.
+ * Resource keys (`state.resources`) ↔ entity `resources.features`:
+ *
+ *   'feat:<key>'             ↔ features['<key>']  ('feat:action-surge',
+ *                              'feat:second-wind', 'feat:rage',
+ *                              'feat:channel-divinity', …)
+ *   'spell:<spellId>'        ↔ features['spell:<spellId>'] (granted-spell
+ *                              uses: Fey Touched Misty Step)
+ *   'legendary-resistance'   ↔ features['legendary-resistance']
+ *   'ddb:<componentId>'      — parser `uses` the engine does not model:
+ *                              never read, never written (preserved)
+ *
  * Pure module: no DOM, no storage, no clock, no randomness.
  */
 
@@ -152,7 +168,11 @@ export function wrapperFromEntity(entity, sheet = null) {
     _concentrating: conc,
     // M64 R9 — absent status = active; PCs always carry death-save tallies.
     status: ENTITY_STATUS_SET.has(e.status) ? e.status : 'active',
-    deathSaves: e.kind === 'pc' ? normalizeDeathSaves(e.deathSaves) : null
+    deathSaves: e.kind === 'pc' ? normalizeDeathSaves(e.deathSaves) : null,
+    // M65 T21 / T23 — exhaustion (static in an encounter; the resolver
+    // reads level 3) and the run items carried, only when present.
+    ...(Number.isInteger(e.exhaustion) && e.exhaustion > 0 ? { exhaustion: e.exhaustion } : {}),
+    ...(res.items && typeof res.items === 'object' ? { _items: clone(res.items) } : {})
   };
   for (const [field, key] of FLAG_FIELDS) {
     base[field] = key === 'smiteSlotUsed' ? (flags[key] ?? null) : !!flags[key];
@@ -294,6 +314,13 @@ export function applyWrapperToEntity(entity, w) {
       if (LEGACY_FEATURE_KEYS.includes(key) || !l) continue;
       const max = Math.max(1, Math.trunc(Number(l.max) || 0));
       (res.features || (res.features = {}))[key] = { max, spent: Math.max(0, Math.min(max, Math.trunc(Number(l.spent) || 0))) };
+    }
+  }
+  // M65 T23 — run items: only `spent` changes in an encounter.
+  if (w._items && typeof w._items === 'object' && res.items) {
+    for (const [id, it] of Object.entries(res.items)) {
+      const live = w._items[id];
+      if (live) it.spent = Math.max(0, Math.min(it.max, Math.trunc(Number(live.spent) || 0)));
     }
   }
   if (w._actionSurgeUsed !== undefined) setFeature(res, 'action-surge', Math.trunc(w._actionSurgeUsed || 0));
@@ -450,13 +477,33 @@ function fighterLevel(sheet) {
  * the slotsForPc estimate); Action Surge / Second Wind ledgers for
  * fighters.
  *
+ * M65 T21 — with `opts.runState` (state_json v1) the entity starts from the
+ * run's state instead of rested: HP and temp HP, spent slots and pact
+ * slots, feature / granted-spell uses (resource key map in the module
+ * header), death saves (0 HP → downed / stable / dead), exhaustion (2:
+ * speed halved, 4: HP max halved, 5: speed 0, 6: dead) and the persistent
+ * conditions. Maxima always come from the sheet. `opts.items` (run items
+ * the PC carries, `{[runItemId]: {name, effect?, max, spent?}}`, `effect`
+ * a consumables-registry key) becomes
+ * `resources.items` (M65 T23). Without either option the result is the
+ * phase-1.5 rested entity, unchanged.
+ *
  * @param {object} sheet — parseCharacter output (`id`, `hp`, `classes`, …)
  * @param {{id?: string, side?: 'party'|'hostile', pos: {col: number, row: number},
  *          controller?: {type: 'player'|'ai'|'dm', seatId: string|null},
- *          speedFt?: number, rev?: number|string}} opts
+ *          speedFt?: number, rev?: number|string,
+ *          runState?: object|null,
+ *          items?: Record<string, {name: string, effect?: string, max: number, spent?: number}>|null}} opts
  * @returns {object} EncounterState entity (sheetRef.characterId = String(sheet.id))
  */
 export function entityFromSheet(sheet, opts) {
+  const entity = restedEntityFromSheet(sheet, opts);
+  const items = normalizeItems(opts?.items);
+  if (items) entity.resources.items = items;
+  return opts?.runState ? seedFromRunState(entity, opts.runState) : entity;
+}
+
+function restedEntityFromSheet(sheet, opts) {
   const max = Math.max(1, Math.trunc(sheet?.hp?.max ?? 1));
   const pact = pactForPc(sheet);
   const fl = fighterLevel(sheet);
@@ -489,6 +536,282 @@ export function entityFromSheet(sheet, opts) {
     turnFlags: {},
     sheetRef: { characterId: String(sheet.id), rev: opts?.rev ?? 0 }
   };
+}
+
+// ---------------------------------------------------------------------
+// M65 T21 — run state (state_json v1) ⇄ entity
+// ---------------------------------------------------------------------
+
+/** Run-state resource key prefix of a class / race / feat feature ledger. */
+export const RUN_FEATURE_PREFIX = 'feat:';
+
+/** Default recovery periods (rest.js vocabulary) of ledgers the engine creates. */
+const DEFAULT_RECOVERY = Object.freeze({
+  'action-surge': ['sr'],
+  'second-wind': ['sr'],
+  'channel-divinity': ['sr'],
+  rage: ['lr'],
+  [LEGENDARY_RESISTANCE_KEY]: ['day']
+});
+
+/**
+ * The entity `resources.features` key of a run-state resource key, or null
+ * when the engine does not model it (`ddb:*`, unknown prefixes).
+ * @param {string} runKey — e.g. 'feat:action-surge', 'spell:misty-step'
+ * @returns {string|null}
+ */
+export function featureKeyForRunResource(runKey) {
+  const k = String(runKey || '');
+  if (k.startsWith(RUN_FEATURE_PREFIX) && k.length > RUN_FEATURE_PREFIX.length) return k.slice(RUN_FEATURE_PREFIX.length);
+  if (k.startsWith('spell:') && k.length > 6) return k;
+  if (k === LEGENDARY_RESISTANCE_KEY) return k;
+  return null;
+}
+
+/**
+ * The run-state resource key of an entity feature ledger key.
+ * @param {string} featureKey — e.g. 'action-surge', 'spell:misty-step'
+ * @returns {string}
+ */
+export function runResourceKeyForFeature(featureKey) {
+  const k = String(featureKey || '');
+  if (k.startsWith('spell:') || k === LEGENDARY_RESISTANCE_KEY) return k;
+  return `${RUN_FEATURE_PREFIX}${k}`;
+}
+
+/**
+ * SRD exhaustion levels (PHB p291) as the effects the engine applies when
+ * it seeds an entity. Level 1's ability-check and level 3's attack / save
+ * disadvantage are the resolver's (`attackSaveDisadvantage` is exposed for
+ * it); speed, HP max and death are seeded here.
+ * @param {number} level — 0..6
+ * @returns {{level: number, abilityCheckDisadvantage: boolean, speedHalved: boolean,
+ *   attackSaveDisadvantage: boolean, hpMaxHalved: boolean, speedZero: boolean, dead: boolean}}
+ */
+export function exhaustionEffects(level) {
+  const n = clampInt(level, 0, 6);
+  return {
+    level: n,
+    abilityCheckDisadvantage: n >= 1,
+    speedHalved: n >= 2 && n < 5,
+    attackSaveDisadvantage: n >= 3,
+    hpMaxHalved: n >= 4,
+    speedZero: n >= 5,
+    dead: n >= 6
+  };
+}
+
+function clampInt(v, lo, hi) {
+  return Math.max(lo, Math.min(hi, Math.trunc(Number(v) || 0)));
+}
+
+/** Lifecycle fields an EncounterState condition object may carry. */
+const CONDITION_LIFECYCLE_KEYS = Object.freeze(['sourceId', 'endsOn', 'save', 'appliedRound']);
+
+/**
+ * `endsOn` values that can only resolve inside initiative: such a
+ * condition (and Rage's 'encounter') ends with the encounter.
+ */
+export const ENCOUNTER_SCOPED_ENDS_ON = Object.freeze(['encounter', 'turn-end', 'turn-start', 'source-turn-end', 'concentration']);
+
+function lifecycleOf(c) {
+  if (!c || typeof c !== 'object') return {};
+  const out = {};
+  for (const k of CONDITION_LIFECYCLE_KEYS) if (c[k] !== undefined) out[k] = clone(c[k]);
+  return out;
+}
+
+/**
+ * Whether a condition (string id or lifecycle object) ends when the
+ * encounter does: an encounter-scoped `endsOn` (Rage, Hold Person, prone).
+ * Plain string conditions and DM-placed ones persist.
+ * @param {string|object} c
+ * @returns {boolean}
+ */
+export function endsWithEncounter(c) {
+  return !!(c && typeof c === 'object' && ENCOUNTER_SCOPED_ENDS_ON.includes(c.endsOn));
+}
+
+/** Item name → consumables-registry key ("Potion of Healing" → 'potion-of-healing'). */
+function itemKeyOf(name) {
+  return String(name || '').toLowerCase().replace(/['']/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+}
+
+/**
+ * `resources.items` from a run-item map (null when empty / absent).
+ * `effect` is a consumables-registry key (EncounterState v1, H23); a
+ * missing one is the item name's key.
+ */
+function normalizeItems(items) {
+  if (!items || typeof items !== 'object') return null;
+  const out = {};
+  for (const [id, it] of Object.entries(items)) {
+    if (!it || typeof it !== 'object') continue;
+    const max = Math.max(0, Math.trunc(Number(it.max) || 0));
+    const name = String(it.name || id).slice(0, 128);
+    out[String(id)] = {
+      name,
+      effect: (typeof it.effect === 'string' && it.effect ? it.effect : itemKeyOf(name)).slice(0, 64),
+      max,
+      spent: clampInt(it.spent, 0, max)
+    };
+  }
+  return Object.keys(out).length ? out : null;
+}
+
+/** Seed a rested PC entity (mutated, then returned) from state_json v1. */
+function seedFromRunState(entity, rs) {
+  const res = entity.resources;
+  const fx = exhaustionEffects(rs.exhaustion);
+  if (fx.level > 0) entity.exhaustion = fx.level;
+  if (fx.hpMaxHalved) entity.hpMax = Math.max(1, Math.floor(entity.hpMax / 2));
+  if (fx.speedZero) entity.speedFt = 0;
+  else if (fx.speedHalved) entity.speedFt = Math.floor(entity.speedFt / 2);
+  const storedHp = rs.hp?.current;
+  const startHp = fx.dead ? 0
+    : (storedHp !== null && storedHp !== undefined && Number.isFinite(Number(storedHp)))
+      ? clampInt(storedHp, 0, entity.hpMax) : entity.hpMax;
+  entity.hp = startHp;   // run state → entity (construction, not a hit)
+  entity.hpTemp = Math.max(0, Math.trunc(Number(rs.hp?.temp) || 0));
+  // Slots: spent only; maxima stay the sheet's.
+  const spell = rs.slots?.spell || {};
+  for (const [lvl, l] of Object.entries(res.slots)) {
+    if (spell[lvl]) l.spent = clampInt(spell[lvl].spent, 0, l.max);
+  }
+  if (Number.isInteger(res.pact?.level) && rs.slots?.pact) {
+    res.pact.spent = clampInt(rs.slots.pact.spent, 0, res.pact.max);
+  }
+  for (const [key, r] of Object.entries(rs.resources || {})) {
+    const fk = featureKeyForRunResource(key);
+    if (!fk || !r || typeof r !== 'object') continue;
+    const ledger = res.features[fk];
+    if (ledger) ledger.spent = clampInt(r.spent, 0, ledger.max);
+    else if (Math.trunc(Number(r.max) || 0) > 0) {
+      const max = Math.trunc(Number(r.max));
+      res.features[fk] = { max, spent: clampInt(r.spent, 0, max) };
+    }
+  }
+  // Persistent conditions (lifecycle fields from conditionMeta).
+  const meta = rs.conditionMeta || {};
+  const seen = new Set();
+  for (const c of Array.isArray(rs.conditions) ? rs.conditions : []) {
+    const id = conditionId(c);
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    const life = { ...lifecycleOf(meta[id]), ...lifecycleOf(c) };
+    entity.conditions.push(Object.keys(life).length ? { id: String(id), ...life } : String(id));
+  }
+  // Life: exhaustion 6 kills; 0 HP is dying (or stable / dead by the tallies).
+  const ds = normalizeDeathSaves(rs.deathSaves);
+  if (fx.dead) {
+    entity.status = 'dead';
+    entity.deathSaves = ds;
+  } else if (entity.hp === 0) {
+    entity.status = ds.failures >= 3 ? 'dead' : ds.stable ? 'stable' : 'downed';
+    entity.deathSaves = ds;
+    if (entity.status !== 'dead' && !seen.has('unconscious')) entity.conditions.push('unconscious');
+  }
+  return entity;
+}
+
+/** Label for a ledger the engine adds to a run state. */
+function ledgerLabel(featureKey) {
+  if (featureKey.startsWith('spell:')) {
+    const id = featureKey.slice(6);
+    return spellById(id)?.name || id;
+  }
+  return featureKey.split('-').map(w => (w ? w[0].toUpperCase() + w.slice(1) : w)).join(' ');
+}
+
+/**
+ * Write an encounter's result for one PC back onto its run state
+ * (state_json v1). Returns a NEW state; `prevState` is never mutated and
+ * every key the engine does not own (hit dice, currency, inspiration,
+ * `ddb:*` resources, labels / maxima / recovery, unknown keys) is kept as
+ * it was. Engine-owned keys:
+ *   hp {current, temp}; deathSaves (reset while active); slots.spell[lvl].spent
+ *   and slots.pact.spent; resources[key].spent for every mapped ledger (a
+ *   ledger the state lacks is added, `{label, max, spent, recovery}`, only
+ *   once something is spent); conditions + conditionMeta (encounter-scoped
+ *   conditions and the dying state's derived 'unconscious' dropped);
+ *   exhaustion; concentration.
+ *
+ * @param {object} entity — EncounterState PC entity (after the encounter)
+ * @param {object} [prevState] — the run state the encounter started from
+ * @returns {object} state_json v1
+ */
+export function runStateFromEntity(entity, prevState = {}) {
+  const prev = prevState && typeof prevState === 'object' ? prevState : {};
+  const out = clone(prev) || {};
+  if (out.schema_v === undefined) out.schema_v = 1;
+  const e = entity || {};
+  const res = e.resources || {};
+  out.hp = { ...(prev.hp || {}), current: Math.max(0, Math.trunc(e.hp ?? 0)), temp: Math.max(0, Math.trunc(e.hpTemp ?? 0)) };
+  const status = ENTITY_STATUS_SET.has(e.status) ? e.status : 'active';
+  const ds = status === 'active'
+    ? { successes: 0, failures: 0, stable: false }
+    : normalizeDeathSaves({ ...e.deathSaves, stable: status === 'stable' || !!e.deathSaves?.stable });
+  out.deathSaves = { ...(prev.deathSaves || {}), ...ds };
+
+  const slots = { ...(out.slots || {}) };
+  const spell = { ...(slots.spell || {}) };
+  for (const [lvl, l] of Object.entries(res.slots || {})) {
+    const spent = clampInt(l?.spent, 0, l?.max ?? 0);
+    if (spell[lvl] || spent > 0) spell[lvl] = { ...(spell[lvl] || {}), spent };
+  }
+  slots.spell = spell;
+  if (Number.isInteger(res.pact?.level)) {
+    const spent = clampInt(res.pact.spent, 0, res.pact.max ?? 0);
+    if (slots.pact || spent > 0) slots.pact = { ...(slots.pact || {}), spent };
+  }
+  out.slots = slots;
+
+  const resources = { ...(out.resources || {}) };
+  for (const [fk, l] of Object.entries(res.features || {})) {
+    if (!l) continue;
+    const rk = runResourceKeyForFeature(fk);
+    const spent = clampInt(l.spent, 0, Math.max(0, Math.trunc(Number(l.max) || 0)));
+    if (resources[rk]) resources[rk] = { ...resources[rk], spent };
+    else if (spent > 0) {
+      resources[rk] = {
+        label: ledgerLabel(fk), max: Math.trunc(Number(l.max) || 0), spent,
+        recovery: [...(DEFAULT_RECOVERY[fk] || ['lr'])]
+      };
+    }
+  }
+  out.resources = resources;
+
+  const dying = status !== 'active';
+  const conditions = [];
+  const conditionMeta = {};
+  const prevMeta = prev.conditionMeta || {};
+  for (const c of e.conditions || []) {
+    const id = conditionId(c);
+    if (!id || conditions.includes(id) || endsWithEncounter(c)) continue;
+    if (dying && id === 'unconscious') continue;
+    conditions.push(id);
+    const m = { ...(prevMeta[id] || {}), ...lifecycleOf(c) };
+    if (Object.keys(m).length) conditionMeta[id] = m;
+  }
+  out.conditions = conditions;
+  out.conditionMeta = conditionMeta;
+  out.exhaustion = Number.isInteger(e.exhaustion) ? e.exhaustion : clampInt(prev.exhaustion, 0, 6);
+  out.concentration = e.concentration ? clone(e.concentration) : null;
+  return out;
+}
+
+/**
+ * Uses spent from each run item the PC carried (`resources.items`), for
+ * the run controller's `run_items` write-back: `{[runItemId]: spent}`.
+ * @param {object} entity
+ * @returns {Record<string, number>}
+ */
+export function itemSpendFromEntity(entity) {
+  const out = {};
+  for (const [id, it] of Object.entries(entity?.resources?.items || {})) {
+    out[id] = clampInt(it?.spent, 0, it?.max ?? 0);
+  }
+  return out;
 }
 
 /**
