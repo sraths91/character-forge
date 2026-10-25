@@ -100,8 +100,11 @@ test('M64 T1: 200 iterations of a 4v4 fight stay fast (budget 100 ms; asserted <
   const args = { party, monsters, scene: { cols: 10, rows: 8 }, iterations: 200, maxRounds: 12, seed: 1 };
   await simulateEncounter({ ...args, iterations: 20 }); // warm the JIT
   const t0 = performance.now();
+  const cpu0 = process.cpuUsage();
   const stats = await simulateEncounter(args);
   const ms = performance.now() - t0;
+  const cpu = process.cpuUsage(cpu0);
+  const cpuMs = (cpu.user + cpu.system) / 1000;
   assert.strictEqual(stats.iterations, 200);
   // The plan's budget is 100 ms on a dev laptop; the assertion is
   // generous so a loaded CI runner doesn't flake. A regression to
@@ -110,5 +113,10 @@ test('M64 T1: 200 iterations of a 4v4 fight stay fast (budget 100 ms; asserted <
   // ~32 ms (Wave 1: ~27 ms; round 3 before the hot-path fix: ~50 ms).
   // Readings of 700+ ms came from a throttled / heavily loaded machine,
   // not the code; m64-sim-hotpath.test.js pins the fix deterministically.
-  assert.ok(ms < 1000, `200×4v4 took ${ms.toFixed(1)} ms`);
+  // Wall time is logged for humans; the gate is CPU time of this process,
+  // which stays within ~2x of the idle figure even when the machine is
+  // saturated by the parallel test runner (the flaky failures of
+  // 2026-10-16..20 were all wall time on a loaded box).
+  if (ms > 1000) console.warn(`[m64-simulator-await] wall ${ms.toFixed(1)} ms (cpu ${cpuMs.toFixed(1)} ms) — machine loaded`);
+  assert.ok(cpuMs < 1000, `200×4v4 used ${cpuMs.toFixed(1)} ms CPU (wall ${ms.toFixed(1)} ms)`);
 });
