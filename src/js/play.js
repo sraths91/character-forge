@@ -6,7 +6,9 @@
  *   in a room, lobby   → lobby (code, seats, members) + claim (S2)
  *   DM, setting up     → setup (S3); players see "the DM is preparing"
  *   encounter running  → battle (S5), plus the DM panel (S4) for the DM
- *   run between nodes  → the run map (M65 C23; the between hub lands with C24)
+ *   run between nodes  → the between hub (M65 C24: run map, rest, stash,
+ *                        party gear; later the level-up, shop, story and
+ *                        DM dashboard screens)
  *
  * This page stays independent of main.js: it shares only pure modules
  * with the forge and never installs document-level listeners — every
@@ -37,7 +39,8 @@ import { mount as mountClaim } from './client/views/claim.js';
 import { mount as mountSetup } from './client/views/setup.js';
 import { mount as mountBattle } from './client/views/battle.js';
 import { mount as mountDmPanel, createDmBridge } from './client/views/dm-panel.js';
-import { mount as mountRunMap } from './client/views/run-map.js';
+import { mount as mountBetween } from './client/views/between.js';
+import { createRunSheets } from './client/run-model.js';
 import { mount as mountCampaigns } from './client/views/campaigns.js';
 import { mount as mountCampaignEditor } from './client/views/campaign-editor.js';
 import { createCampaignKeys } from './client/campaign-keys.js';
@@ -94,6 +97,8 @@ export function createPlayApp({ root, fetch, WebSocketCtor, wsUrl, storage = nul
   const appearanceCache = createAppearanceCache();
   const dmBridge = createDmBridge();
   const api = createApi({ fetch, token: () => creds?.token ?? null });
+  /** Run sheets by seat + version (M65 C24), shared by the between screens; reset per connection. */
+  let runSheets = createRunSheets({ api, roomId: () => creds?.roomId ?? null });
 
   const bar = h(doc, 'header', { class: 'play-bar' });
   const banner = h(doc, 'p', { class: 'play-banner', hidden: true, attrs: { role: 'alert' } });
@@ -267,6 +272,7 @@ export function createPlayApp({ root, fetch, WebSocketCtor, wsUrl, storage = nul
       api,
       room: creds ? { roomId: creds.roomId, code: creds.code, role: creds.role } : null,
       loadSheet,
+      runSheets,
       sheets: () => Object.fromEntries(sheetCache),
       onSheet: (fn) => { sheetListeners.add(fn); return () => sheetListeners.delete(fn); },
       onTokenImages: (fn) => { tokenImageListeners.add(fn); return () => tokenImageListeners.delete(fn); },
@@ -337,7 +343,7 @@ export function createPlayApp({ root, fetch, WebSocketCtor, wsUrl, storage = nul
     } else if (next === 'setup') {
       unmounts.push(mountSetup(mainEl, c));
     } else if (next === 'between') {
-      unmounts.push(mountRunMap(mainEl, c));
+      unmounts.push(mountBetween(mainEl, c));
     } else if (next === 'battle') {
       unmounts.push(mountBattle(mainEl, c));
       if (isDm(session.store.getState())) unmounts.push(mountDmPanel(sideEl, c));
@@ -354,6 +360,7 @@ export function createPlayApp({ root, fetch, WebSocketCtor, wsUrl, storage = nul
 
   async function connect() {
     disconnect();
+    runSheets = createRunSheets({ api, roomId: () => creds?.roomId ?? null });
     showBanner('');
     const s = createSession({ url: wsUrl, token: () => creds?.token || '', WebSocketCtor, wsOptions: deps.wsOptions || {} });
     session = s;

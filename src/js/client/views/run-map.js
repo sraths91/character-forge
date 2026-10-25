@@ -12,6 +12,13 @@
  *            (`dm.run.advance {toNodeId}`), and "Go to any node" as an
  *            explicit override (`dm.run.advance {toNodeId, override: true}`).
  *
+ * `run.started` does not mean the start node was entered (E3): a run in
+ * 'lobby' waits for the DM's "Begin the run" (`dm.node.begin`), and an
+ * encounter node that is entered but not begun shows the DM "Begin this
+ * encounter" (`dm.node.begin`, which builds it and opens the setup screen).
+ * Status comes from the run store (node.entered / run.updated), never from
+ * run.started.
+ *
  * mount(root, ctx) → unmount. ctx: {store (room), runStore, send}
  */
 
@@ -85,6 +92,10 @@ export function mount(root, ctx) {
       const toNodeId = el.dataset.to;
       attempt(() => ctx.send({ t: 'dm.run.advance', p: { toNodeId } }).then(() => say('Moving on…')), fail);
     },
+    'run-begin': () => {
+      if (!dmNow()) return;
+      attempt(() => ctx.send({ t: 'dm.node.begin', p: {} }).then(() => say('Beginning…')), fail);
+    },
     'run-goto': () => {
       if (!dmNow()) return;
       const sel = view.querySelector('[data-field="goto-node"]');
@@ -116,13 +127,24 @@ export function mount(root, ctx) {
     replace(doc, trailEl, m.trail.length ? m.trail.map(t => h(doc, 'li', { class: `play-run-step${t.current ? ' current' : ''}`, dataset: { nodeId: t.id } }, [
       h(doc, 'span', { class: 'play-run-glyph', text: KIND_GLYPHS[t.kind] || KIND_GLYPHS.unknown }),
       h(doc, 'span', { text: ` ${t.title || t.kind}` })
-    ])) : [h(doc, 'li', { class: 'hint-line', text: 'The run has not started.' })]);
+    ])) : [h(doc, 'li', { class: 'hint-line', text: run.status === 'lobby' ? 'The run has not begun: no node entered yet.' : 'The run has not started.' })]);
     const offerItems = m.offers.map(o => (dm
       ? h(doc, 'button', { type: 'button', class: 'play-btn', dataset: { action: 'run-advance', to: o.to }, text: `${o.label}${o.title ? ` → ${o.title}` : ''}` })
       : h(doc, 'span', { class: 'play-chip', text: o.label })));
     const children = [h(doc, 'h3', { text: dm ? 'Next node' : 'Paths ahead' })];
+    const curNode = run.currentNodeId ? run.nodes.find(n => n.id === run.currentNodeId) : null;
+    const unfought = run.status === 'in-node' && curNode?.kind === 'encounter' && !run.completed && !run.result?.outcome;
+    if (run.status === 'lobby') {
+      children.push(dm
+        ? h(doc, 'button', { type: 'button', class: 'play-btn primary', dataset: { action: 'run-begin' }, text: 'Begin the run' })
+        : h(doc, 'p', { class: 'hint-line', text: 'The DM begins the run once the party is seated.' }));
+    } else if (unfought) {
+      children.push(dm
+        ? h(doc, 'button', { type: 'button', class: 'play-btn primary', dataset: { action: 'run-begin' }, text: 'Begin this encounter' })
+        : h(doc, 'p', { class: 'hint-line', text: 'The DM is setting up this encounter.' }));
+    }
     if (offerItems.length) children.push(h(doc, 'div', { class: 'play-row' }, offerItems));
-    else children.push(h(doc, 'p', { class: 'hint-line', text: run.status === 'ended' ? 'The run is over.' : 'No path is on offer yet.' }));
+    else if (run.status !== 'lobby') children.push(h(doc, 'p', { class: 'hint-line', text: run.status === 'ended' ? 'The run is over.' : 'No path is on offer yet.' }));
     if (dm && run.status !== 'ended' && run.nodes.length) {
       children.push(h(doc, 'div', { class: 'play-row' }, [
         select(doc, { dataset: { field: 'goto-node' }, attrs: { 'aria-label': 'Any node' } }, run.nodes.map(n => ({ value: n.id, label: `${KIND_GLYPHS[n.kind] || ''} ${n.title}` }))),

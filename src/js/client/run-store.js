@@ -17,6 +17,17 @@
  *                  ahead of this slice is a gap too.
  *   levelup.offer  private — a pending level-up for one of my seats.
  *
+ * Status (E3's note, M65 C24): `run.started` does NOT mean the start node
+ * was entered — the run waits in 'lobby' until `node.entered` (with the
+ * seated party, at start, or after the DM's `dm.node.begin`). Status comes
+ * from `node.entered` (an encounter node is 'in-node', any other kind
+ * 'between'), `node.completed` ('between') and `run.updated`.
+ *
+ * `run.updated` also carries `completed` and `pendingRest` (the hit dice
+ * declared with `rest.spend`, which changes nothing else and sends no
+ * snapshot); the snapshot carries settings, stash, the node result, shop
+ * purchases this visit and (DM) pending seat reclaims.
+ *
  * Visibility: `visitedIds` is what a player's run map may name. It comes
  * from `run.visitedNodeIds` when the snapshot carries it, else per-node
  * `visited` flags, else (players) every node the server sent; `node.entered`
@@ -49,13 +60,21 @@ const RUN_TYPES = new Set(['run.snapshot', 'run.event', 'run.updated', 'levelup.
  * @property {object[]} levelUps       — {id, slotId, status, …}
  * @property {Record<string, object>} offers — levelup.offer payloads by levelUpId
  * @property {object[]} log            — recent run events (capped)
+ * @property {object} settings         — campaign settings frozen into the run
+ * @property {object} stash            — party stash ({currency})
+ * @property {boolean} completed       — the current node is done
+ * @property {object} result           — the current node's result ({outcome?, choice?})
+ * @property {Record<string, number>} bought — shop purchases this visit (refKey → qty)
+ * @property {Record<string, Record<string, number>>} pendingRest — declared hit dice per slotId
+ * @property {object[]} reclaims       — pending seat.reclaim requests (DM only)
  */
 
 /** @returns {RunState} */
 export function initialRunState() {
   return {
     synced: false, runId: null, campaignId: null, status: null, outcome: null, currentNodeId: null, seq: 0,
-    nodes: [], visitedIds: [], edges: [], characters: [], items: [], levelUps: [], offers: {}, log: []
+    nodes: [], visitedIds: [], edges: [], characters: [], items: [], levelUps: [], offers: {}, log: [],
+    settings: {}, stash: { currency: {} }, completed: false, result: {}, bought: {}, pendingRest: {}, reclaims: []
   };
 }
 
@@ -81,7 +100,14 @@ export function visitedFromSnapshot(p, { dm = false } = {}) {
   return addVisited([...new Set(ids)], p?.run?.currentNodeId ?? null);
 }
 
+/** Offers still worth showing: their level-up is pending in `levelUps`. */
+function liveOffers(offers, levelUps) {
+  const pending = new Set((levelUps || []).filter(l => l.status === 'pending_player' || l.status === 'pending_dm').map(l => l.id));
+  return Object.fromEntries(Object.entries(offers || {}).filter(([id]) => pending.has(id)));
+}
+
 function fromSnapshot(base, p, dm) {
+  const sameRun = p.run.id === base.runId;
   return {
     ...base,
     synced: true,
@@ -96,7 +122,16 @@ function fromSnapshot(base, p, dm) {
     edges: p.edges,
     characters: p.characters,
     items: p.items,
-    levelUps: p.levelUps
+    levelUps: p.levelUps,
+    offers: sameRun ? liveOffers(base.offers, p.levelUps) : {},
+    log: sameRun ? base.log : [],
+    settings: isObj(p.run.settings) ? p.run.settings : {},
+    stash: isObj(p.run.stash) ? p.run.stash : { currency: {} },
+    completed: p.run.completed === true,
+    result: isObj(p.run.result) ? p.run.result : {},
+    bought: isObj(p.run.bought) ? p.run.bought : {},
+    pendingRest: isObj(p.pendingRest) ? p.pendingRest : {},
+    reclaims: Array.isArray(p.reclaims) ? p.reclaims : []
   };
 }
 
@@ -134,16 +169,28 @@ export function reduceRunEvent(s, ev) {
   let next = { ...s, seq: ev.seq, log };
   switch (ev.type) {
     case 'run.started':
-      return { ...next, campaignId: p.campaignId ?? next.campaignId, status: 'in-node', currentNodeId: p.startNodeId, visitedIds: addVisited(next.visitedIds, p.startNodeId), edges: [] };
+      // The run exists; the start node is entered only by a later node.entered.
+      return { ...next, campaignId: p.campaignId ?? next.campaignId, status: 'lobby' };
     case 'run.ended':
       return { ...next, status: 'ended', outcome: p.outcome, edges: [] };
     case 'node.entered':
-      return { ...next, status: 'in-node', currentNodeId: p.nodeId, visitedIds: addVisited(next.visitedIds, p.nodeId), edges: [] };
+      return {
+        ...next, status: p.kind === 'encounter' ? 'in-node' : 'between', currentNodeId: p.nodeId,
+        visitedIds: addVisited(next.visitedIds, p.nodeId), edges: [], completed: false, result: {}, bought: {}, pendingRest: {}
+      };
     case 'node.completed':
-      return { ...next, status: 'between' };
+      return { ...next, status: 'between', completed: true };
     case 'encounter.result':
+      // after: {slotId: {state, lifeStatus}}
+      return {
+        ...next, result: { outcome: p.outcome },
+        characters: patchEach(next.characters, p.after, (a) => (isObj(a) && isObj(a.state) ? { state: a.state, ...(a.lifeStatus ? { lifeStatus: a.lifeStatus } : {}) } : null))
+      };
     case 'rest.taken':
+      // after: {slotId: state}
       return { ...next, characters: patchEach(next.characters, p.after, (st) => (isObj(st) ? { state: st } : null)) };
+    case 'story.chosen':
+      return { ...next, result: { ...next.result, choice: p.choiceId } };
     case 'xp.awarded':
       return { ...next, characters: patchEach(next.characters, p.after, (xp) => (Number.isInteger(xp) ? { xp } : null)) };
     case 'level.queued':
@@ -239,7 +286,9 @@ export function createRunStore({ isDm = () => false } = {}) {
       status: p.status,
       currentNodeId: p.currentNodeId,
       visitedIds: addVisited(state.visitedIds, p.currentNodeId),
-      ...(p.currentNodeId !== state.currentNodeId ? { edges: [] } : {})
+      ...(p.currentNodeId !== state.currentNodeId ? { edges: [] } : {}),
+      ...(typeof p.completed === 'boolean' ? { completed: p.completed } : {}),
+      ...(isObj(p.pendingRest) ? { pendingRest: p.pendingRest } : {})
     };
     stats.applied++;
     return 'applied';

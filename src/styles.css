@@ -3010,3 +3010,11 @@ body.party-view-mode .combat-panel { display: block !important; }
 .play-attribution { font-size: 0.75rem; line-height: 1.4; }
 .play-remembered-list { list-style: none; margin: 0; padding: 0; }
 .play-remembered-list > li { gap: 8px; align-items: center; padding: 3px 0; }
+
+/* M65 C24 — the between-node hub */
+.play-between .play-row .play-field { display: inline-flex; gap: 4px; align-items: center; margin: 0 6px 0 0; }
+.play-between input[type="number"] { width: 4em; }
+.play-preview { color: var(--text-dim); font-size: 0.85rem; }
+.play-preview.error { color: #fca5a5; }
+.play-item-name { min-width: 10em; }
+.play-seat-card h3, .play-stash h3, .play-rest h3 { margin: 0 0 6px; }
