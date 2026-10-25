@@ -26,19 +26,24 @@
  *   entityFromSheet(sheet, {id, pos, rev, controller, runState})
  *       → EncounterState entity seeded from state_json            (T21)
  *   runStateFromEntity(entity, prevState) → state_json            (T21)
- *   encounterXp({defeated: statBlock[], participants: slotId[]})
- *       → {total, perCharacter: {slotId: xp}}                     (R24)
+ *   encounterXp(defeated: statBlock[], participants: {id, lifeStatus}[],
+ *       {mode}) → {total, awards: {slotId: xp}}                   (R24)
  *   levelForXp(xp) → level 1–20                                   (R24)
- *   applyRest(sheet, state, 'short'|'long', {spend, rng, settings})
- *       → {state, deltas, rolls}  (throws on an illegal rest)     (R25)
- *   lifeStatusAfterEncounter(entity, {outcome, deathMode, previous})
- *       → 'active'|'dying'|'stable'|'dead'                        (R28)
+ *   applyRest(sheet, state, 'short'|'long',
+ *       {spend, rng, dawnIsLongRest, lifeStatus})
+ *       → {state, rolls}  (throws on an illegal rest)             (R25)
+ *   settleAfterEncounter(state, {outcome: RUN_OUTCOMES, deathMode})
+ *       → {state, lifeStatus}  after write-back                   (R28)
  *   endEncounterCleanup?(ts)       optional, before write-back    (T22)
  *
- * `referenceAdapter` implements it over today's code (SRD rules written
- * out here, test-only) so the harness and its golden run now; the real
- * adapter (run-golden.test.js, skipped until R24–R28/T21 merge) swaps in
- * E4's and E1's modules.
+ * The signatures are E4's and E1's as merged, so the real modules plug in
+ * unwrapped. The engine ends an encounter with an ENCOUNTER_OUTCOMES value
+ * ('party-victory', …); R28 settles on the run vocabulary ('victory', …),
+ * so the driver maps it (`settleOutcomeOf`) as the run controller must.
+ *
+ * `referenceAdapter` implements the interface with SRD rules written out
+ * here (test-only) so the two can be compared; run-golden.test.js runs it
+ * and the real adapter (E4's + E1's modules) side by side.
  */
 
 import { createRng } from '../../js/scene/rng.js';
@@ -60,8 +65,20 @@ const clone = (v) => JSON.parse(JSON.stringify(v));
 
 /** Adapter methods the driver calls (`endEncounterCleanup` is optional). */
 export const RUN_ADAPTER_METHODS = Object.freeze([
-  'entityFromSheet', 'runStateFromEntity', 'encounterXp', 'levelForXp', 'applyRest', 'lifeStatusAfterEncounter'
+  'entityFromSheet', 'runStateFromEntity', 'encounterXp', 'levelForXp', 'applyRest', 'settleAfterEncounter'
 ]);
+
+/**
+ * Engine encounter outcome (events.js ENCOUNTER_OUTCOMES) → the run
+ * vocabulary R28's settleAfterEncounter takes (run-state RUN_OUTCOMES).
+ * @param {string} outcome
+ * @returns {'victory'|'defeat'|'abandoned'}
+ */
+export function settleOutcomeOf(outcome) {
+  if (outcome === 'party-victory') return 'victory';
+  if (outcome === 'hostile-victory') return 'defeat';
+  return 'abandoned';
+}
 
 /**
  * Throw unless `adapter` implements every required method.
@@ -83,8 +100,6 @@ export const SRD_XP_THRESHOLDS = Object.freeze([
 ]);
 const CR_XP = { 0: 10, '1/8': 25, '1/4': 50, '1/2': 100, 1: 200, 2: 450, 3: 700, 4: 1100, 5: 1800, 6: 2300, 7: 2900, 8: 3900 };
 const PRESET_XP = { goblin: 50, bugbear: 200, orc: 100, hobgoblin: 100, kobold: 25, bandit: 25, cultist: 25, skeleton: 50, zombie: 50, gnoll: 100 };
-
-const isDowned = (c) => (typeof c === 'string' ? c : c?.id) === 'unconscious';
 
 /** @type {object} — see the module header for the interface. */
 export const referenceAdapter = Object.freeze({
@@ -133,10 +148,11 @@ export const referenceAdapter = Object.freeze({
     return next;
   },
 
-  encounterXp({ defeated, participants }) {
+  encounterXp(defeated, participants) {
     const total = defeated.reduce((n, sb) => n + (Number.isInteger(sb.xp) ? sb.xp : (CR_XP[sb.cr] ?? PRESET_XP[sb.slug] ?? 25)), 0);
-    const each = participants.length ? Math.floor(total / participants.length) : 0;
-    return { total, perCharacter: Object.fromEntries(participants.map(id => [id, each])) };
+    const ids = participants.filter(p => p.lifeStatus !== 'dead').map(p => String(p.id));
+    const each = ids.length ? Math.floor(total / ids.length) : 0;
+    return { total, awards: Object.fromEntries(ids.map(id => [id, each])) };
   },
 
   levelForXp(xp) {
@@ -145,13 +161,14 @@ export const referenceAdapter = Object.freeze({
     return level;
   },
 
-  applyRest(sheet, state, type, { spend = {}, rng, settings = {} }) {
+  applyRest(sheet, state, type, { spend = {}, rng, dawnIsLongRest = true, lifeStatus }) {
+    if (lifeStatus === 'dead') throw new Error('applyRest: a dead character cannot rest');
     const next = clone(state);
     const hpMax = sheet.hp.max;
     const con = sheet.abilityModifiers?.CON ?? 0;
     const rolls = [];
     const recovers = new Set(type === 'long'
-      ? ['sr', 'lr', ...(settings.dawnIsLongRest ? ['dawn', 'day'] : [])]
+      ? ['sr', 'lr', ...(dawnIsLongRest ? ['dawn', 'day'] : [])]
       : ['sr']);
     if (type === 'short') {
       for (const [cls, n] of Object.entries(spend)) {
@@ -181,13 +198,13 @@ export const referenceAdapter = Object.freeze({
     return { state: next, deltas: { hp: next.hp.current - state.hp.current }, rolls };
   },
 
-  lifeStatusAfterEncounter(entity, { outcome }) {
-    if (entity.status === 'dead') return 'dead';
-    if (entity.status === 'stable') return 'stable';
-    if (entity.status === 'downed' || (entity.hp === 0 && (entity.conditions || []).some(isDowned))) {
-      return outcome === 'party-victory' ? 'stable' : 'dying';   // owner default 7: auto-stabilised on a win
-    }
-    return 'active';
+  settleAfterEncounter(state, { outcome }) {
+    if (state.deathSaves.failures >= 3) return { state, lifeStatus: 'dead' };
+    if (state.hp.current > 0) return { state, lifeStatus: 'active' };
+    if (state.deathSaves.stable) return { state, lifeStatus: 'stable' };
+    // Owner default 7: a dying PC on a winning side is auto-stabilised.
+    if (outcome !== 'victory') return { state, lifeStatus: 'dying' };
+    return { state: { ...state, deathSaves: { ...state.deathSaves, stable: true } }, lifeStatus: 'stable' };
   }
 });
 
@@ -344,10 +361,12 @@ export async function runScript(script, adapter, opts = {}) {
         const c = chars.get(slotId);
         const e = final.entities[id];
         before[slotId] = { state: c.state, lifeStatus: c.lifeStatus };
-        const next = adapter.runStateFromEntity(e, c.state);
-        checkState(slotId, next, c.sheet);
-        c.state = next;
-        c.lifeStatus = adapter.lifeStatusAfterEncounter(e, { outcome, deathMode: settings.deathMode, previous: c.lifeStatus });
+        const written = adapter.runStateFromEntity(e, c.state);
+        checkState(slotId, written, c.sheet);
+        const settled = adapter.settleAfterEncounter(written, { outcome: settleOutcomeOf(outcome), deathMode: settings.deathMode });
+        checkState(slotId, settled.state, c.sheet);
+        c.state = settled.state;
+        c.lifeStatus = settled.lifeStatus;
         after[slotId] = { state: c.state, lifeStatus: c.lifeStatus };
       }
       emitRun('encounter.result', { encounterId, outcome, rounds: ts.round, before, after });
@@ -361,11 +380,13 @@ export async function runScript(script, adapter, opts = {}) {
         const defeated = Object.values(final.entities)
           .filter(e => e.side === 'hostile' && (e.hp === 0 || e.status === 'dead'))
           .map(e => ({ slug: e.statBlock.slug, ...(e.statBlock.xp !== undefined ? { xp: e.statBlock.xp } : {}), ...(e.statBlock.cr !== undefined ? { cr: e.statBlock.cr } : {}) }));
-        const participants = [...pcIds.keys()].filter(s => chars.get(s).lifeStatus !== 'dead');
-        let award = adapter.encounterXp({ defeated, participants });
-        if (Number.isInteger(current.payload.xpOverride) && participants.length) {
-          const each = Math.floor(current.payload.xpOverride / participants.length);
-          award = { total: current.payload.xpOverride, perCharacter: Object.fromEntries(participants.map(s => [s, each])) };
+        const participants = [...pcIds.keys()].map(s => ({ id: s, lifeStatus: chars.get(s).lifeStatus }));
+        const xp = adapter.encounterXp(defeated, participants, { mode: settings.xpMode });
+        let award = { total: xp.total, perCharacter: xp.awards };
+        const living = participants.filter(p => p.lifeStatus !== 'dead').map(p => p.id);
+        if (Number.isInteger(current.payload.xpOverride) && living.length) {
+          const each = Math.floor(current.payload.xpOverride / living.length);
+          award = { total: current.payload.xpOverride, perCharacter: Object.fromEntries(living.map(s => [s, each])) };
         }
         const xb = {};
         const xa = {};
@@ -407,7 +428,9 @@ export async function runScript(script, adapter, opts = {}) {
       const slotIds = [];
       for (const c of chars.values()) {
         if (c.lifeStatus === 'dead') continue;
-        const r = adapter.applyRest(c.sheet, c.state, type, { spend: step.spend?.[c.slotId] ?? {}, rng: runRng, settings });
+        const r = adapter.applyRest(c.sheet, c.state, type, {
+          spend: step.spend?.[c.slotId] ?? {}, rng: runRng, dawnIsLongRest: settings.dawnIsLongRest, lifeStatus: c.lifeStatus
+        });
         checkState(c.slotId, r.state, c.sheet);
         before[c.slotId] = c.state;
         after[c.slotId] = r.state;

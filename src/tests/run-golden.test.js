@@ -4,7 +4,7 @@
  * the real engine, no ws.
  *
  * Script:   src/tests/fixtures/runs/<name>.run.json
- * Goldens:  src/tests/golden/<name>.run.reference.json  (reference adapter, live now)
+ * Goldens:  src/tests/golden/<name>.run.reference.json  (reference adapter)
  *           src/tests/golden/<name>.run.json            (E4 + E1's real modules)
  * Re-bless: UPDATE_GOLDEN=1 npm test   (only in a commit that says why)
  *
@@ -12,9 +12,9 @@
  * character's final state rebuilt from the run events alone, under 1 s
  * of CPU per run, Math.random tripwired.
  *
- * Un-skipping the real-module test once R24–R28 / T21 merge: delete its
- * `{ skip: … }` option, then `UPDATE_GOLDEN=1 npm test` once to write
- * its golden and review the diff against the reference golden.
+ * Both goldens stay: the reference adapter is the rules written out
+ * independently, so a divergence between the two run hashes names a rule
+ * (asserted below, per rule, so a change in either side shows up here).
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -68,14 +68,14 @@ function assertRunInvariants(r) {
 }
 
 test('run driver: the adapter interface is enforced', () => {
-  assert.deepEqual([...RUN_ADAPTER_METHODS], ['entityFromSheet', 'runStateFromEntity', 'encounterXp', 'levelForXp', 'applyRest', 'lifeStatusAfterEncounter']);
+  assert.deepEqual([...RUN_ADAPTER_METHODS], ['entityFromSheet', 'runStateFromEntity', 'encounterXp', 'levelForXp', 'applyRest', 'settleAfterEncounter']);
   assert.doesNotThrow(() => assertRunAdapter(referenceAdapter));
   assert.throws(() => assertRunAdapter({ ...referenceAdapter, applyRest: undefined }), /missing applyRest/);
 });
 
 test('run driver: reference adapter rules — XP split, SRD thresholds, rests', () => {
-  assert.deepEqual(referenceAdapter.encounterXp({ defeated: Array(4).fill({ slug: 'goblin' }), participants: ['a', 'b', 'c', 'd'] }),
-    { total: 200, perCharacter: { a: 50, b: 50, c: 50, d: 50 } });
+  assert.deepEqual(referenceAdapter.encounterXp(Array(4).fill({ slug: 'goblin' }), ['a', 'b', 'c', 'd'].map(id => ({ id, lifeStatus: 'active' }))),
+    { total: 200, awards: { a: 50, b: 50, c: 50, d: 50 } });
   assert.equal(referenceAdapter.levelForXp(2700), 4);
   assert.equal(referenceAdapter.levelForXp(2699), 3);
   assert.equal(SRD_XP_THRESHOLDS.length, 20);
@@ -135,26 +135,62 @@ test(`run golden: ${SCENARIO} with E1's real run-state seam (T21 / T22) and the 
   }
 });
 
-test(`run golden: ${SCENARIO} with E4 + E1's real modules`, { skip: 'M65: waiting on R24–R28 (E4); T21 / T22 are in' }, async () => {
+/** E4's rules (R24 / R25 / R28) and E1's run-state seam (T21 / T22), unwrapped. */
+async function realAdapter() {
   const adapters = await import('../js/scene/encounter-adapters.js');
   const xp = await import('../js/campaign/xp.js');
   const rest = await import('../js/campaign/rest.js');
   const death = await import('../js/campaign/death.js');
   const turnManager = await import('../js/scene/turn-manager.js');
-  const real = {
+  return {
     entityFromSheet: adapters.entityFromSheet,           // T21: (sheet, {…, runState})
     runStateFromEntity: adapters.runStateFromEntity,     // T21: (entity, prevState)
-    encounterXp: xp.encounterXp,                         // R24: ({defeated, participants})
+    encounterXp: xp.encounterXp,                         // R24: (defeated, participants, {mode})
     levelForXp: xp.levelForXp,                           // R24
-    applyRest: rest.applyRest,                           // R25: (sheet, state, type, {spend, rng, settings})
-    lifeStatusAfterEncounter: death.lifeStatusAfterEncounter,   // R28
-    endEncounterCleanup: turnManager.endEncounterCleanup        // T22 (optional)
+    applyRest: rest.applyRest,                           // R25: (sheet, state, type, {spend, rng, dawnIsLongRest, lifeStatus})
+    settleAfterEncounter: death.settleAfterEncounter,    // R28: (state, {outcome, deathMode})
+    endEncounterCleanup: turnManager.endEncounterCleanup // T22
   };
+}
+
+test(`run golden: ${SCENARIO} with E4 + E1's real modules`, async () => {
+  const real = await realAdapter();
+  assert.doesNotThrow(() => assertRunAdapter(real));
   const script = loadRunScript(SCENARIO);
   const { out: first, ms } = await cpuMs(() => runScript(script, real));
   const second = await runScript(loadRunScript(SCENARIO), real);
-  assert.deepStrictEqual(goldenOf(second), goldenOf(first));
+  assert.deepStrictEqual(goldenOf(second), goldenOf(first), 'a second in-process run must be identical');
+  assert.deepStrictEqual(second.encounterLogs, first.encounterLogs, 'engine logs identical');
   assertRunInvariants(first);
   assert.ok(ms < 1000, `run took ${ms.toFixed(0)} ms of CPU (budget 1000)`);
+  for (const s of Object.values(first.final)) assert.deepEqual(validateRunState(s.state).errors, []);
+  assert.ok(first.runEvents.some(e => e.type === 'level.queued' && e.payload.slotId === 'slot-2' && e.payload.toLevel === 6));
+  const rest = first.runEvents.find(e => e.type === 'rest.taken');
+  assert.equal(rest.payload.after['slot-1'].hitDice.Cleric.spent, 1);
+  assert.equal(rest.payload.after['slot-2'].hitDice.Fighter.spent, 2);
   checkGolden(`${SCENARIO}.run.json`, goldenOf(first));
+});
+
+
+test(`run golden: ${SCENARIO} — the real modules and the reference rules agree on every state`, async () => {
+  // Finding (M65 phase 2, Wave 2): the run hashes differ, and only because
+  // R25 records each hit-die roll as {className, die, roll, con, healed}
+  // where the reference records {cls, die, roll}. Every state_json, XP
+  // award, queued level and life status is identical. Projecting the roll
+  // records onto their common fields makes the two runs byte-identical;
+  // any other divergence is a rule difference and fails here.
+  const ref = await runScript(loadRunScript(SCENARIO), referenceAdapter);
+  const real = await runScript(loadRunScript(SCENARIO), await realAdapter());
+  assert.deepStrictEqual(real.final, ref.final, 'final character state');
+  assert.deepStrictEqual(real.encounters.map(e => [e.outcome, e.rounds, e.eventsHash]), ref.encounters.map(e => [e.outcome, e.rounds, e.eventsHash]));
+  const project = (events) => events.map(e => e.type !== 'rest.taken' ? e : {
+    ...e,
+    payload: {
+      ...e.payload,
+      rolls: Object.fromEntries(Object.entries(e.payload.rolls).map(([slotId, rs]) =>
+        [slotId, rs.map(r => ({ className: r.className ?? r.cls, die: r.die, roll: r.roll }))]))
+    }
+  });
+  assert.deepStrictEqual(project(real.runEvents), project(ref.runEvents), 'run events, roll records projected');
+  assert.notEqual(real.runHash, ref.runHash, 'the raw hashes differ only by the roll record shape (see above)');
 });
