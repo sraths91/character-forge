@@ -29,6 +29,9 @@ import { mount as mountSetup } from './client/views/setup.js';
 import { mount as mountBattle } from './client/views/battle.js';
 import { mount as mountDmPanel, createDmBridge } from './client/views/dm-panel.js';
 import { mount as mountRunMap } from './client/views/run-map.js';
+import { mount as mountCampaigns } from './client/views/campaigns.js';
+import { mount as mountCampaignEditor } from './client/views/campaign-editor.js';
+import { createCampaignKeys } from './client/campaign-keys.js';
 import { h, clear } from './client/views/dom.js';
 
 const CREDS_KEY = 'cf-play-creds';
@@ -55,7 +58,8 @@ function writeCreds(storage, creds) {
  * @param {Function} opts.fetch
  * @param {Function} opts.WebSocketCtor
  * @param {string} opts.wsUrl
- * @param {Storage|null} [opts.storage]
+ * @param {Storage|null} [opts.storage] — sessionStorage (this tab's reconnect creds)
+ * @param {Storage|null} [opts.durableStorage] — localStorage (campaign keys, M65 C21)
  * @param {object} [opts.deps] — view dependencies (render, promptReaction, calibrateEncounter, mountCalibrator, loadImage, readFile, objectUrl, copyText, timers, raf, caf, cinema, cinemaOptions, wsOptions)
  * @param {string} [opts.prefillCode]
  * @param {string} [opts.origin] — for the copy-link URL
@@ -63,7 +67,7 @@ function writeCreds(storage, creds) {
  *            readonly session: object|null, actions: object, api: object,
  *            appearanceCache: object, loadTokenImages: () => Promise<object[]|null>}}
  */
-export function createPlayApp({ root, fetch, WebSocketCtor, wsUrl, storage = null, deps = {}, prefillCode = '', origin = '' }) {
+export function createPlayApp({ root, fetch, WebSocketCtor, wsUrl, storage = null, durableStorage = null, deps = {}, prefillCode = '', origin = '' }) {
   const doc = root.ownerDocument;
   let creds = readCreds(storage);
   let session = null;
@@ -72,6 +76,9 @@ export function createPlayApp({ root, fetch, WebSocketCtor, wsUrl, storage = nul
   let screen = null;
   let unmounts = [];
   let wantSetup = false;
+  /** Local (room-less) screens: 'campaigns' or {editor: campaignId}. */
+  let local = null;
+  const campaignKeys = createCampaignKeys(durableStorage);
   const sheetCache = new Map();
   const sheetLoads = new Map();
   const sheetListeners = new Set();
@@ -148,6 +155,25 @@ export function createPlayApp({ root, fetch, WebSocketCtor, wsUrl, storage = nul
       route(true);
     },
     openSetup() { wantSetup = true; route(true); },
+    // ---- M65 C21: campaign authoring (no room needed) ----
+    openCampaigns() { local = 'campaigns'; route(true); },
+    closeCampaigns() { local = null; route(true); },
+    openCampaign(campaignId) { local = { editor: String(campaignId) }; route(true); },
+    closeCampaign() { local = 'campaigns'; route(true); },
+    async startRun({ campaignId, campaignKey }) {
+      let r;
+      try {
+        r = await api.startRun(campaignId, campaignKey, { roomToken: creds?.role === 'dm' ? creds.token : null });
+      } catch (err) {
+        if (err?.status === 404 || err?.status === 405) throw new Error('This server cannot start campaign runs yet.');
+        throw err;
+      }
+      creds = { roomId: r.roomId, code: r.code, token: r.dmToken || creds?.token, role: 'dm' };
+      writeCreds(storage, creds);
+      local = null;
+      await connect();
+      return r;
+    },
     copyLink(code) { return deps.copyText?.(`${origin}/play.html?code=${encodeURIComponent(code || '')}`); }
   };
 
@@ -166,6 +192,7 @@ export function createPlayApp({ root, fetch, WebSocketCtor, wsUrl, storage = nul
       appearanceCache,
       dmBridge,
       actions,
+      campaignKeys,
       deps,
       prefillCode,
       ...extra
@@ -175,6 +202,13 @@ export function createPlayApp({ root, fetch, WebSocketCtor, wsUrl, storage = nul
   function renderBar() {
     clear(bar);
     bar.appendChild(h(doc, 'strong', { class: 'play-title', text: 'character-forge table' }));
+    if (!local && (!creds || creds.role === 'dm')) {
+      const camp = h(doc, 'button', { type: 'button', class: 'play-btn small', dataset: { action: 'open-campaigns' }, text: 'Campaigns' });
+      bar.appendChild(camp);
+      const onCamp = () => actions.openCampaigns();
+      camp.addEventListener('click', onCamp);
+      unmounts.push(() => camp.removeEventListener('click', onCamp));
+    }
     if (creds) {
       bar.appendChild(h(doc, 'span', { class: 'play-bar-code', text: `Room ${creds.code || ''}` }));
       const leave = h(doc, 'button', { type: 'button', class: 'play-btn small', text: 'Leave' });
@@ -186,6 +220,8 @@ export function createPlayApp({ root, fetch, WebSocketCtor, wsUrl, storage = nul
   }
 
   function currentScreen() {
+    if (local === 'campaigns') return 'campaigns';
+    if (local?.editor) return `campaign-editor:${local.editor}`;
     if (!creds) return 'lobby';
     if (!session) return 'connecting';
     const s = session.store.getState();
@@ -201,7 +237,11 @@ export function createPlayApp({ root, fetch, WebSocketCtor, wsUrl, storage = nul
     screen = next;
     renderBar();
     const c = ctx();
-    if (next === 'connecting') {
+    if (next === 'campaigns') {
+      unmounts.push(mountCampaigns(mainEl, c));
+    } else if (next.startsWith('campaign-editor:')) {
+      unmounts.push(mountCampaignEditor(mainEl, { ...c, campaignId: local.editor }));
+    } else if (next === 'connecting') {
       mainEl.appendChild(h(doc, 'p', { class: 'play-waiting', text: 'Connecting to the table…' }));
     } else if (next === 'lobby') {
       unmounts.push(mountLobby(mainEl, c));
@@ -291,6 +331,14 @@ async function browserDeps() {
       img.src = url;
     }),
     readFile: (file) => file.arrayBuffer(),
+    download: (filename, json) => {
+      const url = URL.createObjectURL(new Blob([JSON.stringify(json, null, 2)], { type: 'application/json' }));
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    },
     objectUrl: (file) => URL.createObjectURL(file),
     copyText: (text) => navigator.clipboard?.writeText?.(text),
     cinemaOptions: {
@@ -320,12 +368,15 @@ export async function boot(doc) {
   const server = fake ? createFakeServer({ characters: DEMO_CHARACTERS, shareLibrary: true }) : null;
   let storage = null;
   try { storage = fake ? null : win.sessionStorage; } catch { storage = null; }
+  let durableStorage = null;
+  try { durableStorage = fake ? null : win.localStorage; } catch { durableStorage = null; }
   const app = createPlayApp({
     root,
     fetch: fake ? server.fetch : win.fetch.bind(win),
     WebSocketCtor: fake ? server.WebSocket : win.WebSocket,
     wsUrl: fake ? 'ws://fake.local/ws' : `${win.location.protocol === 'https:' ? 'wss' : 'ws'}://${win.location.host}/ws`,
     storage,
+    durableStorage,
     deps: await browserDeps(),
     prefillCode: (params.get('code') || '').toUpperCase().slice(0, 6),
     origin: win.location.origin

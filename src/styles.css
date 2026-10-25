@@ -2985,3 +2985,22 @@ body.party-view-mode .combat-panel { display: block !important; }
 .play-run-trail { margin: 0; padding-left: 1.2em; }
 .play-run-step.current { font-weight: 600; color: #facc15; }
 .play-run-glyph { color: var(--accent); }
+
+/* M65 C21 — campaign list and editor */
+.play-campaign-list, .play-nodes, .play-items, .play-edges, .play-choices, .play-assets-list, .play-srd-results, .play-checks { list-style: none; margin: 0; padding: 0; }
+.play-campaign, .play-node-row, .play-edge, .play-items > li, .play-choices > li, .play-srd-results > li { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 3px 0; }
+.play-node-row.selected { font-weight: 600; }
+.play-link { background: transparent; border: 0; color: var(--text); cursor: pointer; font: inherit; padding: 0; text-align: left; }
+.play-editor-grid { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 12px; }
+@media (max-width: 900px) { .play-editor-grid { grid-template-columns: minmax(0, 1fr); } }
+.play-editor-head { gap: 6px; flex-wrap: wrap; align-items: center; }
+.play-field { display: block; margin: 6px 0; }
+.play-node-editor textarea { width: 100%; box-sizing: border-box; }
+.play-node-editor input[type="number"] { width: 5.5em; }
+.play-coins input[type="number"] { width: 4.5em; }
+.play-check.error { color: #fca5a5; }
+.play-check.warning { color: #fcd34d; }
+.play-check-summary.ready { color: #86efac; }
+.play-check-summary.not-ready { color: #fcd34d; }
+.play-btn.danger { border-color: var(--danger); }
+.play-btn:disabled { opacity: 0.5; cursor: not-allowed; }
