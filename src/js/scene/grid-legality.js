@@ -17,7 +17,11 @@
  *
  * Rules implemented (PHB unless noted):
  *   - Movement is 8-neighbour. Every diagonal costs 5 ft (`diagonalRule:
- *     '5ft'`, PHB default) or alternates 5/10 (`'5-10-5'`, DMG variant).
+ *     '5ft'`, PHB default) or alternates 5/10 (`'5-10'`, DMG p252
+ *     variant; `'5-10-5'` is accepted as an alias). The room setting
+ *     `dm.room.settings.diagonalRule` is honoured wherever a caller
+ *     passes it (`findPath`, `reachableCells`, `validateMove`,
+ *     `distanceFt`, `pathCostFt`); anything unknown reads as '5ft'.
  *   - Difficult terrain doubles the cost of entering a cell.
  *   - Blocked cells are impassable; a diagonal step may not squeeze
  *     between two blocked orthogonal neighbours (corner cutting).
@@ -49,6 +53,42 @@ import { detectOpportunityAttacks, detectPolearmEntryOAs } from './reactions.js'
 import { asTerrain, TERRAIN_FLAGS } from '../map/terrain.js';
 
 const FT_PER_CELL = 5;
+
+/** Diagonal movement rules: PHB (every diagonal 5 ft) and DMG alternating 5/10. */
+export const DIAGONAL_RULES = Object.freeze(['5ft', '5-10']);
+
+/**
+ * Canonical diagonal rule: '5-10' (or its alias '5-10-5') → '5-10';
+ * anything else, including undefined, → '5ft'.
+ * @param {unknown} rule
+ * @returns {'5ft'|'5-10'}
+ */
+export function normaliseDiagonalRule(rule) {
+  return rule === '5-10' || rule === '5-10-5' ? '5-10' : '5ft';
+}
+
+/**
+ * Grid distance in feet between two cells, or between two footprints
+ * (nearest cells) when sizes are given. '5ft': every diagonal 5 ft
+ * (Chebyshev, the engine's `chebyshevFeet`); '5-10': every second
+ * diagonal 10 ft, so (max + floor(min / 2)) cells.
+ * @param {{col: number, row: number}} a
+ * @param {{col: number, row: number}} b
+ * @param {{diagonalRule?: '5ft'|'5-10'|'5-10-5', sizeA?: string|number, sizeB?: string|number}} [opts]
+ * @returns {number} feet (Infinity when a cell is missing)
+ */
+export function distanceFt(a, b, { diagonalRule = '5ft', sizeA = 1, sizeB = 1 } = {}) {
+  if (!a || !b || !Number.isFinite(a.col) || !Number.isFinite(b.col)) return Infinity;
+  const na = footprint(sizeA);
+  const nb = footprint(sizeB);
+  const gap = (a0, an, b0, bn) => Math.max(0, b0 - (a0 + an - 1), a0 - (b0 + bn - 1));
+  const dx = gap(a.col, na, b.col, nb);
+  const dy = gap(a.row, na, b.row, nb);
+  const long = Math.max(dx, dy);
+  const short = Math.min(dx, dy);
+  const cells = normaliseDiagonalRule(diagonalRule) === '5-10' ? long + Math.floor(short / 2) : long;
+  return cells * FT_PER_CELL;
+}
 const DIRS = [
   [1, 0], [-1, 0], [0, 1], [0, -1],
   [1, 1], [1, -1], [-1, 1], [-1, -1]
@@ -202,13 +242,39 @@ function cornerCut(grid, c, r, dc, dr) {
   return isBlocked(grid, c + dc, r) && isBlocked(grid, c, r + dr);
 }
 
-/** Cost in feet of stepping (dc,dr) into (c,r); `parity` = diagonals so far (5-10-5). */
+/** Cost in feet of stepping (dc,dr) into (c,r); `parity` = diagonals so far (5-10); `diagonalRule` is normalised. */
 function stepCost(grid, c, r, dc, dr, parity, diagonalRule) {
   const diagonal = dc !== 0 && dr !== 0;
   let base = FT_PER_CELL;
-  if (diagonal && diagonalRule === '5-10-5' && parity === 1) base = FT_PER_CELL * 2;
+  if (diagonal && diagonalRule === '5-10' && parity === 1) base = FT_PER_CELL * 2;
   const difficult = (grid.flag(c, r) & TERRAIN_FLAGS.DIFFICULT) !== 0;
   return difficult ? base * 2 : base;
+}
+
+/**
+ * Movement cost in feet of walking `path` cell by cell: difficult terrain
+ * doubles a step, and under '5-10' every second diagonal costs 10 ft
+ * (counted along this path). No occupancy or blocked-cell checks — use
+ * `validateMove` for legality; this prices a path preview.
+ * @param {object|null} terrain
+ * @param {{col: number, row: number}[]} path — start cell first
+ * @param {{diagonalRule?: '5ft'|'5-10'|'5-10-5'}} [opts]
+ * @returns {number} feet; Infinity when two consecutive cells are not adjacent
+ */
+export function pathCostFt(terrain, path, { diagonalRule = '5ft' } = {}) {
+  const cells = Array.isArray(path) ? path : [];
+  const rule = normaliseDiagonalRule(diagonalRule);
+  const g = makeGrid(terrain, null);
+  let cost = 0;
+  let parity = 0;
+  for (let i = 1; i < cells.length; i++) {
+    const dc = cells[i].col - cells[i - 1].col;
+    const dr = cells[i].row - cells[i - 1].row;
+    if (Math.max(Math.abs(dc), Math.abs(dr)) !== 1) return Infinity;
+    cost += stepCost(g, cells[i].col, cells[i].row, dc, dr, parity, rule);
+    if (rule === '5-10' && dc !== 0 && dr !== 0) parity = 1 - parity;
+  }
+  return cost;
 }
 
 // Small binary heap keyed by [cost, tie, seq].
@@ -253,9 +319,8 @@ function makeHeap() {
  * `"c,r,parity"`, plus the goal state when `to` was reached.
  */
 function search(terrain, occupancy, from, to, opts) {
-  const {
-    budgetFt = Infinity, moverSide = 'party', diagonalRule = '5ft', bounds = null
-  } = opts || {};
+  const { budgetFt = Infinity, moverSide = 'party', bounds = null } = opts || {};
+  const diagonalRule = normaliseDiagonalRule(opts?.diagonalRule);
   const grid = makeGrid(terrain, bounds);
   const occ = normaliseOccupancy(occupancy);
   // Unbounded grid + unbounded budget: keep the search to a sane box.
@@ -280,7 +345,7 @@ function search(terrain, occupancy, from, to, opts) {
     return true;
   };
   const tie = (c, r) => (to ? (c - to.col) ** 2 + (r - to.row) ** 2 : 0);
-  const usesParity = diagonalRule === '5-10-5';
+  const usesParity = diagonalRule === '5-10';
   const startKey = `${from.col},${from.row},0`;
   const dist = new Map([[startKey, 0]]);
   const prev = new Map();
@@ -320,7 +385,7 @@ function search(terrain, occupancy, from, to, opts) {
  *   — cells holding creatures (exclude the mover)
  * @param {{col: number, row: number}} from
  * @param {{col: number, row: number}} to
- * @param {{budgetFt?: number, moverSide?: 'party'|'hostile', diagonalRule?: '5ft'|'5-10-5',
+ * @param {{budgetFt?: number, moverSide?: 'party'|'hostile', diagonalRule?: '5ft'|'5-10'|'5-10-5',
  *          bounds?: {cols: number, rows: number}}} [opts]
  *   — `bounds` is only needed when `terrain` is null
  * @returns {{path: {col: number, row: number}[], costFt: number}|null}
@@ -394,7 +459,7 @@ function reactionShim(e, weaponOf) {
  * @param {string} moverId
  * @param {{col: number, row: number}[]} path — with or without the start cell
  * @param {{budgetFt?: number, usedFt?: number, ignoreBudget?: boolean,
- *          diagonalRule?: '5ft'|'5-10-5', disengaged?: boolean, bigCreatures?: boolean,
+ *          diagonalRule?: '5ft'|'5-10'|'5-10-5', disengaged?: boolean, bigCreatures?: boolean,
  *          weaponOf?: (entity: object) => object|null}} [opts]
  *   — `budgetFt` defaults to the mover's `speedFt` (30) minus `usedFt`;
  *   `weaponOf` supplies reach weapons for state entities that carry none;
@@ -425,7 +490,7 @@ export function validateMove(view, moverId, path, opts = {}) {
 
   const moverSide = sideOf(mover);
   const occ = buildOccupancy(entities, { excludeId: mover.id, bigCreatures: opts.bigCreatures === true });
-  const diagonalRule = opts.diagonalRule || '5ft';
+  const diagonalRule = normaliseDiagonalRule(opts.diagonalRule);
   const speed = Number.isFinite(mover.speedFt) ? mover.speedFt : 30;
   const budget = opts.ignoreBudget ? Infinity
     : (Number.isFinite(opts.budgetFt) ? opts.budgetFt : speed - (opts.usedFt || 0));
@@ -468,7 +533,7 @@ export function validateMove(view, moverId, path, opts = {}) {
     }
 
     cost += stepCost(g, b.col, b.row, dc, dr, parity, diagonalRule);
-    if (diagonalRule === '5-10-5' && dc !== 0 && dr !== 0) parity = 1 - parity;
+    if (diagonalRule === '5-10' && dc !== 0 && dr !== 0) parity = 1 - parity;
   }
   if (cost > budget) return fail(MOVE_REASONS.OVER_BUDGET, full.length - 1, cost, oaTriggers);
   return { legal: true, costFt: cost, reason: null, failedAt: null, oaTriggers };
