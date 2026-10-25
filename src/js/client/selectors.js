@@ -155,6 +155,7 @@ export function screenFor(s, local = {}) {
   const dm = isDm(s);
   if (status === 'in-encounter' || status === 'paused' || status === 'encounter-over') return s.encounter ? 'battle' : (dm ? 'setup' : 'waiting-setup');
   if (status === 'setup') return dm ? 'setup' : 'waiting-setup';
+  if (status === 'between') return 'between';   // M65 v1.6: a run between nodes
   if (dm && local.wantSetup) return 'setup';
   return 'lobby';
 }

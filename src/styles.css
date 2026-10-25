@@ -2964,3 +2964,24 @@ body.party-view-mode .combat-panel { display: block !important; }
 /* M64 phase 1.5 — fog: hidden-event log lines, DM fog brush */
 .play-log .roll-hidden { color: var(--text-dim); font-style: italic; }
 .play-fog-brush { width: auto; }
+
+/* M65 C21 / C23 — campaign chain graph (inline SVG) and the run map */
+.cf-graph-host { overflow-x: auto; }
+.cf-graph { display: block; max-width: none; font: inherit; font-size: 12px; }
+.cf-graph-box { fill: var(--surface, #18181b); stroke: var(--border); stroke-width: 1.5; }
+.cf-graph-node[data-action] { cursor: pointer; }
+.cf-graph-node.selected .cf-graph-box { stroke: var(--accent); stroke-width: 2.5; }
+.cf-graph-node.current .cf-graph-box { stroke: #facc15; stroke-width: 2.5; }
+.cf-graph-node.visited .cf-graph-box { fill: #1e293b; }
+.cf-graph-node.unlinked .cf-graph-box { stroke-dasharray: 4 3; }
+.cf-graph-node.kind-unknown .cf-graph-box { stroke-dasharray: 2 3; }
+.cf-graph-title { fill: var(--text); font-weight: 600; }
+.cf-graph-kind, .cf-graph-edge-label { fill: var(--text-dim); font-size: 10px; }
+.cf-graph-glyph, .cf-graph-start { fill: var(--accent); }
+.cf-graph-edge-line { stroke: var(--text-dim); stroke-width: 1.5; }
+.cf-graph-edge.dangling .cf-graph-edge-line { stroke: var(--danger); stroke-dasharray: 3 3; }
+.cf-graph-arrowhead { fill: var(--text-dim); }
+.play-run-head { gap: 8px; align-items: baseline; }
+.play-run-trail { margin: 0; padding-left: 1.2em; }
+.play-run-step.current { font-weight: 600; color: #facc15; }
+.play-run-glyph { color: var(--accent); }

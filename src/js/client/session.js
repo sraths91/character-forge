@@ -12,10 +12,16 @@
  * turn flags and turn order from the events, so its shared `stateHash`
  * equals the one the server stamps. A mismatch asks for a resync; seq
  * gaps and every (re)connect still bring a full snapshot.
+ *
+ * M65 C23: run messages (`run.snapshot`, `run.event`, `run.updated`,
+ * `levelup.offer`) also go to the run store (client/run-store.js), which
+ * orders run events by their own run seq; its resync request is a ws
+ * `resync` too (the server answers with both snapshots).
  */
 
 import { createWsClient } from './ws-client.js';
 import { createStore } from './store.js';
+import { createRunStore } from './run-store.js';
 import { EVENT_TYPES } from '../shared/events.js';
 
 const EVENT_SET = new Set(EVENT_TYPES);
@@ -26,9 +32,10 @@ const EVENT_SET = new Set(EVENT_TYPES);
  * @param {string|(() => string)} opts.token
  * @param {Function} [opts.WebSocketCtor]
  * @param {object} [opts.store] — defaults to createStore() (hash check on)
+ * @param {object} [opts.runStore] — defaults to createRunStore() (DM-ness from the room store)
  * @param {object} [opts.wsOptions] — extra createWsClient options (timers, now, random, logger)
  * @returns {{
- *   store: object, ws: object,
+ *   store: object, runStore: object, ws: object,
  *   connect: () => Promise<object>,
  *   send: (intent: {t: string, p?: object}) => Promise<object>,
  *   setPlayback: (playback: {play: (events: object[]) => Promise<void>}|null) => () => void,
@@ -37,7 +44,8 @@ const EVENT_SET = new Set(EVENT_TYPES);
  *   close: () => void
  * }}
  */
-export function createSession({ url, token, WebSocketCtor, store = createStore(), wsOptions = {} }) {
+export function createSession({ url, token, WebSocketCtor, store = createStore(), runStore = null, wsOptions = {} }) {
+  const run = runStore || createRunStore({ isDm: () => store.getState().me?.role === 'dm' });
   const ws = createWsClient({
     url, token, WebSocketCtor,
     getLastSeq: () => (store.getState().synced ? store.getState().seq : null),
@@ -52,6 +60,7 @@ export function createSession({ url, token, WebSocketCtor, store = createStore()
       for (const fn of [...errorListeners]) fn({ code: msg.p.code, message: msg.p.message });
       return;
     }
+    if (run.handles(msg.t)) run.apply(msg);
     const r = store.apply(msg);
     if (r !== 'applied' || !Number.isInteger(msg.seq)) return;
     const item = EVENT_SET.has(msg.t) ? msg.p : { seq: msg.seq, type: msg.t };
@@ -59,9 +68,11 @@ export function createSession({ url, token, WebSocketCtor, store = createStore()
     else store.presentUpTo(msg.seq);
   });
   store.onResyncNeeded(() => { ws.resync(store.getState().seq); });
+  run.onResyncNeeded(() => { ws.resync(store.getState().seq); });
 
   return {
     store,
+    runStore: run,
     ws,
     connect: () => ws.connect(),
     send: (intent) => {
