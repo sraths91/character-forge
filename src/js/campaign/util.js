@@ -66,3 +66,67 @@ export function pushDelta(deltas, path, before, after) {
   if (JSON.stringify(before) === JSON.stringify(after)) return;
   deltas.push({ path, before: clone(before), after: clone(after) });
 }
+
+/**
+ * Slots left between nodes: levelled slots of exactly `level` (sheet max −
+ * state spent), or the pact slots when `kind` is 'pact' (pact slot level
+ * must equal `level`).
+ * @param {object} sheet — run sheet (spellSlotTable)
+ * @param {object} state — state_json v1 (slots)
+ * @param {number} level
+ * @param {'spell'|'pact'} [kind]
+ * @returns {number}
+ */
+export function slotsLeft(sheet, state, level, kind = 'spell') {
+  if (kind === 'pact') {
+    const pact = sheet?.spellSlotTable?.pact;
+    if (!pact || Number(pact.level) !== Number(level)) return 0;
+    return Math.max(0, (Number(pact.max) || 0) - (Number(state?.slots?.pact?.spent) || 0));
+  }
+  const max = Number(sheet?.spellSlotTable?.spell?.[level]) || 0;
+  return Math.max(0, max - (Number(state?.slots?.spell?.[level]?.spent) || 0));
+}
+
+/**
+ * The lowest slot at or above `minLevel` that is left (levelled first, then
+ * pact), or null.
+ * @param {object} sheet
+ * @param {object} state
+ * @param {number} minLevel
+ * @returns {{level: number, kind: 'spell'|'pact'}|null}
+ */
+export function lowestSlotAtLeast(sheet, state, minLevel) {
+  for (let lv = Math.max(1, minLevel); lv <= 9; lv++) {
+    if (slotsLeft(sheet, state, lv, 'spell') > 0) return { level: lv, kind: 'spell' };
+  }
+  const pact = sheet?.spellSlotTable?.pact;
+  if (pact && Number(pact.level) >= minLevel && slotsLeft(sheet, state, pact.level, 'pact') > 0) return { level: Number(pact.level), kind: 'pact' };
+  return null;
+}
+
+/**
+ * Spend one slot in a state_json clone (caller checked availability).
+ * @param {object} state — mutated
+ * @param {{level: number, kind: 'spell'|'pact'}} slot
+ */
+export function spendSlotIn(state, slot) {
+  state.slots = { spell: {}, pact: {}, ...(state.slots || {}) };
+  if (slot.kind === 'pact') {
+    state.slots.pact = { ...(state.slots.pact || {}), spent: (Number(state.slots.pact?.spent) || 0) + 1 };
+  } else {
+    state.slots.spell = { ...(state.slots.spell || {}) };
+    const cur = state.slots.spell[slot.level] || { spent: 0 };
+    state.slots.spell[slot.level] = { ...cur, spent: (Number(cur.spent) || 0) + 1 };
+  }
+}
+
+/**
+ * The sheet's spell record by name (case-insensitive), or null.
+ * @param {object} sheet
+ * @param {string} name
+ * @returns {object|null}
+ */
+export function sheetSpell(sheet, name) {
+  const n = String(name || '').trim().toLowerCase();
+  return (sheet?.spells || []).find(s => String(s?.name || '').trim().toLowerCase() === n) || null;
+}
