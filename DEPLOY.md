@@ -130,16 +130,26 @@ Railway auto-restarts the service if this stops responding.
   a room's uploads when a template is used there. Exports carry the SRD
   5.1 attribution (also at `/api/licenses`) and no D&D Beyond prose;
   imports are capped at 64 MB.
+- **SRD items and spells** (M65): `GET /api/srd/items?q=` (`&kind=item|magicitem`),
+  `/api/srd/items/:key`, `/api/srd/spells?q=`, `/api/srd/spells/:key` proxy
+  Open5e with `document__key__in=srd-2014` and cache in `items_cache`, which
+  admits only that document (no other publisher's text is ever cached).
+  Upstream calls time out like the monster proxy (8 s → 504); cache hits
+  skip the 60/minute limiter.
 - **Janitor** (hourly): deletes event logs of encounters ended > 7 days
   ago, rooms idle 30 days (with their maps), and checkpoints the WAL
-  above 64 MB.
+  above 64 MB. A room that holds a campaign run is never deleted while
+  the run exists; runs ended more than 90 days ago are deleted (with
+  their log, snapshots and items), and their room then ages out as usual.
 - **Security headers**: a report-only `Content-Security-Policy` on every
   response (`script-src 'self'`, …) — watch the browser console before
   switching it to enforcing. Map files are served with `nosniff` and
   `default-src 'none'`.
 - **Rate limits** (per IP): room create 5/hour, join 10/minute, import
   20/minute, monster search 60/minute and monster lookups 120/minute
-  (cache hits are not counted), item sprites 200/minute.
+  (cache hits are not counted), item sprites 200/minute, campaign
+  create / import 20/hour, SRD item and spell lookups 60/minute (cache
+  hits are not counted).
 
 ### 5. Deploy
 Push to `main` → Railway picks up the change, runs `npm ci && npm run build`, then `NODE_ENV=production node api/server.js`. First build takes ~2 minutes; subsequent builds reuse the npm cache.

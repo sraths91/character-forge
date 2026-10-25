@@ -51,7 +51,7 @@ test('deletes old ended-encounter events, idle rooms with their maps, and keeps 
   assert.equal(count("SELECT COUNT(*) AS n FROM encounters WHERE id = 'old'"), 1, 'the final snapshot stays');
   assert.equal(lines.length, 1);
   // Idempotent.
-  assert.deepEqual(j.runOnce(), { eventsDeleted: 0, roomsDeleted: [], walCheckpoint: false });
+  assert.deepEqual(j.runOnce(), { eventsDeleted: 0, runsDeleted: 0, roomsDeleted: [], walCheckpoint: false });
   db.close();
 });
 
@@ -90,6 +90,6 @@ test('a failing pass is logged, not thrown', async () => {
   const lines = [];
   const j = createJanitor({ db, dataDir: null, log: (l, m) => lines.push([l, m]) });
   db.db.close();
-  assert.deepEqual(j.runOnce(), { eventsDeleted: 0, roomsDeleted: [], walCheckpoint: false });
+  assert.deepEqual(j.runOnce(), { eventsDeleted: 0, runsDeleted: 0, roomsDeleted: [], walCheckpoint: false });
   assert.deepEqual(lines, [['error', 'janitor failed']]);
 });

@@ -23,6 +23,7 @@ import { createRoomService } from './rooms/service.js';
 import { mountRoomRoutes } from './rooms/http.js';
 import { mountMapRoutes } from './rooms/maps.js';
 import { mountCampaignRoutes, CAMPAIGN_IMPORT_PATH } from './campaigns/http.js';
+import { mountSrdRoutes } from './srd/http.js';
 import { bearerToken, generateToken, hashToken } from './rooms/tokens.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -460,8 +461,12 @@ export function createApp({
   // Campaign authoring needs schema 0006; a DB opened without migrating
   // (tests holding an older schema) simply has no campaign routes.
   const hasCampaigns = !!db.db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'campaigns'").get();
-  if (hasCampaigns) app.locals.campaigns = mountCampaignRoutes(app, { conn: db.db, rooms: roomService, dataDir: healthDataDir, limiter, log, ...campaignOpts });
-  else log('warn', 'campaign routes disabled: the database predates migration 0006');
+  if (hasCampaigns) {
+    app.locals.campaigns = mountCampaignRoutes(app, { conn: db.db, rooms: roomService, dataDir: healthDataDir, limiter, log, ...campaignOpts });
+    mountSrdRoutes(app, { conn: db.db, fetchImpl, timeoutMs: upstreamTimeoutMs, limiter, log });
+  } else {
+    log('warn', 'campaign and SRD routes disabled: the database predates migration 0006');
+  }
   if (mount) mount(app, { rooms: roomService, roomStore, limiter, memberOf, HttpError, PROD, MULTIPLAYER });
 
   // Unknown /api routes are a JSON 404, never the SPA's index.html (F7).

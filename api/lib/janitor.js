@@ -2,6 +2,12 @@
 // room's maps directory) and a WAL checkpoint when the WAL grows past
 // 64 MB. Clock, filesystem and interval are injectable; the timer is
 // unref'd and cleared by stop().
+//
+// Campaign runs (M65 B23, decision 2): a room that holds a run is never
+// deleted as idle while the run exists, ended or not (runs.room_id is a
+// plain FK, so the delete would fail anyway). Ended runs age out after
+// 90 days (their events, snapshots, items and level-ups cascade); the
+// room then goes the ordinary idle way, in the same pass when it is idle.
 
 import { statSync, rmSync } from 'node:fs';
 import { removeRoomMaps } from '../rooms/maps.js';
@@ -10,6 +16,7 @@ export const JANITOR_DEFAULTS = Object.freeze({
   intervalMs: 60 * 60 * 1000,
   eventRetentionMs: 7 * 24 * 60 * 60 * 1000,
   idleRoomMs: 30 * 24 * 60 * 60 * 1000,
+  endedRunRetentionMs: 90 * 24 * 60 * 60 * 1000,
   walLimitBytes: 64 * 1024 * 1024
 });
 
@@ -35,7 +42,8 @@ export function createJanitor({
     deleteOldEvents: conn.prepare(`
       DELETE FROM encounter_events WHERE encounter_id IN (
         SELECT id FROM encounters WHERE status IN ('ended', 'abandoned') AND ended_at IS NOT NULL AND ended_at < ?)`),
-    idleRooms: conn.prepare('SELECT id FROM rooms WHERE last_active_at < ?'),
+    deleteEndedRuns: conn.prepare("DELETE FROM runs WHERE status = 'ended' AND ended_at < ?"),
+    idleRooms: conn.prepare('SELECT id FROM rooms r WHERE last_active_at < ? AND NOT EXISTS (SELECT 1 FROM runs WHERE runs.room_id = r.id)'),
     deleteRoom: conn.prepare('DELETE FROM rooms WHERE id = ?')
   };
   let timer = null;
@@ -45,15 +53,22 @@ export function createJanitor({
     try { return fs.statSync(`${db.path}-wal`).size; } catch { return 0; }
   }
 
-  /** One pass. @returns {{eventsDeleted: number, roomsDeleted: string[], walCheckpoint: boolean}} */
+  /** One pass. @returns {{eventsDeleted: number, runsDeleted: number, roomsDeleted: string[], walCheckpoint: boolean}} */
   function runOnce() {
     const t = now();
-    const out = { eventsDeleted: 0, roomsDeleted: [], walCheckpoint: false };
+    const out = { eventsDeleted: 0, runsDeleted: 0, roomsDeleted: [], walCheckpoint: false };
     try {
       out.eventsDeleted = q.deleteOldEvents.run(t - cfg.eventRetentionMs).changes;
+      out.runsDeleted = q.deleteEndedRuns.run(t - cfg.endedRunRetentionMs).changes;
       for (const { id } of q.idleRooms.all(t - cfg.idleRoomMs)) {
         if (registry && !registry.evict(id) && registry.all?.().some(r => r.id === id)) continue;   // live: keep
-        q.deleteRoom.run(id);
+        try {
+          q.deleteRoom.run(id);
+        } catch (err) {
+          // A run created between the select and the delete pins the room (FK).
+          log('warn', 'janitor: room not deleted', { roomId: id, error: err.message });
+          continue;
+        }
         removeRoomMaps(dataDir, id, fs.rmSync);
         out.roomsDeleted.push(id);
       }
@@ -61,8 +76,8 @@ export function createJanitor({
         conn.pragma('wal_checkpoint(RESTART)');
         out.walCheckpoint = true;
       }
-      if (out.eventsDeleted || out.roomsDeleted.length || out.walCheckpoint) {
-        log('info', 'janitor', { eventsDeleted: out.eventsDeleted, roomsDeleted: out.roomsDeleted.length, walCheckpoint: out.walCheckpoint });
+      if (out.eventsDeleted || out.runsDeleted || out.roomsDeleted.length || out.walCheckpoint) {
+        log('info', 'janitor', { eventsDeleted: out.eventsDeleted, runsDeleted: out.runsDeleted, roomsDeleted: out.roomsDeleted.length, walCheckpoint: out.walCheckpoint });
       }
     } catch (err) {
       log('error', 'janitor failed', { error: err.message });
