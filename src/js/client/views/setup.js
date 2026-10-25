@@ -16,6 +16,14 @@
  *     party too → `dm.review.set`), a live difficulty card that runs
  *     `calibrateEncounter` in the DM's browser debounced 400 ms, Start.
  *
+ * Templates (M65 C22): "Save as template" stores `setupPayload(draft)` in a
+ * campaign this browser holds a key for (`POST …/templates/from-room` with
+ * the room's DM token, so room uploads become campaign assets); "Load
+ * template" instantiates one for this room (`…/instantiate`) and rebuilds
+ * the draft with `draftFromSetup`, the inverse of `setupPayload`, so a save
+ * → load round-trips the exact payload. In a campaign run the draft starts
+ * from the current encounter node: its inline `setup`, or its template.
+ *
  * Once the encounter exists, each non-humanoid monster's row carries E5's
  * token image picker (views/token-image.js: `PUT …/maps?kind=token`, then
  * `dm.entity.patch {imageUrl}`).
@@ -28,7 +36,8 @@
  * Start validates ≥ 1 PC and ≥ 1 monster, then `dm.encounter.start`.
  *
  * mount(root, ctx) → unmount. ctx: {store, send, api, room: {roomId},
- * loadSheet(id), appearanceCache?, deps: {render, raf?, caf?, timers,
+ * loadSheet(id), appearanceCache?, campaignKeys?, roomToken?() , runStore?,
+ * deps: {render, raf?, caf?, timers,
  * calibrateEncounter, mountCalibrator, loadImage(url), readFile(file),
  * objectUrl(file)}}
  */
@@ -91,11 +100,64 @@ export function setupPayload(draft) {
     monsters: draft.monsters.map(m => ({
       id: m.id, slug: m.slug, name: m.name,
       ...(m.open5eSlug ? { open5eSlug: m.open5eSlug } : {}),
-      ...(Number.isInteger(m.hp) ? { hp: m.hp } : {}), ...(m.cr != null ? { cr: m.cr } : {})
+      ...(Number.isInteger(m.hp) ? { hp: m.hp } : {}), ...(m.cr != null ? { cr: m.cr } : {}),
+      ...(m.imageUrl ? { imageUrl: m.imageUrl } : {})   // M65: a template's token image, materialised for this room
     })),
     placements,
+    ...(draft.fog ? { fog: { ...draft.fog } } : {}),
     initiativeMode: draft.initiativeMode
   };
+}
+
+/**
+ * M65 C22 — the draft a `dm.encounter.setup` payload came from (the inverse
+ * of `setupPayload`): `setupPayload(draftFromSetup(p))` deep-equals `p` for
+ * every payload `setupPayload` makes (room form: an image map names
+ * `imageId` + `url`).
+ * @param {object} setup — a dm.encounter.setup payload (template instantiated for this room)
+ * @param {object} [base] — the current draft (keeps its pause mode and unrelated fields)
+ * @returns {object} draft
+ */
+export function draftFromSetup(setup, base = {}) {
+  const map = setup?.map || { kind: 'color', color: COLOR_PRESETS[0].value };
+  const placements = { ...(setup?.placements || {}) };
+  const monsters = (Array.isArray(setup?.monsters) ? setup.monsters : []).map((m) => {
+    const pos = placements[m.id] || { col: 0, row: 0 };
+    delete placements[m.id];
+    return {
+      id: m.id, slug: m.slug, name: m.name,
+      ...(m.open5eSlug ? { open5eSlug: m.open5eSlug } : {}),
+      hp: Number.isInteger(m.hp) ? m.hp : null,
+      cr: m.cr ?? null,
+      ...(m.imageUrl ? { imageUrl: m.imageUrl } : {}),
+      pos: { col: pos.col, row: pos.row }
+    };
+  });
+  const draft = {
+    mapKind: 'color', color: COLOR_PRESETS[0].value, biome: 'grass', seed: 1, image: null,
+    pauseMode: 'auto',
+    ...base,
+    cols: setup?.grid?.cols ?? base.cols ?? 12,
+    rows: setup?.grid?.rows ?? base.rows ?? 8,
+    terrain: setup?.grid?.terrain ?? null,
+    monsters,
+    placements,
+    fog: setup?.fog ?? null,
+    initiativeMode: setup?.initiativeMode === 'grouped' ? 'grouped' : 'individual',
+    cinemaBiome: map.cinemaBiome ?? null
+  };
+  if (map.kind === 'image') {
+    draft.mapKind = 'image';
+    draft.image = { mapId: map.imageId, url: map.url ?? null, imgW: map.imgW, imgH: map.imgH, calib: { ...(map.calib || {}) } };
+  } else if (map.kind === 'generated') {
+    draft.mapKind = 'generated';
+    draft.biome = map.biome;
+    draft.seed = map.seed >>> 0;
+  } else {
+    draft.mapKind = 'color';
+    draft.color = map.color ?? COLOR_PRESETS[0].value;
+  }
+  return draft;
 }
 
 /**
@@ -194,6 +256,7 @@ export function mount(root, ctx) {
     { value: 'all', label: 'Pause AI party members too' }
   ], draft.pauseMode);
   const diffCard = h(doc, 'div', { class: 'play-card play-difficulty', attrs: { 'aria-live': 'polite' } });
+  const templateCard = h(doc, 'div', { class: 'play-card play-setup-templates' });
   const startRow = h(doc, 'div', { class: 'play-row play-start' });
 
   view.appendChild(h(doc, 'h2', { text: 'Encounter setup' }));
@@ -203,7 +266,7 @@ export function mount(root, ctx) {
     h(doc, 'div', { class: 'play-setup-center' }, [toolBar, canvas]),
     h(doc, 'div', { class: 'play-setup-right' }, [
       h(doc, 'div', { class: 'play-card' }, [h(doc, 'h3', { text: 'Rules' }), initSel, pauseSel]),
-      diffCard, startRow
+      diffCard, templateCard, startRow
     ])
   ]));
   view.appendChild(modal);
@@ -400,7 +463,10 @@ export function mount(root, ctx) {
         await ctx.send({ t: 'dm.encounter.start', p: {} });
       }, fail);
     },
-    'calib-close': () => closeModal()
+    'calib-close': () => closeModal(),
+    'template-save': () => attempt(() => saveTemplate(), fail),
+    'template-load': () => attempt(() => loadTemplate(), fail),
+    'template-refresh': () => attempt(() => refreshTemplates(), fail)
   });
 
   delegate(scope, view, 'change', {
@@ -421,11 +487,113 @@ export function mount(root, ctx) {
       draft.pauseMode = PAUSE_MODES[el.value] ? el.value : 'auto';
       attempt(() => ctx.send({ t: 'dm.review.set', p: { ...PAUSE_MODES[draft.pauseMode] } }), fail);
     },
-    'map-file': (el) => { const f = el.files?.[0]; if (f) uploadMap(f); }
+    'map-file': (el) => { const f = el.files?.[0]; if (f) uploadMap(f); },
+    'template-campaign': (el) => { tpl.campaignId = el.value || null; tpl.list = []; attempt(() => refreshTemplates(), fail); }
   });
   delegate(scope, view, 'keydown', {
     'search-field': (_el, e) => { if (e.key === 'Enter') runSearch(); }
   });
+
+  // ---- templates (M65 C22) ----
+  const tpl = { campaignId: null, list: [], loadedFor: null };
+  const keyFor = (cid) => (cid ? ctx.campaignKeys?.get?.(cid) ?? null : null);
+  const roomToken = () => (typeof ctx.roomToken === 'function' ? ctx.roomToken() : null);
+  function runCampaignId() { return ctx.runStore?.getState?.().campaignId ?? null; }
+  function defaultCampaign() {
+    const known = ctx.campaignKeys?.list?.() || [];
+    const rc = runCampaignId();
+    if (rc && keyFor(rc)) return rc;
+    return known[0]?.campaignId ?? null;
+  }
+
+  async function refreshTemplates() {
+    const cid = tpl.campaignId;
+    const key = keyFor(cid);
+    if (!cid || !key) { tpl.list = []; renderTemplates(); return; }
+    const r = await ctx.api.listTemplates(cid, key);
+    if (disposed || tpl.campaignId !== cid) return;
+    tpl.list = Array.isArray(r?.templates) ? r.templates : [];
+    renderTemplates();
+  }
+
+  async function saveTemplate() {
+    const cid = tpl.campaignId;
+    const key = keyFor(cid);
+    const name = templateCard.querySelector('[data-field="template-name"]')?.value?.trim();
+    if (!cid || !key) { say('Pick a campaign to keep the template in.', 'error'); return; }
+    if (!name) { say('Name the template.', 'error'); return; }
+    if (!draft.monsters.length && !created()) { say('Place at least one monster first.', 'error'); return; }
+    say('Saving the template…');
+    const r = await ctx.api.templateFromRoom(cid, key, roomToken(), { name, setup: setupPayload(draft) });
+    tpl.list = [...tpl.list.filter(t => t.id !== r.template.id), r.template];
+    renderTemplates();
+    say(`Template "${r.template.name}" saved.`);
+  }
+
+  /** Replace the draft with a setup (room form) and refresh every control. */
+  function applySetup(setup) {
+    Object.assign(draft, draftFromSetup(setup, { pauseMode: draft.pauseMode }));
+    colsIn.value = String(draft.cols);
+    rowsIn.value = String(draft.rows);
+    cinemaSel.value = draft.cinemaBiome || '';
+    initSel.value = draft.initiativeMode;
+    ackMonsters = {};
+    renderTab();
+    changed();
+  }
+
+  async function loadTemplate() {
+    const cid = tpl.campaignId;
+    const key = keyFor(cid);
+    const tid = templateCard.querySelector('[data-field="template-pick"]')?.value;
+    if (!cid || !key || !tid) { say('Pick a template to load.', 'error'); return; }
+    say('Loading the template…');
+    const r = await ctx.api.instantiateTemplate(cid, key, tid, roomToken());
+    if (disposed) return;
+    applySetup(r.setup);
+    if (created()) await sendSetup();
+    say(`Template loaded${created() ? ' and the encounter rebuilt' : ''}.`);
+  }
+
+  /** In a campaign run: start from the current encounter node (inline setup or its template). */
+  async function prefillFromRun() {
+    const run = ctx.runStore?.getState?.();
+    const node = run?.synced ? (run.nodes || []).find(n => n.id === run.currentNodeId) : null;
+    if (!node || node.kind !== 'encounter' || tpl.loadedFor === node.id) return;
+    const p = node.payload || {};
+    let setup = p.setup || null;
+    if (!setup && p.templateId) {
+      const key = keyFor(run.campaignId);
+      if (!key) { say('This node uses a campaign template; open the campaign on this device to load it.', 'error'); return; }
+      setup = (await ctx.api.instantiateTemplate(run.campaignId, key, p.templateId, roomToken()))?.setup || null;
+    }
+    if (!setup || disposed) return;
+    tpl.loadedFor = node.id;
+    const placed = {};
+    for (const [seat, pos] of Object.entries(p.partyPlacement || {})) placed[`pc-${seat}`] = { col: pos.col, row: pos.row };
+    applySetup({ ...setup, placements: { ...placed, ...(setup.placements || {}) } });
+    say(`Pre-filled from "${node.title}".`);
+  }
+
+  function renderTemplates() {
+    const known = ctx.campaignKeys?.list?.() || [];
+    if (!known.length) {
+      replace(doc, templateCard, [h(doc, 'h3', { text: 'Templates' }), h(doc, 'p', { class: 'hint-line', text: 'Create a campaign (Campaigns) to keep encounter templates.' })]);
+      return;
+    }
+    replace(doc, templateCard, [
+      h(doc, 'h3', { text: 'Templates' }),
+      select(doc, { dataset: { action: 'template-campaign' }, attrs: { 'aria-label': 'Campaign' } }, known.map(c => ({ value: c.campaignId, label: c.name })), tpl.campaignId),
+      h(doc, 'div', { class: 'play-row' }, [
+        h(doc, 'input', { type: 'text', placeholder: 'Template name', dataset: { field: 'template-name' }, attrs: { maxlength: 80, 'aria-label': 'Template name' } }),
+        h(doc, 'button', { type: 'button', class: 'play-btn', dataset: { action: 'template-save' }, text: 'Save as template' })
+      ]),
+      tpl.list.length ? h(doc, 'div', { class: 'play-row' }, [
+        select(doc, { dataset: { field: 'template-pick' }, attrs: { 'aria-label': 'Template' } }, tpl.list.map(t => ({ value: t.id, label: t.name }))),
+        h(doc, 'button', { type: 'button', class: 'play-btn', dataset: { action: 'template-load' }, text: 'Load template' })
+      ]) : h(doc, 'p', { class: 'hint-line', text: 'No templates in this campaign yet.' })
+    ]);
+  }
 
   function armPlacement(a) {
     armed = a;
@@ -619,10 +787,17 @@ export function mount(root, ctx) {
   renderTab();
   renderToolbar();
   changed();
+  tpl.campaignId = defaultCampaign();
+  renderTemplates();
+  const templatesReady = Promise.all([
+    attempt(() => refreshTemplates(), () => {}),
+    attempt(() => prefillFromRun(), fail)
+  ]);
+  if (ctx.runStore?.subscribe) scope.add(ctx.runStore.subscribe((r) => r.currentNodeId, () => attempt(() => prefillFromRun(), fail)));
 
-  return function unmount() {
+  return Object.assign(function unmount() {
     disposed = true;
     scope.dispose();
     if (view.parentNode) view.parentNode.removeChild(view);
-  };
+  }, { ready: templatesReady });
 }

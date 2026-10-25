@@ -193,6 +193,7 @@ export function createPlayApp({ root, fetch, WebSocketCtor, wsUrl, storage = nul
       dmBridge,
       actions,
       campaignKeys,
+      roomToken: () => creds?.token ?? null,
       deps,
       prefillCode,
       ...extra

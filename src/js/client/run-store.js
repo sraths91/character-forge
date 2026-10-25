@@ -36,6 +36,7 @@ const RUN_TYPES = new Set(['run.snapshot', 'run.event', 'run.updated', 'levelup.
  * @typedef {object} RunState
  * @property {boolean} synced          — a run.snapshot has been applied
  * @property {string|null} runId
+ * @property {string|null} campaignId  — the run's campaign (snapshot `run.campaignId`, `run.started`)
  * @property {string|null} status      — run-state.js RUN_STATUSES
  * @property {string|null} outcome
  * @property {string|null} currentNodeId
@@ -53,7 +54,7 @@ const RUN_TYPES = new Set(['run.snapshot', 'run.event', 'run.updated', 'levelup.
 /** @returns {RunState} */
 export function initialRunState() {
   return {
-    synced: false, runId: null, status: null, outcome: null, currentNodeId: null, seq: 0,
+    synced: false, runId: null, campaignId: null, status: null, outcome: null, currentNodeId: null, seq: 0,
     nodes: [], visitedIds: [], edges: [], characters: [], items: [], levelUps: [], offers: {}, log: []
   };
 }
@@ -85,6 +86,7 @@ function fromSnapshot(base, p, dm) {
     ...base,
     synced: true,
     runId: p.run.id,
+    campaignId: typeof p.run.campaignId === 'string' ? p.run.campaignId : (p.run.id === base.runId ? base.campaignId : null),
     status: p.run.status,
     outcome: p.run.outcome ?? null,
     currentNodeId: p.run.currentNodeId ?? null,
@@ -132,7 +134,7 @@ export function reduceRunEvent(s, ev) {
   let next = { ...s, seq: ev.seq, log };
   switch (ev.type) {
     case 'run.started':
-      return { ...next, status: 'in-node', currentNodeId: p.startNodeId, visitedIds: addVisited(next.visitedIds, p.startNodeId), edges: [] };
+      return { ...next, campaignId: p.campaignId ?? next.campaignId, status: 'in-node', currentNodeId: p.startNodeId, visitedIds: addVisited(next.visitedIds, p.startNodeId), edges: [] };
     case 'run.ended':
       return { ...next, status: 'ended', outcome: p.outcome, edges: [] };
     case 'node.entered':
