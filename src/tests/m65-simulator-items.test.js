@@ -62,3 +62,31 @@ test('simulateEncounter: without items no PC wrapper carries _items; the calibra
   const without = await calibrateEncounter({ ...encounter(null), iterations: 20 });
   assert.notDeepEqual(withPotions, without);
 });
+
+// ---------------------------------------------------------------------
+// M65 phase 2 — potion tuning gates (pc-action considerPotion).
+// Fighter 5 vs orc + goblin, 2 Potions of Healing: drinking at 50% HP as a
+// reflex cost the fight (win 0.73 → 0.52 in Wave 2); the expected-value
+// test must keep the potion party at least as strong as the bare one.
+// ---------------------------------------------------------------------
+
+test('M65 phase 2: Fighter 5 vs orc + goblin with 2 potions wins ≥ 0.70 and no worse than without', async () => {
+  const run = (items) => calibrateEncounter({ ...encounter(items), iterations: 300, seed: 1 });
+  const [withPotions, without] = [await run(POTIONS), await run(null)];
+  assert.ok(withPotions.winRate >= 0.70, `win rate with potions ${withPotions.winRate}`);
+  assert.ok(withPotions.winRate >= without.winRate - 0.02, `${withPotions.winRate} vs ${without.winRate} without`);
+});
+
+test('M65 phase 2: a near-death fighter drinks the potions that save it', async () => {
+  const GREATER = { 'ri-1': { name: 'Potion of Greater Healing', effect: 'potion-of-greater-healing', max: 2 } };
+  const input = (items) => ({
+    party: [{ ...pc(items), hp: { current: 4, max: 30 } }],
+    monsters: [{ id: 'o', name: 'orc', presetSlug: 'orc', hp: { current: 30, max: 30 }, conditions: [], position: { col: 1, row: 2 } }],
+    scene: { cols: 10, rows: 8 }, iterations: 300, seed: 3
+  });
+  let drunk = 0;
+  const withPotions = await simulateEncounter({ ...input(GREATER), onIterationEnd: ({ pcs }) => { drunk += pcs[0]._items['ri-1'].spent; } });
+  const without = await simulateEncounter(input(null));
+  assert.ok(drunk > 0, 'the potions are drunk');
+  assert.ok(withPotions.victoryRate >= without.victoryRate + 0.1, `${withPotions.victoryRate} vs ${without.victoryRate} without`);
+});

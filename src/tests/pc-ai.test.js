@@ -96,6 +96,16 @@ test('M42: PC_PROFILES ships archetypes for the core classes', () => {
   }
 });
 
+test('M65 phase 2: every PC archetype (and the default) sets a potion actionWeight; it never surfaces as a weapon option', () => {
+  for (const prof of [...Object.values(PC_PROFILES), DEFAULT_PC_PROFILE]) {
+    const w = prof.actionWeights.potion;
+    assert.ok(Number.isFinite(w) && w > 0 && w <= 1.5, `${prof.archetype}: potion weight ${w}`);
+  }
+  assert.ok(PC_PROFILES.barbarian.actionWeights.potion < PC_PROFILES.wizard.actionWeights.potion, 'the brute fights on, the wizard drinks sooner');
+  const kinds = enumerateActions({ equipment: { mainhand: { name: 'Longsword' } }, classes: [{ name: 'Fighter', level: 5 }] }, null).map(o => o.kind);
+  assert.ok(!kinds.includes('potion'));
+});
+
 // ---------- Class features ----------
 
 test('M42: sneak-attack available only for rogues', () => {

@@ -3,7 +3,11 @@
  *
  * Same shape as MONSTER_PROFILES in profiles.js: a `considerations` map
  * weighting per-target signals, plus `actionWeights` that bias the
- * action-kind choice (melee vs ranged vs cast vs feature). The class
+ * action-kind choice (melee vs ranged vs cast vs feature). M65 phase 2:
+ * `actionWeights.potion` scales how much a modelled survival gain must be
+ * worth before the PC spends its action on a healing potion (pc-action.js
+ * considerPotion; 0 = never self-drinks; absent = DEFAULT_POTION_WEIGHT,
+ * 1). It is not an option kind, so it never enters the weapon scoring. The class
  * detection looks at pc.classes[0].name; multiclass picks the first.
  *
  * Pure data; behavior emerges from the scorer.
@@ -21,7 +25,8 @@ export const PC_PROFILES = {
       melee:  1.0,
       ranged: 0.7,           // prefers melee but will switch if out of reach
       dash:   0.05,
-      dodge:  0.05
+      dodge:  0.05,
+      potion: 1.0            // M65: drinks only when it outlasts swinging
     },
     featureWeights: {
       'action-surge': 0.9
@@ -40,7 +45,8 @@ export const PC_PROFILES = {
       ranged:   0.85,        // also valid for Sneak Attack
       dash:     0.05,
       dodge:    0.1,
-      disengage:0.5          // boosted further by cunning-action when surrounded
+      disengage:0.5,         // boosted further by cunning-action when surrounded
+      potion:   1.0
     },
     featureWeights: {
       'sneak-attack':    1.2,
@@ -60,7 +66,8 @@ export const PC_PROFILES = {
       ranged: 0.4,           // dagger/crossbow if no spell available
       cast:   1.2,
       dodge:  0.2,
-      dash:   0.05
+      dash:   0.05,
+      potion: 1.25           // squishy, little damage to trade: drinks sooner
     },
     castWeights: {
       'fire-bolt':     0.8,
@@ -83,7 +90,8 @@ export const PC_PROFILES = {
       ranged: 0.2,
       cast:   1.1,
       heal:   1.4,
-      dodge:  0.2
+      dodge:  0.2,
+      potion: 1.0            // only once no heal spell can answer
     },
     castWeights: {
       'sacred-flame':   0.7,
@@ -106,7 +114,8 @@ export const PC_PROFILES = {
       ranged: 0.4,
       cast:   0.6,
       heal:   1.0,
-      dodge:  0.1
+      dodge:  0.1,
+      potion: 1.0
     },
     castWeights: {
       'cure-wounds':   1.3,
@@ -125,7 +134,8 @@ export const PC_PROFILES = {
       melee:  1.2,
       ranged: 0.3,           // strongly prefers melee
       dash:   0.1,
-      dodge:  0.05
+      dodge:  0.05,
+      potion: 0.75           // fights on: wants a clearer edge to drink
     }
   }
 };
@@ -141,7 +151,8 @@ export const DEFAULT_PC_PROFILE = {
     melee:  0.8,
     ranged: 0.6,
     dodge:  0.2,
-    dash:   0.05
+    dash:   0.05,
+    potion: 1.0
   }
 };
 

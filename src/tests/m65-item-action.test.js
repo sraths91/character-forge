@@ -2,7 +2,8 @@
  * M65 T23 — the item action: plan kind `item` (drink / administer a
  * potion), validated against `resources.items`, resolved through
  * applyHealing, reported as `item.used`; an AI consideration drinks below
- * the heal threshold when no heal spell answers.
+ * the heal threshold when no heal spell answers — since M65 phase 2 only
+ * when drinking outlasts the action it costs (pc-action considerPotion).
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -11,7 +12,8 @@ import { entityFromSheet, entityFromPreset, wrapperFromEntity } from '../js/scen
 import { validateIntent, planFromIntent } from '../js/scene/intent-validation.js';
 import { turnStateFromEncounter, runTurn, encounterFromTurnState } from '../js/scene/turn-manager.js';
 import { runOneAttack, useItem } from '../js/scene/combat-engine.js';
-import { choosePcAction, POTION_HEAL_THRESHOLD } from '../js/scene/ai/pc-action.js';
+import { choosePcAction, incomingDownRisk, POTION_HEAL_THRESHOLD, POTION_DOWN_RISK } from '../js/scene/ai/pc-action.js';
+import { PC_PROFILES } from '../js/scene/ai/pc-profiles.js';
 import { emptyEncounterState, validateEncounterState } from '../js/shared/encounter-state.js';
 import { validateEvent } from '../js/shared/events.js';
 import { validateClientMessage, INTENT_PLAN_KINDS } from '../js/shared/protocol.js';
@@ -160,15 +162,82 @@ function aiFighter(hp, items = POTIONS) {
 }
 const goblin = () => wrapperFromEntity(entityFromPreset('goblin', { id: 'gob', pos: { col: 2, row: 1 } }));
 
-test('T23: AI — a fighter below the heal threshold with no heal spell drinks; above it, swings', () => {
+/** An orc wrapper (optionally with more HP) at `pos`. */
+function orc(pos = { col: 2, row: 1 }, hp = null, id = 'orc') {
+  const w = wrapperFromEntity(entityFromPreset('orc', { id, pos }));
+  if (hp != null) Object.assign(w, { hp, hpMax: Math.max(hp, w.hpMax) });
+  return w;
+}
+/** A fighter wrapper with Second Wind already spent (so the potion is its only heal). */
+function spentFighter(hp, items = POTIONS) {
+  const w = aiFighter(hp, items);
+  w._secondWindUsed = true;
+  return w;
+}
+const rng1 = () => createRng({ s: 1 });
+const reasonOf = (plan) => plan.breakdown.find(b => /^(critical_down_risk|drinking_outlasts|no_hostile_reachable|ally_dying)$/.test(b.name))?.name;
+
+test('M65 phase 2: AI — a near-death fighter that would otherwise go down drinks', () => {
   assert.equal(POTION_HEAL_THRESHOLD, 0.5);
-  const low = choosePcAction({ self: aiFighter(10), enemies: [goblin()], allies: [], rng: createRng({ s: 1 }) });
+  const low = choosePcAction({ self: spentFighter(3), enemies: [orc(undefined, 30)], allies: [], rng: rng1() });
   assert.deepEqual([low.kind, low.itemId, low.targetId, low.targetSide], ['item', 'ri-1', 'f', 'ally']);
-  assert.ok(low.breakdown.some(b => b.name === 'self_below_threshold'));
-  const high = choosePcAction({ self: aiFighter(40), enemies: [goblin()], allies: [], rng: createRng({ s: 1 }) });
-  assert.notEqual(high.kind, 'item');
-  const none = choosePcAction({ self: aiFighter(10, { 'ri-1': { ...POTIONS['ri-1'], spent: 2 } }), enemies: [goblin()], allies: [], rng: createRng({ s: 1 }) });
+  assert.equal(reasonOf(low), 'critical_down_risk');
+  const sig = Object.fromEntries(low.breakdown.filter(b => b.name.startsWith('potion:')).map(b => [b.name, b.raw]));
+  assert.ok(sig['potion:p_down'] >= POTION_DOWN_RISK, 'at risk of being downed before its next turn');
+  assert.ok(sig['potion:survive_drink'] > sig['potion:survive_attack'], 'drinking outlasts swinging');
+  // Used up → swings.
+  const none = choosePcAction({ self: spentFighter(3, { 'ri-1': { ...POTIONS['ri-1'], spent: 2 } }), enemies: [orc(undefined, 30)], allies: [], rng: rng1() });
   assert.notEqual(none.kind, 'item', 'used up');
+});
+
+test('M65 phase 2: AI — below half HP is no longer a reflex: healthy enough, Second Wind up, or a weak foe → swing', () => {
+  // Below the 50% gate but the goblin barely threatens a 10 HP AC 18 fighter (and dies to one turn).
+  assert.notEqual(choosePcAction({ self: aiFighter(10), enemies: [goblin()], allies: [], rng: rng1() }).kind, 'item');
+  // Above the gate: never.
+  assert.notEqual(choosePcAction({ self: aiFighter(40), enemies: [orc(undefined, 30)], allies: [], rng: rng1() }).kind, 'item');
+  // Second Wind rides the swing and heals more than the potion: swing + Second Wind.
+  const sw = choosePcAction({ self: aiFighter(3), enemies: [orc(undefined, 30)], allies: [], rng: rng1() });
+  assert.equal(sw.kind, 'melee');
+  assert.ok(sw.featuresFired.includes('second-wind'));
+});
+
+test('M65 phase 2: AI — never drinks when the fight is nearly won (last hostile at low HP)', () => {
+  const plan = choosePcAction({ self: spentFighter(3), enemies: [orc(undefined, 2)], allies: [], rng: rng1() });
+  assert.equal(plan.kind, 'melee');
+  assert.equal(plan.targetId, 'orc');
+  // Two hostiles left: the low one is not "the last", the risk rule decides again.
+  const two = choosePcAction({ self: spentFighter(3), enemies: [orc(undefined, 2), orc({ col: 1, row: 2 }, 30, 'orc2')], allies: [], rng: rng1() });
+  assert.ok(two.kind === 'item' || two.kind === 'melee');
+});
+
+test('M65 phase 2: AI — drinks when no hostile is reachable this turn', () => {
+  const plan = choosePcAction({ self: spentFighter(8), enemies: [orc({ col: 9, row: 5 })], allies: [], rng: rng1() });
+  assert.deepEqual([plan.kind, reasonOf(plan)], ['item', 'no_hostile_reachable']);
+});
+
+test('M65 phase 2: AI — actionWeights.potion 0 never self-drinks; dying allies are still fed', () => {
+  const self = spentFighter(3);
+  self._aiProfile = { ...PC_PROFILES.fighter, actionWeights: { ...PC_PROFILES.fighter.actionWeights, potion: 0 } };
+  assert.notEqual(choosePcAction({ self, enemies: [orc(undefined, 30)], allies: [], rng: rng1() }).kind, 'item');
+  assert.notEqual(choosePcAction({ self, enemies: [orc({ col: 9, row: 5 })], allies: [], rng: rng1() }).kind, 'item');
+  const { state } = table();
+  const c = wrapperFromEntity(state.entities.c, cleric);
+  const fed = choosePcAction({ self, enemies: [goblin()], allies: [self], downedAllies: [c], rng: rng1() });
+  assert.deepEqual([fed.kind, fed.targetId], ['item', 'c']);
+});
+
+test('M65 phase 2: incomingDownRisk — exact P(the hostiles in reach deal ≥ HP before the next turn)', () => {
+  const f = aiFighter(10);                                   // AC 18
+  const o = orc();                                           // +5, 1d12+3: hits on 13+ → 0.4
+  assert.ok(Math.abs(incomingDownRisk(f, [o], 1) - 0.4) < 1e-9);
+  assert.equal(incomingDownRisk(f, [o], 0), 1);
+  assert.equal(incomingDownRisk(f, [o], 100), 0);
+  // 1d12+3 ≥ 10 on 7..12 (6/12) on a plain hit (0.35), crit 2d12+3 ≥ 10 on 129/144 (0.05).
+  assert.ok(Math.abs(incomingDownRisk(f, [o], 10) - (0.35 * 0.5 + 0.05 * 129 / 144)) < 1e-9);
+  assert.equal(incomingDownRisk(f, [orc({ col: 9, row: 5 })], 1), 0, 'out of reach this round');
+  assert.equal(incomingDownRisk(f, [orc(undefined, 0)], 1), 0, 'a downed foe does not attack');
+  const two = incomingDownRisk(f, [o, orc({ col: 1, row: 2 }, null, 'o2')], 10);
+  assert.ok(two > incomingDownRisk(f, [o], 10), 'two attackers are riskier than one');
 });
 
 test('T23: AI — a cleric with a heal spell castable never reaches for the potion', () => {
@@ -194,6 +263,9 @@ test('T23: AI — an adjacent dying ally gets the potion first', () => {
 
 test('T23: AI end to end — a delegated turn drinks the potion through the engine', async () => {
   const { state, sheets } = table({ clericState: 'up' });
+  // M65 phase 2 — drinking is now worth it only out of reach (or near death):
+  // the goblin stands 50 ft away, beyond the fighter's move + reach.
+  state.entities.gob.pos = { col: 9, row: 5 };
   state.entities.f = entityFromSheet(fighter, { id: 'f', pos: { col: 1, row: 1 }, items: POTIONS, runState: { hp: { current: 9, temp: 0 } } });
   const ts = turnStateFromEncounter(state, sheets);
   const events = [];
