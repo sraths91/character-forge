@@ -48,7 +48,8 @@ function turnState(party, monsters, actorId, scene = buildScene()) {
 // ---------- data helpers ----------
 
 test('R7: strings normalise to the lifecycle shape; lifecycle detection', () => {
-  assert.deepEqual(CONDITION_ENDS_ON, ['turn-end', 'turn-start', 'source-turn-end', 'concentration', 'encounter']);
+  // M65 T22 adds 'persistent' (outlives the encounter; run state).
+  assert.deepEqual(CONDITION_ENDS_ON, ['turn-end', 'turn-start', 'source-turn-end', 'concentration', 'encounter', 'persistent']);
   assert.deepEqual(normalizeCondition('poisoned'), { id: 'poisoned', sourceId: null, endsOn: 'encounter', save: null, appliedRound: null });
   assert.deepEqual(normalizeCondition({ id: 'paralyzed', sourceId: 7, endsOn: 'concentration', save: { stat: 'WIS', dc: '13' }, appliedRound: 2 }),
     { id: 'paralyzed', sourceId: '7', endsOn: 'concentration', save: { stat: 'WIS', dc: 13 }, appliedRound: 2 });

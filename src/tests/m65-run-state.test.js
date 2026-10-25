@@ -92,7 +92,7 @@ test('T21: a runState seeds HP, temp HP, spent slots, feature uses and persisten
   assert.deepEqual(e.resources.slots, { 1: { max: 4, spent: 3 }, 2: { max: 3, spent: 1 }, 3: { max: 2, spent: 0 } });
   assert.deepEqual(e.resources.features['arcane-recovery'], { max: 1, spent: 1 });
   assert.equal(e.resources.features['ddb:777'], undefined, 'ddb:* is not an engine ledger');
-  assert.deepEqual(e.conditions, ['poisoned']);
+  assert.deepEqual(e.conditions, [{ id: 'poisoned', endsOn: 'persistent' }], 'run-state conditions are persistent');
   assert.equal(e.status, undefined, 'active');
   assert.equal(e.exhaustion, undefined);
   assert.deepEqual(validateEncounterState(stateWith([e])).errors, []);
@@ -152,20 +152,28 @@ test('T21: exhaustion seeds speed and HP max (2: half speed, 4: half HP max, 5: 
   assert.equal(runStateFromEntity(ex(3), { exhaustion: 3 }).exhaustion, 3);
 });
 
-test('T21: lifecycle conditions round-trip through conditionMeta; encounter-scoped ones are dropped on write-back', () => {
+test('T21: persistent conditions round-trip through conditionMeta; everything encounter-scoped is dropped on write-back', () => {
   const sheet = parsedDdbFixture('fighter-l5');
   const rs = {
     hp: { current: 30, temp: 0 },
     conditions: ['cursed'],
-    conditionMeta: { cursed: { sourceId: 'hag', endsOn: null, persistent: true } }
+    conditionMeta: { cursed: { sourceId: 'hag', note: 'until Remove Curse' } }
   };
   const e = entityFromSheet(sheet, { ...OPTS, runState: rs });
-  assert.deepEqual(e.conditions, [{ id: 'cursed', sourceId: 'hag', endsOn: null }]);
-  e.conditions.push({ id: 'raging', sourceId: e.id, endsOn: 'encounter', appliedRound: 1 }, { id: 'prone', endsOn: 'turn-start' }, 'frightened');
-  assert.equal(endsWithEncounter(e.conditions[1]), true);
+  assert.deepEqual(e.conditions, [{ id: 'cursed', sourceId: 'hag', endsOn: 'persistent' }]);
+  assert.deepEqual(validateEncounterState(stateWith([e])).errors, []);
+  // In the fight: Rage, prone, a bite's plain 'poisoned' (R7 default
+  // 'encounter'), and a DM-marked persistent disease.
+  e.conditions.push(
+    { id: 'raging', sourceId: e.id, endsOn: 'encounter', appliedRound: 1 }, { id: 'prone', endsOn: 'turn-start' },
+    'poisoned', { id: 'sewer-plague', sourceId: null, endsOn: 'persistent' });
+  assert.deepEqual(e.conditions.map(endsWithEncounter), [false, true, true, true, false]);
   const back = runStateFromEntity(e, rs);
-  assert.deepEqual(back.conditions, ['cursed', 'frightened']);
-  assert.deepEqual(back.conditionMeta, { cursed: { sourceId: 'hag', endsOn: null, persistent: true } });
+  assert.deepEqual(back.conditions, ['cursed', 'sewer-plague']);
+  assert.deepEqual(back.conditionMeta, { cursed: { sourceId: 'hag', note: 'until Remove Curse' } });
+  // The wrapper keeps the persistent lifecycle through a turn.
+  const w = wrapperFromEntity(e, sheet);
+  assert.equal(w._conditionMeta.cursed.endsOn, 'persistent');
 });
 
 test('T21: runStateFromEntity writes spent (not remaining) and keeps every key the engine does not own', () => {

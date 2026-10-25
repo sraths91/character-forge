@@ -45,7 +45,9 @@ import { spellById, freshSlots, freshInnateState } from './monster-spells.js';
 import { isLegendary, freshLegendaryBudget } from './monster-legendary.js';
 import { acFor } from './fighting-styles.js';
 import { slotsForPc, pactForPc } from './reactions.js';
-import { wrapperConditions, normalizeCondition, hasLifecycle } from './conditions.js';
+import {
+  wrapperConditions, normalizeCondition, hasLifecycle, endsWithEncounter, PERSISTENT_ENDS_ON
+} from './conditions.js';
 import { withEngineFields } from './open5e-normalize.js';
 import { featureLedgerFor } from './feature-uses.js';
 import {
@@ -605,32 +607,20 @@ function clampInt(v, lo, hi) {
   return Math.max(lo, Math.min(hi, Math.trunc(Number(v) || 0)));
 }
 
-/** Lifecycle fields an EncounterState condition object may carry. */
-const CONDITION_LIFECYCLE_KEYS = Object.freeze(['sourceId', 'endsOn', 'save', 'appliedRound']);
-
 /**
- * `endsOn` values that can only resolve inside initiative: such a
- * condition (and Rage's 'encounter') ends with the encounter.
+ * Lifecycle fields a run-state `conditionMeta` entry may hand to an
+ * entity condition (`endsOn` is always 'persistent' there).
  */
-export const ENCOUNTER_SCOPED_ENDS_ON = Object.freeze(['encounter', 'turn-end', 'turn-start', 'source-turn-end', 'concentration']);
+const CONDITION_LIFECYCLE_KEYS = Object.freeze(['sourceId', 'save', 'appliedRound']);
 
 function lifecycleOf(c) {
   if (!c || typeof c !== 'object') return {};
   const out = {};
-  for (const k of CONDITION_LIFECYCLE_KEYS) if (c[k] !== undefined) out[k] = clone(c[k]);
+  for (const k of CONDITION_LIFECYCLE_KEYS) if (c[k] !== undefined && c[k] !== null) out[k] = clone(c[k]);
   return out;
 }
 
-/**
- * Whether a condition (string id or lifecycle object) ends when the
- * encounter does: an encounter-scoped `endsOn` (Rage, Hold Person, prone).
- * Plain string conditions and DM-placed ones persist.
- * @param {string|object} c
- * @returns {boolean}
- */
-export function endsWithEncounter(c) {
-  return !!(c && typeof c === 'object' && ENCOUNTER_SCOPED_ENDS_ON.includes(c.endsOn));
-}
+export { endsWithEncounter };
 
 /** Item name → consumables-registry key ("Potion of Healing" → 'potion-of-healing'). */
 function itemKeyOf(name) {
@@ -691,15 +681,15 @@ function seedFromRunState(entity, rs) {
       res.features[fk] = { max, spent: clampInt(r.spent, 0, max) };
     }
   }
-  // Persistent conditions (lifecycle fields from conditionMeta).
+  // The run state's conditions are the persistent ones (M65 T22): each
+  // enters as `endsOn: 'persistent'` so the encounter's end keeps it.
   const meta = rs.conditionMeta || {};
   const seen = new Set();
   for (const c of Array.isArray(rs.conditions) ? rs.conditions : []) {
     const id = conditionId(c);
     if (!id || seen.has(id)) continue;
     seen.add(id);
-    const life = { ...lifecycleOf(meta[id]), ...lifecycleOf(c) };
-    entity.conditions.push(Object.keys(life).length ? { id: String(id), ...life } : String(id));
+    entity.conditions.push({ id: String(id), ...lifecycleOf(meta[id]), ...lifecycleOf(c), endsOn: PERSISTENT_ENDS_ON });
   }
   // Life: exhaustion 6 kills; 0 HP is dying (or stable / dead by the tallies).
   const ds = normalizeDeathSaves(rs.deathSaves);
@@ -732,9 +722,9 @@ function ledgerLabel(featureKey) {
  *   hp {current, temp}; deathSaves (reset while active); slots.spell[lvl].spent
  *   and slots.pact.spent; resources[key].spent for every mapped ledger (a
  *   ledger the state lacks is added, `{label, max, spent, recovery}`, only
- *   once something is spent); conditions + conditionMeta (encounter-scoped
- *   conditions and the dying state's derived 'unconscious' dropped);
- *   exhaustion; concentration.
+ *   once something is spent); conditions + conditionMeta (only the
+ *   `endsOn: 'persistent'` conditions; a DM-marked one gains its meta, a
+ *   carried one keeps its stored meta); exhaustion; concentration.
  *
  * @param {object} entity — EncounterState PC entity (after the encounter)
  * @param {object} [prevState] — the run state the encounter started from
@@ -781,14 +771,12 @@ export function runStateFromEntity(entity, prevState = {}) {
   }
   out.resources = resources;
 
-  const dying = status !== 'active';
   const conditions = [];
   const conditionMeta = {};
   const prevMeta = prev.conditionMeta || {};
   for (const c of e.conditions || []) {
     const id = conditionId(c);
     if (!id || conditions.includes(id) || endsWithEncounter(c)) continue;
-    if (dying && id === 'unconscious') continue;
     conditions.push(id);
     const m = { ...(prevMeta[id] || {}), ...lifecycleOf(c) };
     if (Object.keys(m).length) conditionMeta[id] = m;

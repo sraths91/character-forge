@@ -25,7 +25,9 @@
  *     without a version bump. v1 additive (M64 R7, E1): the object may
  *     carry `appliedRound` (int|null); `endsOn` is one of
  *     'turn-end' | 'turn-start' | 'source-turn-end' | 'concentration' |
- *     'encounter' (src/js/scene/conditions.js). The engine wrapper keeps
+ *     'encounter' (src/js/scene/conditions.js); v1 additive (M65 T22, E1):
+ *     | 'persistent' — survives the encounter's end (run state). The
+ *     engine wrapper keeps
  *     string ids in `conditions` and the objects in `_conditionMeta`.
  *   - `legendaryBudget` is the REMAINING budget this round (engine
  *     semantics), not a spent counter.

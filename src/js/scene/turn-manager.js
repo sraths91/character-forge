@@ -48,9 +48,9 @@
 import {
   runOneAttack, runLegendaryActions, isAlive, isIncapacitated, sameId, setHpRaw,
   startOfTurnConditions, endOfTurnConditions, sweepConcentrationConditions,
-  rollDeathSave
+  rollDeathSave, endConcentration, removeCondition
 } from './combat-engine.js';
-import { wrapperConditions } from './conditions.js';
+import { wrapperConditions, conditionIds, conditionMeta, PERSISTENT_ENDS_ON } from './conditions.js';
 import { resetReaction } from './reactions.js';
 import { isLegendaryEntity, resetLegendaryBudget } from './monster-legendary.js';
 import { resetPerTurnFlags } from './ai/pc-features.js';
@@ -428,6 +428,55 @@ export function skipTurn(ts, ctx = {}, reason = 'dm') {
 export function endEncounter(ts, ctx = {}, outcome = 'dm-ended') {
   if (ts.phase === 'ended') return;
   finish(ts, outcome, makeEmitter(ts, ctx, turnIdOf(ts)));
+}
+
+/** Turn-scoped wrapper flags (false when cleared); `_smiteSlotUsed` clears to null. */
+const TURN_SCOPED_FLAGS = Object.freeze([
+  '_reactionUsed', '_shieldActive', '_dodging', '_disengaged', '_recklessUsedThisTurn',
+  '_recklessUntilNextTurn', '_sneakAttackUsedThisTurn', '_cunningActionUsedThisTurn',
+  '_extraActionThisTurn', '_surgeFiredThisTurn', '_rageSustained'
+]);
+
+/**
+ * M65 T22 — the end-of-encounter step a run takes before it writes each
+ * PC back to its run state (`runStateFromEntity`). Call it once the
+ * encounter has ended (naturally or by the DM), before
+ * `encounterFromTurnState`. On every creature:
+ *   - concentration ends (and the conditions it held on others);
+ *   - every condition ends except `endsOn: 'persistent'` ones (conditions.js):
+ *     'encounter' (Rage, and every plain string — the R7 default) and the
+ *     turn / concentration triggers, which only resolve inside initiative;
+ *   - turn-scoped flags clear (reaction, Shield, Dodge, Reckless, …).
+ * Kept: HP and temp HP, exhaustion, the death-save state (a dying PC
+ * keeps 'unconscious'), persistent (DM-marked / run-state) conditions,
+ * spent slots and every feature ledger. Action Surge, Second Wind and
+ * Rage are NOT restored here — they come back on a rest only
+ * (`applyRest`, src/js/campaign/rest.js).
+ *
+ * @param {object} ts — TurnState (mutated)
+ * @param {{emit?: function}} [ctx] — with `emit`, the removals are reported
+ *   (`concentration.broken`, `condition.removed` with reason 'encounter-end')
+ * @returns {{concentrationEnded: number, conditionsRemoved: number}}
+ */
+export function endEncounterCleanup(ts, ctx = {}) {
+  const emit = makeEmitter(ts, ctx, turnIdOf(ts));
+  const engineCtx = emit ? { emit, round: ts.round } : { round: ts.round };
+  const roster = Object.values(ts.entities);
+  let concentrationEnded = 0;
+  let conditionsRemoved = 0;
+  for (const w of roster) {
+    if (w._concentrating && endConcentration(w, 'encounter-end', engineCtx, null, roster)) concentrationEnded++;
+  }
+  for (const w of roster) {
+    const dying = w.status && w.status !== 'active';
+    for (const id of conditionIds(w)) {
+      if (conditionMeta(w, id)?.endsOn === PERSISTENT_ENDS_ON || (dying && id === 'unconscious')) continue;
+      if (removeCondition(w, id, { ctx: engineCtx, reason: 'encounter-end' })) conditionsRemoved++;
+    }
+    for (const f of TURN_SCOPED_FLAGS) if (w[f] !== undefined) w[f] = false;
+    if (w._smiteSlotUsed !== undefined) w._smiteSlotUsed = null;
+  }
+  return { concentrationEnded, conditionsRemoved };
 }
 
 /**

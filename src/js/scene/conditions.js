@@ -10,7 +10,13 @@
  *                  'source-turn-end' : ends at the end of the source's turn
  *                  'concentration'   : ends when the source's concentration
  *                                      on it drops
- *                  'encounter'       : lasts until removed (the default)
+ *                  'encounter'       : lasts until removed or the encounter
+ *                                      ends (the default; M65 T22)
+ *                  'persistent'      : survives the end of the encounter
+ *                                      (M65: a curse, a disease, a DM-marked
+ *                                      condition); carried in the run state
+ *                                      and removed only between nodes / by
+ *                                      the DM
  *   save         — `{stat, dc}`: the bearer repeats the save at the end of
  *                  each of its turns and the condition ends on a success
  *                  (Hold Person); null for none
@@ -31,7 +37,21 @@
  */
 
 /** Lifecycle end triggers. */
-export const CONDITION_ENDS_ON = Object.freeze(['turn-end', 'turn-start', 'source-turn-end', 'concentration', 'encounter']);
+export const CONDITION_ENDS_ON = Object.freeze(['turn-end', 'turn-start', 'source-turn-end', 'concentration', 'encounter', 'persistent']);
+
+/** M65 T22 — the one trigger that outlives an encounter. */
+export const PERSISTENT_ENDS_ON = 'persistent';
+
+/**
+ * Whether a condition (string or object) ends when the encounter does —
+ * every lifecycle but 'persistent' (a plain string is 'encounter').
+ * @param {string|object} c
+ * @returns {boolean}
+ */
+export function endsWithEncounter(c) {
+  const n = normalizeCondition(c);
+  return !!n && n.endsOn !== PERSISTENT_ENDS_ON;
+}
 
 /** Conditions that leave a creature incapacitated (PHB p290-292). */
 export const INCAPACITATING = Object.freeze(['incapacitated', 'paralyzed', 'stunned', 'unconscious', 'petrified']);

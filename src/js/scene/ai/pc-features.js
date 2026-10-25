@@ -408,10 +408,3 @@ export function resetPerTurnFlags(pc) {
   pc._cunningActionUsedThisTurn = false;
   pc._extraActionThisTurn = false;
 }
-
-/** Refresh per-encounter / short-rest flags (action surge, second wind). */
-export function resetPerEncounterFlags(pc) {
-  if (!pc) return;
-  pc._actionSurgeUsed = 0;
-  pc._secondWindUsed = false;
-}
