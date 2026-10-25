@@ -17,6 +17,13 @@
  * moveTo is on the grid, free and within speedFt; features[] are
  * available to this creature now (pc-features `available`).
  *
+ * M65 T23 — an `item` plan (`{kind: 'item', itemId, targetId?, moveTo?}`)
+ * uses a run item the actor carries (`resources.items`): it must have a
+ * use left and an effect the engine resolves (item-effects.js); the
+ * target is the actor (no targetId) or an ally that is not dead within
+ * 5 ft of the actor after its move; it is the turn's action, so it takes
+ * no weapon, spell or riding features.
+ *
  * Range: Chebyshev feet on the 5-ft grid. Weapons go through
  * grid-legality.weaponRangeBand (reach / normal / long range; a melee
  * reach check allows the move budget first). `opts.rangeBand(from, to,
@@ -36,6 +43,7 @@ import { nameToSpellId } from './ai/pc-action.js';
 import { wrapperFromEntity } from './encounter-adapters.js';
 import { spellUseKey } from './feature-uses.js';
 import { statBlockKitOf, kitInnateState } from './stat-block-kit.js';
+import { itemEffectOf, itemUsesLeft } from './item-effects.js';
 
 /**
  * M64 phase 1.5 wave 6b — the spell `spellId` names for this entity: a
@@ -173,6 +181,7 @@ export function validateIntent(state, intent, opts = {}) {
     from = mv;
   }
   if (plan.kind === 'move' && !plan.moveTo) return fail('bad-move', 'a move needs moveTo');
+  if (plan.kind === 'item') return validateItemPlan(state, actor, plan, from);
 
   // Spell.
   let spell = null;
@@ -263,6 +272,25 @@ export function validateIntent(state, intent, opts = {}) {
   return { ok: true };
 }
 
+/** M65 T23 — the `item` half of validateIntent (after the move check). */
+function validateItemPlan(state, actor, plan, from) {
+  if (plan.weaponName || plan.spellId || (plan.features || []).length || plan.featureId) {
+    return fail('bad-plan', 'using an item is the action: no weapon, spell or feature with it');
+  }
+  if (plan.itemId == null || plan.itemId === '') return fail('no-item', 'an item plan names no itemId');
+  const item = actor.resources?.items?.[String(plan.itemId)];
+  if (!item) return fail('no-item', `${actor.name} carries no item ${plan.itemId}`);
+  if (itemUsesLeft(item) <= 0) return fail('no-item', `${item.name} is used up (quantity 0)`);
+  if (!itemEffectOf(item)) return fail('bad-item', `${item.name} has no effect the engine can resolve (DM adjudication)`);
+  if (plan.targetId == null || String(plan.targetId) === actor.id) return { ok: true };
+  const target = state.entities[String(plan.targetId)];
+  if (!target) return fail('no-target', `unknown target ${plan.targetId}`);
+  if (target.side !== actor.side) return fail('wrong-side', `${target.name} is not an ally`);
+  if (target.status === 'dead') return fail('target-down', `${target.name} is dead`);
+  if (chebyshevFeet(from, target.pos) > 5) return fail('out-of-range', `${target.name} is not within 5 ft`);
+  return { ok: true };
+}
+
 /**
  * The engine forcePlan for a validated intent (weapon object resolved from
  * the sheet / stat block, features → featuresFired, moveTo kept).
@@ -275,6 +303,14 @@ export function planFromIntent(state, intent, opts = {}) {
   const plan = intent.plan;
   const actorId = intent.actorId != null ? String(intent.actorId) : state.initiative?.[state.turnIndex]?.entityId;
   const actor = state.entities[actorId];
+  if (plan.kind === 'item') {
+    return {
+      kind: 'item', itemId: String(plan.itemId), targetId: plan.targetId != null ? String(plan.targetId) : actor.id,
+      targetSide: 'ally',
+      ...(plan.moveTo ? { moveTo: { col: plan.moveTo.col, row: plan.moveTo.row } } : {}),
+      featuresFired: [], archetype: 'manual', score: 0, breakdown: []
+    };
+  }
   const sheet = sheetOf(actor, opts.sheets);
   let weapon;
   if (plan.weaponName) {

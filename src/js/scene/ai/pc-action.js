@@ -7,8 +7,9 @@
  *
  * Plan shape (extends the monster plan shape with PC-specific fields):
  *   {
- *     kind:        'melee' | 'ranged' | 'cast' | 'heal' | 'dash' | 'disengage' | 'dodge' | 'feature',
+ *     kind:        'melee' | 'ranged' | 'cast' | 'heal' | 'dash' | 'disengage' | 'dodge' | 'feature' | 'item',
  *     featureId?:  string,        // kind 'feature' (M64 phase 1.5)
+ *     itemId?:     string,        // kind 'item' (M65 T23): a run item (potion)
  *     targetId:    string | null,
  *     weapon?:     object,        // the chosen weapon for melee/ranged
  *     spellId?:    string,
@@ -30,6 +31,16 @@ import { mctsEvaluate, shallowRolloutForResource } from './mcts.js';
 import { requireRng } from '../rng.js';
 import { spellSlug, grantedSpellEntry, spellUseKey, usesLeft } from '../feature-uses.js';
 import { hasReactionAvailable } from '../reactions.js';
+import { itemEffectOf, itemUsesLeft } from '../item-effects.js';
+
+/**
+ * M65 T23 — a PC below this HP fraction drinks a healing potion when no
+ * heal spell can answer (profiles may set `potionThreshold`). Matches
+ * Second Wind's "bloodied" gate.
+ */
+export const POTION_HEAL_THRESHOLD = 0.5;
+/** Base score of a potion plan: above any ordinary attack once it qualifies. */
+const POTION_BASE_SCORE = 3;
 
 function posOf(e) { return e?._position || e?.position || null; }
 function hpOf(e)  { return typeof e?.hp === 'number' ? e.hp : (e?.hp?.current ?? 0); }
@@ -69,6 +80,12 @@ export function choosePcAction({ self, enemies, allies, downedAllies = [], rng }
   if (healPlan && (!best || healPlan.score > best.score)) {
     best = { ...healPlan, target: healPlan.target };
   }
+  // M65 T23 — a healing potion (self below the threshold, or a dying ally
+  // in reach) when no heal spell answers. No items → no work, no rng.
+  if (!healPlan && self?._items) {
+    const potion = considerPotion({ self, profile, allies: [...(allies || []), ...(downedAllies || [])] });
+    if (potion && (!best || potion.score > best.score)) best = potion;
+  }
   if (!best) {
     return { kind: 'dodge', targetId: null, archetype, score: 0, breakdown: [], featuresFired: [] };
   }
@@ -107,6 +124,7 @@ export function choosePcAction({ self, enemies, allies, downedAllies = [], rng }
     spellId: best.spellId,
     castAtLevel: best.castAtLevel,
     ...(best.kind === 'feature' ? { featureId: best.featureId } : {}),
+    ...(best.kind === 'item' ? { itemId: best.itemId } : {}),
     featuresFired: best.featuresFired,
     archetype,
     score: best.score,
@@ -522,6 +540,69 @@ function considerMistyStep({ self, profile, enemies, best }) {
     featuresFired: [],
     score: best.score + w,
     breakdown: [{ name: 'action:cast', raw: 1, weighted: 0 }, { name: `spell:${spell.name}`, raw: 1, weighted: w }, { name: 'escape:leave-oa', raw: 1, weighted: 0 }]
+  };
+}
+
+/**
+ * M65 T23 — whether `self` can cast a heal (ally-targeted) spell right
+ * now: a cantrip, a granted spell with a use left, or one with a slot.
+ */
+function canCastAnyHeal(self) {
+  const ref = self.ref || self;
+  const slots = self._slots || ref._slots || null;
+  for (const sname of collectSpells(ref)) {
+    const id = nameToSpellId(sname);
+    const spell = spellById(id);
+    if (!spell || spell.targetSide !== 'ally') continue;
+    if (spell.level === 0) return true;
+    const granted = grantedUsable(self, id);
+    if (granted === true) return true;
+    if (granted === null && slots && canCastSpell(spell, slots)) return true;
+  }
+  return false;
+}
+
+/**
+ * M65 T23 — the potion plan: feed a dying ally within 5 ft first, else
+ * drink when below the heal threshold. Only when no heal spell is
+ * castable. Picks the first usable healing item (run item order).
+ * @returns {object|null} a plan candidate (kind 'item', target set)
+ */
+function considerPotion({ self, profile, allies }) {
+  let itemId = null;
+  let item = null;
+  for (const [id, it] of Object.entries(self._items || {})) {
+    if (itemUsesLeft(it) > 0 && itemEffectOf(it)?.kind === 'heal') { itemId = id; item = it; break; }
+  }
+  if (!item || canCastAnyHeal(self)) return null;
+  const selfId = self.id ?? self.ref?.id;
+  const sp = posOf(self);
+  const dying = (allies || []).find(a => a && a !== self && a.id !== selfId && hpOf(a) <= 0 &&
+    a.status !== 'dead' && sp && posOf(a) && chebyshevFeet(sp, posOf(a)) <= 5);
+  let target;
+  let reason;
+  let urgency;
+  if (dying) {
+    target = dying;
+    reason = 'ally_dying';
+    urgency = 1;
+  } else {
+    const max = self.hpMax || self.hp?.max || 0;
+    const frac = max > 0 ? hpOf(self) / max : 1;
+    const threshold = Number.isFinite(profile?.potionThreshold) ? profile.potionThreshold : POTION_HEAL_THRESHOLD;
+    if (!(frac < threshold)) return null;
+    target = self;
+    reason = 'self_below_threshold';
+    urgency = 1 - frac;
+  }
+  return {
+    kind: 'item', itemId, target, targetSide: 'ally',
+    weapon: null, spellId: null, castAtLevel: null, featuresFired: [],
+    score: POTION_BASE_SCORE + urgency,
+    breakdown: [
+      { name: `item:${item.name}`, raw: 1, weighted: POTION_BASE_SCORE },
+      { name: reason, raw: urgency, weighted: urgency }
+    ]
   };
 }
 

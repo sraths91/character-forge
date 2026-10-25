@@ -67,6 +67,7 @@ import { rollSave } from './save-rolls.js';
 import { swingStyleMods, offhandWeaponFor, offhandDice } from './fighting-styles.js';
 import { grantedSpellEntry, spellUseKey, featureLedgerFor, usesLeft, spendUse, spellSlug } from './feature-uses.js';
 import { scaleCantrip } from './cantrip-scaling.js';
+import { itemEffectOf, itemUsesLeft } from './item-effects.js';
 import { MONSTER_DEFAULT_SAVES } from './monster-presets.js';
 import { chooseLegendaryAction, spendLegendaryAction } from './monster-legendary.js';
 import {
@@ -243,9 +244,13 @@ async function resolveTurn(attacker, enemies, allies, scene, rng, prompts, ctx) 
   // M64 phase 1.5 wave 6 — a self-targeted spell (Misty Step) is decided
   // by the registry, not the plan: the turn.act plan has no 'self' side.
   const selfSpell = plan?.kind === 'cast' && spellForEntity(attacker, plan.spellId)?.targetSide === 'self';
+  // M65 T23 — an item plan (drink / administer a potion) targets the user
+  // itself unless it names an ally.
+  const itemPlan = plan?.kind === 'item';
   let target;
   if (selfSpell) target = attacker;
-  else if (plan?.targetSide === 'ally') target = allies.find(a => sameId(a.id, plan.targetId));
+  else if (itemPlan && (plan.targetId == null || sameId(plan.targetId, actorId))) target = attacker;
+  else if (plan?.targetSide === 'ally' || itemPlan) target = allies.find(a => sameId(a.id, plan.targetId));
   else if (plan?.targetId != null) target = enemies.find(e => sameId(e.id, plan.targetId));
   else target = pickTarget(targetable);
   if (plan && canEmit(ctx)) {
@@ -256,7 +261,8 @@ async function resolveTurn(attacker, enemies, allies, scene, rng, prompts, ctx) 
       spellId: plan.spellId ?? null,
       castAtLevel: Number.isInteger(plan.castAtLevel) ? plan.castAtLevel : null,
       featuresFired: [...(plan.featuresFired || [])],
-      archetype: plan.archetype ?? null
+      archetype: plan.archetype ?? null,
+      ...(itemPlan ? { itemId: plan.itemId != null ? String(plan.itemId) : null } : {})
     });
   }
   // M64 phase 1.5 — a 'feature' plan (Second Wind, Rage, …) is the whole
@@ -282,7 +288,7 @@ async function resolveTurn(attacker, enemies, allies, scene, rng, prompts, ctx) 
     }
     return;
   }
-  const healsAlly = plan?.kind === 'cast' && plan?.targetSide === 'ally';
+  const healsAlly = (plan?.kind === 'cast' && plan?.targetSide === 'ally') || itemPlan;
   if (!healsAlly && plan?.targetSide !== 'ally' && charmers.some(c => sameId(c, target.id)) && !NON_ATTACK_KINDS.has(plan?.kind)) {
     emitEvent(ctx, explicit ? 'turn.rejected' : 'turn.skipped', explicit
       ? { actorId, code: 'charmed', reason: `${attacker.name || actorId} is charmed by ${target.name || idOf(target)}` }
@@ -315,7 +321,7 @@ async function resolveTurn(attacker, enemies, allies, scene, rng, prompts, ctx) 
   const targetPos   = target._position   || target.position;
   // An AI ally-targeted cast does not walk toward the ally: the planner
   // only offers it in range. Player / DM plans move as before.
-  const staysPut = healsAlly && !explicit;
+  const staysPut = (healsAlly && !explicit) || (itemPlan && !plan.moveTo);
   if (attackerPos && targetPos && !staysPut) {
     const weapon = attacker.kind === 'pc' ? attacker.weapon : { name: attacker.attack?.name };
     const occupied = occupiedCellsOf({
@@ -436,6 +442,16 @@ async function resolveTurn(attacker, enemies, allies, scene, rng, prompts, ctx) 
   // M42 — Non-attack PC actions skip the resolver entirely.
   // M64 T9 — so does a plain move.
   if (plan && NON_ATTACK_KINDS.has(plan.kind)) {
+    return;
+  }
+  // M65 T23 — the item action (after the optional move): the whole action.
+  if (itemPlan) {
+    const r = useItem(attacker, target, plan.itemId, { ctx, rng });
+    if (!r.ok) {
+      emitEvent(ctx, explicit ? 'turn.rejected' : 'turn.skipped', explicit
+        ? { actorId, code: r.code, reason: r.reason }
+        : { actorId, reason: r.code });
+    }
     return;
   }
 
@@ -1901,6 +1917,41 @@ export function useFeature(pc, featureId, { ctx = NO_CTX, rng, roster = null } =
     return true;
   }
   return false;
+}
+
+/**
+ * M65 T23 — use a run item (a potion) on `target`: the user itself or a
+ * standing-or-dying ally within 5 ft (administering a potion is an
+ * action, SRD p.153). Spends one use, rolls the effect and heals through
+ * applyHealing (a dying target stands up). Emits `item.used {entityId,
+ * targetId, itemId, name, effect, rolled, remaining}` then `heal`.
+ * Changes nothing on a failure.
+ * @param {object} user — wrapper carrying `_items`
+ * @param {object} target — wrapper
+ * @param {string} itemId — run item id (key of `_items`)
+ * @param {{ctx?: object, rng: function, group?: string|null}} opts
+ * @returns {{ok: true, rolled: number, amount: number}|{ok: false, code: string, reason: string}}
+ */
+export function useItem(user, target, itemId, { ctx = NO_CTX, rng, group = null } = {}) {
+  const item = itemId != null ? user?._items?.[String(itemId)] : null;
+  if (!item) return { ok: false, code: 'no-item', reason: `${user?.name || idOf(user)} carries no item ${itemId}` };
+  if (itemUsesLeft(item) <= 0) return { ok: false, code: 'no-item', reason: `${item.name} is used up` };
+  const effect = itemEffectOf(item);
+  if (!effect) return { ok: false, code: 'bad-item', reason: `${item.name} has no effect the engine can resolve` };
+  if (!target || isDead(target)) return { ok: false, code: 'target-down', reason: `${target?.name || 'the target'} is dead` };
+  if (!sameId(user.id, target.id)) {
+    const a = user._position || user.position;
+    const b = target._position || target.position;
+    if (a && b && chebyshevFeet(a, b) > 5) return { ok: false, code: 'out-of-range', reason: `${target.name || idOf(target)} is not within 5 ft` };
+  }
+  item.spent = (Math.trunc(Number(item.spent) || 0)) + 1;
+  const roll = rollDamage(effect.dice, { crit: false }, rng);
+  emitEvent(ctx, 'item.used', {
+    entityId: idOf(user), targetId: idOf(target), itemId: String(itemId), name: String(item.name || itemId),
+    effect: effect.kind, rolled: roll.total, remaining: itemUsesLeft(item)
+  }, group);
+  const healed = applyHealing(target, roll.total, { ctx, source: user, group });
+  return { ok: true, rolled: roll.total, amount: healed.amount };
 }
 
 /** d20 mode for a creature's saving throw: Rage gives advantage on STR saves. */
