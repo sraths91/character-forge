@@ -50,6 +50,39 @@ Closed after the acceptance pass (both on main by b969efc):
   GC (nodejs/node#65446). Upgraded to better-sqlite3 ^13 (N-API). Every
   worktree needs a fresh `npm ci` for the new native module.
 
+**2026-10-25 — Phase 1.5 built: Waves 5 and 6 merged to main**
+(7c90c65; 2,242 tests, 1 skipped by design; lint 3/3; CI green).
+Landed: Extra Attack + monster Multiattack (R10), dying / death saves /
+stable / dead (R9), the Open5e stat-block normaliser parsed from SRD
+text with 21 fixtures (R11) and wired into the room so searched
+monsters fight with real AC, attacks, saves, R/I/V, breath weapons,
+legendary actions and Legendary Resistance; feat-granted spells spend
+their own uses; a `feature` action kind (Second Wind, Rage); Fighting
+Styles + off-hand attack; cantrip scaling; cover; Misty Step and
+Eldritch Blast; damage-type defenses and feature-use counts from the
+import; fog redaction of incremental traffic with per-seat hashes;
+PC sheets persisted with the encounter (migration 0003); engine-
+authoritative reactions; room settings; the auth gate on
+`GET /api/characters/:ddbId` (migration 0004); token images for
+non-humanoid monsters (migration 0005); the client mirror complete
+enough that the shared `stateHash` check is on with zero resyncs;
+dying UI; grouped multi-swing cinema; grid facing, death fade, 2×2
+rendering; the M45 calibrator doc regenerated with its history and a
+CI drift check; the S1 restart smoke made deterministic; the speed
+test gated on CPU time.
+
+E6's 1.5 acceptance: 8 of 14 deferred items landed, 5 partial
+(below), 1 owner-only (iOS tint check). Remaining before a playtest:
+- The simulator and the DM's live calibrator card ignore `statBlock`,
+  so difficulty estimates for Open5e monsters are wrong. [E1]
+- Preset monster damage carries `type: null`. [E4]
+- Large creatures draw 2×2 but move and fight as 1×1; the diagonal
+  setting accepts only `5ft`. (Owner defaults; phase 2.)
+- Still no real Warlock / multiclass DDB exports. [owner]
+- `MONSTER_SPELLCASTING` spellbooks are keyed by preset slug, not the
+  stat block's `spellcasting`. [E1]
+- Innate recharges now emit `resource.recharged` (events v1.3).
+
 Partial / known gaps carried into phase 1.5 (owners in brackets):
 - Fog: `entity.updated` and engine events are not yet fog-filtered,
   and players under fog get a `stateHash` of the unfiltered state. Fog
