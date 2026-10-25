@@ -5,8 +5,13 @@
  * code + display name. In a room: the code with a copy-link button, the
  * six seats with role badges, and every member with a connection dot.
  *
+ * M65 C28: out of a room, the tables this device holds creds for (by room
+ * code) are listed with Rejoin and "Forget this device"; joining a code
+ * the device already holds is a rejoin (no name needed, same seat).
+ *
  * mount(root, ctx) → unmount. ctx: {store, room: {code, role}|null,
- * actions: {createRoom(name?), joinRoom(code, name), leave?(), copyLink?(code)},
+ * actions: {createRoom(name?), joinRoom(code, name), leave?(), copyLink?(code),
+ * rememberedRooms?() → [{code, role, displayName}], rejoin?(code), forgetRoom?(code)},
  * prefillCode?: string}
  */
 
@@ -44,7 +49,9 @@ export function mount(root, ctx) {
     ])
   ]);
   const roomPanel = h(doc, 'div', { class: 'play-lobby-room' });
+  const remembered = h(doc, 'div', { class: 'play-card play-remembered' });
   view.appendChild(status);
+  view.appendChild(remembered);
   view.appendChild(entry);
   view.appendChild(roomPanel);
   root.appendChild(view);
@@ -53,7 +60,8 @@ export function mount(root, ctx) {
     const code = codeIn.value.trim().toUpperCase();
     const name = nameIn.value.trim();
     if (!/^[0-9A-Z]{6}$/.test(code)) { say('Room codes are 6 letters / digits.', 'error'); return; }
-    if (!name) { say('Pick a display name.', 'error'); return; }
+    const known = (ctx.actions.rememberedRooms?.() || []).some(r => r.code === code);
+    if (!name && !known) { say('Pick a display name.', 'error'); return; }
     say('Joining…');
     attempt(async () => { await ctx.actions.joinRoom(code, name); say(''); },
       (e) => say(e.code === 'ROOM_NOT_FOUND' || e.status === 404 ? 'No room with that code.' : e.message, 'error'));
@@ -65,6 +73,11 @@ export function mount(root, ctx) {
       attempt(async () => { await ctx.actions.createRoom(roomNameIn.value.trim() || null); say(''); }, (e) => say(e.message, 'error'));
     },
     join: () => doJoin(),
+    rejoin: (el) => {
+      say('Rejoining…');
+      attempt(async () => { await ctx.actions.rejoin(el.dataset.code); say(''); }, (e) => say(e.message, 'error'));
+    },
+    'forget-room': (el) => { ctx.actions.forgetRoom?.(el.dataset.code); renderRemembered(); say('Forgotten on this device.'); },
     copy: () => attempt(() => ctx.actions.copyLink?.(ctx.room?.code), (e) => say(e.message, 'error')).then(() => say('Link copied.')),
     leave: () => attempt(() => ctx.actions.leave?.(), (e) => say(e.message, 'error'))
   });
@@ -86,9 +99,24 @@ export function mount(root, ctx) {
     ]);
   }
 
+  function renderRemembered() {
+    const rows = !ctx.room && ctx.actions.rememberedRooms ? ctx.actions.rememberedRooms() : [];
+    remembered.hidden = !rows.length;
+    replace(doc, remembered, rows.length ? [
+      h(doc, 'h2', { text: 'Your tables on this device' }),
+      h(doc, 'ul', { class: 'play-remembered-list' }, rows.map(r => h(doc, 'li', { class: 'play-row', dataset: { code: r.code } }, [
+        h(doc, 'strong', { class: 'play-room-code', text: r.code }),
+        h(doc, 'span', { class: 'dim', text: ` ${r.role === 'dm' ? 'DM' : (r.displayName || 'Player')} ` }),
+        h(doc, 'button', { type: 'button', class: 'play-btn small primary', dataset: { action: 'rejoin', code: r.code }, text: 'Rejoin' }),
+        h(doc, 'button', { type: 'button', class: 'play-btn small', dataset: { action: 'forget-room', code: r.code }, attrs: { 'aria-label': `Forget room ${r.code} on this device` }, text: 'Forget this device' })
+      ])))
+    ] : []);
+  }
+
   function render() {
     const s = ctx.store?.getState?.() || null;
     const inRoom = !!ctx.room;
+    renderRemembered();
     entry.hidden = inRoom;
     if (!inRoom) { replace(doc, roomPanel, []); return; }
     const members = membersOf(s);

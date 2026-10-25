@@ -3004,3 +3004,9 @@ body.party-view-mode .combat-panel { display: block !important; }
 .play-check-summary.not-ready { color: #fcd34d; }
 .play-btn.danger { border-color: var(--danger); }
 .play-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* M65 C28 — SRD attribution footer, About dialog, remembered tables */
+.play-footer { margin-top: 16px; padding: 8px 0; border-top: 1px solid var(--border); color: var(--text-dim); }
+.play-attribution { font-size: 0.75rem; line-height: 1.4; }
+.play-remembered-list { list-style: none; margin: 0; padding: 0; }
+.play-remembered-list > li { gap: 8px; align-items: center; padding: 3px 0; }
