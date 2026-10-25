@@ -8,7 +8,7 @@ import {
   RUN_STATE_SCHEMA_V, RUN_SNAPSHOT_VERSION, RUN_STATUSES, RUN_OUTCOMES, LIFE_STATUSES, LEVEL_UP_STATUSES,
   SNAPSHOT_RUN_STATUSES, RECOVERY_PERIODS, RESOURCE_KEY_PREFIXES, HIT_DIE_BY_CLASS, MAX_ATTUNED,
   validateRunState, initialRunState, validateRunSnapshot, resourcesFromSheet, recoveryForReset,
-  ledgerKeyForResource, resourceKeyForLedger, spellSlug, emptyCurrency
+  ledgerKeyForResource, resourceKeyForLedger, spellSlug, emptyCurrency, hitDieForClass
 } from '../js/shared/run-state.js';
 import { spellSlug as engineSpellSlug } from '../js/scene/feature-uses.js';
 import { entityFromSheet } from '../js/scene/encounter-adapters.js';
@@ -98,6 +98,35 @@ test('run-state: initialRunState — cleric slots, hit die, resource keys and re
   assert.deepEqual(f.hitDice, { Fighter: { die: 10, spent: 0 } });
   assert.deepEqual(Object.keys(f.resources).sort(), ['feat:action-surge', 'feat:second-wind']);
   assert.deepEqual(f.slots.spell, {});
+});
+
+test('run-state: initialRunState reads the parser\'s hitDice / progression before the SRD table (cleric)', () => {
+  const cleric = parsedDdbFixture('cleric-l5');
+  // What the parser emits (M65 R23): no classes[].hitDie at all.
+  assert.equal(cleric.classes[0].hitDie, undefined);
+  assert.deepEqual(cleric.hitDice, { Cleric: { die: 8, spent: 3 } });
+  assert.equal(cleric.progression.Cleric.hitDie, 8);
+  assert.deepEqual(initialRunState(cleric).hitDice, { Cleric: { die: 8, spent: 0 } }, 'fully rested');
+  // A die that differs from the SRD table proves which source is read.
+  const homebrew = clone(cleric);
+  homebrew.hitDice.Cleric.die = 10;
+  homebrew.progression.Cleric.hitDie = 12;
+  assert.equal(hitDieForClass(homebrew, 'Cleric'), 10, 'sheet.hitDice first');
+  assert.deepEqual(initialRunState(homebrew).hitDice, { Cleric: { die: 10, spent: 0 } });
+  delete homebrew.hitDice;
+  assert.equal(hitDieForClass(homebrew, 'Cleric'), 12, 'progression[Class].hitDie next');
+  assert.deepEqual(initialRunState(homebrew).hitDice, { Cleric: { die: 12, spent: 0 } });
+  delete homebrew.progression;
+  assert.equal(hitDieForClass(homebrew, 'Cleric'), HIT_DIE_BY_CLASS.Cleric, 'SRD table last');
+  assert.equal(hitDieForClass({ classes: [{ name: 'Homebrewer', level: 1 }] }, 'Homebrewer'), 8, '8 when nothing is known');
+  assert.equal(hitDieForClass({ ...cleric, hitDice: { Cleric: { die: 7 } } }, 'Cleric'), 8, 'a non-die value falls through');
+  // DDB's spent hit dice are live play state: carried only on import.
+  const live = initialRunState(cleric, { importDdbState: true });
+  assert.deepEqual(live.hitDice, { Cleric: { die: 8, spent: 3 } });
+  assert.deepEqual(validateRunState(live, { sheet: cleric }).errors, []);
+  const overspent = clone(cleric);
+  overspent.hitDice.Cleric.spent = 99;
+  assert.equal(initialRunState(overspent, { importDdbState: true }).hitDice.Cleric.spent, 5, 'clamped to the class level');
 });
 
 test('run-state: importDdbState carries DDB live play state', () => {

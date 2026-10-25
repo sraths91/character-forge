@@ -67,7 +67,7 @@ export const RECOVERY_PERIODS = Object.freeze(['sr', 'lr', 'dawn', 'dusk', 'day'
 export const RESOURCE_KEY_PREFIXES = Object.freeze(['feat', 'spell', 'ddb', 'item', 'dm']);
 /** Most attuned items one character may hold (SRD). */
 export const MAX_ATTUNED = 3;
-/** SRD hit die per class (fallback when the class row carries no `hitDie`). */
+/** SRD hit die per class (last fallback: see `hitDieForClass`). */
 export const HIT_DIE_BY_CLASS = Object.freeze({
   Barbarian: 12, Fighter: 10, Paladin: 10, Ranger: 10,
   Bard: 8, Cleric: 8, Druid: 8, Monk: 8, Rogue: 8, Warlock: 8, Artificer: 8,
@@ -273,13 +273,44 @@ export function emptyCurrency() {
 
 const clampInt = (v, lo, hi) => Math.max(lo, Math.min(hi, Math.trunc(Number(v)) || 0));
 
+const HIT_DIE_SIZES = [6, 8, 10, 12];
+const asHitDie = (v) => (HIT_DIE_SIZES.includes(Number(v)) ? Number(v) : null);
+
+/**
+ * A class's hit die on a parsed sheet. The parser (M65 R23) emits it as
+ * `sheet.hitDice[Class].die` and `sheet.progression[Class].hitDie` (from
+ * DDB `definition.hitDice`, so homebrew dice survive); a hand-built
+ * `classes[].hitDie` is read next, the SRD table last, 8 when unknown.
+ * @param {object} sheet — parseCharacter output
+ * @param {string} className
+ * @returns {6|8|10|12}
+ */
+export function hitDieForClass(sheet, className) {
+  const row = (Array.isArray(sheet?.classes) ? sheet.classes : []).find(c => c?.name === className);
+  return asHitDie(isPlainObject(sheet?.hitDice) ? sheet.hitDice[className]?.die : null)
+    ?? asHitDie(isPlainObject(sheet?.progression) ? sheet.progression[className]?.hitDie : null)
+    ?? asHitDie(row?.hitDie)
+    ?? HIT_DIE_BY_CLASS[className]
+    ?? 8;
+}
+
+/** DDB's spent hit dice for a class (`hitDice[Class].spent`, else progression `hitDiceUsed`). */
+function ddbHitDiceSpent(sheet, className) {
+  const hd = isPlainObject(sheet?.hitDice) ? sheet.hitDice[className] : null;
+  if (Number.isFinite(Number(hd?.spent))) return Number(hd.spent);
+  const p = isPlainObject(sheet?.progression) ? sheet.progression[className] : null;
+  return Number(p?.hitDiceUsed) || 0;
+}
+
 /**
  * A run character's starting state from its parsed sheet: fully rested
  * (M65 B24) — full HP, no temp HP, every slot / hit die / resource
- * unspent, no conditions, no exhaustion. With `importDdbState` (the DM's
- * opt-in) DDB's live play state is carried instead: HP / temp HP, death
- * saves at 0 HP, used slots and feature / spell uses, conditions,
- * exhaustion and inspiration. Currency comes from `sheet.currency`
+ * unspent, no conditions, no exhaustion. Hit dice come from
+ * `hitDieForClass` (the parser's `hitDice` / `progression` first, the SRD
+ * table last). With `importDdbState` (the DM's opt-in) DDB's live play
+ * state is carried instead: HP / temp HP, death saves at 0 HP, spent hit
+ * dice, used slots and resource uses, conditions, exhaustion and
+ * inspiration. Currency comes from `sheet.currency`
  * (E4 R23) when present. XP and level live on the party_slots row.
  * @param {object} sheet — parseCharacter output (the run sheet_json)
  * @param {{importDdbState?: boolean}} [opts]
@@ -289,10 +320,10 @@ export function initialRunState(sheet, opts = {}) {
   const live = !!opts?.importDdbState;
   const hpMax = Math.max(1, Math.trunc(Number(sheet?.hp?.max)) || 1);
   const hitDice = {};
-  for (const c of Array.isArray(sheet?.classes) ? sheet.classes : []) {
-    if (!c || typeof c.name !== 'string' || hitDice[c.name]) continue;
-    const die = [6, 8, 10, 12].includes(Number(c.hitDie)) ? Number(c.hitDie) : (HIT_DIE_BY_CLASS[c.name] || 8);
-    hitDice[c.name] = { die, spent: 0 };
+  const levels = classLevels(sheet);
+  for (const name of Object.keys(levels)) {
+    const spent = live ? clampInt(ddbHitDiceSpent(sheet, name), 0, Math.min(20, levels[name])) : 0;
+    hitDice[name] = { die: hitDieForClass(sheet, name), spent };
   }
   const table = isPlainObject(sheet?.spellSlotTable?.spell) ? sheet.spellSlotTable.spell : {};
   const used = sheet?.slotsUsed || {};
