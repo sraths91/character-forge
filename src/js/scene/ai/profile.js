@@ -27,7 +27,7 @@ import { profileFor } from './profiles.js';
 import { profileForEntity } from './infer.js';
 import { chebyshevFeet } from '../grid-rules.js';
 import {
-  spellbookFor, spellById, spellForEntity,
+  spellbookForEntity, spellById, spellForEntity,
   innateBlockForEntity, canInnateCast
 } from '../monster-spells.js';
 import { requireRng } from '../rng.js';
@@ -60,6 +60,21 @@ function alive(e) { return e && hpOf(e) > 0; }
  *           score:number, breakdown:Array<{name:string,raw:number,weighted:number}>}}
  */
 export function chooseAction({ self, slug, enemies, allies, rng } = {}) {
+  const plan = chooseActionPlan({ self, slug, enemies, allies, rng });
+  // M65 leftover B — a stat-block spellbook's spells the engine registry
+  // lacks are noted on whatever the creature chose.
+  const skipped = self?._statBlockKit?.spellbook?.skipped;
+  if (!skipped?.length) return plan;
+  return {
+    ...plan,
+    breakdown: [...(plan.breakdown || []), {
+      name: 'spellbook:skipped', raw: skipped.length, weighted: 0,
+      note: `not modelled by the engine: ${skipped.join(', ')}`
+    }]
+  };
+}
+
+function chooseActionPlan({ self, slug, enemies, allies, rng }) {
   requireRng(rng, 'chooseAction');
   // M32.2: prefer a per-entity override (Open5e-inferred profile attached
   // at spawn) over the slug-based lookup.
@@ -140,8 +155,7 @@ export function chooseAction({ self, slug, enemies, allies, rng } = {}) {
  * no spell beats the melee score.
  */
 function considerCast({ self, profile, archetype, target, enemies }) {
-  const slug = self?.presetSlug || self?.ref?._presetSlug;
-  const book = spellbookFor(slug);
+  const book = spellbookForEntity(self);
   // M64 phase 1.5 wave 6b — a normalised stat block's recharge abilities
   // replace the preset's innate block.
   const innate = innateBlockForEntity(self);
@@ -169,8 +183,8 @@ function considerCast({ self, profile, archetype, target, enemies }) {
     const spell = spellForEntity(self, id);
     if (!spell) continue;
     // A stat-block recharge ability brings its own weight when the
-    // profile names none.
-    const weight = castWeights[id] ?? spell.aiWeight;
+    // profile names none; so does a stat-block spellbook spell (M65).
+    const weight = castWeights[id] ?? spell.aiWeight ?? book?.weights?.[id];
     if (!weight) continue;             // profile didn't authorize this spell
     if (spell.targetSide === 'ally') continue;     // M34.2: heal spells handled separately
     // M37 — Pick the resource model. Innate first (no slot cost), then slots.
@@ -252,8 +266,7 @@ function spellInRange(spell, self, target) {
  * range, an ally-targeted heal, and the caster needs the slot.
  */
 function considerHeal({ self, profile, archetype, allies }) {
-  const slug = self?.presetSlug || self?.ref?._presetSlug;
-  const book = spellbookFor(slug);
+  const book = spellbookForEntity(self);
   if (!book) return null;
   const castWeights = profile.castWeights || {};
   const slots = self?._slots;
@@ -291,7 +304,7 @@ function considerHeal({ self, profile, archetype, allies }) {
   // ally is closer to 0 hp.
   let bestSpell = null;
   for (const id of book.spells) {
-    const weight = castWeights[id];
+    const weight = castWeights[id] ?? book.weights?.[id];
     if (!weight) continue;
     const spell = spellById(id);
     if (!spell || spell.targetSide !== 'ally') continue;

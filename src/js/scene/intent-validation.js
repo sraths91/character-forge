@@ -97,9 +97,10 @@ function knowsSpell(entity, sheet, spellId) {
     const own = spells.find(s => nameToSpellId(typeof s === 'string' ? s : s?.name) === spellId);
     return own ? { known: true, own: typeof own === 'string' ? null : own } : { known: false };
   }
-  const book = spellbookFor(entity.statBlock?.slug);
-  if (book?.spells?.includes(spellId)) return { known: true, own: null };
+  // M65 leftover B — a stat block's own spellcasting replaces the preset's.
   const kit = statBlockKitOf(entity);
+  const book = kit?.spellbook || spellbookFor(entity.statBlock?.slug);
+  if (book?.spells?.includes(spellId)) return { known: true, own: null };
   const innate = kit ? kitInnateState(kit, entity.resources?.innate) : entity.resources?.innate;
   if (innate) {
     if (innate.atWill?.includes(spellId)) return { known: true, own: null, innate: 'at-will' };

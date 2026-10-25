@@ -839,7 +839,8 @@ export function entityFromPreset(slug, opts) {
     concentration: null,
     resources: {
       reactionUsed: false,
-      slots: fullLedger(freshSlots(slug)),
+      // M65 leftover B — a block's own spellcasting brings its slots.
+      slots: fullLedger(kit?.spellbook ? kit.spellbook.slots : freshSlots(slug)),
       pact: {},
       innate: kit ? freshKitInnate(kit) : freshInnateState(slug),
       legendaryBudget: kit ? (kit.legendary?.budget ?? 0) : (isLegendary(slug) ? freshLegendaryBudget(slug) : 0),

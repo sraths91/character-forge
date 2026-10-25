@@ -245,6 +245,18 @@ export function isInnateCaster(slug) { return !!MONSTER_INNATE[slug]; }
 export function innateBlockFor(slug) { return MONSTER_INNATE[slug] || null; }
 
 /**
+ * M65 (phase 1.5 leftover B) — the spellbook an engine wrapper casts
+ * from: its stat block's `spellcasting` (`_statBlockKit.spellbook`,
+ * stat-block-kit.js) when the block has one, else the preset slug's
+ * MONSTER_SPELLCASTING entry.
+ * @param {object|null} self — engine wrapper
+ * @returns {object|null}
+ */
+export function spellbookForEntity(self) {
+  return self?._statBlockKit?.spellbook || spellbookFor(self?.presetSlug || self?.ref?._presetSlug);
+}
+
+/**
  * M64 phase 1.5 wave 6b — the innate block an engine wrapper fights
  * with: a normalised stat block's recharge abilities (`_statBlockKit`,
  * stat-block-kit.js) replace the preset slug's MONSTER_INNATE entry.

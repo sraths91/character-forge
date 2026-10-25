@@ -55,7 +55,7 @@ import {
   resolveCounterspell
 } from './reactions.js';
 import {
-  consumeSlot, spellbookFor, freshInnateStateForEntity, spellForEntity,
+  consumeSlot, spellbookForEntity, freshInnateStateForEntity, spellForEntity,
   rollInnateRecharges, consumeInnate, applyUpcast
 } from './monster-spells.js';
 import { LEGENDARY_RESISTANCE_KEY } from './stat-block-kit.js';
@@ -903,7 +903,8 @@ export async function runMonsterSpell({ attacker, target, plan, scene, rng, witn
   if (attacker.kind === 'pc' && baseSpell.level === 0 && !plan.isInnate) {
     spell = scaleCantrip(spell, totalLevel(attacker.ref || attacker), ownSpellEntry(attacker.ref, String(plan.spellId)));
   }
-  const book = attacker.kind === 'monster' ? spellbookFor(attacker.presetSlug) : null;
+  // M65 leftover B — a stat block's own spellcasting (DC, to-hit) first.
+  const book = attacker.kind === 'monster' ? spellbookForEntity(attacker) : null;
   const innateBook = !book && attacker._innate
     ? { dc: 12, attackBonus: 4, abilityMod: 3 }
     : null;

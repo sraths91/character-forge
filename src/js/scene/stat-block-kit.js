@@ -11,10 +11,23 @@
  *
  *   {
  *     spells:  {[actionName]: registry-shaped spell},   // runtime entries
- *     innate:  {recharge: {[actionName]: min}, atWill: [], perDay: {}} | null,
+ *     innate:  {recharge: {[actionName]: min}, atWill: [ids], perDay: {N: [ids]}} | null,
  *     legendary: {budget, actions: [LEGENDARY_ACTIONS-shaped action]} | null,
- *     legendaryResistance: number                         // uses per day
+ *     legendaryResistance: number,                        // uses per day
+ *     spellbook: {ability, dc, attackBonus, abilityMod, slots, spells: [ids],
+ *                 weights: {id: w}, skipped: [names], source: 'statBlock'} | null
  *   }
+ *
+ * M65 (phase 1.5 leftover B) — `statBlock.spellcasting` (the normaliser's
+ * `{dc, toHit, ability, casterLevel, innate, slots, spells: [{name, level,
+ * perDay?}]}`) builds the creature's spellbook instead of the preset
+ * slug's MONSTER_SPELLCASTING entry: spells are matched to the engine
+ * registry by name; slot spells go to `spells` (slots from the block),
+ * innate ones to the kit's `innate` (at will / N per day). A name the
+ * registry lacks — or a reaction / self-only spell the monster AI cannot
+ * use as its action — is listed in `skipped`, and chooseAction notes it
+ * in the plan breakdown. Profiles rarely weight these spells, so the
+ * book carries default AI weights (BOOK_DEFAULT_WEIGHTS).
  *
  * A recharge action with a save (a breath weapon) becomes a `leveled-save`
  * spell built from the action — the same shape as the registry's
@@ -30,13 +43,17 @@
  */
 
 import { isNormalizedStatBlock } from './open5e-normalize.js';
-import { freshInnateFromBlock } from './monster-spells.js';
+import { freshInnateFromBlock, spellById } from './monster-spells.js';
+import { spellSlug } from './feature-uses.js';
 
 /** `resources.features` key of the Legendary Resistance ledger. */
 export const LEGENDARY_RESISTANCE_KEY = 'legendary-resistance';
 
 /** AI cast weight of a stat-block recharge ability (the preset dragon's 2.0). */
 export const RECHARGE_AI_WEIGHT = 2.0;
+
+/** Default AI cast weights of a block spellbook's spells (profile weights win). */
+export const BOOK_DEFAULT_WEIGHTS = Object.freeze({ cantrip: 0.5, leveled: 0.9, heal: 1.2 });
 
 /** Memo: statBlock object → kit (stat blocks are static). */
 const KIT_CACHE = new WeakMap();
@@ -60,11 +77,17 @@ export function buildStatBlockKit(sb) {
     spells[spell.id] = spell;
     recharge[spell.id] = Math.max(2, Math.min(6, Math.trunc(Number(a.recharge.min) || 6)));
   }
+  const spellbook = spellbookFrom(sb.spellcasting, sb.abilities);
+  const atWill = spellbook?.innate?.atWill || [];
+  const perDay = spellbook?.innate?.perDay || {};
+  const hasInnate = Object.keys(recharge).length || atWill.length || Object.keys(perDay).length;
+  if (spellbook) delete spellbook.innate;
   const kit = {
     spells,
-    innate: Object.keys(recharge).length ? { recharge, atWill: [], perDay: {} } : null,
+    innate: hasInnate ? { recharge, atWill, perDay } : null,
     legendary: legendaryFrom(sb.legendary, actions),
-    legendaryResistance: Math.max(0, Math.trunc(Number(sb.legendaryResistance) || 0))
+    legendaryResistance: Math.max(0, Math.trunc(Number(sb.legendaryResistance) || 0)),
+    spellbook
   };
   KIT_CACHE.set(sb, kit);
   return kit;
@@ -108,7 +131,72 @@ export function kitInnateState(kit, stored) {
   for (const id of Object.keys(fresh.recharges)) {
     if (typeof prior[id] === 'boolean') fresh.recharges[id] = prior[id];
   }
+  // M65 leftover B — per-day innate spells keep their remaining uses.
+  for (const [uses, list] of Object.entries(fresh.perDay)) {
+    const was = stored?.perDay?.[uses];
+    if (!Array.isArray(was)) continue;
+    for (const slot of list) {
+      const w = was.find(x => x?.id === slot.id);
+      if (w && Number.isInteger(w.remaining)) slot.remaining = Math.max(0, Math.min(Number(uses), w.remaining));
+    }
+  }
   return fresh;
+}
+
+/**
+ * The spellbook a stat block's `spellcasting` describes (see the module
+ * header), or null when it has none.
+ * @param {object|null} sc — normalised `spellcasting`
+ * @param {Record<string, number>|null} abilities — ability scores
+ * @returns {object|null}
+ */
+function spellbookFrom(sc, abilities) {
+  if (!sc || typeof sc !== 'object' || !Array.isArray(sc.spells)) return null;
+  const spells = [];
+  const weights = {};
+  const skipped = [];
+  const atWill = [];
+  const perDay = {};
+  for (const s of sc.spells) {
+    const name = typeof s === 'string' ? s : s?.name;
+    if (!name) continue;
+    const id = spellSlug(name);
+    const spell = spellById(id);
+    if (!spell || spell.kind === 'reactive-counter' || spell.targetSide === 'self') {
+      skipped.push(String(name));
+      continue;
+    }
+    const innate = !!sc.innate || s.level === null || s.level === undefined;
+    if (innate) {
+      const n = Math.trunc(Number(s.perDay) || 0);
+      if (n > 0) (perDay[n] || (perDay[n] = [])).includes(id) || perDay[n].push(id);
+      else if (!atWill.includes(id)) atWill.push(id);
+    } else if (!spells.includes(id)) {
+      spells.push(id);
+    }
+    weights[id] = spell.kind === 'heal' ? BOOK_DEFAULT_WEIGHTS.heal
+      : spell.level === 0 ? BOOK_DEFAULT_WEIGHTS.cantrip : BOOK_DEFAULT_WEIGHTS.leveled;
+  }
+  const slots = {};
+  for (const [lvl, n] of Object.entries(sc.slots || {})) {
+    const k = Math.trunc(Number(n) || 0);
+    if (/^[1-9]$/.test(String(lvl)) && k > 0) slots[lvl] = k;
+  }
+  const dc = Number.isFinite(sc.dc) ? sc.dc : null;
+  const attackBonus = Number.isFinite(sc.toHit) ? sc.toHit : (dc !== null ? dc - 8 : 0);
+  const score = Number(abilities?.[sc.ability]);
+  return {
+    ability: sc.ability || null,
+    dc: dc ?? 8 + attackBonus,
+    attackBonus,
+    abilityMod: Number.isFinite(score) ? Math.floor((score - 10) / 2) : Math.max(0, attackBonus - 2),
+    slots,
+    spells,
+    weights,
+    skipped,
+    innate: { atWill, perDay },
+    source: 'statBlock'
+  };
 }
 
 /**
