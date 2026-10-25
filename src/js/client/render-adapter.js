@@ -33,6 +33,13 @@
  * setInterval anywhere; the only timer is the one-shot impact timeout
  * (injectable for tests).
  *
+ * Token images (M65 1.5 leftover A): campaign monsters name their picture
+ * by `statBlock.tokenImageId`; the view resolves it through the room's
+ * `kind: 'token'` uploads (the snapshot's `room.tokenImages` / `room.maps`,
+ * `tokenImagesOf`), then the `tokenImages` option, then the appearance
+ * cache's `putTokenImages` index (play.js fills it from
+ * `GET /api/rooms/:id/maps`). `invalidate()` re-projects after a refresh.
+ *
  * Life-state badges (Dying / Stable / Dead, E1 wave 5; Down on older
  * servers) are drawn over the tokens after E5's renderer, from the
  * presented encounter (`tokenBadges`).
@@ -49,7 +56,7 @@ import { projectBattleView } from '../map/view.js';
 import { buildCinemaSequence } from '../anim/cinema-plan.js';
 import { createCinema, findHitPauseAt } from '../anim/cinema.js';
 import { MONSTER_PRESETS, buildMonsterCharacter } from '../scene/monster-presets.js';
-import { statusBadge } from './selectors.js';
+import { statusBadge, tokenImagesOf, tokenImageResolver } from './selectors.js';
 
 const DEFAULT_TIMERS = {
   setTimeout: (fn, ms) => globalThis.setTimeout(fn, ms),
@@ -137,6 +144,8 @@ function drawTokenBadges(canvas, badges, camera) {
  * @param {object} [opts.lookups] — buildCinemaSequence lookups
  * @param {boolean} [opts.cinemaEnabled=true]
  * @param {object} [opts.camera] — map/camera.js camera (default: created from the canvas size)
+ * @param {Map<string, string>|Record<string, string>|((id: string) => string|null)|null} [opts.tokenImages]
+ *   — extra token-image index (room uploads by id / sha256), after the snapshot's
  * @param {Function} [opts.render] — renderBattleScene override (tests)
  * @param {{raf?: Function, caf?: Function}} [opts.schedulerOpts]
  * @param {{setTimeout: Function, clearTimeout: Function}} [opts.timers]
@@ -168,6 +177,7 @@ export function createRenderAdapter({
   cinema = null,
   cinemaOptions = {},
   lookups = {},
+  tokenImages = null,
   cinemaEnabled = true,
   camera = null,
   render = renderBattleScene,
@@ -213,10 +223,15 @@ export function createRenderAdapter({
     requestRedraw: () => scheduler.markDirty()
   };
 
-  let viewMemo = { enc: undefined, view: null };
+  let viewMemo = { enc: undefined, idx: undefined, view: null };
   function currentView() {
-    const enc = store.getPresented().encounter;
-    if (enc !== viewMemo.enc) viewMemo = { enc, view: enc ? projectBattleView(enc, appearanceCache) : null };
+    const p = store.getPresented();
+    const enc = p.encounter;
+    const idx = tokenImagesOf(p);
+    if (enc !== viewMemo.enc || idx !== viewMemo.idx) {
+      const resolve = tokenImageResolver(idx, tokenImages, appearanceCache);
+      viewMemo = { enc, idx, view: enc ? projectBattleView(enc, appearanceCache, { tokenImages: resolve }) : null };
+    }
     return viewMemo.view;
   }
 
@@ -233,7 +248,7 @@ export function createRenderAdapter({
     return !!res?.needsRedraw;
   }, schedulerOpts);
 
-  const unsubscribe = store.subscribe((_a, p) => p.encounter, () => scheduler.markDirty());
+  const unsubscribe = store.subscribe((_a, p) => [p.encounter, tokenImagesOf(p)], () => scheduler.markDirty(), (x, y) => x[0] === y[0] && x[1] === y[1]);
   scheduler.markDirty();   // first frame
 
   function settle(item) { item.done(); }
@@ -431,7 +446,7 @@ export function createRenderAdapter({
     redraw() { scheduler.markDirty(); },
 
     /** Re-project the view (e.g. a character sheet arrived, so tokens get their look) and redraw. */
-    invalidate() { viewMemo = { enc: undefined, view: null }; scheduler.markDirty(); },
+    invalidate() { viewMemo = { enc: undefined, idx: undefined, view: null }; scheduler.markDirty(); },
 
     setCinemaEnabled(on) {
       cinemaOn = !!on;

@@ -20,7 +20,7 @@
 import { createApi } from './client/api.js';
 import { createSession } from './client/session.js';
 import { createFakeServer, demoCharacter } from './client/fake-transport.js';
-import { screenFor, isDm, seatsOf } from './client/selectors.js';
+import { screenFor, isDm, seatsOf, tokenUploads } from './client/selectors.js';
 import { createAppearanceCache } from './map/view.js';
 import { mount as mountLobby } from './client/views/lobby.js';
 import { mount as mountClaim } from './client/views/claim.js';
@@ -58,7 +58,8 @@ function writeCreds(storage, creds) {
  * @param {string} [opts.prefillCode]
  * @param {string} [opts.origin] — for the copy-link URL
  * @returns {{start: () => Promise<void>, dispose: () => void, readonly screen: string|null,
- *            readonly session: object|null, actions: object, api: object}}
+ *            readonly session: object|null, actions: object, api: object,
+ *            appearanceCache: object, loadTokenImages: () => Promise<object[]|null>}}
  */
 export function createPlayApp({ root, fetch, WebSocketCtor, wsUrl, storage = null, deps = {}, prefillCode = '', origin = '' }) {
   const doc = root.ownerDocument;
@@ -72,6 +73,9 @@ export function createPlayApp({ root, fetch, WebSocketCtor, wsUrl, storage = nul
   const sheetCache = new Map();
   const sheetLoads = new Map();
   const sheetListeners = new Set();
+  const tokenImageListeners = new Set();
+  let unsubTokens = null;
+  let tokenLoad = 0;
   const appearanceCache = createAppearanceCache();
   const dmBridge = createDmBridge();
   const api = createApi({ fetch, token: () => creds?.token ?? null });
@@ -102,6 +106,24 @@ export function createPlayApp({ root, fetch, WebSocketCtor, wsUrl, storage = nul
       }).catch(() => { sheetLoads.delete(id); return null; }));
     }
     return sheetLoads.get(id);
+  }
+
+  /**
+   * M65 1.5 leftover A: the room's `kind: 'token'` uploads (campaign
+   * tokens materialised on node entry) → the appearance cache's index,
+   * so `statBlock.tokenImageId` resolves. Refreshed per encounter.
+   */
+  function loadTokenImages() {
+    const roomId = creds?.roomId;
+    if (!roomId || typeof api.listMaps !== 'function') return Promise.resolve(null);
+    const n = ++tokenLoad;
+    return api.listMaps(roomId).then((res) => {
+      if (n !== tokenLoad) return null;
+      const rows = tokenUploads(res?.maps).filter(r => r.kind === 'token');
+      appearanceCache.putTokenImages(rows);
+      for (const fn of [...tokenImageListeners]) fn(rows);
+      return rows;
+    }).catch(() => null);   // an older server, or not a member yet: tokens keep their LPC look
   }
 
   const actions = {
@@ -137,6 +159,7 @@ export function createPlayApp({ root, fetch, WebSocketCtor, wsUrl, storage = nul
       loadSheet,
       sheets: () => Object.fromEntries(sheetCache),
       onSheet: (fn) => { sheetListeners.add(fn); return () => sheetListeners.delete(fn); },
+      onTokenImages: (fn) => { tokenImageListeners.add(fn); return () => tokenImageListeners.delete(fn); },
       appearanceCache,
       dmBridge,
       actions,
@@ -193,6 +216,7 @@ export function createPlayApp({ root, fetch, WebSocketCtor, wsUrl, storage = nul
   function disconnect() {
     unsubRoute?.(); unsubRoute = null;
     unsubSeats?.(); unsubSeats = null;
+    unsubTokens?.(); unsubTokens = null;
     session?.close();
     session = null;
   }
@@ -212,6 +236,7 @@ export function createPlayApp({ root, fetch, WebSocketCtor, wsUrl, storage = nul
     s.onError((e) => showBanner(e.message));
     unsubRoute = s.store.subscribe((a) => screenFor(a, { wantSetup }), () => route());
     unsubSeats = s.store.subscribe((a) => a, (a) => { for (const seat of seatsOf(a)) if (seat.characterId) loadSheet(seat.characterId); });
+    unsubTokens = s.store.subscribe((a) => (a.synced ? `${a.room?.encounterId ?? ''}|${a.room?.status ?? ''}` : null), (k) => { if (k !== null) loadTokenImages(); });
     route(true);
     await s.connect();
     route(true);
@@ -230,7 +255,9 @@ export function createPlayApp({ root, fetch, WebSocketCtor, wsUrl, storage = nul
     get screen() { return screen; },
     get session() { return session; },
     actions,
-    api
+    api,
+    appearanceCache,
+    loadTokenImages
   };
 }
 

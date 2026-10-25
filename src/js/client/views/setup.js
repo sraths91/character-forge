@@ -34,7 +34,7 @@
  */
 
 import { h, replace, clear, createScope, delegate, attempt, select, observeCanvasSize } from './dom.js';
-import { seatsOf } from '../selectors.js';
+import { seatsOf, tokenImagesOf, tokenImageResolver } from '../selectors.js';
 import { dmMoveIntent } from '../intents.js';
 import { matchPresetForOpen5e, fightsAsLabel, statBlockLabel, statBlockInfo, setupAckMonsters } from '../monster-match.js';
 import { createTokenPickers } from './token-image.js';
@@ -226,12 +226,14 @@ export function mount(root, ctx) {
     const st = previewState();
     const key = `${st.grid.cols}x${st.grid.rows}`;
     if (key !== fittedFor) { Object.assign(camera, fitToGrid(camera, st.grid.cols, st.grid.rows, WORLD_CELL_PX, { padding: 8 })); fittedFor = key; }
-    const res = await deps.render(canvas, projectBattleView(st, ctx.appearanceCache), local);
+    const tokenImages = tokenImageResolver(tokenImagesOf(ctx.store.getPresented()), ctx.appearanceCache);
+    const res = await deps.render(canvas, projectBattleView(st, ctx.appearanceCache, { tokenImages }), local);
     return !!res?.needsRedraw;
   }, { raf: deps.raf, caf: deps.caf });
   scope.add(() => scheduler.stop());
   const tokenPickers = createTokenPickers({ ...ctx, doc }, { onError: fail });
   scope.add(() => tokenPickers.dispose());
+  if (ctx.onTokenImages) scope.add(ctx.onTokenImages(() => scheduler.markDirty()));
   scope.add(observeCanvasSize(canvas, camera, () => { fittedFor = ''; scheduler.markDirty(); }));
   scope.add(attachCameraControls(canvas, camera, () => scheduler.markDirty(), { worldSize: () => ({ w: gridOf().cols * WORLD_CELL_PX, h: gridOf().rows * WORLD_CELL_PX }) }));
   brush.onPreview = (cells, op) => {

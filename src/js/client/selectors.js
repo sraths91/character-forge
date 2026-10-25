@@ -12,6 +12,7 @@
 
 import { currentTurn } from './intents.js';
 import { lifeStatus } from './mirror.js';
+import { tokenImageIndex } from '../map/view.js';
 
 /** Seats per room (E3 MAX_SEATS). */
 export const SEAT_COUNT = 6;
@@ -245,4 +246,61 @@ export function tokenImageAllowed(e) {
   if (!e || e.kind !== 'monster') return false;
   const type = e.statBlock?.type;
   return typeof type === 'string' && type !== '' && type.toLowerCase() !== 'humanoid';
+}
+
+/**
+ * M65 1.5 leftover A — the room's token-image uploads (`uploaded_maps`
+ * rows with `kind: 'token'`) as the snapshot carries them: `room.tokenImages`
+ * (token rows only) or `room.maps` / `room.uploadedMaps` (every upload;
+ * map-kind rows are skipped). Rows are E3's `GET /api/rooms/:id/maps`
+ * shape `{mapId, kind, url, sha256, …}`.
+ * @param {object[]|null|undefined} rows
+ * @returns {object[]}
+ */
+export function tokenUploads(rows) {
+  return (Array.isArray(rows) ? rows : []).filter(r => r && typeof r === 'object' && (r.kind === 'token' || r.kind === undefined));
+}
+
+const TOKEN_INDEX_MEMO = new WeakMap();
+
+/**
+ * The room's token-image index (id / sha256 → served URL) from the
+ * client state's `room`, memoised per room object so a renderer can
+ * compare it by identity. Null when the room lists no token uploads.
+ * @param {object} s — ClientState
+ * @returns {Map<string, string>|null}
+ */
+export function tokenImagesOf(s) {
+  const room = s?.room;
+  if (!room || typeof room !== 'object') return null;
+  if (TOKEN_INDEX_MEMO.has(room)) return TOKEN_INDEX_MEMO.get(room);
+  const rows = Array.isArray(room.tokenImages)
+    ? tokenUploads(room.tokenImages)
+    : tokenUploads(room.maps ?? room.uploadedMaps).filter(r => r.kind === 'token');
+  const idx = rows.length ? tokenImageIndex(rows) : null;
+  TOKEN_INDEX_MEMO.set(room, idx);
+  return idx;
+}
+
+/**
+ * One `tokenImages` resolver for `projectBattleView` over several
+ * sources, first hit wins: Maps, plain objects, functions, or anything
+ * with `tokenImageUrl(id)` (the appearance cache's `putTokenImages` index).
+ * @param {...(Map<string, string>|Record<string, string>|Function|{tokenImageUrl: Function}|null)} sources
+ * @returns {(id: string) => string|null}
+ */
+export function tokenImageResolver(...sources) {
+  const list = sources.filter(Boolean);
+  return (id) => {
+    const key = String(id);
+    for (const src of list) {
+      let url = null;
+      if (typeof src === 'function') url = src(key);
+      else if (src instanceof Map) url = src.get(key);
+      else if (typeof src.tokenImageUrl === 'function') url = src.tokenImageUrl(key);
+      else if (typeof src === 'object') url = src[key];
+      if (url) return url;
+    }
+    return null;
+  };
 }

@@ -177,6 +177,7 @@ export function mount(root, ctx) {
   scope.add(() => adapter.dispose());
   if (ctx.session?.setPlayback) scope.add(ctx.session.setPlayback(adapter));
   if (ctx.onSheet) scope.add(ctx.onSheet(() => { adapter.invalidate(); renderActions(); }));
+  if (ctx.onTokenImages) scope.add(ctx.onTokenImages(() => adapter.invalidate()));
   const local = adapter.local;
   local.camera.viewW = canvas.clientWidth || local.camera.viewW || 640;
   local.camera.viewH = canvas.clientHeight || local.camera.viewH || 420;

@@ -13,6 +13,7 @@
  *   GET    /api/characters/:ddbId (Bearer)                         → {character, prose?: 'stripped'}
  *   PUT    /api/rooms/:id/maps?filename=     raw image bytes       → {mapId, url, width, height, …}
  *   PUT    /api/rooms/:id/maps?kind=token&filename=  raw image bytes → {mapId, kind: 'token', url, …}
+ *   GET    /api/rooms/:id/maps                                     → {maps: [{mapId, kind, url, sha256, …}]}
  *   GET    /api/monsters/search?q=                                 → {results: [{slug, name, type, cr, hp}]}
  *
  * Tokens travel only in `Authorization: Bearer` — never in a URL. Every
@@ -70,6 +71,7 @@ export function createApi({ fetch: fetchImpl = globalThis.fetch?.bind(globalThis
     getCharacter: (ddbId) => call('GET', `/api/characters/${enc(ddbId)}`),
     uploadMap: (roomId, bytes, { filename = '', mime = 'application/octet-stream' } = {}) =>
       call('PUT', `/api/rooms/${enc(roomId)}/maps${filename ? `?filename=${enc(filename)}` : ''}`, { raw: bytes, contentType: mime }),
+    listMaps: (roomId) => call('GET', `/api/rooms/${enc(roomId)}/maps`),
     // E3 wave 6: a DM token image (E5's tokenImageUploadPath, kind=token).
     uploadTokenImage: (roomId, bytes, { filename = '', mime = 'application/octet-stream' } = {}) =>
       call('PUT', tokenImageUploadPath(roomId, { filename, kindSupported: true }), { raw: bytes, contentType: mime }),
