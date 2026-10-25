@@ -53,10 +53,15 @@ import { ABILITIES } from './encounter-state.js';
  * `available` is the post-event use count (1 for a recharge ability).
  * Emitted only when the count changes. A legendary budget's reset needs
  * no event: it is a turn.started reset (turn-manager beginTurnResets).
+ * v1.4 (additive, 2026-10-25, E6 M65 H23 — for E1's T23 item action):
+ * `item.used` {entityId (who used it), targetId (who drank / was fed),
+ * itemId (the entity's `resources.items` key = the run item id),
+ * remaining (uses left after this one)}; the effect itself is the `heal`
+ * event applyHealing emits.
  */
 export const EVENT_CATALOGUE_VERSION = 1;
 /** Additive minor revision of catalogue v1. */
-export const EVENT_CATALOGUE_MINOR = 3;
+export const EVENT_CATALOGUE_MINOR = 4;
 
 /** Every event type, in catalogue order. */
 export const EVENT_TYPES = Object.freeze([
@@ -74,6 +79,8 @@ export const EVENT_TYPES = Object.freeze([
   // v1.3 (additive, M64 phase 1.5 wave 6)
   'resource.recharged',
   'feature.used',
+  // v1.4 (additive, M65 T23)
+  'item.used',
   'entity.downed',
   // v1.2 (additive, M64 R9)
   'death.save', 'entity.died', 'entity.stabilized', 'entity.revived',
@@ -188,6 +195,7 @@ export const EVENT_PAYLOAD_SPECS = Object.freeze({
   'resource.spent': shape({ entityId: ID, resource: str(), level: nullable(int(0, 9)) }, LOOSE),
   'resource.recharged': shape({ entityId: ID, resource: oneOf(RECHARGE_RESOURCES), spellId: str(), available: int(0) }, LOOSE),
   'feature.used': shape({ entityId: ID, featureId: str() }, LOOSE),
+  'item.used': shape({ entityId: ID, targetId: ID, itemId: ID, remaining: int(0) }, LOOSE),
   'entity.downed': shape({ entityId: ID }, LOOSE),
   'death.save': shape({
     entityId: ID, d20: nullable(int(1, 20)), success: bool(), crit: bool(),

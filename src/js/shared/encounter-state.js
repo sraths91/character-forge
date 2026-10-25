@@ -42,6 +42,17 @@
  *     campaign-authored token image (an upload id or its sha256). The 2D
  *     projection (map/view.js `resolveTokenImage`) resolves it to the
  *     room's served URL when the entity has no `imageUrl` of its own.
+ *   - v1 additive (M65 H23, E6 — the campaign loop; all optional, no
+ *     version bump):
+ *       `runId`, `nodeId`        top level: the run / campaign node this
+ *                                encounter belongs to (null or absent
+ *                                outside a run)
+ *       entity `exhaustion`      0–6 (R29); absent = 0
+ *       `resources.items`        {[runItemId]: {name, effect, max, spent}} —
+ *                                consumables the entity carries in (T23);
+ *                                `effect` is a consumables-registry key
+ *       `statBlock.xp|cr`        XP value (R22), challenge rating (number,
+ *                                or the CR_XP key '1/8' | '1/4' | '1/2')
  */
 
 import {
@@ -188,6 +199,7 @@ export const WRAPPER_FIELD_MAP = Object.freeze({
  * @property {{atWill: string[], recharges: Record<string, boolean>, perDay: Record<string, {id: string, remaining: number}[]>}|null} innate
  * @property {number} legendaryBudget                 — remaining this round
  * @property {Record<string, SlotLedger>} features    — e.g. 'action-surge', 'second-wind'
+ * @property {Record<string, {name: string, effect: string, max: number, spent: number}>} [items] — v1 additive (M65): consumables by run item id
  */
 
 /**
@@ -219,6 +231,7 @@ export const WRAPPER_FIELD_MAP = Object.freeze({
  * @property {'north'|'east'|'south'|'west'} [facing]                    — v1 additive (E5): sprite row
  * @property {'Tiny'|'Small'|'Medium'|'Large'|'Huge'|'Gargantuan'} [size] — v1 additive (E5): render footprint
  * @property {string|null} [imageUrl]                                    — v1 additive (E5): DM token image path
+ * @property {number} [exhaustion]                                       — v1 additive (M65): 0–6, absent = 0
  */
 
 /**
@@ -235,6 +248,8 @@ export const WRAPPER_FIELD_MAP = Object.freeze({
  * @property {{revealed: string}|null} [fog] — revealed-cell bitset (map/fog.js); absent = no fog
  * @property {Record<string, EncounterEntity>} entities
  * @property {number} lastEventSeq
+ * @property {string|null} [runId]  — v1 additive (M65): the owning run
+ * @property {string|null} [nodeId] — v1 additive (M65): the campaign node
  */
 
 const ID = str({ maxLength: 128 });
@@ -263,7 +278,9 @@ const RESOURCES = shape({
     perDay: mapOf(arrayOf(shape({ id: str(), remaining: int(0) })), { keyPattern: /^[0-9]+$/ })
   })),
   legendaryBudget: int(0),
-  features: mapOf(LEDGER)
+  features: mapOf(LEDGER),
+  // v1 additive (M65 H23): consumables keyed by run item id (T23).
+  items: optional(mapOf(shape({ name: str({ maxLength: 128 }), effect: str({ maxLength: 64 }), max: int(0), spent: int(0) })))
 });
 
 const TURN_FLAGS = shape({
@@ -302,10 +319,15 @@ const ENTITY = shape({
   sheetRef: optional(nullable(shape({ characterId: ID, rev: union(int(0), str()) }))),
   // v1 additive (M65 M21, E5): `statBlock.tokenImageId` — a campaign-
   // authored token image, resolved to the room's upload by the projection.
+  // v1 additive (M65 H23, E6): `xp` / `cr` for encounterXp (R22).
   statBlock: optional(nullable(shape({
     slug: str({ maxLength: 128 }),
-    tokenImageId: optional(nullable(str({ maxLength: 128, pattern: /^[A-Za-z0-9_.:-]+$/ })))
+    tokenImageId: optional(nullable(str({ maxLength: 128, pattern: /^[A-Za-z0-9_.:-]+$/ }))),
+    xp: optional(int(0)),
+    cr: optional(union(num(0, 30), oneOf(['1/8', '1/4', '1/2'])))
   }, { strict: false }))),
+  // v1 additive (M65 H23): exhaustion level (R29); absent = 0.
+  exhaustion: optional(int(0, 6)),
   // v1 additive (E5, M64 phase 1.5): presentation-only, optional.
   facing: optional(oneOf(ENTITY_FACINGS)),
   size: optional(oneOf(ENTITY_SIZES)),
@@ -363,7 +385,10 @@ function topSpec(projected) {
     // row*cols+col LSB-first (src/js/map/fog.js). Absent/null = no fog.
     fog: optional(nullable(shape({ revealed: str({ allowEmpty: true, pattern: /^[A-Za-z0-9+/]*={0,2}$/ }) }))),
     entities: mapOf(ENTITY),
-    lastEventSeq: int(0)
+    lastEventSeq: int(0),
+    // v1 additive (M65 H23): the run / campaign node this encounter belongs to.
+    runId: optional(nullable(ID)),
+    nodeId: optional(nullable(ID))
   });
 }
 
@@ -426,7 +451,7 @@ export function validateEncounterState(state, opts = {}) {
     }
     const res = e.resources;
     if (res && typeof res === 'object') {
-      for (const bucket of ['slots', 'features']) {
+      for (const bucket of ['slots', 'features', 'items']) {
         for (const [k, l] of Object.entries(res[bucket] || {})) {
           if (l && Number.isInteger(l.spent) && Number.isInteger(l.max) && l.spent > l.max) {
             c.add(joinPath(joinPath(joinPath(p, 'resources'), bucket), k), VALIDATION_CODES.RANGE,

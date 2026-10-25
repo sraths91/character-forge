@@ -28,5 +28,6 @@
   { "seq": 27, "type": "entity.died", "round": 2, "turnId": "t2", "cinemaGroup": "x3", "payload": { "entityId": "m-goblin", "byId": "pc-fighter", "cause": "monster" } },
   { "seq": 28, "type": "entity.stabilized", "round": 3, "turnId": "t3", "cinemaGroup": null, "payload": { "entityId": "pc-fighter" } },
   { "seq": 29, "type": "entity.revived", "round": 3, "turnId": "t3", "cinemaGroup": "x4", "payload": { "entityId": "pc-fighter", "hp": 5, "byId": "pc-cleric" } },
-  { "seq": 30, "type": "resource.recharged", "round": 4, "turnId": "t4", "cinemaGroup": null, "payload": { "entityId": "m-dragon", "resource": "innate", "spellId": "fire-breath", "available": 1 } }
+  { "seq": 30, "type": "resource.recharged", "round": 4, "turnId": "t4", "cinemaGroup": null, "payload": { "entityId": "m-dragon", "resource": "innate", "spellId": "fire-breath", "available": 1 } },
+  {"seq": 31, "type": "item.used", "round": 4, "turnId": "t5", "cinemaGroup": null, "payload": {"entityId": "pc-fighter", "targetId": "pc-cleric", "itemId": "item-1", "remaining": 1}}
 ]

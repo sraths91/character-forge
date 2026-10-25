@@ -18,7 +18,7 @@
  *
  * Per-kind payloads (docs/M65-CAMPAIGN-LOOP-PLAN.md "Node kinds"):
  *   encounter  exactly one of `templateId` / `setup` (the exact
- *              `dm.encounter.setup` intent payload, protocol.js), plus
+ *              `dm.encounter.setup` intent payload, encounter-setup.js), plus
  *              `partyPlacement?` {seat '1'..'6': {col,row}}, `xpOverride?`,
  *              `loot?` {items, currency?} granted on victory
  *   rest       { type: 'short' | 'long' | 'choice' }
@@ -45,7 +45,7 @@ import {
   VALIDATION_CODES
 } from './check.js';
 import { ENCOUNTER_OUTCOMES } from './events.js';
-import { INTENT_PAYLOAD_SPECS } from './protocol.js';
+import { ENCOUNTER_SETUP_SPEC } from './encounter-setup.js';
 
 const C = VALIDATION_CODES;
 
@@ -118,7 +118,7 @@ const SETTINGS_SPEC = shape({
 export const NODE_PAYLOAD_SPECS = Object.freeze({
   encounter: shape({
     templateId: optional(ID),
-    setup: optional(INTENT_PAYLOAD_SPECS['dm.encounter.setup']),
+    setup: optional(ENCOUNTER_SETUP_SPEC),
     partyPlacement: optional(mapOf(POS, { keyPattern: /^[1-6]$/ })),
     xpOverride: optional(int(0, 1e6)),
     loot: optional(LOOT)
@@ -165,7 +165,7 @@ const NODE = shape({
 const TEMPLATE = shape({
   id: ID,
   name: str({ maxLength: 128 }),
-  setup: INTENT_PAYLOAD_SPECS['dm.encounter.setup']
+  setup: ENCOUNTER_SETUP_SPEC
 });
 
 const CAMPAIGN = shape({

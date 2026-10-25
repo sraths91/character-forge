@@ -80,6 +80,31 @@
  *        clear it): a non-humanoid monster's token image. `entity.updated`
  *        patches may carry `status` ('active' when cleared), `deathSaves`
  *        and `imageUrl` (null when cleared).
+ *   v1.6 (2026-10-25, E6 M65 H23 — the campaign loop; plan "Contract
+ *        changes") — room status `between` (protocol only: `rooms.status`
+ *        keeps its CHECK; the run is between nodes). Server messages:
+ *        `run.snapshot` (private: the viewer's projection of the run —
+ *        visited nodes, offered edges, characters, items, level-ups),
+ *        `run.updated` (broadcast: run status / current node / run seq),
+ *        `run.event` (broadcast: one run event, run-events.js; run events
+ *        travel under this one type because `item.used` and `dm.override`
+ *        also name engine events), `levelup.offer` (private, to the seat's
+ *        controller). Player intents (role 'seat' = the controller of
+ *        `slotId`): `rest.spend`, `loot.claim`, `item.equip`, `item.give`,
+ *        `item.use`, `shop.buy`, `shop.sell`, `levelup.choose`,
+ *        `levelup.reconcile`; role 'player': `story.choose`,
+ *        `seat.reclaim`. DM intents: `dm.run.advance`, `dm.run.end`,
+ *        `dm.node.begin`, `dm.rest.grant`, `dm.loot.assign`,
+ *        `dm.story.resolve`, `dm.xp.adjust`, `dm.levelup.confirm`,
+ *        `dm.levelup.revert`, `dm.character.revive`,
+ *        `dm.character.retire`, `dm.seat.fill`, `dm.snapshot.save`,
+ *        `dm.snapshot.load`, `dm.seat.reclaim.approve`. `turn.act.plan.kind`
+ *        gains `item` (T23: drink / feed a potion; `itemId` names the
+ *        entity's `resources.items` key). Between-node intents are refused
+ *        while an encounter is live (M65 decision 3).
+ *        `DIAGONAL_RULES` gains '5-10' (DMG alternating 5/10-ft diagonals,
+ *        E5's legality module): `dm.room.settings.diagonalRule` and the
+ *        `room.settings` broadcast accept it.
  *
  * Client payloads are strict (unknown fields rejected); server payloads
  * enforce required fields and allow additive ones.
@@ -89,16 +114,20 @@
 
 import {
   createCollector, checkSpec, checkJsonSafe, isPlainObject,
-  str, int, num, bool, oneOf, arrayOf, shape, anyJson, optional, nullable,
+  str, int, num, bool, oneOf, arrayOf, shape, mapOf, anyJson, optional, nullable,
   VALIDATION_CODES
 } from './check.js';
 import { CONTROLLER_TYPES, validateEncounterState } from './encounter-state.js';
 import { EVENT_TYPES, REACTION_KINDS, ENCOUNTER_OUTCOMES, ENTITY_STATUSES, validateEvent } from './events.js';
+import { ENCOUNTER_SETUP_SPEC } from './encounter-setup.js';
+import { LEVEL_UP_MODES } from './campaign.js';
+import { RUN_STATUSES, RUN_OUTCOMES, LIFE_STATUSES, LEVEL_UP_STATUSES, validateRunState } from './run-state.js';
+import { RUN_REST_TYPES, validateRunEvent } from './run-events.js';
 
 /** Wire protocol version; every message's `v` must equal this. */
 export const PROTOCOL_VERSION = 1;
 /** Additive minor revision of protocol v1 (see the header). */
-export const PROTOCOL_MINOR = 5;
+export const PROTOCOL_MINOR = 6;
 /** Longest accepted client message id. */
 export const MAX_CID_LENGTH = 64;
 
@@ -132,12 +161,40 @@ export const INTENT_ROLES = Object.freeze({
   'dm.prompt.force': 'dm',
   'dm.member.revoke': 'dm',
   'dm.room.settings': 'dm',   // v1.4
-  'dm.fog.paint': 'dm'        // v1.4
+  'dm.fog.paint': 'dm',       // v1.4
+  // v1.6 (M65) — between-node player intents. 'seat' = the controller of `slotId`.
+  'rest.spend': 'seat',
+  'loot.claim': 'seat',
+  'item.equip': 'seat',
+  'item.give': 'seat',
+  'item.use': 'seat',
+  'shop.buy': 'seat',
+  'shop.sell': 'seat',
+  'story.choose': 'player',
+  'levelup.choose': 'seat',
+  'levelup.reconcile': 'seat',
+  'seat.reclaim': 'player',
+  // v1.6 (M65) — the DM's run controls.
+  'dm.run.advance': 'dm',
+  'dm.run.end': 'dm',
+  'dm.node.begin': 'dm',
+  'dm.rest.grant': 'dm',
+  'dm.loot.assign': 'dm',
+  'dm.story.resolve': 'dm',
+  'dm.xp.adjust': 'dm',
+  'dm.levelup.confirm': 'dm',
+  'dm.levelup.revert': 'dm',
+  'dm.character.revive': 'dm',
+  'dm.character.retire': 'dm',
+  'dm.seat.fill': 'dm',
+  'dm.snapshot.save': 'dm',
+  'dm.snapshot.load': 'dm',
+  'dm.seat.reclaim.approve': 'dm'
 });
 
 /** v1.4 room settings: who sees DM fudges (dm.override), and the grid's diagonal rule. */
 export const FUDGE_VISIBILITY = Object.freeze(['public', 'dm-only']);
-export const DIAGONAL_RULES = Object.freeze(['5ft']);
+export const DIAGONAL_RULES = Object.freeze(['5ft', '5-10']);   // '5-10': v1.6, DMG alternating diagonals (E5)
 /** Bounds on the per-room reaction prompt deadline (ms). */
 export const REACTION_TIMEOUT_RANGE = Object.freeze({ min: 1000, max: 120000 });
 
@@ -165,6 +222,10 @@ const ROOM_MESSAGE_SCOPES = {
   'room.closing': 'broadcast',
   'room.settings': 'broadcast',   // v1.4
   'encounter.fog': 'broadcast',   // v1.5
+  'run.snapshot': 'private',      // v1.6
+  'levelup.offer': 'private',     // v1.6
+  'run.updated': 'broadcast',     // v1.6
+  'run.event': 'broadcast',       // v1.6
   redacted: 'broadcast'
 };
 
@@ -196,7 +257,8 @@ export const CLOSE_CODES = Object.freeze({
 });
 
 /** Room status values (`room.status`). */
-export const ROOM_STATUSES = Object.freeze(['lobby', 'setup', 'in-encounter', 'paused', 'encounter-over', 'closed', 'error']);
+export const ROOM_STATUSES = Object.freeze(['lobby', 'setup', 'in-encounter', 'paused', 'encounter-over', 'closed', 'error',
+  'between']);   // v1.6: a run between nodes
 /** Prompt kinds: the three reactions plus DM plan / roll review. */
 export const PROMPT_KINDS = Object.freeze([...REACTION_KINDS, 'plan', 'roll']);
 /** Rolls the DM may arm or edit in phase 1 (monster / AI rolls only). */
@@ -205,7 +267,10 @@ export const ROLL_KINDS = Object.freeze(['attack', 'damage', 'save']);
 export const FOG_PAINT_OPS = Object.freeze(['reveal', 'hide']);
 
 /** Plan kinds a client may submit in `turn.act`. */
-export const INTENT_PLAN_KINDS = Object.freeze(['melee', 'ranged', 'attack', 'cast', 'dash', 'dodge', 'disengage', 'move', 'feature']);
+export const INTENT_PLAN_KINDS = Object.freeze(['melee', 'ranged', 'attack', 'cast', 'dash', 'dodge', 'disengage', 'move', 'feature',
+  'item']);   // v1.6 (M65 T23): use a potion / consumable
+/** How the DM brings a dead character back (v1.6). */
+export const DM_REVIVE_METHODS = Object.freeze(['revivify', 'raise-dead', 'dm']);
 
 const ID = str({ maxLength: 128 });
 const POS = shape({ col: int(0), row: int(0) });
@@ -221,7 +286,17 @@ const PLAN = shape({
   moveTo: optional(POS),
   path: optional(arrayOf(POS, { max: 64 })),
   features: optional(arrayOf(str({ maxLength: 64 }), { max: 8, unique: true })),
-  featureId: optional(str({ maxLength: 64 }))   // v1.4 — a `feature` action (Second Wind, Rage)
+  featureId: optional(str({ maxLength: 64 })),  // v1.4 — a `feature` action (Second Wind, Rage)
+  itemId: optional(ID)                          // v1.6 — an `item` action: the entity's resources.items key
+});
+
+const SLOT_ID = ID;
+const QTY = int(1, 999);
+const ABILITY_KEY = /^(STR|DEX|CON|INT|WIS|CHA)$/;
+const LEVELUP_CHOICES = shape({
+  asi: optional(mapOf(int(1, 2), { keyPattern: ABILITY_KEY })),   // +2 one, or +1/+1
+  spells: optional(arrayOf(str({ maxLength: 128 }), { max: 8, unique: true })),
+  className: optional(str({ maxLength: 64 }))   // which existing class gains the level
 });
 
 /** Client payload specs (strict). Exported frozen as INTENT_PAYLOAD_SPECS below. */
@@ -235,15 +310,7 @@ const INTENT_PAYLOADS = {
   'turn.delegate': shape({ turnId: ID }),
   'prompt.answer': shape({ promptId: ID, answer: anyJson() }),
   'cinema.done': shape({ exchangeId: ID }),
-  'dm.encounter.setup': shape({
-    map: nullable(shape({}, LOOSE)),
-    grid: shape({ cols: int(1, 500), rows: int(1, 500) }, LOOSE),
-    monsters: arrayOf(shape({}, LOOSE), { max: 64 }),
-    placements: shape({}, LOOSE),
-    // v1 additive (E3, M64 W4): the starting fog-of-war bitset (map/fog.js).
-    fog: optional(nullable(shape({ revealed: str({ allowEmpty: true, maxLength: 4096, pattern: /^[A-Za-z0-9+/]*={0,2}$/ }) }))),
-    initiativeMode: optional(oneOf(['individual', 'grouped']))   // v1.2
-  }),
+  'dm.encounter.setup': ENCOUNTER_SETUP_SPEC,   // encounter-setup.js (shared with campaign.js)
   'dm.initiative.roll': shape({}),
   'dm.initiative.set': shape({ order: arrayOf(ID, { min: 1, unique: true }) }),
   'dm.encounter.start': shape({ seed: optional(int(0, 0xFFFFFFFF)) }),
@@ -282,6 +349,40 @@ const INTENT_PAYLOADS = {
   }),
   // v1.4 — the DM's fog reveal / hide brush.
   'dm.fog.paint': shape({ cells: arrayOf(POS, { min: 1, max: 4096 }), op: oneOf(FOG_PAINT_OPS) }),
+  // v1.6 (M65) — between-node player intents.
+  'rest.spend': shape({ slotId: SLOT_ID, hitDice: mapOf(int(1, 20), { keyPattern: /^[A-Za-z][A-Za-z '-]{0,63}$/ }) }),
+  'loot.claim': shape({ slotId: SLOT_ID, itemId: ID, qty: optional(QTY) }),
+  'item.equip': shape({ slotId: SLOT_ID, itemId: ID, equipped: bool(), attuned: optional(bool()) }),
+  'item.give': shape({ slotId: SLOT_ID, itemId: ID, toSlotId: nullable(SLOT_ID), qty: optional(QTY) }),
+  'item.use': shape({ slotId: SLOT_ID, itemId: ID, targetSlotId: optional(SLOT_ID) }),
+  'shop.buy': shape({ slotId: SLOT_ID, refKey: str({ maxLength: 128 }), qty: int(1, 99) }),
+  'shop.sell': shape({ slotId: SLOT_ID, itemId: ID, qty: QTY }),
+  'story.choose': shape({ nodeId: ID, choiceId: ID }),
+  'levelup.choose': shape({ slotId: SLOT_ID, levelUpId: ID, choices: LEVELUP_CHOICES }),
+  'levelup.reconcile': shape({ slotId: SLOT_ID }),
+  'seat.reclaim': shape({ slotId: SLOT_ID }),
+  // v1.6 (M65) — the DM's run controls.
+  'dm.run.advance': shape({ toNodeId: ID, override: optional(bool()) }),   // override: "go to any node"
+  'dm.run.end': shape({ outcome: oneOf(RUN_OUTCOMES) }),
+  'dm.node.begin': shape({ setup: optional(ENCOUNTER_SETUP_SPEC) }),       // the DM's tweak of an encounter node
+  'dm.rest.grant': shape({ type: oneOf(RUN_REST_TYPES), slotIds: optional(arrayOf(SLOT_ID, { min: 1, max: 6, unique: true })) }),
+  'dm.loot.assign': shape({ itemId: ID, toSlotId: nullable(SLOT_ID), qty: optional(QTY) }),
+  'dm.story.resolve': shape({ nodeId: ID, choiceId: ID }),
+  'dm.xp.adjust': shape({ slotId: SLOT_ID, delta: int(-355000, 355000), reason: optional(str({ maxLength: 200 })) }),
+  'dm.levelup.confirm': shape({ levelUpId: ID, choices: optional(LEVELUP_CHOICES) }),
+  'dm.levelup.revert': shape({ levelUpId: ID }),
+  'dm.character.revive': shape({ slotId: SLOT_ID, method: oneOf(DM_REVIVE_METHODS), casterSlotId: optional(SLOT_ID) }),
+  'dm.character.retire': shape({ slotId: SLOT_ID, reason: optional(str({ maxLength: 200 })) }),
+  'dm.seat.fill': shape({
+    seat: int(1, 6),
+    characterId: nullable(ID),                 // null = an AI seat with no character yet
+    controller: oneOf(CONTROLLER_TYPES),
+    memberId: optional(nullable(ID)),
+    level: optional(int(1, 20))
+  }),
+  'dm.snapshot.save': shape({ label: optional(str({ maxLength: 128 })) }),
+  'dm.snapshot.load': shape({ snapshotId: ID }),
+  'dm.seat.reclaim.approve': shape({ slotId: SLOT_ID, memberId: ID, approve: bool() }),
   // v1.3 — the DM resolves a spell outside the engine's registry.
   'dm.spell.adjudicate': shape({
     casterId: ID,
@@ -297,11 +398,7 @@ const INTENT_PAYLOADS = {
   })
 };
 
-/**
- * Client payload spec per intent type (strict). Exported for contracts
- * that embed an intent payload — M65 campaign.js validates an encounter
- * node's inline `setup` against `INTENT_PAYLOAD_SPECS['dm.encounter.setup']`.
- */
+/** Client payload spec per intent type (strict), for callers that embed an intent payload. */
 export const INTENT_PAYLOAD_SPECS = Object.freeze(INTENT_PAYLOADS);
 
 /** Broadcasts a `redacted {type}` may stand in for (v1.4: engine events + entity.updated). */
@@ -338,7 +435,26 @@ const SERVER_PAYLOADS = {
     reactionTimeoutMs: int(0), importLiveState: bool(), fudgeVisibility: oneOf(FUDGE_VISIBILITY), diagonalRule: oneOf(DIAGONAL_RULES)
   }, LOOSE) }, LOOSE),   // v1.4
   'encounter.fog': shape({ fog: shape({ revealed: str({ allowEmpty: true, pattern: /^[A-Za-z0-9+/]*={0,2}$/ }) }, LOOSE) }, LOOSE),   // v1.5
-  redacted: shape({ type: oneOf(REDACTABLE_TYPES) }, LOOSE)   // v1.4: + entity.updated
+  redacted: shape({ type: oneOf(REDACTABLE_TYPES) }, LOOSE),   // v1.4: + entity.updated
+  // v1.6 (M65) — the run. `run.seq` / `runSeq` is the run event seq, not the room seq.
+  'run.snapshot': shape({
+    run: shape({ id: ID, status: oneOf(RUN_STATUSES), currentNodeId: nullable(ID), seq: int(0) }, LOOSE),
+    nodes: arrayOf(shape({ id: ID, kind: str(), title: str({ allowEmpty: true }) }, LOOSE)),   // visited (players) / all (DM)
+    edges: arrayOf(shape({ to: ID }, LOOSE)),                                             // offered now
+    characters: arrayOf(shape({
+      slotId: ID, seat: int(1, 6), level: int(1, 20), xp: int(0), lifeStatus: oneOf(LIFE_STATUSES),
+      state: optional(anyJson())   // validated as state_json v1 when present
+    }, LOOSE), { max: 6 }),
+    items: arrayOf(shape({ id: ID, ownerSlotId: nullable(ID), name: str(), qty: int(0) }, LOOSE)),
+    levelUps: arrayOf(shape({ id: ID, slotId: ID, status: oneOf(LEVEL_UP_STATUSES) }, LOOSE))
+  }, LOOSE),
+  'run.updated': shape({ runId: ID, status: oneOf(RUN_STATUSES), currentNodeId: nullable(ID), runSeq: int(0) }, LOOSE),
+  'run.event': shape({}, LOOSE),   // a run event, validated with validateRunEvent
+  'levelup.offer': shape({
+    levelUpId: ID, slotId: ID, fromLevel: int(1, 20), toLevel: int(1, 20),
+    mode: oneOf(LEVEL_UP_MODES), status: oneOf(LEVEL_UP_STATUSES),
+    auto: shape({}, LOOSE), choices: optional(shape({}, LOOSE))
+  }, LOOSE)
 };
 
 const CLIENT_ENVELOPE = shape({
@@ -417,6 +533,17 @@ export function validateServerMessage(msg) {
   }
 
   checkSpec(c, msg.p, SERVER_PAYLOADS[msg.t], 'p');
+  if (msg.t === 'run.event') {
+    for (const err of validateRunEvent(msg.p).errors) c.add(err.path ? `p.${err.path}` : 'p', err.code, err.message);
+  }
+  if (msg.t === 'run.snapshot' && Array.isArray(msg.p.characters)) {
+    msg.p.characters.forEach((ch, i) => {
+      if (!isPlainObject(ch) || ch.state === undefined) return;
+      for (const err of validateRunState(ch.state).errors) {
+        c.add(err.path ? `p.characters[${i}].state.${err.path}` : `p.characters[${i}].state`, err.code, err.message);
+      }
+    });
+  }
   if (msg.t === 'room.snapshot' && isPlainObject(msg.p.encounter)) {
     for (const err of validateEncounterState(msg.p.encounter, { projected: true }).errors) {
       c.add(err.path ? `p.encounter.${err.path}` : 'p.encounter', err.code, err.message);
