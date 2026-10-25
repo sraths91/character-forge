@@ -39,6 +39,7 @@ import {
 } from './grid-rules.js';
 import { evaluateFeatures } from './class-feature-rules.js';
 import { coverBetween } from './grid-legality.js';
+import { exhaustionLevelOf, exhaustionEffects } from '../campaign/exhaustion.js';
 
 /** AC bonus per cover degree (PHB p196). */
 export const COVER_AC_BONUS = Object.freeze({ none: 0, half: 2, threeQuarters: 5, total: 0 });
@@ -178,6 +179,10 @@ export function resolveAttack(ctx) {
   if (attackerConditions.has('restrained'))  disReasons.push('Attacker restrained');
   if (attackerConditions.has('prone'))       disReasons.push('Attacker prone');
   if (attackerConditions.has('invisible'))   advReasons.push('Attacker invisible');
+  // M65 R29 — exhaustion 3+ (SRD): disadvantage on attack rolls. Read from
+  // the entity's `exhaustion` level (or an exhaustion condition object).
+  const exhaustion = exhaustionLevelOf(attacker);
+  if (exhaustionEffects(exhaustion).attackDisadvantage) disReasons.push(`Attacker exhausted (level ${exhaustion})`);
 
   // Target conditions
   if (targetConditions.has('blinded'))     advReasons.push('Target blinded');
