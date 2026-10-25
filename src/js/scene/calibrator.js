@@ -22,6 +22,7 @@
  */
 
 import { simulateEncounter } from './simulator.js';
+import { CR_XP } from '../campaign/xp.js';
 
 /**
  * @param {object} args
@@ -111,19 +112,7 @@ const PC_THRESHOLDS = {
   20: { easy:  2800, medium: 5700, hard: 8500, deadly: 12700 }
 };
 
-/**
- * 5e DMG monster XP by Challenge Rating. Covers CR 0–20 (lower-end is
- * the common encounter-design range). For higher-CR monsters, callers
- * should pass an explicit `xp` override on the preset.
- */
-const CR_XP = {
-   0:    10,  '1/8':  25,  '1/4':  50,  '1/2': 100,
-   1:   200,    2:   450,    3:   700,    4:  1100,
-   5:  1800,    6:  2300,    7:  2900,    8:  3900,
-   9:  5000,   10:  5900,   11:  7200,   12:  8400,
-  13: 10000,  14: 11500,  15: 13000,  16: 15000,
-  17: 18000,  18: 20000,  19: 22000,  20: 25000
-};
+// M65 R24 — CR_XP (SRD CR 0–30) lives in src/js/campaign/xp.js.
 
 /** Encounter multiplier for monster count (DMG p82). */
 function encounterMultiplier(count, partySize) {
