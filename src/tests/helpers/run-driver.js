@@ -508,7 +508,8 @@ export async function runScript(script, adapter, opts = {}) {
  * Rebuild every character's final state from the run events alone (the
  * replay contract B24 / B26 rely on): character.joined seeds, the
  * `after` of encounter.result / rest.taken / xp.awarded / character.died /
- * level.applied overwrite, level.queued queues, level.applied dequeues.
+ * level.applied / between-node item.used / dm.override (xp) overwrite,
+ * level.queued queues, level.applied dequeues.
  * @param {object[]} runEvents
  * @returns {Record<string, {state: object, xp: number, level: number, lifeStatus: string, pendingLevels: number[]}>}
  */
@@ -532,6 +533,14 @@ export function replayRunEvents(runEvents) {
       case 'level.applied':
         Object.assign(out[p.slotId], clone(p.after));
         out[p.slotId].pendingLevels.shift();
+        break;
+      // Between-node item.use (B25) carries the drinker's state; the
+      // engine's in-encounter item.used does not (encounter.result has it).
+      case 'item.used':
+        if (p.after?.state && out[p.targetSlotId ?? p.slotId]) out[p.targetSlotId ?? p.slotId].state = clone(p.after.state);
+        break;
+      case 'dm.override':
+        if (p.kind === 'xp' && out[p.slotId]) out[p.slotId].xp = p.after.xp;
         break;
       default: break;
     }

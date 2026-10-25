@@ -1,0 +1,27 @@
+{
+  "about": "M65 S21 run smoke: the run event types of the 3-node campaign (goblin ambush → short rest → bugbear den with loot), run seed 20261025, players acting with melee turn.act, potion, level-up confirm, run end.",
+  "seed": 20261025,
+  "types": [
+    "run.started",
+    "character.joined",
+    "character.joined",
+    "node.entered",
+    "encounter.result",
+    "xp.awarded",
+    "node.completed",
+    "node.entered",
+    "rest.taken",
+    "node.completed",
+    "node.entered",
+    "encounter.result",
+    "xp.awarded",
+    "level.queued",
+    "level.queued",
+    "loot.granted",
+    "node.completed",
+    "item.moved",
+    "item.used",
+    "level.applied",
+    "run.ended"
+  ]
+}
