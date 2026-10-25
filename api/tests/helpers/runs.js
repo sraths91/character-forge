@@ -73,6 +73,14 @@ export function openRoom(ctx, { log = quiet } = {}) {
         list.push(msg);
         // Players finish every cinema at once.
         if (msg.t === 'exchange') setImmediate(() => room.handle(conn, memberId, { t: 'cinema.done', cid: `cd${++cid}`, p: { exchangeId: msg.p.payload.exchangeId } }));
+        // A seated player hands every turn to the AI.
+        setImmediate(() => {
+          const aw = room.turn?.awaiting;
+          if (aw && aw.ownerId === memberId && !aw.delegated) {
+            aw.delegated = true;
+            room.handle(conn, memberId, { t: 'turn.delegate', cid: `td${++cid}`, p: { turnId: room.turn.turnId } });
+          }
+        });
       },
       close() {}
     };

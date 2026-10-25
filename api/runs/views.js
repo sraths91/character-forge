@@ -85,6 +85,35 @@ export function stripProse(v) {
   return out;
 }
 
+/** Sheet keys that are character prose, removed whole by publicSheet. */
+const SHEET_PROSE_FIELDS = ['traits', 'backstory', 'notes', 'personalityTraits', 'ideals', 'bonds', 'flaws'];
+/** Keys holding rules prose at any depth of a sheet. */
+const SHEET_PROSE_KEYS = new Set(['description', 'snippet', 'desc']);
+
+function stripSheetKeys(v) {
+  if (Array.isArray(v)) return v.map(stripSheetKeys);
+  if (!v || typeof v !== 'object') return v;
+  const out = {};
+  for (const [k, x] of Object.entries(v)) if (!SHEET_PROSE_KEYS.has(k)) out[k] = stripSheetKeys(x);
+  return out;
+}
+
+/**
+ * A run sheet for anyone but its seat's controller and the DM (M65
+ * decision 9, licensing): names, numbers and the appearance the sprites
+ * need stay; every rules description (classFeatures[].description,
+ * spell and feat prose, progression.*.features[].description, level
+ * scale notes) and the character's own prose (traits, backstory) go.
+ * @param {object|null} sheet
+ * @returns {object|null} a new object
+ */
+export function publicSheet(sheet) {
+  if (!sheet || typeof sheet !== 'object') return sheet ?? null;
+  const out = stripSheetKeys(sheet);
+  for (const k of SHEET_PROSE_FIELDS) delete out[k];
+  return out;
+}
+
 /**
  * The `run.snapshot` payload for one member.
  * @param {object} ctx

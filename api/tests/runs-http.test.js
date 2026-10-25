@@ -91,3 +91,43 @@ test('B26 HTTP: DM recovery — the campaign key mints a fresh DM token; the old
     assert.equal(me.body.me.role, 'dm');
   } finally { await srv.close(); }
 });
+
+test('B27 HTTP: GET /api/rooms/:id/seats/:slotId/sheet serves the run sheet — full to its seat and the DM, stripped to others', async () => {
+  const { srv, url } = await boot();
+  try {
+    const { cid, key } = await campaign(url);
+    const room = (await api(url, '/api/rooms', { method: 'POST', body: {} })).body;
+    const join = async (name) => (await api(url, '/api/rooms/join', { method: 'POST', body: { code: room.code, displayName: name } })).body;
+    const pat = await join('Pat');
+    const sam = await join('Sam');
+    const imp = await api(url, `/api/import?room=${room.roomId}`, { method: 'POST', token: pat.token, body: { json: ddbFixture('cleric-l5') } });
+    const cleric = String(imp.body.character.id);
+    const seat = await api(url, `/api/rooms/${room.roomId}/seats/1/claim`, { method: 'POST', token: pat.token, body: { characterId: cleric } });
+    const slotId = seat.body.seat.slotId;
+    assert.equal((await api(url, `/api/campaigns/${cid}/runs`, { method: 'POST', token: key, body: {}, headers: { 'x-room-token': room.dmToken } })).status, 201);
+    // The run sheet differs from the import once the game changes it.
+    const store = srv.registry.get(room.roomId).run.store;
+    const c = store.getCharacter(slotId);
+    store.updateCharacter(c.runId, slotId, c.version, { sheet: { ...c.sheet, name: 'Saris the Leveled' } });
+    const path = `/api/rooms/${room.roomId}/seats/${slotId}/sheet`;
+    const mine = await api(url, path, { token: pat.token });
+    assert.equal(mine.status, 200);
+    assert.equal(mine.body.sheet.name, 'Saris the Leveled', 'the run sheet, not the DDB seed');
+    assert.ok(mine.body.sheet.classFeatures.some(f => f.description));
+    assert.equal(mine.body.prose, undefined);
+    const dm = await api(url, path, { token: room.dmToken });
+    assert.ok(dm.body.sheet.classFeatures.some(f => f.description));
+    const other = await api(url, path, { token: sam.token });
+    assert.equal(other.status, 200);
+    assert.equal(other.body.prose, 'stripped');
+    assert.equal(JSON.stringify(other.body).includes('synthetic text'), false, 'no prose for another player');
+    assert.equal((await api(url, path)).status, 401);
+    const view = await api(url, `/api/rooms/${room.roomId}/run`, { token: sam.token });
+    assert.equal(view.status, 200);
+    assert.deepEqual(view.body.nodes.map(n => n.id), ['n-ambush']);
+    assert.equal(JSON.stringify(view.body).includes('synthetic text'), false);
+    // /api/characters/:ddbId stays gated (stripped for another member).
+    const ch = await api(url, `/api/characters/${cleric}`, { token: sam.token });
+    assert.equal(ch.body.prose, 'stripped');
+  } finally { await srv.close(); }
+});

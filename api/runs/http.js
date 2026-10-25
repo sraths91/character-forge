@@ -11,6 +11,11 @@
 //        the start node), or — with no X-Room-Token — creates a room for
 //        it (the DM token is returned once) where the run waits in the
 //        lobby until the party is seated and the DM sends dm.node.begin.
+//   GET  /api/rooms/:id/seats/:slotId/sheet   (member)  → {sheet, prose?}
+//        The seat's RUN sheet (sheet_json; the seed outside a run): full
+//        for the seat's controller and the DM, publicSheet (prose
+//        stripped, `prose: 'stripped'`) for everyone else (B27).
+//   GET  /api/rooms/:id/run   (member)  → run.snapshot payload for the caller (B27)
 //   POST /api/campaigns/:cid/runs/:runId/dm-token   (campaign key)
 //        → 201 {dmToken, roomId, code}   DM recovery (B26): a fresh DM token for the
 //        run's room; the old one stops working and its socket is closed.
@@ -18,6 +23,7 @@
 import { bearerToken, generateToken, hashToken } from '../rooms/tokens.js';
 import { RoomError as ApiError } from '../rooms/service.js';
 import { validateCampaign } from '../../src/js/shared/campaign.js';
+import { publicSheet } from './views.js';
 
 const isObj = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
 
@@ -104,6 +110,30 @@ export function mountRunRoutes(app, { registry, rooms, campaigns, runs, log = ()
     }
     log('info', 'runs: started over HTTP', { campaignId: c.id, roomId: dm.roomId, runId: out.runId });
     res.status(201).json({ ...out, roomId: dm.roomId, code: rooms.store.getRoom(dm.roomId).code, dmToken });
+  }));
+
+  /** The member a bearer room token names, for room :id. */
+  function member(req) {
+    const a = rooms.authenticate(bearerToken(req));
+    if (!a || a.roomId !== req.params.id) throw new ApiError(401, 'UNAUTHENTICATED', 'A token for this room is required');
+    return a;
+  }
+
+  app.get('/api/rooms/:id/seats/:slotId/sheet', wrap((req, res) => {
+    const a = member(req);
+    const seat = rooms.store.getSeatById(req.params.id, req.params.slotId);
+    if (!seat) throw new ApiError(404, 'NOT_FOUND', 'No such seat');
+    const sheet = seat.runId && seat.sheet ? seat.sheet : seat.seed;
+    if (!sheet) throw new ApiError(404, 'NOT_FOUND', 'That seat has no character');
+    const full = a.role === 'dm' || seat.controllerParticipantId === a.participantId;
+    res.json(full ? { sheet, ...(seat.runId ? { run: true } : {}) } : { sheet: publicSheet(sheet), prose: 'stripped', ...(seat.runId ? { run: true } : {}) });
+  }));
+
+  app.get('/api/rooms/:id/run', wrap((req, res) => {
+    const a = member(req);
+    const snap = registry.get(req.params.id)?.run?.snapshotFor({ role: a.role, id: a.participantId });
+    if (!snap) throw new ApiError(404, 'NOT_FOUND', 'This room has no run');
+    res.json(snap);
   }));
 
   app.post('/api/campaigns/:cid/runs/:runId/dm-token', wrap((req, res) => {
