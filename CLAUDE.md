@@ -79,6 +79,35 @@ State crosses the engine boundary only as EncounterState v1
 wrapper field). Shared contracts in `src/js/shared/` (encounter state,
 events, protocol, state hash) change additively with a version note.
 
+**The run-state seam (M65).** Between encounters a run PC's mutable state
+is `state_json` v1 (`src/js/shared/run-state.js`, "spent, not remaining";
+maxima always come from the sheet). It crosses into and out of an
+encounter only through `encounter-adapters.js`:
+
+```
+entityFromSheet(sheet, {pos, runState, items})   state_json v1 → entity
+    HP / temp HP, spent slots + pact, feat:* / spell:* ledgers,
+    ddb:* uses carried inert (DM-adjudicated, written back untouched),
+    persistent conditions, death saves, exhaustion
+    (campaign/exhaustion.js applyExhaustionToEntity); `items` (run-item
+    map or list, runItemsLedger) → resources.items
+  → turnStateFromEncounter → runTurn / runEncounter → …
+  → endEncounterCleanup(ts)    (turn-manager.js: concentration and every
+                                non-persistent condition end; spends kept)
+  → encounterFromTurnState
+runStateFromEntity(entity, prevState)            entity → state_json v1
+    a NEW state; every key the engine does not own is kept
+itemSpendFromEntity(entity)                      → run_items write-back
+```
+
+Rests, level-up, XP, loot, potions between nodes, death / revival live in
+`src/js/campaign/` (pure, Node + browser, inside the T10 portability
+guard, seeded rng only). The scene closure may import campaign modules
+(one exhaustion table, one potion registry: `campaign/consumables.js`
+`POTIONS`). **No combat rule outside `src/js/scene/`, no progression rule
+outside `src/js/campaign/`** (M65 plan); `api/runs/**` sequences and
+persists, it does not compute 5e.
+
 The non-engine `runAttackPrompt` / `runSpellSavePrompt` path remains
 as a fallback for spells without a `monster-spells.js` registry
 entry (homebrew, edge cases).
