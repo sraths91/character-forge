@@ -9,7 +9,7 @@ import assert from 'node:assert/strict';
 import {
   entityFromSheet, entityFromPreset, runStateFromEntity, wrapperFromEntity, applyEngineSides,
   featureKeyForRunResource, runResourceKeyForFeature, itemSpendFromEntity,
-  endsWithEncounter
+  endsWithEncounter, applyWrapperToEntity, CARRIED_RESOURCE_PREFIX
 } from '../js/scene/encounter-adapters.js';
 import * as adapters from '../js/scene/encounter-adapters.js';
 import { exhaustionEffects } from '../js/campaign/exhaustion.js';
@@ -97,7 +97,7 @@ test('T21: a runState seeds HP, temp HP, spent slots, feature uses and persisten
   assert.deepEqual([e.hp, e.hpMax, e.hpTemp, e.speedFt], [20, 32, 3, 30]);
   assert.deepEqual(e.resources.slots, { 1: { max: 4, spent: 3 }, 2: { max: 3, spent: 1 }, 3: { max: 2, spent: 0 } });
   assert.deepEqual(e.resources.features['arcane-recovery'], { max: 1, spent: 1 });
-  assert.equal(e.resources.features['ddb:777'], undefined, 'ddb:* is not an engine ledger');
+  assert.deepEqual(e.resources.features['ddb:777'], { max: 3, spent: 2 }, 'ddb:* rides along as an inert ledger');
   assert.deepEqual(validateRunState(wizardState(), { sheet }).errors, []);
   assert.deepEqual(e.conditions, [{ id: 'poisoned', sourceId: 'sewer-rat', endsOn: 'persistent' }], 'a DM-marked persistent condition');
   assert.equal(e.status, undefined, 'active');
@@ -360,3 +360,36 @@ function randomRunState(sheet, rng) {
   rs.currency = { cp: pick(50), sp: pick(10), ep: 0, gp: pick(200), pp: pick(3) };
   return rs;
 }
+
+test('T21: unknown ddb:* resources (Harness Divine Power) ride the entity untouched through an encounter into runStateFromEntity', async () => {
+  assert.equal(CARRIED_RESOURCE_PREFIX, 'ddb:');
+  const sheet = parsedDdbFixture('cleric-l5');
+  // A real DDB export: E4's R23 map keys a limited use no engine rule models as ddb:<componentId>.
+  sheet.resources = { ...sheet.resources, 'ddb:1234567': { label: 'Harness Divine Power', max: 1, spent: 0, recovery: ['lr'], source: 'feature' } };
+  const prev = initialRunState(sheet);
+  assert.ok(prev.resources['ddb:1234567'], 'initialRunState carries the DDB use');
+  prev.resources['ddb:1234567'].spent = 1;   // the DM adjudicated a use between nodes
+  assert.deepEqual(validateRunState(prev, { sheet }).errors, []);
+  const e = entityFromSheet(sheet, { ...OPTS, runState: prev });
+  assert.deepEqual(e.resources.features['ddb:1234567'], { max: 1, spent: 1 });
+  assert.deepEqual(validateEncounterState(stateWith([e])).errors, []);
+  // Through the engine wrapper and a real fight.
+  const viaWrapper = applyWrapperToEntity(e, wrapperFromEntity(e, sheet));
+  assert.deepEqual(viaWrapper.resources.features['ddb:1234567'], { max: 1, spent: 1 });
+  const state = stateWith([e]);
+  ['goblin', 'goblin'].forEach((slug, k) => {
+    const m = entityFromPreset(slug, { id: `m${k}`, pos: { col: 5, row: k + 1 } });
+    state.entities[m.id] = m;
+  });
+  const rng = createRng({ s: 31 });
+  const ts = turnStateFromEncounter(state, { [String(sheet.id)]: sheet });
+  startEncounter(ts, { rng, initiative: 'roll', maxRounds: 4 });
+  await runEncounter(ts, { rng });
+  const after = encounterFromTurnState(ts, rng).entities[e.id];
+  assert.deepEqual(after.resources.features['ddb:1234567'], { max: 1, spent: 1 }, 'no engine rule spends it');
+  const out = runStateFromEntity(after, prev);
+  assert.deepEqual(out.resources['ddb:1234567'], prev.resources['ddb:1234567'], 'written back untouched');
+  assert.deepEqual(validateRunState(out, { sheet }).errors, []);
+  // A writer without the previous state still gets it back (DM-adjudicated: no recovery known).
+  assert.deepEqual(runStateFromEntity(after, {}).resources['ddb:1234567'], { label: 'ddb:1234567', max: 1, spent: 1, recovery: [] });
+});

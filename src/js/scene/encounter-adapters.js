@@ -36,8 +36,12 @@
  *                              'feat:legendary-resistance', …)
  *   'spell:<spellId>'        ↔ features['spell:<spellId>'] (granted-spell
  *                              uses: Fey Touched Misty Step)
- *   'ddb:*', 'item:*', 'dm:*' — limited uses the engine does not model:
- *                              never read, never written (preserved)
+ *   'ddb:<id>'               ↔ features['ddb:<id>'] — a DDB limited use
+ *                              no engine rule models (Harness Divine
+ *                              Power, …): carried on the entity as an inert
+ *                              ledger (nothing spends it; DM-adjudicated
+ *                              between nodes) and written back untouched
+ *   'item:*', 'dm:*'         — never read, never written (preserved)
  *
  * Conditions: only those the run state marks `conditionMeta[id].persistent`
  * enter the encounter as `endsOn: 'persistent'` and survive its end; the
@@ -556,6 +560,16 @@ function restedEntityFromSheet(sheet, opts) {
 /** Run-state resource prefixes whose ledgers the engine spends. */
 export const ENGINE_RESOURCE_PREFIXES = Object.freeze(['feat:', 'spell:']);
 
+/**
+ * Run-state resource prefix the entity carries through an encounter
+ * untouched: DDB limited uses no engine rule models. They ride in
+ * `resources.features['ddb:<id>']` ({max, spent}); no engine code spends
+ * them, and runStateFromEntity writes them back as they came in.
+ */
+export const CARRIED_RESOURCE_PREFIX = 'ddb:';
+
+const isCarriedResource = (key) => String(key || '').startsWith(CARRIED_RESOURCE_PREFIX) && String(key).length > CARRIED_RESOURCE_PREFIX.length;
+
 /** Default recovery periods (rest.js vocabulary) of ledgers the engine creates. */
 const DEFAULT_RECOVERY = Object.freeze({
   'action-surge': ['sr'],
@@ -653,8 +667,15 @@ function seedFromRunState(rested, rs) {
     res.pact.spent = clampInt(rs.slots.pact.spent, 0, res.pact.max);
   }
   for (const [key, r] of Object.entries(rs.resources || {})) {
+    if (!r || typeof r !== 'object') continue;
+    if (isCarriedResource(key)) {
+      // A DDB limited use the engine does not model: carried, never spent.
+      const max = Math.trunc(Number(r.max) || 0);
+      if (max > 0 && !res.features[key]) res.features[key] = { max, spent: clampInt(r.spent, 0, max) };
+      continue;
+    }
     const fk = featureKeyForRunResource(key);
-    if (!fk || !r || typeof r !== 'object') continue;
+    if (!fk) continue;
     const ledger = res.features[fk];
     if (ledger) ledger.spent = clampInt(r.spent, 0, ledger.max);
     else if (Math.trunc(Number(r.max) || 0) > 0) {
@@ -702,8 +723,10 @@ function ledgerLabel(featureKey) {
  * Write an encounter's result for one PC back onto its run state
  * (state_json v1). Returns a NEW state; `prevState` is never mutated and
  * every key the engine does not own (hit dice, currency, inspiration,
- * `ddb:*` resources, labels / maxima / recovery, unknown keys) is kept as
- * it was. Engine-owned keys:
+ * labels / maxima / recovery, unknown keys) is kept as it was. `ddb:*`
+ * resources ride the entity untouched and are written back as they came
+ * in (one `prevState` lacks is added as `{label: key, max, spent,
+ * recovery: []}`). Engine-owned keys:
  *   hp {current, temp}; deathSaves (reset while active); slots.spell[lvl].spent
  *   and slots.pact.spent; resources[key].spent for every mapped ledger (a
  *   ledger the state lacks is added, `{label, max, spent, recovery}`, only
@@ -749,7 +772,11 @@ export function runStateFromEntity(entity, prevState = {}) {
     const rk = runResourceKeyForFeature(fk);
     const spent = clampInt(l.spent, 0, Math.max(0, Math.trunc(Number(l.max) || 0)));
     if (resources[rk]) resources[rk] = { ...resources[rk], spent };
-    else if (spent > 0) {
+    else if (isCarriedResource(rk)) {
+      // Carried DDB use with no record in prevState: kept, DM-adjudicated
+      // (no recovery the engine could know; the label is the key).
+      resources[rk] = { label: rk, max: Math.trunc(Number(l.max) || 0), spent, recovery: [] };
+    } else if (spent > 0) {
       resources[rk] = {
         label: ledgerLabel(fk), max: Math.trunc(Number(l.max) || 0), spent,
         recovery: [...(DEFAULT_RECOVERY[fk] || ['lr'])]
