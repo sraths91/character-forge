@@ -185,9 +185,12 @@ test('run-state: ddb:<componentId> resources from a real-shaped export are DM-ad
   assert.deepEqual(['ddb:5299', 'ddb:77', 'ddb:88'].map(k => live.resources[k].spent), [1, 1, 2]);
   assert.deepEqual(validateRunState(live, { sheet }).errors, []);
 
-  // The engine ignores them: no entity ledger, and the write-back keeps them.
+  // The engine carries them as inert ledgers (E1, b897a30) and the
+  // write-back returns them exactly as they came in.
   const e = entityFromSheet(sheet, { id: 'pc-1', pos: { col: 0, row: 0 }, runState: live });
-  for (const k of ddbKeys) assert.equal(e.resources.features[k], undefined, `${k} has no engine ledger`);
+  for (const k of ddbKeys) {
+    assert.deepEqual(e.resources.features[k], { max: live.resources[k].max, spent: live.resources[k].spent }, `${k} rides along inert`);
+  }
   const back = runStateFromEntity(e, live);
   for (const k of ddbKeys) assert.deepEqual(back.resources[k], live.resources[k], `${k} persists through an encounter`);
   assert.deepEqual(validateRunState(back, { sheet }).errors, []);
