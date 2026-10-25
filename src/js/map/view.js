@@ -57,6 +57,22 @@
  *   tokens[].imageUrl  DM-uploaded token image (same-origin path, see
  *                    isTokenImageUrl) drawn instead of the LPC composite
  *                    (circular mask + side ring, same bake-cache slot).
+ *
+ * v1 additive fields (M65 M21, E5 — optional, no version bump):
+ *   tokens[].imageId  the campaign-authored `statBlock.tokenImageId` the
+ *                    token's `imageUrl` was resolved from (absent when the
+ *                    entity carried its own `imageUrl`). It is part of the
+ *                    image bake key (map/token-cache.js `imageKeyFor`).
+ *   Resolution (`resolveTokenImage`): `entity.imageUrl` wins; else the
+ *   room's upload for `statBlock.tokenImageId`, looked up through
+ *   `opts.tokenImages` (a `tokenImageIndex(maps)` built from
+ *   `GET /api/rooms/:id/maps`, a Map, a plain object or a function), or
+ *   the appearance cache's `putTokenImages` index. An id the room does
+ *   not hold (yet) leaves the token on its LPC look.
+ *
+ * Corpses (M65 M21): a dead PC is never `hidden` — it stays on the map as
+ * the death-fade marker, also on the next encounter's map when the run
+ * seeds it `status: 'dead'` (first seen dead → no fade, faint at once).
  */
 
 import { facingFor } from './facing.js';
@@ -172,7 +188,16 @@ export function appearanceKeyOf(character) {
 export function createAppearanceCache() {
   const keyById = new Map();
   const byKey = new Map();
+  let images = new Map();
   return {
+    /**
+     * M65 M21 — replace the room's token-image index (the
+     * `GET /api/rooms/:id/maps` list, see `tokenImageIndex`).
+     * @param {object[]|Map<string, string>|Record<string, string>} maps
+     */
+    putTokenImages(maps) { images = tokenImageIndex(maps); },
+    /** Served URL of a room upload by id or sha256, or null. */
+    tokenImageUrl(id) { return images.get(String(id)) || null; },
     put(characterId, character) {
       const key = appearanceKeyOf(character);
       keyById.set(String(characterId), key);
@@ -182,8 +207,62 @@ export function createAppearanceCache() {
     keyFor(characterId) { return keyById.get(String(characterId)) || null; },
     characterFor(key) { return byKey.get(key) || null; },
     delete(characterId) { keyById.delete(String(characterId)); },
-    clear() { keyById.clear(); byKey.clear(); }
+    clear() { keyById.clear(); byKey.clear(); images = new Map(); }
   };
+}
+
+/**
+ * M65 M21 — the room's uploads as an id → served URL index. Accepts the
+ * `GET /api/rooms/:id/maps` rows (`{mapId, sha256, url, kind}`; each row
+ * is indexed by `mapId` and by `sha256`, so a campaign asset copied into
+ * the room under a new id still resolves by content), a Map or a plain
+ * object of id → url. URLs that fail `isTokenImageUrl` are dropped.
+ * @param {object[]|Map<string, string>|Record<string, string>|null} maps
+ * @returns {Map<string, string>}
+ */
+export function tokenImageIndex(maps) {
+  const out = new Map();
+  const put = (id, url) => {
+    if (id != null && id !== '' && isTokenImageUrl(url) && !out.has(String(id))) out.set(String(id), url);
+  };
+  if (Array.isArray(maps)) {
+    for (const row of maps) {
+      if (!row || typeof row !== 'object') continue;
+      put(row.mapId ?? row.id, row.url);
+      put(row.sha256, row.url);
+    }
+  } else if (maps instanceof Map) {
+    for (const [id, url] of maps) put(id, url);
+  } else if (maps && typeof maps === 'object') {
+    for (const [id, url] of Object.entries(maps)) put(id, url);
+  }
+  return out;
+}
+
+function lookupTokenImage(tokenImages, id) {
+  if (!tokenImages || id == null) return null;
+  if (typeof tokenImages === 'function') return tokenImages(String(id)) ?? null;
+  if (tokenImages instanceof Map) return tokenImages.get(String(id)) ?? null;
+  if (typeof tokenImages.tokenImageUrl === 'function') return tokenImages.tokenImageUrl(String(id));
+  if (typeof tokenImages === 'object') return tokenImages[String(id)] ?? null;
+  return null;
+}
+
+/**
+ * M65 M21 — the image a token draws: the entity's own `imageUrl` when it
+ * has one, else the room's upload for the campaign-authored
+ * `statBlock.tokenImageId`. Only same-origin paths (`isTokenImageUrl`)
+ * are returned.
+ * @param {{imageUrl?: string|null, statBlock?: {tokenImageId?: string|null}|null}} entity
+ * @param {Map<string, string>|Record<string, string>|((id: string) => string|null)|{tokenImageUrl: (id: string) => string|null}|null} [tokenImages]
+ * @returns {{url: string, imageId: string|null}|null}
+ */
+export function resolveTokenImage(entity, tokenImages = null) {
+  if (isTokenImageUrl(entity?.imageUrl)) return { url: entity.imageUrl, imageId: null };
+  const id = entity?.statBlock?.tokenImageId;
+  if (typeof id !== 'string' || id.length === 0) return null;
+  const url = lookupTokenImage(tokenImages, id);
+  return isTokenImageUrl(url) ? { url, imageId: id } : null;
 }
 
 function cacheKeyFor(appearanceCache, characterId) {
@@ -288,14 +367,19 @@ export function tokenAtCell(view, cell, { showHidden = false, includeDead = true
  * @param {object} [appearanceCache] — createAppearanceCache(), a Map or a
  *   plain object of characterId → appearanceKey; PCs not in it get the
  *   placeholder key `pc:<characterId>`
- * @param {{facings?: Record<string, string>|Map<string, string>}} [opts] —
- *   `facings` is the client-held entity id → direction map (map/facing.js)
+ * @param {{facings?: Record<string, string>|Map<string, string>,
+ *          tokenImages?: Map<string, string>|Record<string, string>|((id: string) => string|null)}} [opts] —
+ *   `facings` is the client-held entity id → direction map (map/facing.js);
+ *   `tokenImages` resolves `statBlock.tokenImageId` (see `resolveTokenImage`;
+ *   defaults to the appearance cache's `putTokenImages` index)
  * @returns {object} RenderView
  */
 export function projectBattleView(state, appearanceCache = null, opts = {}) {
   const grid = state?.grid || {};
   const entities = state?.entities && typeof state.entities === 'object' ? Object.values(state.entities) : [];
   const running = state?.phase === 'running' || state?.phase === 'awaiting-prompt';
+  const tokenImages = opts?.tokenImages
+    ?? (typeof appearanceCache?.tokenImageUrl === 'function' ? appearanceCache : null);
   const tokens = [];
   for (const e of entities) {
     if (!e || !e.pos) continue;
@@ -320,13 +404,18 @@ export function projectBattleView(state, appearanceCache = null, opts = {}) {
       conditions,
       worstCondition: worstConditionOf(conditions),
       concentration: e.concentration?.spellId ?? null,
-      hidden: e.hidden === true || conditions.includes('hidden')
+      // M65 M21 — a dead PC is a corpse on the map, never hidden.
+      hidden: !(e.kind !== 'monster' && status === 'dead') && (e.hidden === true || conditions.includes('hidden'))
     };
     if (Number.isFinite(e.hp)) token.hp = e.hp;
     if (Number.isFinite(e.hpMax)) token.hpMax = e.hpMax;
     const facing = facingFor(opts?.facings, e);
     if (facing) token.facing = facing;
-    if (isTokenImageUrl(e.imageUrl)) token.imageUrl = e.imageUrl;
+    const image = resolveTokenImage(e, tokenImages);
+    if (image) {
+      token.imageUrl = image.url;
+      if (image.imageId) token.imageId = image.imageId;
+    }
     tokens.push(token);
   }
   tokens.sort(compareTokens);

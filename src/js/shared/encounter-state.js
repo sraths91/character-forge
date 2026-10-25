@@ -38,6 +38,10 @@
  *       `imageUrl` DM-uploaded token image, a same-origin path
  *                  (`/api/maps/<room>/<sha>.<ext>`); drawn instead of the
  *                  LPC sprite for non-humanoid monsters
+ *   - v1 additive (M65 M21, E5): `statBlock.tokenImageId` — the id of a
+ *     campaign-authored token image (an upload id or its sha256). The 2D
+ *     projection (map/view.js `resolveTokenImage`) resolves it to the
+ *     room's served URL when the entity has no `imageUrl` of its own.
  */
 
 import {
@@ -210,7 +214,8 @@ export const WRAPPER_FIELD_MAP = Object.freeze({
  * @property {'active'|'downed'|'stable'|'dead'} [status] — v1 additive (R9); absent = active
  * @property {{successes: number, failures: number, stable: boolean}} [deathSaves] — v1 additive (R9)
  * @property {{characterId: string, rev: number|string}|null} [sheetRef]  — PCs
- * @property {{slug: string}|null} [statBlock]                           — monsters (other fields opaque in v1)
+ * @property {{slug: string, tokenImageId?: string|null}|null} [statBlock] — monsters (other fields opaque in v1;
+ *   `tokenImageId` v1 additive, M65 M21: a campaign token image id → the room's upload URL in the projection)
  * @property {'north'|'east'|'south'|'west'} [facing]                    — v1 additive (E5): sprite row
  * @property {'Tiny'|'Small'|'Medium'|'Large'|'Huge'|'Gargantuan'} [size] — v1 additive (E5): render footprint
  * @property {string|null} [imageUrl]                                    — v1 additive (E5): DM token image path
@@ -295,7 +300,12 @@ const ENTITY = shape({
   status: optional(oneOf(ENTITY_STATUSES)),
   deathSaves: optional(shape({ successes: int(0, 3), failures: int(0, 3), stable: bool() })),
   sheetRef: optional(nullable(shape({ characterId: ID, rev: union(int(0), str()) }))),
-  statBlock: optional(nullable(shape({ slug: str({ maxLength: 128 }) }, { strict: false }))),
+  // v1 additive (M65 M21, E5): `statBlock.tokenImageId` — a campaign-
+  // authored token image, resolved to the room's upload by the projection.
+  statBlock: optional(nullable(shape({
+    slug: str({ maxLength: 128 }),
+    tokenImageId: optional(nullable(str({ maxLength: 128, pattern: /^[A-Za-z0-9_.:-]+$/ })))
+  }, { strict: false }))),
   // v1 additive (E5, M64 phase 1.5): presentation-only, optional.
   facing: optional(oneOf(ENTITY_FACINGS)),
   size: optional(oneOf(ENTITY_SIZES)),

@@ -16,7 +16,9 @@
  * runs.
  *
  * A token with a DM `imageUrl` uses the same cache under the key
- * `img:<url>|-|-|0|<hpState>`: one bake per image and HP bucket (facing,
+ * `img:<url>|-|-|0|<hpState>` (`img:<imageId>@<url>|…` when the image
+ * came from a campaign `statBlock.tokenImageId`, M65 M21): one bake
+ * per image and HP bucket (facing,
  * animation and conditions do not change a static image). If that bake
  * fails (404, decode error) the key is remembered and `keyFor` falls back
  * to the token's LPC key, so a broken upload still shows the sprite.
@@ -43,12 +45,14 @@ export function directionFor(token, opts = {}) {
 const FALLBACK_CYCLE = 72;   // lcm of the LPC strip lengths (2, 4, 6, 8, 9) until a bake reports the real one
 
 /**
- * Cache key of a DM token image bake.
- * @param {{imageUrl: string, hpState?: string}} token
+ * Cache key of a DM token image bake. A campaign-authored image
+ * (`token.imageId`, M65 M21) prefixes its id.
+ * @param {{imageUrl: string, imageId?: string, hpState?: string}} token
  * @returns {string}
  */
 export function imageKeyFor(token) {
-  return `img:${token.imageUrl}|-|-|0|${token.hpState || 'healthy'}`;
+  const id = token.imageId ? `${token.imageId}@` : '';
+  return `img:${id}${token.imageUrl}|-|-|0|${token.hpState || 'healthy'}`;
 }
 
 /**
