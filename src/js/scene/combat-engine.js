@@ -68,6 +68,7 @@ import { swingStyleMods, offhandWeaponFor, offhandDice } from './fighting-styles
 import { grantedSpellEntry, spellUseKey, featureLedgerFor, usesLeft, spendUse, spellSlug } from './feature-uses.js';
 import { scaleCantrip } from './cantrip-scaling.js';
 import { itemEffectOf, itemUsesLeft } from './item-effects.js';
+import { exhaustionEffects, exhaustionLevelOf } from '../campaign/exhaustion.js';
 import { MONSTER_DEFAULT_SAVES } from './monster-presets.js';
 import { chooseLegendaryAction, spendLegendaryAction } from './monster-legendary.js';
 import {
@@ -1955,9 +1956,20 @@ export function useItem(user, target, itemId, { ctx = NO_CTX, rng, group = null 
   return { ok: true, rolled: roll.total, amount: healed.amount };
 }
 
-/** d20 mode for a creature's saving throw: Rage gives advantage on STR saves. */
+/**
+ * d20 mode for a creature's saving throw: Rage gives advantage on STR
+ * saves; exhaustion 3+ (SRD, campaign/exhaustion.js) gives disadvantage on
+ * every save. Both cancel to a straight roll. Every engine save (spell,
+ * AoE, condition repeat, concentration, death save) takes its mode here.
+ * @param {object} entity — wrapper
+ * @param {string|null} stat — 'STR' … 'CHA' (null for a death save)
+ * @returns {'normal'|'advantage'|'disadvantage'}
+ */
 export function saveModeFor(entity, stat) {
-  return stat === 'STR' && isRaging(entity) ? 'advantage' : 'normal';
+  const adv = stat === 'STR' && isRaging(entity);
+  const dis = exhaustionEffects(exhaustionLevelOf(entity)).saveDisadvantage;
+  if (adv === dis) return 'normal';
+  return adv ? 'advantage' : 'disadvantage';
 }
 
 /** Taking damage keeps a rage going (sets the flag only on a raging creature). */
@@ -2066,7 +2078,7 @@ export function rollDeathSave(actor, rng, ctx = NO_CTX) {
   if (!actor || actor.kind !== 'pc' || actor.status !== 'downed' || (actor.hp ?? 0) > 0) {
     return { rolled: false, d20: null, revived: false, status: actor?.status ?? 'active' };
   }
-  const d20 = 1 + Math.floor(rng() * 20);
+  const d20 = rollSave({ bonus: 0, dc: 10, advantage: saveModeFor(actor, null) }, rng).kept;
   const ds = ensureDeathSaves(actor);
   if (d20 === 20) {
     ds.successes = 0; ds.failures = 0; ds.stable = false;
@@ -2107,7 +2119,7 @@ export function rollDeathSave(actor, rng, ctx = NO_CTX) {
 export function concentrationCheck(target, taken, rng, ctx = NO_CTX, group = null, roster = null) {
   if (!target || !(taken > 0) || !isConcentrating(target) || !isAlive(target)) return { broke: false, save: null };
   const conMod = saveBonusFor(target, 'CON');
-  const res = handleDamageOnConcentration({ caster: target, damage: taken, conMod }, rng);
+  const res = handleDamageOnConcentration({ caster: target, damage: taken, conMod, advantage: saveModeFor(target, 'CON') }, rng);
   if (res.save) emitSave(ctx, group, target, 'CON', res.save, 'concentration');
   if (res.broke) {
     emitEvent(ctx, 'concentration.broken', {

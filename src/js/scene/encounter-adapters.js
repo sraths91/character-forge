@@ -57,6 +57,7 @@ import {
 import { withEngineFields } from './open5e-normalize.js';
 import { featureLedgerFor } from './feature-uses.js';
 import { ledgerKeyForResource, resourceKeyForLedger } from '../shared/run-state.js';
+import { applyExhaustionToEntity, exhaustionEffects } from '../campaign/exhaustion.js';
 import {
   buildStatBlockKit, freshKitInnate, kitInnateState, kitLegendaryResistance, LEGENDARY_RESISTANCE_KEY
 } from './stat-block-kit.js';
@@ -489,8 +490,9 @@ function fighterLevel(sheet) {
  * M65 T21 — with `opts.runState` (state_json v1) the entity starts from the
  * run's state instead of rested: HP and temp HP, spent slots and pact
  * slots, feature / granted-spell uses (resource key map in the module
- * header), death saves (0 HP → downed / stable / dead), exhaustion (2:
- * speed halved, 4: HP max halved, 5: speed 0, 6: dead) and the persistent
+ * header), death saves (0 HP → downed / stable / dead), exhaustion
+ * (campaign/exhaustion.js applyExhaustionToEntity — 2: speed halved, 4: HP
+ * max halved, 5: speed 0, 6: dead) and the persistent
  * conditions. Maxima always come from the sheet. `opts.items` (run items
  * the PC carries, `{[runItemId]: {name, effect?, max, spent?}}`, `effect`
  * a consumables-registry key) becomes
@@ -585,28 +587,6 @@ export function runResourceKeyForFeature(featureKey) {
   return resourceKeyForLedger(String(featureKey || ''));
 }
 
-/**
- * SRD exhaustion levels (PHB p291) as the effects the engine applies when
- * it seeds an entity. Level 1's ability-check and level 3's attack / save
- * disadvantage are the resolver's (`attackSaveDisadvantage` is exposed for
- * it); speed, HP max and death are seeded here.
- * @param {number} level — 0..6
- * @returns {{level: number, abilityCheckDisadvantage: boolean, speedHalved: boolean,
- *   attackSaveDisadvantage: boolean, hpMaxHalved: boolean, speedZero: boolean, dead: boolean}}
- */
-export function exhaustionEffects(level) {
-  const n = clampInt(level, 0, 6);
-  return {
-    level: n,
-    abilityCheckDisadvantage: n >= 1,
-    speedHalved: n >= 2 && n < 5,
-    attackSaveDisadvantage: n >= 3,
-    hpMaxHalved: n >= 4,
-    speedZero: n >= 5,
-    dead: n >= 6
-  };
-}
-
 function clampInt(v, lo, hi) {
   return Math.max(lo, Math.min(hi, Math.trunc(Number(v) || 0)));
 }
@@ -651,13 +631,13 @@ function normalizeItems(items) {
 }
 
 /** Seed a rested PC entity (mutated, then returned) from state_json v1. */
-function seedFromRunState(entity, rs) {
+function seedFromRunState(rested, rs) {
+  // Exhaustion (E4's campaign/exhaustion.js, the one table): speed, HP max
+  // and level-6 death are seeded here; the attack / save disadvantage is
+  // read off the entity by the resolver and saveModeFor.
+  const entity = applyExhaustionToEntity(rested, rs.exhaustion);
   const res = entity.resources;
   const fx = exhaustionEffects(rs.exhaustion);
-  if (fx.level > 0) entity.exhaustion = fx.level;
-  if (fx.hpMaxHalved) entity.hpMax = Math.max(1, Math.floor(entity.hpMax / 2));
-  if (fx.speedZero) entity.speedFt = 0;
-  else if (fx.speedHalved) entity.speedFt = Math.floor(entity.speedFt / 2);
   const storedHp = rs.hp?.current;
   const startHp = fx.dead ? 0
     : (storedHp !== null && storedHp !== undefined && Number.isFinite(Number(storedHp)))
@@ -700,8 +680,7 @@ function seedFromRunState(entity, rs) {
   // Life: exhaustion 6 kills; 0 HP is dying (or stable / dead by the tallies).
   const ds = normalizeDeathSaves(rs.deathSaves);
   if (fx.dead) {
-    entity.status = 'dead';
-    entity.deathSaves = ds;
+    entity.status = 'dead';   // applyExhaustionToEntity: hp 0, three failures
   } else if (entity.hp === 0) {
     entity.status = ds.failures >= 3 ? 'dead' : ds.stable ? 'stable' : 'downed';
     entity.deathSaves = ds;

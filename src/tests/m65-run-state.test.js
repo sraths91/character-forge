@@ -8,9 +8,11 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   entityFromSheet, entityFromPreset, runStateFromEntity, wrapperFromEntity, applyEngineSides,
-  featureKeyForRunResource, runResourceKeyForFeature, exhaustionEffects, itemSpendFromEntity,
+  featureKeyForRunResource, runResourceKeyForFeature, itemSpendFromEntity,
   endsWithEncounter
 } from '../js/scene/encounter-adapters.js';
+import * as adapters from '../js/scene/encounter-adapters.js';
+import { exhaustionEffects } from '../js/campaign/exhaustion.js';
 import { emptyEncounterState, validateEncounterState } from '../js/shared/encounter-state.js';
 import { initialRunState, validateRunState } from '../js/shared/run-state.js';
 import { turnStateFromEncounter, startEncounter, runEncounter, encounterFromTurnState } from '../js/scene/turn-manager.js';
@@ -49,19 +51,20 @@ test('T21: resource key map — feat:* / spell:* map (run-state helpers), ddb:* 
   }
 });
 
-test('T21: SRD exhaustion table (2 speed halved, 3 attack/save disadvantage, 4 HP max halved, 5 speed 0, 6 dead)', () => {
+test('T21: one exhaustion table — the adapters seed through campaign/exhaustion.js (no local copy)', () => {
+  assert.equal(adapters.exhaustionEffects, undefined, 'encounter-adapters no longer exports its own table');
   const rows = [0, 1, 2, 3, 4, 5, 6].map(n => {
     const f = exhaustionEffects(n);
-    return [f.level, f.abilityCheckDisadvantage, f.speedHalved, f.attackSaveDisadvantage, f.hpMaxHalved, f.speedZero, f.dead];
+    return [f.level, f.checkDisadvantage, f.speedMultiplier, f.attackDisadvantage, f.saveDisadvantage, f.hpMaxMultiplier, f.dead];
   });
   assert.deepEqual(rows, [
-    [0, false, false, false, false, false, false],
-    [1, true, false, false, false, false, false],
-    [2, true, true, false, false, false, false],
-    [3, true, true, true, false, false, false],
-    [4, true, true, true, true, false, false],
-    [5, true, false, true, true, true, false],
-    [6, true, false, true, true, true, true]
+    [0, false, 1, false, false, 1, false],
+    [1, true, 1, false, false, 1, false],
+    [2, true, 0.5, false, false, 1, false],
+    [3, true, 0.5, true, true, 1, false],
+    [4, true, 0.5, true, true, 0.5, false],
+    [5, true, 0, true, true, 0.5, false],
+    [6, true, 0, true, true, 0.5, true]
   ]);
   assert.equal(exhaustionEffects(9).level, 6);
   assert.equal(exhaustionEffects(-2).level, 0);

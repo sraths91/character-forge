@@ -42,13 +42,22 @@ export function dropConcentration(caster) {
  * Roll a CON concentration save against `dc`. Returns true if held.
  *   conMod   — caster's CON saving-throw bonus
  *   dc       — max(10, floor(damageTaken / 2))
+ *   advantage — 'normal' | 'advantage' | 'disadvantage' (saveModeFor)
  *   rng      — injectable for tests
  */
-export function rollConcentrationSave({ conMod = 0, dc = 10 } = {}, rng) {
+export function rollConcentrationSave({ conMod = 0, dc = 10, advantage = 'normal' } = {}, rng) {
   requireRng(rng, 'rollConcentrationSave');
-  const d20 = Math.floor(rng() * 20) + 1;
+  const a = Math.floor(rng() * 20) + 1;
+  if (advantage !== 'advantage' && advantage !== 'disadvantage') {
+    const total = a + conMod;
+    return { d20: a, conMod, total, dc, success: total >= dc };
+  }
+  // M65 — a second d20 only when the save has advantage / disadvantage
+  // (exhaustion 3+), so a straight roll draws exactly as before.
+  const b = Math.floor(rng() * 20) + 1;
+  const d20 = advantage === 'advantage' ? Math.max(a, b) : Math.min(a, b);
   const total = d20 + conMod;
-  return { d20, conMod, total, dc, success: total >= dc };
+  return { d20, dice: [a, b], advantage, conMod, total, dc, success: total >= dc };
 }
 
 /** DC for a concentration save after taking `damage`. */
@@ -63,12 +72,12 @@ export function concentrationDc(damage) {
  *   rng    — RNG; threaded for determinism
  * Returns { broke: bool, dropped: block|null, save: rollResult|null }.
  */
-export function handleDamageOnConcentration({ caster, damage, conMod = 0 } = {}, rng) {
+export function handleDamageOnConcentration({ caster, damage, conMod = 0, advantage = 'normal' } = {}, rng) {
   requireRng(rng, 'handleDamageOnConcentration');
   if (!isConcentrating(caster)) return { broke: false, dropped: null, save: null };
   if (damage <= 0) return { broke: false, dropped: null, save: null };
   const dc = concentrationDc(damage);
-  const save = rollConcentrationSave({ conMod, dc }, rng);
+  const save = rollConcentrationSave({ conMod, dc, advantage }, rng);
   if (save.success) return { broke: false, dropped: null, save };
   const dropped = dropConcentration(caster);
   return { broke: true, dropped, save };
