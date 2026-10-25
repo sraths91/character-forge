@@ -34,6 +34,14 @@
  *     creatures give half cover.
  *
  * Phase-1 limits: every creature occupies one cell; no thin edge walls.
+ *
+ * Large creatures (M65, prepared, OFF by default): `footprint(size)` gives
+ * a creature's side in cells (Large 2, Huge 3, Gargantuan 4) and
+ * `buildOccupancy(entities, {bigCreatures: true})` (also `validateMove`'s
+ * `opts.bigCreatures`) marks every cell of the footprint, anchored at the
+ * creature's pos (top-left, as the 2D grid draws it). With the default
+ * `{bigCreatures: false}` every creature stays 1×1 (owner default, plan
+ * Q3) and behaviour is unchanged. A big MOVER still paths as 1×1.
  */
 
 import { isRangedWeapon, meleeReachFt } from './grid-rules.js';
@@ -100,6 +108,39 @@ function entityList(entities) {
   return Object.values(entities).filter(Boolean);
 }
 
+const SIZE_CELLS = Object.freeze({ tiny: 1, small: 1, medium: 1, large: 2, huge: 3, gargantuan: 4 });
+
+/**
+ * A creature's footprint side in cells: SRD size names ('Large' → 2,
+ * 'Huge' → 3, 'Gargantuan' → 4, Medium and smaller → 1) or a cell count
+ * (RenderView `tokens[].size`, clamped to 1..4). Unknown ⇒ 1.
+ * @param {string|number|null|undefined} size
+ * @returns {number}
+ */
+export function footprint(size) {
+  if (Number.isInteger(size)) return Math.min(4, Math.max(1, size));
+  return SIZE_CELLS[String(size ?? '').trim().toLowerCase()] || 1;
+}
+
+/**
+ * Every cell a creature of `size` covers when anchored (top-left) at
+ * `anchor`, anchor first, then row-major.
+ * @param {{col: number, row: number}} anchor
+ * @param {string|number|null|undefined} size
+ * @returns {{col: number, row: number}[]}
+ */
+export function footprintCells(anchor, size) {
+  const n = footprint(size);
+  const out = [];
+  for (let dr = 0; dr < n; dr++) for (let dc = 0; dc < n; dc++) out.push({ col: anchor.col + dc, row: anchor.row + dr });
+  return out;
+}
+
+/** Size of any entity shape (EncounterState `size`, a stat block's, a token's cell count). */
+function sizeOf(e) {
+  return e?.size ?? e?.statBlock?.size ?? null;
+}
+
 function conditionIds(conds) {
   return (Array.isArray(conds) ? conds : []).map(c => (typeof c === 'string' ? c : c?.id)).filter(Boolean);
 }
@@ -107,21 +148,30 @@ function conditionIds(conds) {
 /**
  * Build occupancy from entities. Dead monsters are skipped.
  * @param {object[]|Record<string, object>} entities
- * @param {{excludeId?: string}} [opts] — usually the mover
+ * @param {{excludeId?: string, bigCreatures?: boolean}} [opts] — `excludeId`
+ *   is usually the mover; `bigCreatures` (default false) marks every cell
+ *   of a Large+ creature's `footprint`, else each creature is 1×1
  * @returns {{cells: Set<string>, sides: Map<string, string>}}
  */
-export function buildOccupancy(entities, { excludeId = null } = {}) {
+export function buildOccupancy(entities, { excludeId = null, bigCreatures = false } = {}) {
   const cells = new Set();
   const sides = new Map();
+  const mark = (k, side) => {
+    cells.add(k);
+    // A cell holding both sides (shouldn't happen) reads as hostile.
+    if (sides.get(k) !== 'hostile') sides.set(k, side);
+  };
   for (const e of entityList(entities)) {
     if (excludeId != null && String(e.id) === String(excludeId)) continue;
     if (isDeadMonster(e)) continue;
     const p = posOf(e);
     if (!p) continue;
-    const k = cellKey(p);
-    cells.add(k);
-    // A cell holding both sides (shouldn't happen) reads as hostile.
-    if (sides.get(k) !== 'hostile') sides.set(k, sideOf(e));
+    const side = sideOf(e);
+    if (bigCreatures && footprint(sizeOf(e)) > 1) {
+      for (const c of footprintCells(p, sizeOf(e))) mark(cellKey(c), side);
+    } else {
+      mark(cellKey(p), side);
+    }
   }
   return { cells, sides };
 }
@@ -344,10 +394,12 @@ function reactionShim(e, weaponOf) {
  * @param {string} moverId
  * @param {{col: number, row: number}[]} path — with or without the start cell
  * @param {{budgetFt?: number, usedFt?: number, ignoreBudget?: boolean,
- *          diagonalRule?: '5ft'|'5-10-5', disengaged?: boolean,
+ *          diagonalRule?: '5ft'|'5-10-5', disengaged?: boolean, bigCreatures?: boolean,
  *          weaponOf?: (entity: object) => object|null}} [opts]
  *   — `budgetFt` defaults to the mover's `speedFt` (30) minus `usedFt`;
- *   `weaponOf` supplies reach weapons for state entities that carry none.
+ *   `weaponOf` supplies reach weapons for state entities that carry none;
+ *   `bigCreatures` (default false) makes other creatures occupy their
+ *   whole footprint (see `buildOccupancy`).
  * @returns {{legal: boolean, costFt: number, reason: string|null, failedAt: number|null,
  *            oaTriggers: {entityId: string, reason: string, stepIndex: number, at: {col: number, row: number}}[]}}
  *   `stepIndex` is 1-based into the full path (start = 0); `at` is the
@@ -372,7 +424,7 @@ export function validateMove(view, moverId, path, opts = {}) {
   if (full.length === 1) return { legal: true, costFt: 0, reason: null, failedAt: null, oaTriggers: [] };
 
   const moverSide = sideOf(mover);
-  const occ = buildOccupancy(entities, { excludeId: mover.id });
+  const occ = buildOccupancy(entities, { excludeId: mover.id, bigCreatures: opts.bigCreatures === true });
   const diagonalRule = opts.diagonalRule || '5ft';
   const speed = Number.isFinite(mover.speedFt) ? mover.speedFt : 30;
   const budget = opts.ignoreBudget ? Infinity

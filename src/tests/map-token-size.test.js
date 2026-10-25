@@ -8,6 +8,7 @@ import { projectBattleView, sizeCellsOf, tokenSizeOf, tokenCells, tokenAtCell } 
 import { createTokenCache } from '../js/map/token-cache.js';
 import { renderBattleScene, prepareBattleView } from '../js/sprite/compositor.js';
 import { validateEncounterState } from '../js/shared/encounter-state.js';
+import { buildOccupancy } from '../js/scene/grid-legality.js';
 import { recordingCanvas, deepFreeze } from './helpers/mock-canvas.js';
 
 const FIXTURE = () => JSON.parse(readFileSync(new URL('./fixtures/contracts/encounter-state.valid.json', import.meta.url), 'utf8'));
@@ -82,7 +83,16 @@ test('renderer: a Large token draws one 128-px image at its anchor and outlines 
   assert.ok(outline[1] < 130 && outline[2] < 194 && outline[3] > 120 && outline[4] > 120, `active outline covers 2×2: ${outline}`);
 });
 
-test('grid legality is untouched by token size (still 1×1)', () => {
+test('grid legality is untouched by token size by default (still 1×1; M65 bigCreatures is opt-in)', () => {
   const src = readFileSync(new URL('../js/scene/grid-legality.js', import.meta.url), 'utf8');
-  assert.ok(!/tokenSizeOf|sizeCellsOf|map\/view\.js|statBlock\??\.size/.test(src), 'grid-legality reads no creature size');
+  assert.ok(!/tokenSizeOf|sizeCellsOf|map\/view\.js/.test(src), 'grid-legality does not use the render footprint');
+  assert.match(src, /bigCreatures = false/, 'the footprint occupancy stays off by default');
+  const s = FIXTURE();
+  s.entities['m-fanatic'].size = 'Large';
+  const view = projectBattleView(s);
+  assert.equal(view.tokens.find(t => t.id === 'm-fanatic').size, 2, 'drawn 2×2');
+  const occ = buildOccupancy(s.entities);
+  const fan = s.entities['m-fanatic'].pos;
+  assert.equal(occ.cells.has(`${fan.col},${fan.row}`), true);
+  assert.equal(occ.cells.has(`${fan.col + 1},${fan.row + 1}`), false, 'legality still 1×1');
 });

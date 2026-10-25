@@ -53,7 +53,8 @@
  *                    anchored at (col,row) and `tokenAtCell` hit-tests
  *                    every covered cell, but movement / reach legality
  *                    (scene/grid-legality.js) stays 1×1 this phase (owner
- *                    default, plan Q3).
+ *                    default, plan Q3); M65 prepares the footprint there
+ *                    behind `{bigCreatures: true}` (off by default).
  *   tokens[].imageUrl  DM-uploaded token image (same-origin path, see
  *                    isTokenImageUrl) drawn instead of the LPC composite
  *                    (circular mask + side ring, same bake-cache slot).
