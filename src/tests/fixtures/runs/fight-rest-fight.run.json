@@ -1,0 +1,201 @@
+{
+  "name": "fight-rest-fight",
+  "note": "M65 H24: fight -> short rest -> fight with the synthetic cleric and fighter fixtures. The fighter starts 50 XP short of level 6 so the first award queues a level-up.",
+  "runId": "run-golden-1",
+  "seed": 20261025,
+  "party": [
+    {
+      "slotId": "slot-1",
+      "seat": 1,
+      "fixture": "cleric-l5"
+    },
+    {
+      "slotId": "slot-2",
+      "seat": 2,
+      "fixture": "fighter-l5",
+      "xp": 13950
+    }
+  ],
+  "campaign": {
+    "v": 1,
+    "id": "camp-golden",
+    "name": "Goblin road",
+    "ruleset": "srd-5.1",
+    "settings": {
+      "xpMode": "xp",
+      "deathMode": "standard"
+    },
+    "nodes": [
+      {
+        "id": "n-ambush",
+        "kind": "encounter",
+        "title": "Goblin ambush",
+        "ord": 0,
+        "start": true,
+        "payload": {
+          "setup": {
+            "map": null,
+            "grid": {
+              "cols": 10,
+              "rows": 8
+            },
+            "monsters": [
+              {
+                "slug": "goblin",
+                "id": "gob-1"
+              },
+              {
+                "slug": "goblin",
+                "id": "gob-2"
+              },
+              {
+                "slug": "goblin",
+                "id": "gob-3"
+              },
+              {
+                "slug": "goblin",
+                "id": "gob-4"
+              }
+            ],
+            "placements": {
+              "gob-1": {
+                "col": 6,
+                "row": 2
+              },
+              "gob-2": {
+                "col": 6,
+                "row": 4
+              },
+              "gob-3": {
+                "col": 7,
+                "row": 3
+              },
+              "gob-4": {
+                "col": 7,
+                "row": 5
+              }
+            }
+          },
+          "partyPlacement": {
+            "1": {
+              "col": 2,
+              "row": 3
+            },
+            "2": {
+              "col": 3,
+              "row": 4
+            }
+          }
+        },
+        "next": [
+          {
+            "to": "n-camp"
+          }
+        ]
+      },
+      {
+        "id": "n-camp",
+        "kind": "rest",
+        "title": "Catch your breath",
+        "ord": 1,
+        "payload": {
+          "type": "short"
+        },
+        "next": [
+          {
+            "to": "n-den"
+          }
+        ]
+      },
+      {
+        "id": "n-den",
+        "kind": "encounter",
+        "title": "The bugbear's den",
+        "ord": 2,
+        "payload": {
+          "setup": {
+            "map": null,
+            "grid": {
+              "cols": 10,
+              "rows": 8
+            },
+            "monsters": [
+              {
+                "slug": "bugbear",
+                "id": "bug-1"
+              },
+              {
+                "slug": "goblin",
+                "id": "gob-5"
+              },
+              {
+                "slug": "goblin",
+                "id": "gob-6"
+              }
+            ],
+            "placements": {
+              "bug-1": {
+                "col": 6,
+                "row": 3
+              },
+              "gob-5": {
+                "col": 7,
+                "row": 2
+              },
+              "gob-6": {
+                "col": 7,
+                "row": 5
+              }
+            }
+          },
+          "partyPlacement": {
+            "1": {
+              "col": 2,
+              "row": 3
+            },
+            "2": {
+              "col": 3,
+              "row": 3
+            }
+          }
+        },
+        "next": []
+      }
+    ]
+  },
+  "steps": [
+    {
+      "t": "enter",
+      "nodeId": "n-ambush"
+    },
+    {
+      "t": "fight",
+      "maxRounds": 15
+    },
+    {
+      "t": "advance"
+    },
+    {
+      "t": "rest",
+      "spend": {
+        "slot-1": {
+          "Cleric": 1
+        },
+        "slot-2": {
+          "Fighter": 2
+        }
+      }
+    },
+    {
+      "t": "advance"
+    },
+    {
+      "t": "fight",
+      "maxRounds": 15
+    },
+    {
+      "t": "end",
+      "outcome": "victory"
+    }
+  ]
+}
