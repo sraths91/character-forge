@@ -33,6 +33,7 @@ import { isLegendary, freshLegendaryBudget } from './monster-legendary.js';
 import { createRng } from './rng.js';
 import { featureLedgerFor } from './feature-uses.js';
 import { createTurnState, startEncounter, runEncounter } from './turn-manager.js';
+import { entityFromPreset, wrapperFromEntity } from './encounter-adapters.js';
 // M45 Phase 4 — Combat resolution moved to a shared engine module so
 // the live runner can dispatch through the same spine without
 // re-implementing rules. Per-attack logic, spell casting, reactions,
@@ -58,7 +59,13 @@ export function seedRng(seed) {
  * Run a Monte Carlo simulation of the encounter.
  *
  *   party     — array of PC characters (with _position resolved)
- *   monsters  — array of monster instances (with .position + .hp + .conditions)
+ *   monsters  — array of monster instances (with .position + .hp + .conditions);
+ *               M65 (phase 1.5 leftover A): a monster with a `statBlock`
+ *               (an imported / Open5e-normalised block) and a known
+ *               `presetSlug` fights from the block — AC, HP, attacks,
+ *               Multiattack, saves, R/I/V, recharge abilities, legendary
+ *               actions, spellcasting — through entityFromPreset, the
+ *               server's path; `.hp` (when given) still sets current / max
  *   scene     — scene object (flankingEnabled, positions, etc.)
  *   iterations — how many runs to average (default 200; UI exposes 100/1000)
  *   maxRounds — round cap per run (default 12)
@@ -146,6 +153,7 @@ async function runOneIteration({ party, monsters, scene, maxRounds, rng, index =
     deathSaves: { successes: 0, failures: 0, stable: false }
   }));
   const mons = monsters.map(m => {
+    if (m.statBlock && MONSTER_PRESETS[m.presetSlug]) return statBlockMonster(m);
     const preset = MONSTER_PRESETS[m.presetSlug] || {};
     return {
       ref: m, id: m.id, name: m.name || 'Monster', kind: 'monster', presetSlug: m.presetSlug,
@@ -200,6 +208,40 @@ async function runOneIteration({ party, monsters, scene, maxRounds, rng, index =
     monstersAlive: sideAlive(mons) > 0,
     endState
   };
+}
+
+/**
+ * M65 leftover A — a stat-block monster's simulator wrapper, built like
+ * the server builds it (entityFromPreset → wrapperFromEntity). The input
+ * record is the wrapper's `ref`; its id, name, position, HP and
+ * conditions win over the block's.
+ * @param {object} m — {id, name?, presetSlug, statBlock, position?, hp?, conditions?}
+ * @returns {object} engine wrapper
+ */
+function statBlockMonster(m) {
+  const pos = m.position && Number.isFinite(m.position.col) ? m.position : { col: 0, row: 0 };
+  const entity = entityFromPreset(m.presetSlug, {
+    id: String(m.id ?? m.presetSlug), pos: { col: pos.col, row: pos.row },
+    ...(m.name ? { name: m.name } : {}), statBlock: m.statBlock
+  });
+  const w = wrapperFromEntity(entity, m);
+  w.id = m.id;
+  w.position = m.position;
+  // Construction (like the preset path's literal), not a hit.
+  if (m.hp && typeof m.hp === 'object') {
+    const hpMax = m.hp.max ?? w.hpMax;
+    Object.assign(w, { hpMax, hp: m.hp.current ?? hpMax, hpTemp: m.hp.temp ?? 0 });
+  }
+  w.conditions = Array.isArray(m.conditions) ? [...m.conditions] : [];
+  w.deathSaves = null;
+  return w;
+}
+
+/** A stat-block monster's HP max for the stats table. */
+function statBlockHpMax(m) {
+  if (!m.statBlock || !MONSTER_PRESETS[m.presetSlug]) return null;
+  const sb = m.statBlock;
+  return sb.hpMax ?? sb.hp?.average ?? null;
 }
 
 // ---------- Per-attack ----------
@@ -262,7 +304,7 @@ function newStats(party, monsters, iterations) {
     entities.push(p.id);
   }
   for (const m of monsters) {
-    byId.set(m.id, { id: m.id, name: m.name || 'Monster', kind: 'monster', deaths: 0, dead: 0, hpSum: 0, damageSum: 0, hpMax: m.hp?.max ?? 1 });
+    byId.set(m.id, { id: m.id, name: m.name || 'Monster', kind: 'monster', deaths: 0, dead: 0, hpSum: 0, damageSum: 0, hpMax: m.hp?.max ?? statBlockHpMax(m) ?? 1 });
     entities.push(m.id);
   }
   return {

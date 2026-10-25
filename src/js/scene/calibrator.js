@@ -26,7 +26,9 @@ import { simulateEncounter } from './simulator.js';
 /**
  * @param {object} args
  * @param {object[]} args.party       — PC character records (with hp+_position)
- * @param {object[]} args.monsters    — monster instances (with hp+position)
+ * @param {object[]} args.monsters    — monster instances (with hp+position);
+ *   a `statBlock` (with a known `presetSlug`) drives the simulation and
+ *   the XP rating (M65 leftover A)
  * @param {object}   [args.scene]     — { cols, rows, ... }
  * @param {number}   [args.iterations] — default 200
  * @param {number}   [args.maxRounds]  — default 15
@@ -165,10 +167,26 @@ function pcLevel(pc) {
   return classes.reduce((s, c) => s + (c?.level || 0), 0);
 }
 
-/** Look up XP for a monster preset by its slug — falls back via CR. */
+/** A stat block's decimal CR (0.25) as a CR_XP key ('1/4'). */
+function crKey(cr) {
+  const n = Number(cr);
+  if (n === 0.125) return '1/8';
+  if (n === 0.25) return '1/4';
+  if (n === 0.5) return '1/2';
+  return cr;
+}
+
+/**
+ * Look up XP for a monster: its own `xp` / `cr`, then (M65 leftover A)
+ * its stat block's (an Open5e block carries both), then the preset
+ * slug's SRD value.
+ */
 function monsterXp(m) {
   if (Number.isFinite(m?.xp)) return m.xp;
   if (m?.cr !== undefined && CR_XP[m.cr] !== undefined) return CR_XP[m.cr];
+  const sb = m?.statBlock;
+  if (Number.isFinite(sb?.xp)) return sb.xp;
+  if (sb?.cr !== undefined && sb?.cr !== null && CR_XP[crKey(sb.cr)] !== undefined) return CR_XP[crKey(sb.cr)];
   // Reasonable defaults for our presets (5e SRD values where known)
   const fallback = {
     goblin: 50, orc: 100, hobgoblin: 100, bugbear: 200, kobold: 25,
