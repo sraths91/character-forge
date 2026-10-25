@@ -1,0 +1,511 @@
+[
+  {
+    "seq": 1,
+    "type": "run.started",
+    "nodeId": null,
+    "actorKind": "system",
+    "actorId": null,
+    "override": false,
+    "payload": {
+      "campaignId": "camp-fixture",
+      "startNodeId": "n-start",
+      "seats": [
+        {
+          "slotId": "slot-1",
+          "seat": 1,
+          "characterId": "900000003"
+        },
+        {
+          "slotId": "slot-2",
+          "seat": 2,
+          "characterId": "900000001"
+        }
+      ]
+    }
+  },
+  {
+    "seq": 2,
+    "type": "node.entered",
+    "nodeId": "n-start",
+    "actorKind": "dm",
+    "actorId": "p-dm",
+    "override": false,
+    "payload": {
+      "nodeId": "n-start",
+      "kind": "story",
+      "fromNodeId": null
+    }
+  },
+  {
+    "seq": 3,
+    "type": "story.chosen",
+    "nodeId": "n-start",
+    "actorKind": "player",
+    "actorId": "p-ann",
+    "override": false,
+    "payload": {
+      "nodeId": "n-start",
+      "choiceId": "road"
+    }
+  },
+  {
+    "seq": 4,
+    "type": "node.completed",
+    "nodeId": "n-start",
+    "actorKind": "system",
+    "actorId": null,
+    "override": false,
+    "payload": {
+      "nodeId": "n-start",
+      "kind": "story"
+    }
+  },
+  {
+    "seq": 5,
+    "type": "node.entered",
+    "nodeId": "n-goblins",
+    "actorKind": "dm",
+    "actorId": "p-dm",
+    "override": false,
+    "payload": {
+      "nodeId": "n-goblins",
+      "kind": "encounter",
+      "fromNodeId": "n-start"
+    }
+  },
+  {
+    "seq": 6,
+    "type": "encounter.result",
+    "nodeId": "n-goblins",
+    "actorKind": "system",
+    "actorId": null,
+    "override": false,
+    "payload": {
+      "encounterId": "enc-1",
+      "outcome": "party-victory",
+      "before": {
+        "slot-1": {
+          "hp": {
+            "current": 38,
+            "temp": 0
+          }
+        }
+      },
+      "after": {
+        "slot-1": {
+          "hp": {
+            "current": 21,
+            "temp": 0
+          }
+        }
+      }
+    }
+  },
+  {
+    "seq": 7,
+    "type": "xp.awarded",
+    "nodeId": "n-goblins",
+    "actorKind": "system",
+    "actorId": null,
+    "override": false,
+    "payload": {
+      "total": 240,
+      "perCharacter": {
+        "slot-1": 120,
+        "slot-2": 120
+      },
+      "before": {
+        "slot-1": 6500,
+        "slot-2": 6500
+      },
+      "after": {
+        "slot-1": 6620,
+        "slot-2": 6620
+      }
+    }
+  },
+  {
+    "seq": 8,
+    "type": "level.queued",
+    "nodeId": "n-goblins",
+    "actorKind": "system",
+    "actorId": null,
+    "override": false,
+    "payload": {
+      "levelUpId": "lu-1",
+      "slotId": "slot-1",
+      "fromLevel": 5,
+      "toLevel": 6
+    }
+  },
+  {
+    "seq": 9,
+    "type": "loot.granted",
+    "nodeId": "n-goblins",
+    "actorKind": "system",
+    "actorId": null,
+    "override": false,
+    "payload": {
+      "items": [
+        {
+          "itemId": "item-2",
+          "name": "Potion of Healing",
+          "qty": 1
+        }
+      ],
+      "before": null,
+      "after": [
+        {
+          "id": "item-2",
+          "qty": 1
+        }
+      ]
+    }
+  },
+  {
+    "seq": 10,
+    "type": "currency.changed",
+    "nodeId": "n-goblins",
+    "actorKind": "system",
+    "actorId": null,
+    "override": false,
+    "payload": {
+      "slotId": null,
+      "delta": {
+        "gp": 12,
+        "sp": 5
+      },
+      "reason": "loot",
+      "before": {
+        "gp": 0,
+        "sp": 0
+      },
+      "after": {
+        "gp": 12,
+        "sp": 5
+      }
+    }
+  },
+  {
+    "seq": 11,
+    "type": "node.completed",
+    "nodeId": "n-goblins",
+    "actorKind": "system",
+    "actorId": null,
+    "override": false,
+    "payload": {
+      "nodeId": "n-goblins",
+      "kind": "encounter"
+    }
+  },
+  {
+    "seq": 12,
+    "type": "snapshot.saved",
+    "nodeId": "n-goblins",
+    "actorKind": "dm",
+    "actorId": "p-dm",
+    "override": false,
+    "payload": {
+      "snapshotId": "snap-1",
+      "label": "after the toll",
+      "atSeq": 11
+    }
+  },
+  {
+    "seq": 13,
+    "type": "node.entered",
+    "nodeId": "n-camp",
+    "actorKind": "dm",
+    "actorId": "p-dm",
+    "override": false,
+    "payload": {
+      "nodeId": "n-camp",
+      "kind": "rest",
+      "fromNodeId": "n-goblins"
+    }
+  },
+  {
+    "seq": 14,
+    "type": "rest.taken",
+    "nodeId": "n-camp",
+    "actorKind": "player",
+    "actorId": "p-ann",
+    "override": false,
+    "payload": {
+      "type": "short",
+      "slotIds": [
+        "slot-1"
+      ],
+      "rolls": [
+        6
+      ],
+      "before": {
+        "hp": 21
+      },
+      "after": {
+        "hp": 29
+      }
+    }
+  },
+  {
+    "seq": 15,
+    "type": "item.moved",
+    "nodeId": "n-camp",
+    "actorKind": "player",
+    "actorId": "p-ann",
+    "override": false,
+    "payload": {
+      "itemId": "item-2",
+      "fromSlotId": null,
+      "toSlotId": "slot-1",
+      "qty": 1,
+      "before": {
+        "ownerSlotId": null
+      },
+      "after": {
+        "ownerSlotId": "slot-1"
+      }
+    }
+  },
+  {
+    "seq": 16,
+    "type": "item.used",
+    "nodeId": "n-camp",
+    "actorKind": "player",
+    "actorId": "p-ann",
+    "override": false,
+    "payload": {
+      "itemId": "item-2",
+      "slotId": "slot-1",
+      "targetSlotId": "slot-2",
+      "before": {
+        "qty": 1
+      },
+      "after": {
+        "qty": 0
+      }
+    }
+  },
+  {
+    "seq": 17,
+    "type": "level.applied",
+    "nodeId": "n-camp",
+    "actorKind": "dm",
+    "actorId": "p-dm",
+    "override": false,
+    "payload": {
+      "levelUpId": "lu-1",
+      "slotId": "slot-1",
+      "fromLevel": 5,
+      "toLevel": 6,
+      "before": {
+        "level": 5
+      },
+      "after": {
+        "level": 6
+      }
+    }
+  },
+  {
+    "seq": 18,
+    "type": "level.reverted",
+    "nodeId": "n-camp",
+    "actorKind": "dm",
+    "actorId": "p-dm",
+    "override": false,
+    "payload": {
+      "levelUpId": "lu-1",
+      "slotId": "slot-1",
+      "fromLevel": 5,
+      "toLevel": 6,
+      "before": {
+        "level": 6
+      },
+      "after": {
+        "level": 5
+      }
+    }
+  },
+  {
+    "seq": 19,
+    "type": "shop.bought",
+    "nodeId": "n-camp",
+    "actorKind": "player",
+    "actorId": "p-ann",
+    "override": false,
+    "payload": {
+      "slotId": "slot-1",
+      "refKey": "srd_diamond",
+      "qty": 1,
+      "price": {
+        "gp": 300
+      },
+      "before": {
+        "gp": 340
+      },
+      "after": {
+        "gp": 40
+      }
+    }
+  },
+  {
+    "seq": 20,
+    "type": "shop.sold",
+    "nodeId": "n-camp",
+    "actorKind": "player",
+    "actorId": "p-ann",
+    "override": false,
+    "payload": {
+      "slotId": "slot-1",
+      "itemId": "item-3",
+      "qty": 1,
+      "price": {
+        "gp": 5
+      },
+      "before": {
+        "gp": 40
+      },
+      "after": {
+        "gp": 45
+      }
+    }
+  },
+  {
+    "seq": 21,
+    "type": "character.died",
+    "nodeId": "n-camp",
+    "actorKind": "system",
+    "actorId": null,
+    "override": false,
+    "payload": {
+      "slotId": "slot-2",
+      "cause": "failures",
+      "before": {
+        "lifeStatus": "dying"
+      },
+      "after": {
+        "lifeStatus": "dead"
+      }
+    }
+  },
+  {
+    "seq": 22,
+    "type": "character.revived",
+    "nodeId": "n-camp",
+    "actorKind": "dm",
+    "actorId": "p-dm",
+    "override": false,
+    "payload": {
+      "slotId": "slot-2",
+      "method": "revivify",
+      "lifeStatus": "active",
+      "before": {
+        "lifeStatus": "dead"
+      },
+      "after": {
+        "lifeStatus": "active",
+        "hp": 1
+      }
+    }
+  },
+  {
+    "seq": 23,
+    "type": "character.retired",
+    "nodeId": "n-camp",
+    "actorKind": "dm",
+    "actorId": "p-dm",
+    "override": false,
+    "payload": {
+      "slotId": "slot-2",
+      "archiveId": "arch-1",
+      "reason": "player left",
+      "before": {
+        "characterId": "900000001"
+      },
+      "after": {
+        "characterId": null
+      }
+    }
+  },
+  {
+    "seq": 24,
+    "type": "character.joined",
+    "nodeId": "n-camp",
+    "actorKind": "dm",
+    "actorId": "p-dm",
+    "override": false,
+    "payload": {
+      "slotId": "slot-2",
+      "characterId": "900000002",
+      "level": 5,
+      "before": {
+        "characterId": null
+      },
+      "after": {
+        "characterId": "900000002"
+      }
+    }
+  },
+  {
+    "seq": 25,
+    "type": "seat.filled",
+    "nodeId": "n-camp",
+    "actorKind": "dm",
+    "actorId": "p-dm",
+    "override": false,
+    "payload": {
+      "slotId": "slot-2",
+      "seat": 2,
+      "controller": "ai",
+      "before": {
+        "controller": "player"
+      },
+      "after": {
+        "controller": "ai"
+      }
+    }
+  },
+  {
+    "seq": 26,
+    "type": "dm.override",
+    "nodeId": "n-camp",
+    "actorKind": "dm",
+    "actorId": "p-dm",
+    "override": true,
+    "payload": {
+      "kind": "xp",
+      "slotId": "slot-1",
+      "before": 6620,
+      "after": 7000
+    }
+  },
+  {
+    "seq": 27,
+    "type": "snapshot.restored",
+    "nodeId": "n-camp",
+    "actorKind": "dm",
+    "actorId": "p-dm",
+    "override": false,
+    "payload": {
+      "snapshotId": "snap-1",
+      "atSeq": 11,
+      "before": {
+        "seq": 26
+      },
+      "after": {
+        "seq": 11
+      }
+    }
+  },
+  {
+    "seq": 28,
+    "type": "run.ended",
+    "nodeId": "n-camp",
+    "actorKind": "dm",
+    "actorId": "p-dm",
+    "override": false,
+    "payload": {
+      "outcome": "victory"
+    }
+  }
+]

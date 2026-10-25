@@ -1,0 +1,511 @@
+{
+  "v": 1,
+  "runId": "run-fixture",
+  "atSeq": 9,
+  "run": {
+    "status": "between",
+    "currentNodeId": "n-camp",
+    "visitedNodeIds": [
+      "n-start",
+      "n-goblins",
+      "n-camp"
+    ],
+    "settings": {
+      "xpMode": "xp",
+      "deathMode": "standard"
+    },
+    "stash": {
+      "currency": {
+        "cp": 0,
+        "sp": 5,
+        "ep": 0,
+        "gp": 12,
+        "pp": 0
+      }
+    },
+    "rng": {
+      "algo": "mulberry32",
+      "s": 424242
+    }
+  },
+  "characters": [
+    {
+      "slotId": "slot-1",
+      "seat": 1,
+      "characterId": "900000003",
+      "name": "Fixture Cleric",
+      "level": 5,
+      "xp": 6620,
+      "lifeStatus": "active",
+      "version": 3,
+      "controllerParticipantId": "p-ann",
+      "sheet": {
+        "id": "900000003",
+        "name": "Fixture Cleric",
+        "classes": [
+          {
+            "name": "Cleric",
+            "level": 5,
+            "subclass": "Life Domain"
+          }
+        ],
+        "level": 5,
+        "hp": {
+          "max": 38
+        },
+        "abilityModifiers": {
+          "STR": 2,
+          "DEX": 0,
+          "CON": 2,
+          "INT": 0,
+          "WIS": 3,
+          "CHA": 1
+        },
+        "spellSlotTable": {
+          "spell": {
+            "1": 4,
+            "2": 3,
+            "3": 2
+          },
+          "pact": null
+        }
+      },
+      "state": {
+        "schema_v": 1,
+        "hp": {
+          "current": 21,
+          "temp": 0
+        },
+        "deathSaves": {
+          "successes": 0,
+          "failures": 0,
+          "stable": false
+        },
+        "hitDice": {
+          "Cleric": {
+            "die": 8,
+            "spent": 1
+          }
+        },
+        "slots": {
+          "spell": {
+            "1": {
+              "spent": 2
+            },
+            "2": {
+              "spent": 0
+            },
+            "3": {
+              "spent": 0
+            }
+          },
+          "pact": {
+            "spent": 0
+          }
+        },
+        "resources": {
+          "feat:channel-divinity": {
+            "label": "Channel Divinity",
+            "max": 1,
+            "spent": 0,
+            "recovery": [
+              "sr"
+            ]
+          },
+          "spell:misty-step": {
+            "label": "Misty Step",
+            "max": 1,
+            "spent": 0,
+            "recovery": [
+              "lr"
+            ]
+          }
+        },
+        "conditions": [],
+        "conditionMeta": {},
+        "exhaustion": 0,
+        "inspiration": false,
+        "currency": {
+          "cp": 0,
+          "sp": 0,
+          "ep": 0,
+          "gp": 40,
+          "pp": 0
+        },
+        "concentration": null
+      }
+    },
+    {
+      "slotId": "slot-2",
+      "seat": 2,
+      "characterId": "900000001",
+      "name": "Fixture Fighter",
+      "level": 5,
+      "xp": 6620,
+      "lifeStatus": "active",
+      "version": 3,
+      "controllerParticipantId": null,
+      "sheet": {
+        "id": "900000001",
+        "name": "Fixture Fighter",
+        "classes": [
+          {
+            "name": "Fighter",
+            "level": 5,
+            "subclass": "Champion"
+          }
+        ],
+        "level": 5,
+        "hp": {
+          "max": 44
+        },
+        "abilityModifiers": {
+          "STR": 3,
+          "DEX": 2,
+          "CON": 2,
+          "INT": 0,
+          "WIS": 1,
+          "CHA": -1
+        },
+        "spellSlotTable": {
+          "spell": {},
+          "pact": null
+        }
+      },
+      "state": {
+        "schema_v": 1,
+        "hp": {
+          "current": 44,
+          "temp": 0
+        },
+        "deathSaves": {
+          "successes": 0,
+          "failures": 0,
+          "stable": false
+        },
+        "hitDice": {
+          "Fighter": {
+            "die": 10,
+            "spent": 0
+          }
+        },
+        "slots": {
+          "spell": {},
+          "pact": {
+            "spent": 0
+          }
+        },
+        "resources": {
+          "feat:second-wind": {
+            "label": "Second Wind",
+            "max": 1,
+            "spent": 0,
+            "recovery": [
+              "sr"
+            ]
+          },
+          "feat:action-surge": {
+            "label": "Action Surge",
+            "max": 1,
+            "spent": 1,
+            "recovery": [
+              "sr"
+            ]
+          }
+        },
+        "conditions": [
+          "poisoned"
+        ],
+        "conditionMeta": {
+          "poisoned": {
+            "sourceId": null,
+            "endsOn": null,
+            "persistent": true
+          }
+        },
+        "exhaustion": 1,
+        "inspiration": false,
+        "currency": {
+          "cp": 0,
+          "sp": 0,
+          "ep": 0,
+          "gp": 0,
+          "pp": 0
+        },
+        "concentration": null
+      }
+    }
+  ],
+  "items": [
+    {
+      "id": "item-1",
+      "ownerSlotId": "slot-2",
+      "origin": "ddb",
+      "refKey": null,
+      "name": "Potion of Healing",
+      "qty": 2,
+      "equipped": false,
+      "attuned": false,
+      "chargesSpent": 0,
+      "data": {
+        "consumable": true
+      }
+    },
+    {
+      "id": "item-2",
+      "ownerSlotId": null,
+      "origin": "open5e",
+      "refKey": "srd_potion-of-healing",
+      "name": "Potion of Healing",
+      "qty": 1,
+      "equipped": false,
+      "attuned": false,
+      "chargesSpent": 0,
+      "data": null
+    }
+  ],
+  "levelUps": [
+    {
+      "id": "lu-1",
+      "slotId": "slot-1",
+      "fromLevel": 5,
+      "toLevel": 6,
+      "className": "Cleric",
+      "mode": "choose",
+      "status": "pending_player",
+      "auto": {
+        "hp": 7
+      }
+    }
+  ],
+  "campaign": {
+    "v": 1,
+    "id": "camp-fixture",
+    "name": "Fixture Crossing",
+    "ruleset": "srd-5.1",
+    "settings": {
+      "xpMode": "xp",
+      "hpOnLevel": "average",
+      "deathMode": "standard",
+      "levelUpMode": "choose",
+      "dawnIsLongRest": true,
+      "xpAward": "auto"
+    },
+    "templates": [
+      {
+        "id": "tpl-bandits",
+        "name": "Bandit ambush",
+        "setup": {
+          "map": null,
+          "grid": {
+            "cols": 12,
+            "rows": 8
+          },
+          "monsters": [
+            {
+              "slug": "bandit",
+              "id": "b-1"
+            }
+          ],
+          "placements": {
+            "b-1": {
+              "col": 9,
+              "row": 3
+            }
+          }
+        }
+      }
+    ],
+    "nodes": [
+      {
+        "id": "n-start",
+        "kind": "story",
+        "title": "The crossroads",
+        "ord": 0,
+        "start": true,
+        "payload": {
+          "text": "Two roads lead on.",
+          "choices": [
+            {
+              "id": "road",
+              "label": "Take the road"
+            },
+            {
+              "id": "woods",
+              "label": "Cut through the woods"
+            }
+          ]
+        },
+        "next": [
+          {
+            "to": "n-goblins",
+            "label": "Road",
+            "when": {
+              "choice": "road"
+            }
+          },
+          {
+            "to": "n-bandits",
+            "label": "Woods",
+            "when": {
+              "choice": "woods"
+            }
+          }
+        ]
+      },
+      {
+        "id": "n-goblins",
+        "kind": "encounter",
+        "title": "Goblin toll",
+        "ord": 1,
+        "payload": {
+          "setup": {
+            "map": null,
+            "grid": {
+              "cols": 10,
+              "rows": 8
+            },
+            "monsters": [
+              {
+                "slug": "goblin",
+                "id": "gob-1"
+              },
+              {
+                "slug": "goblin",
+                "id": "gob-2"
+              }
+            ],
+            "placements": {
+              "gob-1": {
+                "col": 7,
+                "row": 2
+              },
+              "gob-2": {
+                "col": 7,
+                "row": 5
+              }
+            }
+          },
+          "partyPlacement": {
+            "1": {
+              "col": 1,
+              "row": 3
+            },
+            "2": {
+              "col": 1,
+              "row": 4
+            }
+          },
+          "xpOverride": 120,
+          "loot": {
+            "items": [
+              {
+                "origin": "open5e",
+                "ref": "srd_potion-of-healing",
+                "qty": 1
+              }
+            ],
+            "currency": {
+              "gp": 12,
+              "sp": 5
+            }
+          }
+        },
+        "next": [
+          {
+            "to": "n-camp"
+          },
+          {
+            "to": "n-start",
+            "label": "Retreat",
+            "when": {
+              "outcome": "hostile-victory"
+            }
+          }
+        ]
+      },
+      {
+        "id": "n-bandits",
+        "kind": "encounter",
+        "title": "Bandit ambush",
+        "ord": 2,
+        "payload": {
+          "templateId": "tpl-bandits"
+        },
+        "next": [
+          {
+            "to": "n-camp"
+          }
+        ]
+      },
+      {
+        "id": "n-camp",
+        "kind": "rest",
+        "title": "Make camp",
+        "ord": 3,
+        "payload": {
+          "type": "short"
+        },
+        "next": [
+          {
+            "to": "n-cache"
+          }
+        ]
+      },
+      {
+        "id": "n-cache",
+        "kind": "loot",
+        "title": "The cache",
+        "ord": 4,
+        "payload": {
+          "items": [
+            {
+              "origin": "dm",
+              "name": "Silver locket",
+              "qty": 1,
+              "data": {
+                "value": "25 gp"
+              }
+            },
+            {
+              "origin": "open5e",
+              "ref": "srd_rope-hempen-50-feet"
+            }
+          ],
+          "currency": {
+            "gp": 30
+          },
+          "assign": "free"
+        },
+        "next": [
+          {
+            "to": "n-market"
+          }
+        ]
+      },
+      {
+        "id": "n-market",
+        "kind": "shop",
+        "title": "Trading post",
+        "ord": 5,
+        "payload": {
+          "stock": [
+            {
+              "ref": "srd_potion-of-healing",
+              "qty": 3,
+              "price": {
+                "gp": 50
+              }
+            },
+            {
+              "ref": "srd_diamond",
+              "qty": 1
+            }
+          ],
+          "buyback": 0.5
+        },
+        "next": []
+      }
+    ]
+  }
+}

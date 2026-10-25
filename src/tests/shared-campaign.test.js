@@ -174,7 +174,7 @@ test('campaign: validators never throw on garbage', () => {
 });
 
 test('campaign: the shared contract modules stay portable (Vite and Node: relative imports only)', () => {
-  for (const f of ['campaign.js', 'check.js', 'protocol.js', 'events.js', 'encounter-state.js']) {
+  for (const f of ['campaign.js', 'run-state.js', 'run-events.js', 'check.js', 'protocol.js', 'events.js', 'encounter-state.js']) {
     const src = readFileSync(new URL(`../js/shared/${f}`, import.meta.url), 'utf8');
     const imports = [...src.matchAll(/^import[^'"]*['"]([^'"]+)['"]/gm)].map(m => m[1]);
     for (const spec of imports) assert.match(spec, /^\.\/[a-z-]+\.js$/, `${f} imports ${spec}`);
