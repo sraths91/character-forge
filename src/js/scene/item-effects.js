@@ -4,21 +4,21 @@
  * An entity carries its run items as `resources.items {[runItemId]:
  * {name, effect, max, spent}}` (wrapper `_items`). `effect` is either a
  * registry key ('potion-of-healing') or an inline `{kind: 'heal', dice}`.
- * The SRD potion amounts live here because Open5e has them only as prose
- * (M65 "Rests, items, currency"): Healing 2d4+2, Greater 4d4+4, Superior
- * 8d4+8, Supreme 10d4+20 (SRD 5.1 p.235). E4's campaign consumables
- * registry produces the same keys / shapes.
+ *
+ * The data source is E4's campaign consumables registry
+ * (campaign/consumables.js `POTIONS`, SRD 5.1 p.235 — Open5e has the
+ * amounts only as prose). This module only derives the engine's
+ * `{kind, dice}` view of it and resolves an entity's item record.
  *
  * Pure module: no DOM, no rng.
  */
 
-/** SRD consumables the engine resolves, keyed like the item's slug. */
-export const ITEM_EFFECTS = Object.freeze({
-  'potion-of-healing': Object.freeze({ kind: 'heal', dice: '2d4+2' }),
-  'potion-of-greater-healing': Object.freeze({ kind: 'heal', dice: '4d4+4' }),
-  'potion-of-superior-healing': Object.freeze({ kind: 'heal', dice: '8d4+8' }),
-  'potion-of-supreme-healing': Object.freeze({ kind: 'heal', dice: '10d4+20' })
-});
+import { POTIONS } from '../campaign/consumables.js';
+
+/** SRD consumables the engine resolves, keyed like the item's slug (derived from POTIONS). */
+export const ITEM_EFFECTS = Object.freeze(Object.fromEntries(
+  Object.values(POTIONS).map(p => [p.id, Object.freeze({ kind: 'heal', dice: p.dice })])
+));
 
 /** Effect kinds the engine can resolve. */
 export const ITEM_EFFECT_KINDS = Object.freeze(['heal']);

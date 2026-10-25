@@ -17,6 +17,8 @@ import { validateEvent } from '../js/shared/events.js';
 import { validateClientMessage, INTENT_PLAN_KINDS } from '../js/shared/protocol.js';
 import { createRng } from '../js/scene/rng.js';
 import { parsedDdbFixture, buildScene } from './helpers/entities.js';
+import { POTIONS as CAMPAIGN_POTIONS, drinkPotion } from '../js/campaign/consumables.js';
+import { readFileSync } from 'node:fs';
 
 const fighter = parsedDdbFixture('fighter-l5');
 const cleric = parsedDdbFixture('cleric-l5');
@@ -200,4 +202,25 @@ test('T23: AI end to end — a delegated turn drinks the potion through the engi
   assert.ok(used, events.map(e => e.type).join(','));
   assert.equal(ts.entities.f.hp, 9 + used.payload.rolled);
   assert.equal(events.find(e => e.type === 'plan.chosen').payload.source, 'ai');
+});
+
+test('one potion registry: ITEM_EFFECTS is derived from campaign POTIONS; drinkPotion rolls are unchanged', () => {
+  assert.deepEqual(Object.keys(ITEM_EFFECTS), Object.keys(CAMPAIGN_POTIONS));
+  for (const p of Object.values(CAMPAIGN_POTIONS)) {
+    assert.deepEqual(ITEM_EFFECTS[p.id], { kind: 'heal', dice: p.dice });
+    assert.ok(Object.isFrozen(ITEM_EFFECTS[p.id]));
+  }
+  const src = readFileSync(new URL('../js/campaign/consumables.js', import.meta.url), 'utf8');
+  assert.ok(!/item-effects/.test(src.replace(/\/\*[\s\S]*?\*\//g, '')), 'consumables.js owns the dice (no import of scene/item-effects.js)');
+  // Seeded rolls pinned from before the move (main c162fec).
+  const rolls = Object.values(CAMPAIGN_POTIONS).map(p => {
+    const r = drinkPotion({ hp: { max: 100 } }, { hp: { current: 1, temp: 0 } }, p.id, createRng({ s: 7 }));
+    return [p.id, r.rolled, r.rolls.join(',')];
+  });
+  assert.deepEqual(rolls, [
+    ['potion-of-healing', 4, '1,1'],
+    ['potion-of-greater-healing', 13, '1,1,4,3'],
+    ['potion-of-superior-healing', 25, '1,1,4,3,3,2,2,1'],
+    ['potion-of-supreme-healing', 43, '1,1,4,3,3,2,2,1,3,3']
+  ]);
 });

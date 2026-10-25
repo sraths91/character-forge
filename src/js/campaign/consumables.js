@@ -2,9 +2,9 @@
  * M65 R27 — consumables: the SRD potion registry and its effects.
  *
  * Open5e gives potion healing only as prose, so the amounts come from
- * the SRD 5.1 "Potions of Healing" table — one table, the engine's
- * `ITEM_EFFECTS` (scene/item-effects.js, T23); this registry adds names,
- * rarities and Open5e keys. Between nodes a potion is drunk through
+ * the SRD 5.1 "Potions of Healing" table. This registry is the ONE data
+ * source: names, rarities, Open5e keys and dice; the engine's
+ * `ITEM_EFFECTS` (scene/item-effects.js, T23) is derived from it. Between nodes a potion is drunk through
  * `drinkPotion` (state_json); during an encounter it is the engine's item
  * action, fed by `itemsLedgerFor` (entity `resources.items`, `effect` =
  * the registry key).
@@ -18,18 +18,17 @@ import { requireRng } from '../scene/rng.js';
 import { ruleAssert } from './errors.js';
 import { clone, pushDelta } from './util.js';
 import { effectiveHpMax } from './exhaustion.js';
-import { ITEM_EFFECTS } from '../scene/item-effects.js';
 
-const potion = (id, name, rarity) => Object.freeze({
-  id, name, rarity, dice: ITEM_EFFECTS[id].dice, refKeys: Object.freeze([`srd_${id}`])
+const potion = (id, name, rarity, dice) => Object.freeze({
+  id, name, rarity, dice, refKeys: Object.freeze([`srd_${id}`])
 });
 
-/** SRD 5.1 Potions of Healing (2d4+2, 4d4+4, 8d4+8, 10d4+20 via ITEM_EFFECTS). */
+/** SRD 5.1 Potions of Healing (SRD 5.1 p.235: 2d4+2, 4d4+4, 8d4+8, 10d4+20). */
 export const POTIONS = Object.freeze({
-  'potion-of-healing': potion('potion-of-healing', 'Potion of Healing', 'common'),
-  'potion-of-greater-healing': potion('potion-of-greater-healing', 'Potion of Greater Healing', 'uncommon'),
-  'potion-of-superior-healing': potion('potion-of-superior-healing', 'Potion of Superior Healing', 'rare'),
-  'potion-of-supreme-healing': potion('potion-of-supreme-healing', 'Potion of Supreme Healing', 'very rare')
+  'potion-of-healing': potion('potion-of-healing', 'Potion of Healing', 'common', '2d4+2'),
+  'potion-of-greater-healing': potion('potion-of-greater-healing', 'Potion of Greater Healing', 'uncommon', '4d4+4'),
+  'potion-of-superior-healing': potion('potion-of-superior-healing', 'Potion of Superior Healing', 'rare', '8d4+8'),
+  'potion-of-supreme-healing': potion('potion-of-supreme-healing', 'Potion of Supreme Healing', 'very rare', '10d4+20')
 });
 
 const slug = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
@@ -62,7 +61,7 @@ export function potionFor(itemOrName) {
  */
 export function itemEffectOf(item) {
   const p = potionFor(item);
-  return p ? { ...ITEM_EFFECTS[p.id] } : null;
+  return p ? { kind: 'heal', dice: p.dice } : null;
 }
 
 /**
