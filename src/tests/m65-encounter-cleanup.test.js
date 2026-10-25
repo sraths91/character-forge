@@ -18,6 +18,7 @@ import { PC_FEATURES } from '../js/scene/ai/pc-features.js';
 import { validateIntent, planFromIntent } from '../js/scene/intent-validation.js';
 import { emptyEncounterState, validateEncounterState } from '../js/shared/encounter-state.js';
 import { validateEvent } from '../js/shared/events.js';
+import { initialRunState, validateRunState } from '../js/shared/run-state.js';
 import { createRng } from '../js/scene/rng.js';
 import { parsedDdbFixture } from './helpers/entities.js';
 
@@ -153,15 +154,9 @@ async function fightOnce(runState) {
 }
 
 test('T22: Action Surge spent in fight 1 is still spent in fight 2, and back after a short rest', async () => {
-  const start = {
-    schema_v: 1, hp: { current: 44, temp: 0 }, deathSaves: { successes: 0, failures: 0, stable: false },
-    hitDice: { Fighter: { die: 10, spent: 0 } }, slots: { spell: {}, pact: { spent: 0 } },
-    resources: {
-      'feat:action-surge': { label: 'Action Surge', max: 1, spent: 0, recovery: ['sr'] },
-      'feat:second-wind': { label: 'Second Wind', max: 1, spent: 0, recovery: ['sr'] }
-    },
-    conditions: [], conditionMeta: {}, exhaustion: 0, inspiration: false, currency: { gp: 0 }, concentration: null
-  };
+  // E6's rested state_json v1 (feat:action-surge / feat:second-wind, `sr`).
+  const start = initialRunState(fighterSheet);
+  assert.deepEqual(start.resources['feat:action-surge'], { label: 'Action Surge', max: 1, spent: 0, recovery: ['sr'] });
 
   // Fight 1: surge.
   const one = await fightOnce(start);
@@ -174,6 +169,7 @@ test('T22: Action Surge spent in fight 1 is still spent in fight 2, and back aft
   endEncounterCleanup(ts);
   const afterOne = runStateFromEntity(encounterFromTurnState(ts).entities.f, start);
   assert.equal(afterOne.resources['feat:action-surge'].spent, 1);
+  assert.deepEqual(validateRunState(afterOne, { sheet: fighterSheet }).errors, []);
 
   // Fight 2: still spent.
   const two = await fightOnce(afterOne);

@@ -110,7 +110,32 @@ test('run golden: damage and spent resources carry from fight 1 into fight 2', a
   }
 });
 
-test(`run golden: ${SCENARIO} with E4 + E1's real modules`, { skip: 'M65: waiting on R24–R28/T21' }, async () => {
+test(`run golden: ${SCENARIO} with E1's real run-state seam (T21 / T22) and the reference rules`, async () => {
+  // Until E4's rules merge: E1's entityFromSheet / runStateFromEntity /
+  // endEncounterCleanup with the reference adapter's XP, rest and death.
+  const adapters = await import('../js/scene/encounter-adapters.js');
+  const turnManager = await import('../js/scene/turn-manager.js');
+  const hybrid = {
+    ...referenceAdapter,
+    entityFromSheet: adapters.entityFromSheet,
+    runStateFromEntity: adapters.runStateFromEntity,
+    endEncounterCleanup: turnManager.endEncounterCleanup
+  };
+  assert.doesNotThrow(() => assertRunAdapter(hybrid));
+  const { out: first, ms } = await cpuMs(() => runScript(loadRunScript(SCENARIO), hybrid));
+  const second = await runScript(loadRunScript(SCENARIO), hybrid);
+  assert.deepStrictEqual(goldenOf(second), goldenOf(first), 'a second in-process run must be identical');
+  assertRunInvariants(first);
+  assert.ok(ms < 1000, `run took ${ms.toFixed(0)} ms of CPU (budget 1000)`);
+  for (const s of Object.values(first.final)) assert.deepEqual(validateRunState(s.state).errors, []);
+  const [res1] = first.runEvents.filter(e => e.type === 'encounter.result');
+  const rest = first.runEvents.find(e => e.type === 'rest.taken');
+  for (const slotId of Object.keys(res1.payload.after)) {
+    assert.deepStrictEqual(rest.payload.before[slotId], res1.payload.after[slotId].state, `${slotId}: the rest starts from fight 1's write-back`);
+  }
+});
+
+test(`run golden: ${SCENARIO} with E4 + E1's real modules`, { skip: 'M65: waiting on R24–R28 (E4); T21 / T22 are in' }, async () => {
   const adapters = await import('../js/scene/encounter-adapters.js');
   const xp = await import('../js/campaign/xp.js');
   const rest = await import('../js/campaign/rest.js');

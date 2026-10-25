@@ -26,16 +26,22 @@
  * model; "spent, not remaining"). `entityFromSheet(sheet, {runState})`
  * seeds an entity from it and `runStateFromEntity(entity, prev)` writes the
  * encounter's result back, preserving every key the engine does not own.
- * Resource keys (`state.resources`) ↔ entity `resources.features`:
+ * Resource keys (`state.resources`, shared/run-state.js) ↔ entity
+ * `resources.features` (run-state's ledgerKeyForResource /
+ * resourceKeyForLedger):
  *
  *   'feat:<key>'             ↔ features['<key>']  ('feat:action-surge',
  *                              'feat:second-wind', 'feat:rage',
- *                              'feat:channel-divinity', …)
+ *                              'feat:channel-divinity',
+ *                              'feat:legendary-resistance', …)
  *   'spell:<spellId>'        ↔ features['spell:<spellId>'] (granted-spell
  *                              uses: Fey Touched Misty Step)
- *   'legendary-resistance'   ↔ features['legendary-resistance']
- *   'ddb:<componentId>'      — parser `uses` the engine does not model:
+ *   'ddb:*', 'item:*', 'dm:*' — limited uses the engine does not model:
  *                              never read, never written (preserved)
+ *
+ * Conditions: only those the run state marks `conditionMeta[id].persistent`
+ * enter the encounter as `endsOn: 'persistent'` and survive its end; the
+ * rest enter with their stored lifecycle and end with the encounter.
  *
  * Pure module: no DOM, no storage, no clock, no randomness.
  */
@@ -50,6 +56,7 @@ import {
 } from './conditions.js';
 import { withEngineFields } from './open5e-normalize.js';
 import { featureLedgerFor } from './feature-uses.js';
+import { ledgerKeyForResource, resourceKeyForLedger } from '../shared/run-state.js';
 import {
   buildStatBlockKit, freshKitInnate, kitInnateState, kitLegendaryResistance, LEGENDARY_RESISTANCE_KEY
 } from './stat-block-kit.js';
@@ -544,8 +551,8 @@ function restedEntityFromSheet(sheet, opts) {
 // M65 T21 — run state (state_json v1) ⇄ entity
 // ---------------------------------------------------------------------
 
-/** Run-state resource key prefix of a class / race / feat feature ledger. */
-export const RUN_FEATURE_PREFIX = 'feat:';
+/** Run-state resource prefixes whose ledgers the engine spends. */
+export const ENGINE_RESOURCE_PREFIXES = Object.freeze(['feat:', 'spell:']);
 
 /** Default recovery periods (rest.js vocabulary) of ledgers the engine creates. */
 const DEFAULT_RECOVERY = Object.freeze({
@@ -558,16 +565,15 @@ const DEFAULT_RECOVERY = Object.freeze({
 
 /**
  * The entity `resources.features` key of a run-state resource key, or null
- * when the engine does not model it (`ddb:*`, unknown prefixes).
+ * when the engine does not model it (`ddb:*`, `item:*`, `dm:*`).
  * @param {string} runKey — e.g. 'feat:action-surge', 'spell:misty-step'
  * @returns {string|null}
  */
 export function featureKeyForRunResource(runKey) {
   const k = String(runKey || '');
-  if (k.startsWith(RUN_FEATURE_PREFIX) && k.length > RUN_FEATURE_PREFIX.length) return k.slice(RUN_FEATURE_PREFIX.length);
-  if (k.startsWith('spell:') && k.length > 6) return k;
-  if (k === LEGENDARY_RESISTANCE_KEY) return k;
-  return null;
+  const prefix = ENGINE_RESOURCE_PREFIXES.find(p => k.startsWith(p));
+  if (!prefix || k.length === prefix.length) return null;
+  return ledgerKeyForResource(k);
 }
 
 /**
@@ -576,9 +582,7 @@ export function featureKeyForRunResource(runKey) {
  * @returns {string}
  */
 export function runResourceKeyForFeature(featureKey) {
-  const k = String(featureKey || '');
-  if (k.startsWith('spell:') || k === LEGENDARY_RESISTANCE_KEY) return k;
-  return `${RUN_FEATURE_PREFIX}${k}`;
+  return resourceKeyForLedger(String(featureKey || ''));
 }
 
 /**
@@ -607,10 +611,7 @@ function clampInt(v, lo, hi) {
   return Math.max(lo, Math.min(hi, Math.trunc(Number(v) || 0)));
 }
 
-/**
- * Lifecycle fields a run-state `conditionMeta` entry may hand to an
- * entity condition (`endsOn` is always 'persistent' there).
- */
+/** Lifecycle fields a run-state `conditionMeta` entry hands to an entity condition. */
 const CONDITION_LIFECYCLE_KEYS = Object.freeze(['sourceId', 'save', 'appliedRound']);
 
 function lifecycleOf(c) {
@@ -681,15 +682,20 @@ function seedFromRunState(entity, rs) {
       res.features[fk] = { max, spent: clampInt(r.spent, 0, max) };
     }
   }
-  // The run state's conditions are the persistent ones (M65 T22): each
-  // enters as `endsOn: 'persistent'` so the encounter's end keeps it.
+  // M65 T22 — a DM-marked persistent condition (conditionMeta.persistent)
+  // enters as `endsOn: 'persistent'` and survives the encounter; any other
+  // (a DDB import's 'poisoned') keeps its stored lifecycle and ends with it.
   const meta = rs.conditionMeta || {};
   const seen = new Set();
   for (const c of Array.isArray(rs.conditions) ? rs.conditions : []) {
     const id = conditionId(c);
     if (!id || seen.has(id)) continue;
     seen.add(id);
-    entity.conditions.push({ id: String(id), ...lifecycleOf(meta[id]), ...lifecycleOf(c), endsOn: PERSISTENT_ENDS_ON });
+    const m = meta[id] && typeof meta[id] === 'object' ? meta[id] : {};
+    const life = { ...lifecycleOf(m), ...lifecycleOf(c) };
+    if (m.persistent === true) entity.conditions.push({ id: String(id), ...life, endsOn: PERSISTENT_ENDS_ON });
+    else if (Object.keys(life).length || m.endsOn) entity.conditions.push({ id: String(id), ...life, ...(m.endsOn ? { endsOn: m.endsOn } : {}) });
+    else entity.conditions.push(String(id));
   }
   // Life: exhaustion 6 kills; 0 HP is dying (or stable / dead by the tallies).
   const ds = normalizeDeathSaves(rs.deathSaves);
@@ -723,8 +729,10 @@ function ledgerLabel(featureKey) {
  *   and slots.pact.spent; resources[key].spent for every mapped ledger (a
  *   ledger the state lacks is added, `{label, max, spent, recovery}`, only
  *   once something is spent); conditions + conditionMeta (only the
- *   `endsOn: 'persistent'` conditions; a DM-marked one gains its meta, a
- *   carried one keeps its stored meta); exhaustion; concentration.
+ *   `endsOn: 'persistent'` conditions, each with `persistent: true` and
+ *   its stored meta kept); exhaustion; concentration.
+ * `prevState` should be a full state_json v1 (initialRunState): the
+ * output then validates with validateRunState.
  *
  * @param {object} entity — EncounterState PC entity (after the encounter)
  * @param {object} [prevState] — the run state the encounter started from
@@ -778,8 +786,7 @@ export function runStateFromEntity(entity, prevState = {}) {
     const id = conditionId(c);
     if (!id || conditions.includes(id) || endsWithEncounter(c)) continue;
     conditions.push(id);
-    const m = { ...(prevMeta[id] || {}), ...lifecycleOf(c) };
-    if (Object.keys(m).length) conditionMeta[id] = m;
+    conditionMeta[id] = { ...(prevMeta[id] || {}), ...lifecycleOf(c), persistent: true };
   }
   out.conditions = conditions;
   out.conditionMeta = conditionMeta;

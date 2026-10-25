@@ -12,6 +12,7 @@ import {
   endsWithEncounter
 } from '../js/scene/encounter-adapters.js';
 import { emptyEncounterState, validateEncounterState } from '../js/shared/encounter-state.js';
+import { initialRunState, validateRunState } from '../js/shared/run-state.js';
 import { turnStateFromEncounter, startEncounter, runEncounter, encounterFromTurnState } from '../js/scene/turn-manager.js';
 import { runOneAttack } from '../js/scene/combat-engine.js';
 import { createRng } from '../js/scene/rng.js';
@@ -32,13 +33,15 @@ test('T21: without a runState every fixture entity is byte-identical to phase 1.
   }
 });
 
-test('T21: resource key map — feat:* / spell:* / legendary-resistance map, ddb:* does not', () => {
+test('T21: resource key map — feat:* / spell:* map (run-state helpers), ddb:* / item:* / dm:* do not', () => {
   assert.equal(featureKeyForRunResource('feat:action-surge'), 'action-surge');
   assert.equal(featureKeyForRunResource('feat:second-wind'), 'second-wind');
   assert.equal(featureKeyForRunResource('feat:rage'), 'rage');
   assert.equal(featureKeyForRunResource('spell:misty-step'), 'spell:misty-step');
-  assert.equal(featureKeyForRunResource('legendary-resistance'), 'legendary-resistance');
+  assert.equal(featureKeyForRunResource('feat:legendary-resistance'), 'legendary-resistance');
   assert.equal(featureKeyForRunResource('ddb:12345'), null);
+  assert.equal(featureKeyForRunResource('item:ri-1'), null);
+  assert.equal(featureKeyForRunResource('dm:blessing'), null);
   assert.equal(featureKeyForRunResource('feat:'), null);
   assert.equal(featureKeyForRunResource('bardic'), null);
   for (const k of ['action-surge', 'second-wind', 'rage', 'channel-divinity', 'spell:misty-step', 'legendary-resistance']) {
@@ -76,10 +79,10 @@ function wizardState(over = {}) {
       'ddb:777': { label: 'Lucky', max: 3, spent: 2, recovery: ['lr'] }
     },
     conditions: ['poisoned'],
-    conditionMeta: { poisoned: { note: 'until a long rest' } },
+    conditionMeta: { poisoned: { sourceId: 'sewer-rat', persistent: true } },
     exhaustion: 0,
     inspiration: true,
-    currency: { gp: 42, sp: 7 },
+    currency: { cp: 0, sp: 7, ep: 0, gp: 42, pp: 0 },
     concentration: null,
     ...over
   };
@@ -92,7 +95,8 @@ test('T21: a runState seeds HP, temp HP, spent slots, feature uses and persisten
   assert.deepEqual(e.resources.slots, { 1: { max: 4, spent: 3 }, 2: { max: 3, spent: 1 }, 3: { max: 2, spent: 0 } });
   assert.deepEqual(e.resources.features['arcane-recovery'], { max: 1, spent: 1 });
   assert.equal(e.resources.features['ddb:777'], undefined, 'ddb:* is not an engine ledger');
-  assert.deepEqual(e.conditions, [{ id: 'poisoned', endsOn: 'persistent' }], 'run-state conditions are persistent');
+  assert.deepEqual(validateRunState(wizardState(), { sheet }).errors, []);
+  assert.deepEqual(e.conditions, [{ id: 'poisoned', sourceId: 'sewer-rat', endsOn: 'persistent' }], 'a DM-marked persistent condition');
   assert.equal(e.status, undefined, 'active');
   assert.equal(e.exhaustion, undefined);
   assert.deepEqual(validateEncounterState(stateWith([e])).errors, []);
@@ -156,21 +160,22 @@ test('T21: persistent conditions round-trip through conditionMeta; everything en
   const sheet = parsedDdbFixture('fighter-l5');
   const rs = {
     hp: { current: 30, temp: 0 },
-    conditions: ['cursed'],
-    conditionMeta: { cursed: { sourceId: 'hag', note: 'until Remove Curse' } }
+    conditions: ['cursed', 'charmed'],
+    conditionMeta: { cursed: { sourceId: 'hag', persistent: true } }
   };
   const e = entityFromSheet(sheet, { ...OPTS, runState: rs });
-  assert.deepEqual(e.conditions, [{ id: 'cursed', sourceId: 'hag', endsOn: 'persistent' }]);
+  assert.deepEqual(e.conditions, [{ id: 'cursed', sourceId: 'hag', endsOn: 'persistent' }, 'charmed'],
+    'only the DM-marked one is persistent; an imported plain condition ends with the encounter');
   assert.deepEqual(validateEncounterState(stateWith([e])).errors, []);
   // In the fight: Rage, prone, a bite's plain 'poisoned' (R7 default
   // 'encounter'), and a DM-marked persistent disease.
   e.conditions.push(
     { id: 'raging', sourceId: e.id, endsOn: 'encounter', appliedRound: 1 }, { id: 'prone', endsOn: 'turn-start' },
     'poisoned', { id: 'sewer-plague', sourceId: null, endsOn: 'persistent' });
-  assert.deepEqual(e.conditions.map(endsWithEncounter), [false, true, true, true, false]);
+  assert.deepEqual(e.conditions.map(endsWithEncounter), [false, true, true, true, true, false]);
   const back = runStateFromEntity(e, rs);
   assert.deepEqual(back.conditions, ['cursed', 'sewer-plague']);
-  assert.deepEqual(back.conditionMeta, { cursed: { sourceId: 'hag', note: 'until Remove Curse' } });
+  assert.deepEqual(back.conditionMeta, { cursed: { sourceId: 'hag', persistent: true }, 'sewer-plague': { persistent: true } });
   // The wrapper keeps the persistent lifecycle through a turn.
   const w = wrapperFromEntity(e, sheet);
   assert.equal(w._conditionMeta.cursed.endsOn, 'persistent');
@@ -189,6 +194,7 @@ test('T21: runStateFromEntity writes spent (not remaining) and keeps every key t
   for (const k of ['schema_v', 'hitDice', 'inspiration', 'currency']) assert.deepEqual(out[k], prev[k], k);
   assert.deepEqual(out.resources['ddb:777'], prev.resources['ddb:777']);
   assert.deepEqual(out.resources['feat:arcane-recovery'], prev.resources['feat:arcane-recovery']);
+  assert.deepEqual(validateRunState(out, { sheet }).errors, []);
   assert.equal(prev.hp.current, 20, 'prev not mutated');
   assert.equal(prev.slots.spell['2'].spent, 1, 'prev not mutated');
 });
@@ -199,8 +205,12 @@ test('T21: identity — seeding then writing back with no encounter returns the 
     for (const name of DDB_FIXTURES) {
       const sheet = parsedDdbFixture(name);
       const rs = randomRunState(sheet, rng);
+      assert.deepEqual(validateRunState(rs, { sheet }).errors, [], `${name} #${i} generator`);
       const e = entityFromSheet(sheet, { ...OPTS, runState: rs });
       assert.deepEqual(runStateFromEntity(e, rs), rs, `${name} #${i}`);
+      // Keys outside state_json v1 (a later version's) are carried too.
+      const withExtra = { ...rs, extra: { kept: [1, 'two', { three: 3 }] } };
+      assert.deepEqual(runStateFromEntity(entityFromSheet(sheet, { ...OPTS, runState: withExtra }), withExtra), withExtra);
     }
   }
 });
@@ -240,7 +250,8 @@ test('T21: property — over simulated encounters the write-back keeps every unt
       const out = runStateFromEntity(entity, before);
       if (canonicalJson(out) !== canonicalJson(before)) changed++;
       // Keys the engine never owns are deep-equal.
-      for (const k of ['schema_v', 'hitDice', 'inspiration', 'currency', 'extra']) assert.deepEqual(out[k], before[k], `${name}: ${k}`);
+      assert.deepEqual(validateRunState(out, { sheet }).errors, [], `${name}: valid state_json v1`);
+      for (const k of ['schema_v', 'hitDice', 'inspiration', 'currency']) assert.deepEqual(out[k], before[k], `${name}: ${k}`);
       for (const [rk, r] of Object.entries(before.resources)) {
         if (!featureKeyForRunResource(rk)) { assert.deepEqual(out.resources[rk], r, `${name}: ${rk}`); continue; }
         const { spent: _a, ...restOut } = out.resources[rk];
@@ -321,32 +332,28 @@ function stateWith(entities) {
   return s;
 }
 
-/** A consistent state_json v1 for `sheet` (spends within the sheet's maxima). */
+/**
+ * A valid state_json v1 for `sheet`: E6's initialRunState with random
+ * spends within the sheet's maxima, a DDB resource, a DM-marked
+ * persistent condition and some exhaustion.
+ */
 function randomRunState(sheet, rng) {
+  const rs = initialRunState(sheet);
   const rested = entityFromSheet(sheet, { pos: POS });
   const pick = (n) => Math.floor(rng() * n);
-  const spell = {};
-  for (const [lvl, l] of Object.entries(rested.resources.slots)) spell[lvl] = { spent: pick(l.max + 1) };
-  const resources = {
-    'ddb:4242': { label: 'Something DDB', max: 3, spent: pick(4), recovery: ['lr'] },
-    'ddb:99': { label: 'Other', max: 1, spent: 0, recovery: ['sr', 'lr'] }
-  };
+  for (const [lvl, l] of Object.entries(rs.slots.spell)) l.spent = pick((rested.resources.slots[lvl]?.max ?? 0) + 1);
+  rs.resources['ddb:4242'] = { label: 'Something DDB', max: 3, spent: pick(4), recovery: ['lr'] };
+  rs.resources['ddb:99'] = { label: 'Other', max: 1, spent: 0, recovery: ['sr', 'lr'] };
   for (const [fk, l] of Object.entries(rested.resources.features)) {
-    resources[runResourceKeyForFeature(fk)] = { label: `L ${fk}`, max: l.max, spent: pick(l.max + 1), recovery: ['sr'] };
+    const key = runResourceKeyForFeature(fk);
+    rs.resources[key] = { ...(rs.resources[key] || { label: `L ${fk}`, recovery: ['sr'] }), max: l.max, spent: pick(l.max + 1) };
   }
-  return {
-    schema_v: 1,
-    hp: { current: 1 + pick(rested.hpMax), temp: pick(4) },
-    deathSaves: { successes: 0, failures: 0, stable: false },
-    hitDice: { [sheet.classes?.[0]?.name || 'X']: { die: 8, spent: pick(3) } },
-    slots: { spell, pact: { spent: 0 } },
-    resources,
-    conditions: ['poisoned'],
-    conditionMeta: { poisoned: { note: 'DM: until a long rest' } },
-    exhaustion: pick(4),
-    inspiration: rng() < 0.5,
-    currency: { gp: pick(200), sp: pick(10) },
-    concentration: null,
-    extra: { kept: [1, 'two', { three: 3 }] }
-  };
+  rs.hp = { current: 1 + pick(rested.hpMax), temp: pick(4) };
+  for (const hd of Object.values(rs.hitDice)) hd.spent = pick(3);
+  rs.conditions = ['poisoned'];
+  rs.conditionMeta = { poisoned: { sourceId: 'sewer-rat', persistent: true } };
+  rs.exhaustion = pick(4);
+  rs.inspiration = rng() < 0.5;
+  rs.currency = { cp: pick(50), sp: pick(10), ep: 0, gp: pick(200), pp: pick(3) };
+  return rs;
 }
