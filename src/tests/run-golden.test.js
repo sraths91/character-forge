@@ -23,7 +23,7 @@ import { installTripwires } from './helpers/tripwires.js';
 
 installTripwires();
 const {
-  loadRunScript, runScript, replayRunEvents, goldenOf, referenceAdapter, assertRunAdapter, RUN_ADAPTER_METHODS, SRD_XP_THRESHOLDS
+  loadRunScript, runScript, replayRunEvents, goldenOf, referenceAdapter, realRunAdapter, assertRunAdapter, RUN_ADAPTER_METHODS, SRD_XP_THRESHOLDS
 } = await import('./helpers/run-driver.js');
 const { validateRunEventLog, isMutatingRunEvent } = await import('../js/shared/run-events.js');
 const { validateRunState } = await import('../js/shared/run-state.js');
@@ -135,26 +135,8 @@ test(`run golden: ${SCENARIO} with E1's real run-state seam (T21 / T22) and the 
   }
 });
 
-/** E4's rules (R24 / R25 / R28) and E1's run-state seam (T21 / T22), unwrapped. */
-async function realAdapter() {
-  const adapters = await import('../js/scene/encounter-adapters.js');
-  const xp = await import('../js/campaign/xp.js');
-  const rest = await import('../js/campaign/rest.js');
-  const death = await import('../js/campaign/death.js');
-  const turnManager = await import('../js/scene/turn-manager.js');
-  return {
-    entityFromSheet: adapters.entityFromSheet,           // T21: (sheet, {…, runState})
-    runStateFromEntity: adapters.runStateFromEntity,     // T21: (entity, prevState)
-    encounterXp: xp.encounterXp,                         // R24: (defeated, participants, {mode})
-    levelForXp: xp.levelForXp,                           // R24
-    applyRest: rest.applyRest,                           // R25: (sheet, state, type, {spend, rng, dawnIsLongRest, lifeStatus})
-    settleAfterEncounter: death.settleAfterEncounter,    // R28: (state, {outcome, deathMode})
-    endEncounterCleanup: turnManager.endEncounterCleanup // T22
-  };
-}
-
 test(`run golden: ${SCENARIO} with E4 + E1's real modules`, async () => {
-  const real = await realAdapter();
+  const real = await realRunAdapter();
   assert.doesNotThrow(() => assertRunAdapter(real));
   const script = loadRunScript(SCENARIO);
   const { out: first, ms } = await cpuMs(() => runScript(script, real));
@@ -180,7 +162,7 @@ test(`run golden: ${SCENARIO} — the real modules and the reference rules agree
   // records onto their common fields makes the two runs byte-identical;
   // any other divergence is a rule difference and fails here.
   const ref = await runScript(loadRunScript(SCENARIO), referenceAdapter);
-  const real = await runScript(loadRunScript(SCENARIO), await realAdapter());
+  const real = await runScript(loadRunScript(SCENARIO), await realRunAdapter());
   assert.deepStrictEqual(real.final, ref.final, 'final character state');
   assert.deepStrictEqual(real.encounters.map(e => [e.outcome, e.rounds, e.eventsHash]), ref.encounters.map(e => [e.outcome, e.rounds, e.eventsHash]));
   const project = (events) => events.map(e => e.type !== 'rest.taken' ? e : {

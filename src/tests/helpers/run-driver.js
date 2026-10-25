@@ -15,6 +15,10 @@
  *                                 creature AI-driven, to its end
  *   { t: 'rest', type?, spend? }  the current rest node; spend =
  *                                 {slotId: {Class: hitDice}}
+ *   { t: 'level', slotId, picks? } between nodes: apply the slot's next
+ *                                 queued level (adapter.planLevelUp /
+ *                                 applyLevelUp, R26; hit points rolled on
+ *                                 the run rng when hpOnLevel is 'roll')
  *   { t: 'end', outcome }         run.ended
  *
  * Randomness: one run RNG (mulberry32, `seed`). Each encounter draws its
@@ -35,6 +39,9 @@
  *   settleAfterEncounter(state, {outcome: RUN_OUTCOMES, deathMode})
  *       → {state, lifeStatus}  after write-back                   (R28)
  *   endEncounterCleanup?(ts)       optional, before write-back    (T22)
+ *   planLevelUp?(sheet, state, {settings}) /
+ *   applyLevelUp?(sheet, state, plan, picks, {rng})
+ *       → {sheet, state}    optional, only for 'level' steps       (R26)
  *
  * The signatures are E4's and E1's as merged, so the real modules plug in
  * unwrapped. The engine ends an encounter with an ENCOUNTER_OUTCOMES value
@@ -208,6 +215,31 @@ export const referenceAdapter = Object.freeze({
   }
 });
 
+/**
+ * The real adapter: E4's rules (R24 / R25 / R26 / R28) and E1's run-state
+ * seam (T21 / T22), unwrapped. Imported lazily so a caller can install
+ * its tripwires before any rules module loads.
+ * @returns {Promise<object>}
+ */
+export async function realRunAdapter() {
+  const adapters = await import('../../js/scene/encounter-adapters.js');
+  const xp = await import('../../js/campaign/xp.js');
+  const rest = await import('../../js/campaign/rest.js');
+  const death = await import('../../js/campaign/death.js');
+  const levelUp = await import('../../js/campaign/level-up.js');
+  return {
+    entityFromSheet: adapters.entityFromSheet,           // T21: (sheet, {…, runState})
+    runStateFromEntity: adapters.runStateFromEntity,     // T21: (entity, prevState)
+    encounterXp: xp.encounterXp,                         // R24: (defeated, participants, {mode})
+    levelForXp: xp.levelForXp,                           // R24
+    applyRest: rest.applyRest,                           // R25: (sheet, state, type, {spend, rng, dawnIsLongRest, lifeStatus})
+    settleAfterEncounter: death.settleAfterEncounter,    // R28: (state, {outcome, deathMode})
+    planLevelUp: levelUp.planLevelUp,                    // R26
+    applyLevelUp: levelUp.applyLevelUp,                  // R26
+    endEncounterCleanup: TM.endEncounterCleanup          // T22
+  };
+}
+
 // ---------------------------------------------------------------------
 // Scripts
 // ---------------------------------------------------------------------
@@ -237,7 +269,8 @@ const levelOfSheet = (sheet) => Math.max(1, Math.min(20, Math.trunc(Number(sheet
  * @param {{sheets?: Record<string, object>}} [opts] — parsed sheets by
  *   fixture name (default: the synthetic DDB fixtures)
  * @returns {Promise<{scenario: string, seed: number, runEvents: object[],
- *   encounters: object[], encounterLogs: object[][], final: object, runHash: string}>}
+ *   encounters: object[], encounterLogs: object[][], final: object, runHash: string,
+ *   sheets: Record<string, object>}>} — `sheets`: each slot's run sheet at the end
  */
 export async function runScript(script, adapter, opts = {}) {
   assertRunAdapter(adapter);
@@ -441,6 +474,22 @@ export async function runScript(script, adapter, opts = {}) {
       emitRun('rest.taken', { type, slotIds, rolls, before, after });
       emitRun('node.completed', { nodeId: current.id, kind: current.kind });
       lastResult = {};
+    } else if (step.t === 'level') {
+      if (typeof adapter.planLevelUp !== 'function' || typeof adapter.applyLevelUp !== 'function') {
+        throw new Error(where(`${at}: the adapter has no planLevelUp / applyLevelUp`));
+      }
+      const c = chars.get(step.slotId);
+      const lu = c?.pendingLevels[0];
+      if (!lu) throw new Error(where(`${at}: ${step.slotId} has no queued level`));
+      const plan = adapter.planLevelUp(c.sheet, c.state, { toLevel: lu.toLevel, settings });
+      const r = adapter.applyLevelUp(c.sheet, c.state, plan, step.picks ?? {}, { rng: runRng });
+      checkState(c.slotId, r.state, r.sheet);
+      const before = { state: c.state, level: c.level };
+      c.sheet = r.sheet;
+      c.state = r.state;
+      c.level = lu.toLevel;
+      c.pendingLevels.shift();
+      emitRun('level.applied', { ...lu, granted: r.granted, before, after: { state: c.state, level: c.level } }, { actorKind: 'player', actorId: c.slotId });
     } else if (step.t === 'end') {
       emitRun('run.ended', { outcome: step.outcome }, { actorKind: 'dm', actorId: 'dm' });
     } else {
@@ -459,15 +508,16 @@ export async function runScript(script, adapter, opts = {}) {
     encounters,
     encounterLogs,
     final,
-    runHash: hash53(canonicalJson(runEvents))
+    runHash: hash53(canonicalJson(runEvents)),
+    sheets: Object.fromEntries([...chars.values()].map(c => [c.slotId, c.sheet]))
   };
 }
 
 /**
  * Rebuild every character's final state from the run events alone (the
  * replay contract B24 / B26 rely on): character.joined seeds, the
- * `after` of encounter.result / rest.taken / xp.awarded / character.died
- * overwrite, level.queued queues.
+ * `after` of encounter.result / rest.taken / xp.awarded / character.died /
+ * level.applied overwrite, level.queued queues, level.applied dequeues.
  * @param {object[]} runEvents
  * @returns {Record<string, {state: object, xp: number, level: number, lifeStatus: string, pendingLevels: number[]}>}
  */
@@ -488,6 +538,10 @@ export function replayRunEvents(runEvents) {
         break;
       case 'character.died': out[p.slotId].lifeStatus = p.after.lifeStatus; break;
       case 'level.queued': out[p.slotId].pendingLevels.push(p.toLevel); break;
+      case 'level.applied':
+        Object.assign(out[p.slotId], clone(p.after));
+        out[p.slotId].pendingLevels.shift();
+        break;
       default: break;
     }
   }
@@ -495,12 +549,12 @@ export function replayRunEvents(runEvents) {
 }
 
 /**
- * The golden projection of a run result (drops the bulky engine logs; their
- * hashes and per-type counts stay).
+ * The golden projection of a run result (drops the bulky engine logs and
+ * the run sheets; the logs' hashes and per-type counts stay).
  * @param {Awaited<ReturnType<typeof runScript>>} result
  * @returns {object}
  */
 export function goldenOf(result) {
-  const { encounterLogs: _logs, ...rest } = result;
+  const { encounterLogs: _logs, sheets: _sheets, ...rest } = result;
   return rest;
 }
