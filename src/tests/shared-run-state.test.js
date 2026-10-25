@@ -11,8 +11,11 @@ import {
   ledgerKeyForResource, resourceKeyForLedger, spellSlug, emptyCurrency, hitDieForClass
 } from '../js/shared/run-state.js';
 import { spellSlug as engineSpellSlug } from '../js/scene/feature-uses.js';
-import { entityFromSheet } from '../js/scene/encounter-adapters.js';
-import { parsedDdbFixture, DDB_FIXTURES } from './helpers/entities.js';
+import { entityFromSheet, runStateFromEntity } from '../js/scene/encounter-adapters.js';
+import { applyRest } from '../js/campaign/rest.js';
+import { createRng } from '../js/scene/rng.js';
+import { parseCharacter } from '../../api/lib/ddb-parser.js';
+import { parsedDdbFixture, loadDdbFixture, DDB_FIXTURES } from './helpers/entities.js';
 
 const SNAPSHOT = JSON.parse(readFileSync(new URL('./fixtures/contracts/run-snapshot.valid.json', import.meta.url), 'utf8'));
 const clone = (v) => JSON.parse(JSON.stringify(v));
@@ -153,6 +156,48 @@ test('run-state: R23 sheet.resources and sheet.currency win when present', () =>
   };
   assert.deepEqual(resourcesFromSheet(sheet), { 'ddb:777': { label: 'Harness of Light', max: 2, spent: 0, recovery: ['lr'] } });
   assert.deepEqual(initialRunState(sheet).currency, { cp: 0, sp: 3, ep: 0, gp: 165, pp: 0 });
+});
+
+test('run-state: ddb:<componentId> resources from a real-shaped export are DM-adjudicated', () => {
+  // The limited uses a real export carries beyond featureUses: an optional
+  // class feature, a racial trait, an item with an unknown reset (DM-managed).
+  const raw = loadDdbFixture('cleric-l5');
+  raw.actions.class.push({ componentId: 5299, name: 'Harness Divine Power', limitedUse: { maxUses: 1, numberUsed: 1, resetType: 2 } });
+  raw.actions.race = [{ componentId: 77, name: 'Breath Weapon', limitedUse: { maxUses: 1, numberUsed: 1, resetType: 1 } }];
+  raw.actions.item = [{ componentId: 88, name: 'Mystery Charm', limitedUse: { maxUses: 2, numberUsed: 2, resetType: 99 } }];
+  const sheet = parseCharacter(raw);
+  const ddbKeys = Object.keys(sheet.resources).filter(k => k.startsWith('ddb:')).sort();
+  assert.deepEqual(ddbKeys, ['ddb:5299', 'ddb:77', 'ddb:88']);
+  assert.ok(Object.values(sheet.resources).every(r => typeof r.source === 'string'), 'the parser tags provenance');
+
+  // Seeded fully rested, valid against the sheet; the parser's own map
+  // (with `spent` and `source`) also validates as state resources.
+  const fromSheet = resourcesFromSheet(sheet);
+  assert.deepEqual(fromSheet['ddb:5299'], { label: 'Harness Divine Power', max: 1, spent: 0, recovery: ['lr'] });
+  assert.deepEqual(fromSheet['ddb:88'].recovery, [], 'unknown reset: only the DM resets it');
+  const rested = initialRunState(sheet);
+  assert.deepEqual(validateRunState(rested, { sheet }).errors, []);
+  assert.deepEqual(validateRunState({ ...rested, resources: clone(sheet.resources) }, { sheet }).errors, []);
+  assertNamedError(validateRunState({ ...rested, resources: { 'ddb:77': { ...sheet.resources['ddb:77'], source: 7 } } }), 'resources.ddb:77.source', 'type');
+
+  // importDdbState carries DDB's live uses for every pool.
+  const live = initialRunState(sheet, { importDdbState: true });
+  assert.deepEqual(['ddb:5299', 'ddb:77', 'ddb:88'].map(k => live.resources[k].spent), [1, 1, 2]);
+  assert.deepEqual(validateRunState(live, { sheet }).errors, []);
+
+  // The engine ignores them: no entity ledger, and the write-back keeps them.
+  const e = entityFromSheet(sheet, { id: 'pc-1', pos: { col: 0, row: 0 }, runState: live });
+  for (const k of ddbKeys) assert.equal(e.resources.features[k], undefined, `${k} has no engine ledger`);
+  const back = runStateFromEntity(e, live);
+  for (const k of ddbKeys) assert.deepEqual(back.resources[k], live.resources[k], `${k} persists through an encounter`);
+  assert.deepEqual(validateRunState(back, { sheet }).errors, []);
+
+  // Rests recover them by `recovery`; an empty list never recovers.
+  const short = applyRest(sheet, back, 'short', { rng: createRng({ s: 1 }) }).state;
+  assert.deepEqual(['ddb:5299', 'ddb:77', 'ddb:88'].map(k => short.resources[k].spent), [1, 0, 2]);
+  const long = applyRest(sheet, back, 'long').state;
+  assert.deepEqual(['ddb:5299', 'ddb:77', 'ddb:88'].map(k => long.resources[k].spent), [0, 0, 2]);
+  assert.deepEqual(validateRunState(long, { sheet }).errors, []);
 });
 
 test('run-state: resource key map agrees with the engine ledger keys (T21 seam)', () => {

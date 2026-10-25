@@ -11,7 +11,7 @@
  *     deathSaves:  { successes, failures, stable },
  *     hitDice:     { <class name>: { die, spent } },
  *     slots:       { spell: { <1-9>: { spent } }, pact: { spent } },
- *     resources:   { <key>: { label, max, spent, recovery[] } },
+ *     resources:   { <key>: { label, max, spent, recovery[], source? } },
  *     conditions:  [ <condition id> ],          persistent across nodes
  *     conditionMeta: { <condition id>: { sourceId?, endsOn?, save?, appliedRound?, persistent? } },
  *     exhaustion:  0-6,
@@ -26,8 +26,18 @@
  *   feat:<slug>        class features — the sheet's `featureUses` slugs
  *                      ('feat:action-surge', 'feat:second-wind', 'feat:rage')
  *   spell:<spellId>    a feat / race / item spell cast through its own uses
- *   ddb:<componentId>  any other DDB limited use (E4's R23 resources map)
+ *   ddb:<componentId>  any other DDB limited use (the parser's R23
+ *                      `sheet.resources`: race / feat / item / background
+ *                      actions, optional class features). DM-adjudicated:
+ *                      the engine has no ledger for them and never reads
+ *                      or writes them; they persist across nodes and
+ *                      recover on rests by their `recovery` (an empty
+ *                      list = only the DM resets it).
  *   item:<id>, dm:<id> reserved
+ * `source` (optional) is the parser's provenance tag ('feature', 'race',
+ * 'feat', 'item', 'class', …), accepted so a state seeded straight from
+ * `sheet.resources` validates. Added in M65 phase 2 (additive: schema_v
+ * stays 1; a state without it is unchanged).
  * `ledgerKeyForResource` / `resourceKeyForLedger` map them to and from the
  * EncounterState entity's `resources.features` keys (T21's seam).
  *
@@ -94,7 +104,8 @@ const RUN_STATE_SPEC = shape({
     label: str({ maxLength: 128 }),
     max: int(0),
     spent: int(0),
-    recovery: arrayOf(oneOf(RECOVERY_PERIODS), { unique: true })
+    recovery: arrayOf(oneOf(RECOVERY_PERIODS), { unique: true }),
+    source: optional(str({ maxLength: 32 }))   // parser provenance (additive)
   }), { keyPattern: RESOURCE_KEY }),
   conditions: arrayOf(str({ maxLength: 64 }), { unique: true }),
   conditionMeta: mapOf(shape({
@@ -235,9 +246,12 @@ const titleCase = (slug) => String(slug).split('-').filter(Boolean)
 
 /**
  * Every limited-use resource on a parsed sheet as `{key: {label, max,
- * spent: 0, recovery}}`. E4's R23 `sheet.resources` map (`{key: {label,
- * max, recovery[]}}`) wins when present; otherwise `featureUses` →
- * `feat:<slug>` and granted spells with their own uses → `spell:<id>`.
+ * spent: 0, recovery}}`. The parser's R23 `sheet.resources` map (`{key:
+ * {label, max, spent, recovery[], source}}`, including the
+ * DM-adjudicated `ddb:<componentId>` pools) wins when present; otherwise
+ * `featureUses` → `feat:<slug>` and granted spells with their own uses →
+ * `spell:<id>`. The parser's `spent` (DDB's live uses) is not copied:
+ * initialRunState carries it only on importDdbState.
  * @param {object} sheet
  * @returns {Record<string, {label: string, max: number, spent: number, recovery: string[]}>}
  */
@@ -335,7 +349,10 @@ export function initialRunState(sheet, opts = {}) {
   const pact = sheet?.spellSlotTable?.pact;
   const pactSpent = live && pact ? clampInt(used.pact?.[pact.level], 0, Math.trunc(Number(pact.max)) || 0) : 0;
   const resources = resourcesFromSheet(sheet);
-  if (live) {
+  if (live && isPlainObject(sheet?.resources)) {
+    // R23 sheet: every pool (feat:, spell:, ddb:) carries DDB's live `spent`.
+    for (const [key, r] of Object.entries(resources)) r.spent = clampInt(sheet.resources[key]?.spent, 0, r.max);
+  } else if (live) {
     for (const [slug, u] of Object.entries(isPlainObject(sheet?.featureUses) ? sheet.featureUses : {})) {
       const r = resources[`feat:${slug}`];
       if (r) r.spent = clampInt(u?.used, 0, r.max);
