@@ -2,7 +2,16 @@
 
 ## Status
 Drafted 2026-10-16 by the planning architect against `main` @ 3ed14aa
-(phase 1 built and merged; 2,008 tests). **Not yet approved.** Inputs:
+(phase 1 built and merged; 2,008 tests). **Approved by the owner
+2026-10-25** at main dd955c2 (phase 1.5 merged, 2,242 tests) with every
+default in the owner-questions table, confirmed explicitly: XP mode with
+fixed-average HP on level-up; standard 5e death and revival; the
+forge's versus mode retires into a server-hosted solo room behind
+`?classic=1` for one release. Already landed in phase 1.5 and dropped
+from this plan's carry-ins: R21 (death saves), Extra Attack, the Open5e
+normaliser with `xp`/`cr` (R22 becomes a check), fog filtering of
+incremental events, the `GET /api/characters/:ddbId` gate (gap 7).
+Migrations 0003–0005 exist, so this plan's schema is **0006**. Inputs:
 M64 (decisions, the data model, "Phase 2 — campaign loop", the owner
 defaults table), the progression brief R3, the DM-tools brief R4's
 phase 2 list, and the code as it is now. Every path and function cited
