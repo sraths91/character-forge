@@ -8,6 +8,8 @@
 
 import { primaryWeaponForCharacter } from '../../src/js/anim/primary-weapon.js';
 import { DAMAGE_TYPES, CONDITION_NAMES } from '../../src/js/scene/open5e-normalize.js';
+import { spellSlug } from '../../src/js/scene/feature-uses.js';
+import { casterClassEntry, combineSpellSlots, hasSlotRows } from '../../src/js/campaign/spell-slots.js';
 
 const STAT_NAMES = { 1: 'STR', 2: 'DEX', 3: 'CON', 4: 'INT', 5: 'WIS', 6: 'CHA' };
 
@@ -84,6 +86,7 @@ export function parseCharacter(raw) {
   const slotsUsed = parseSlotsUsed(raw);
   const spellSlotTable = parseSpellSlotTable(raw);
   const inventory = parseInventory(raw);
+  const progression = parseProgression(raw);
 
   return {
     id,
@@ -148,7 +151,14 @@ export function parseCharacter(raw) {
     // `equipment` / `carried` stay the sprite pipeline's slotted view.
     inventory,
     // R14 — racial trait names (Lucky, Relentless Endurance, ...).
-    racialTraits: parseRacialTraits(raw)
+    racialTraits: parseRacialTraits(raw),
+    // M65 R23 — progression data the game owns after import: coin purse,
+    // hit dice per class (state_json v1 shape), the full per-class level
+    // ladder, and every limited-use pool keyed for state_json.resources.
+    currency: parseCurrency(raw),
+    hitDice: hitDiceFromProgression(progression),
+    progression,
+    resources: parseResources(raw, { classFeatures, featureUses, spells })
   };
 }
 
@@ -1051,27 +1061,6 @@ export function parseSlotsUsed(raw) {
   return { spell: read(raw.spellSlots), pact: read(raw.pactMagic) };
 }
 
-// PHB multiclass spellcaster table (combined caster level → slots 1..9).
-const MULTICLASS_SLOTS = [
-  [0, 0, 0, 0, 0, 0, 0, 0, 0],
-  [2, 0, 0, 0, 0, 0, 0, 0, 0], [3, 0, 0, 0, 0, 0, 0, 0, 0], [4, 2, 0, 0, 0, 0, 0, 0, 0],
-  [4, 3, 0, 0, 0, 0, 0, 0, 0], [4, 3, 2, 0, 0, 0, 0, 0, 0], [4, 3, 3, 0, 0, 0, 0, 0, 0],
-  [4, 3, 3, 1, 0, 0, 0, 0, 0], [4, 3, 3, 2, 0, 0, 0, 0, 0], [4, 3, 3, 3, 1, 0, 0, 0, 0],
-  [4, 3, 3, 3, 2, 0, 0, 0, 0], [4, 3, 3, 3, 2, 1, 0, 0, 0], [4, 3, 3, 3, 2, 1, 0, 0, 0],
-  [4, 3, 3, 3, 2, 1, 1, 0, 0], [4, 3, 3, 3, 2, 1, 1, 0, 0], [4, 3, 3, 3, 2, 1, 1, 1, 0],
-  [4, 3, 3, 3, 2, 1, 1, 1, 0], [4, 3, 3, 3, 2, 1, 1, 1, 1], [4, 3, 3, 3, 3, 1, 1, 1, 1],
-  [4, 3, 3, 3, 3, 2, 1, 1, 1], [4, 3, 3, 3, 3, 2, 2, 1, 1]
-];
-
-const slotRowToObject = (row) => {
-  const out = {};
-  for (let i = 0; i < 9; i++) {
-    const n = Number(Array.isArray(row) ? row[i] : 0) || 0;
-    if (n > 0) out[i + 1] = n;
-  }
-  return out;
-};
-
 /**
  * Spell-slot maximums from each class's DDB `spellRules.levelSpellSlots`
  * (indexed by class level, each row = slots of levels 1..9).
@@ -1092,43 +1081,272 @@ const slotRowToObject = (row) => {
 export function parseSpellSlotTable(raw) {
   const classes = [];
   for (const cls of (Array.isArray(raw.classes) ? raw.classes : [])) {
-    const level = Number(cls?.level) || 0;
-    const name = cls?.definition?.name || 'Unknown';
-    const rules = [cls?.definition?.spellRules, cls?.subclassDefinition?.spellRules]
-      .find(r => Array.isArray(r?.levelSpellSlots) && r.levelSpellSlots.some(row => Array.isArray(row) && row.some(n => Number(n) > 0)));
+    const rules = slotRulesOf(cls);
     if (!rules) continue;
-    const row = rules.levelSpellSlots[Math.min(level, rules.levelSpellSlots.length - 1)] || [];
-    classes.push({
-      name,
-      level,
-      divisor: Number(rules.multiClassSpellSlotDivisor) || 1,
-      rounding: Number(rules.multiClassSpellSlotRounding) || 1,
-      pact: /warlock/i.test(name),
-      slots: slotRowToObject(row)
-    });
+    classes.push(casterClassEntry({
+      name: cls?.definition?.name || 'Unknown',
+      level: Number(cls?.level) || 0,
+      rows: rules.levelSpellSlots,
+      divisor: rules.multiClassSpellSlotDivisor,
+      rounding: rules.multiClassSpellSlotRounding
+    }));
   }
-  const casters = classes.filter(c => !c.pact);
-  let spell = {};
-  if (casters.length === 1) {
-    spell = { ...casters[0].slots };
-  } else if (casters.length > 1) {
-    let casterLevel = 0;
-    for (const c of casters) {
-      const share = c.level / c.divisor;
-      casterLevel += c.rounding === 2 ? Math.ceil(share) : Math.floor(share);
-    }
-    spell = slotRowToObject(MULTICLASS_SLOTS[Math.max(0, Math.min(20, casterLevel))]);
-  }
-  const lock = classes.find(c => c.pact);
-  let pact = null;
-  if (lock) {
-    const levels = Object.keys(lock.slots).map(Number);
-    if (levels.length) {
-      const top = Math.max(...levels);
-      pact = { level: top, max: lock.slots[top] };
-    }
-  }
+  const { spell, pact } = combineSpellSlots(classes);
   return { classes, spell, pact };
+}
+
+/** The class's (or subclass's, for third-casters) spellRules with a non-empty slot table. */
+function slotRulesOf(cls) {
+  return [cls?.definition?.spellRules, cls?.subclassDefinition?.spellRules]
+    .find(r => hasSlotRows(r?.levelSpellSlots)) || null;
+}
+
+// M65 R23 — progression.
+//
+// DDB keeps the full 1..20 ladder on every class: `classes[i].classFeatures[]`
+// ({definition: {id, name, requiredLevel, classId, limitedUse[], levelScales[]},
+// levelScale}), `definition.hitDice`, `hitDiceUsed`, and spellRules
+// (`levelSpellSlots`, `levelSpellKnownMaxes`, `levelPreparedSpellMaxes`,
+// `levelCantripsKnownMaxes`; index = class level). Verified against a real
+// Cleric 4 export (2026-10-25): hitDice 8, hitDiceUsed 3, known maxes [],
+// prepared maxes all null (prepared casters compute their own), cantrip
+// maxes per level, ASI rows to level 19.
+
+/** Ladder rows that are bookkeeping, not features (ASIs stay: they are level-up choices). */
+const PROGRESSION_DENYLIST = new Set([...FEATURE_NAME_DENYLIST].filter(n => n !== 'Ability Score Improvement'));
+
+/** DDB reset label (RESET_TYPE_LABEL value) → state_json recovery period. */
+const RESET_PERIOD = { 'short rest': 'sr', 'long rest': 'lr', 'dawn': 'dawn', 'dusk': 'dusk', 'turn': 'turn' };
+
+/**
+ * DDB `resetType` (numeric or string) or a parsed reset label → the
+ * state_json `recovery` list (`[{period}]`; empty when unknown, i.e. DM-managed).
+ * @param {string|number|null} reset
+ * @returns {{period: string}[]}
+ */
+export function recoveryFor(reset) {
+  if (reset == null || reset === '') return [];
+  const key = String(reset).toLowerCase();
+  const label = RESET_PERIOD[key] ? key : RESET_TYPE_LABEL[key];
+  const period = RESET_PERIOD[label];
+  return period ? [{ period }] : [];
+}
+
+const numberArrayOrNull = (a) => (Array.isArray(a) && a.length
+  ? a.map(n => (n == null || !Number.isFinite(Number(n)) ? null : Number(n)))
+  : null);
+
+function levelScaleRows(def) {
+  const rows = Array.isArray(def?.levelScales) ? def.levelScales : [];
+  return rows
+    .filter(r => Number.isFinite(Number(r?.level)))
+    .map(r => ({
+      level: Number(r.level),
+      dice: formatDDBDice(r.dice),
+      value: Number.isFinite(Number(r.fixedValue)) && r.fixedValue !== null ? Number(r.fixedValue) : null,
+      description: String(r.description || '').trim() || null
+    }))
+    .sort((a, b) => a.level - b.level);
+}
+
+/**
+ * Per-class progression ladder, keyed by class name:
+ *   { [className]: { className, level, subclass, hitDie, hitDiceUsed,
+ *       levelSpellSlots (all 21 rows, or null for non-casters),
+ *       spellSlotDivisor, spellSlotRounding, pact,
+ *       knownMaxes, preparedMaxes, cantripMaxes (arrays indexed by class
+ *       level, null entries = "computed", or null when DDB gives none),
+ *       spellcastingAbility,
+ *       features: [{id, name, requiredLevel, source, subclass, asi,
+ *                   limitedUse, description, levelScales}] — the FULL ladder,
+ *                   including requiredLevel > level,
+ *       levelScales: { [featureSlug]: [{level, dice, value, description}] } } }
+ *
+ * `limitedUse` is `{max, reset, recovery, resourceKey}` when DDB lists the
+ * feature's action uses (unlocked features), `{byLevel: [{level, uses}],
+ * max: null, reset: null, recovery: [], resourceKey}` when only the
+ * definition's per-level table exists, else null. The Warlock pact row
+ * shape is unverified (no real Warlock export yet).
+ * @param {object} raw — DDB character
+ * @returns {Record<string, object>}
+ */
+export function parseProgression(raw) {
+  const out = {};
+  const actionsByComponent = indexClassActions(raw?.actions?.class);
+  for (const cls of (Array.isArray(raw?.classes) ? raw.classes : [])) {
+    const className = cls?.definition?.name || 'Unknown';
+    const subclassName = cls?.subclassDefinition?.name || null;
+    const level = Number(cls?.level) || 0;
+    const baseClassId = cls?.definition?.id;
+    const rules = slotRulesOf(cls);
+    const sr = cls?.definition?.spellRules || {};
+    const features = [];
+    const levelScales = {};
+    const seen = new Set();
+    for (const f of (Array.isArray(cls?.classFeatures) ? cls.classFeatures : [])) {
+      const def = f?.definition;
+      if (!def || def.hideInSheet) continue;
+      const name = String(def.name || '').trim();
+      if (!name || PROGRESSION_DENYLIST.has(name)) continue;
+      const requiredLevel = Number(def.requiredLevel) || 1;
+      const dedupe = `${def.id ?? name}|${requiredLevel}`;
+      if (seen.has(dedupe)) continue;
+      seen.add(dedupe);
+      const isSub = baseClassId != null && def.classId != null && def.classId !== baseClassId;
+      const slug = featureSlug(name);
+      const action = requiredLevel <= level ? classActionFor(actionsByComponent, def.id, name) : null;
+      const uses = action ? formatUses(action.limitedUse) : null;
+      let limitedUse = null;
+      if (uses) {
+        limitedUse = { max: uses.max, reset: uses.reset, recovery: recoveryFor(uses.reset), resourceKey: `feat:${slug}` };
+      } else if (Array.isArray(def.limitedUse) && def.limitedUse.length) {
+        limitedUse = {
+          byLevel: def.limitedUse.map(u => ({ level: Number.isFinite(Number(u?.level)) && u?.level !== null ? Number(u.level) : null, uses: Number(u?.uses) || 0 })),
+          max: null, reset: null, recovery: [], resourceKey: `feat:${slug}`
+        };
+      }
+      const scales = levelScaleRows(def);
+      if (scales.length) levelScales[slug] = scales;
+      features.push({
+        id: def.id ?? null,
+        name,
+        requiredLevel,
+        source: isSub && subclassName ? subclassName : className,
+        subclass: isSub,
+        asi: name === 'Ability Score Improvement',
+        limitedUse,
+        description: pickDescription(def, action),
+        levelScales: scales.length ? scales : null
+      });
+    }
+    features.sort((a, b) => a.requiredLevel - b.requiredLevel || a.name.localeCompare(b.name));
+    const hitDie = Number(cls?.definition?.hitDice) || null;
+    out[className] = {
+      className,
+      level,
+      subclass: subclassName,
+      hitDie,
+      hitDiceUsed: Math.max(0, Math.min(level, Number(cls?.hitDiceUsed) || 0)),
+      levelSpellSlots: rules ? rules.levelSpellSlots.map(row => (Array.isArray(row) ? row.map(n => Number(n) || 0) : [])) : null,
+      spellSlotDivisor: rules ? Number(rules.multiClassSpellSlotDivisor) || 1 : null,
+      spellSlotRounding: rules ? Number(rules.multiClassSpellSlotRounding) || 1 : null,
+      pact: /warlock/i.test(className),
+      knownMaxes: numberArrayOrNull(sr.levelSpellKnownMaxes),
+      preparedMaxes: numberArrayOrNull(sr.levelPreparedSpellMaxes),
+      cantripMaxes: numberArrayOrNull(sr.levelCantripsKnownMaxes),
+      spellcastingAbility: STAT_NAMES[cls?.definition?.spellCastingAbilityId ?? cls?.subclassDefinition?.spellCastingAbilityId] || null,
+      features,
+      levelScales
+    };
+  }
+  return out;
+}
+
+/**
+ * state_json v1 hit dice from the progression: `{ [className]: {die, spent} }`
+ * (classes whose die DDB did not give are skipped).
+ * @param {Record<string, object>} progression
+ * @returns {Record<string, {die: number, spent: number}>}
+ */
+export function hitDiceFromProgression(progression) {
+  const out = {};
+  for (const [name, p] of Object.entries(progression || {})) {
+    if (!p?.hitDie) continue;
+    out[name] = { die: p.hitDie, spent: p.hitDiceUsed || 0 };
+  }
+  return out;
+}
+
+const COINS = ['cp', 'sp', 'ep', 'gp', 'pp'];
+
+/**
+ * DDB `currencies` → `{cp, sp, ep, gp, pp}` (non-negative integers; 0 when absent).
+ * @param {object} raw
+ * @returns {{cp: number, sp: number, ep: number, gp: number, pp: number}}
+ */
+export function parseCurrency(raw) {
+  const c = raw?.currencies || {};
+  const out = {};
+  for (const k of COINS) out[k] = Math.max(0, Math.trunc(Number(c[k]) || 0));
+  return out;
+}
+
+const ACTION_BUCKETS = ['class', 'race', 'feat', 'background', 'item'];
+const titleFromSlug = (slug) => String(slug).split('-').filter(Boolean).map(w => w[0].toUpperCase() + w.slice(1)).join(' ');
+
+/**
+ * Every limited-use pool, in the state_json v1 `resources` shape
+ * `{ [key]: {label, max, spent, recovery: [{period}], source} }`:
+ *   'feat:<slug>'        — class features in `featureUses` (the engine's
+ *                          `resources.features` keys: 'action-surge',
+ *                          'second-wind', 'rage', 'channel-divinity', …)
+ *   'ddb:<componentId>'  — any other DDB action with limited uses (race,
+ *                          feat, item, background actions, optional class
+ *                          features with no classFeatures row)
+ *   'spell:<spellSlug>'  — a non-class granted spell's own uses (engine
+ *                          `spellUseKey`, e.g. 'spell:misty-step')
+ * `recovery` comes from DDB `resetType` (sr / lr / dawn / dusk / turn).
+ * @param {object} raw — DDB character
+ * @param {{classFeatures: object[], featureUses: object, spells: object[]}} parsed
+ * @returns {Record<string, {label: string, max: number, spent: number, recovery: {period: string}[], source: string}>}
+ */
+export function parseResources(raw, { classFeatures = [], featureUses = {}, spells = [] } = {}) {
+  const out = {};
+  for (const [slug, u] of Object.entries(featureUses || {})) {
+    const max = Math.trunc(Number(u?.max) || 0);
+    if (max <= 0) continue;
+    const feature = (classFeatures || []).find(f => featureSlug(f?.name) === slug);
+    out[`feat:${slug}`] = {
+      label: feature?.name || titleFromSlug(slug),
+      max,
+      spent: Math.max(0, Math.min(max, Math.trunc(Number(u.used) || 0))),
+      recovery: recoveryFor(u.reset),
+      source: 'feature'
+    };
+  }
+  // Component ids already covered by a feat: key (unlocked class features with uses).
+  const covered = new Set();
+  const actionsByComponent = indexClassActions(raw?.actions?.class);
+  for (const cls of (Array.isArray(raw?.classes) ? raw.classes : [])) {
+    const level = Number(cls?.level) || 0;
+    for (const f of (Array.isArray(cls?.classFeatures) ? cls.classFeatures : [])) {
+      const def = f?.definition;
+      if (!def || def.id == null || (Number(def.requiredLevel) || 1) > level) continue;
+      const action = classActionFor(actionsByComponent, def.id, def.name);
+      if (action && formatUses(action.limitedUse) && out[`feat:${featureSlug(def.name)}`]) covered.add(def.id);
+    }
+  }
+  for (const bucket of ACTION_BUCKETS) {
+    for (const a of (Array.isArray(raw?.actions?.[bucket]) ? raw.actions[bucket] : [])) {
+      if (a?.componentId == null || covered.has(a.componentId)) continue;
+      const uses = formatUsesWithUsed(a.limitedUse);
+      if (!uses) continue;
+      const key = `ddb:${a.componentId}`;
+      if (out[key]) continue;
+      out[key] = {
+        label: String(a.name || 'Feature').trim(),
+        max: uses.max,
+        spent: uses.used,
+        recovery: recoveryFor(uses.reset),
+        source: bucket
+      };
+    }
+  }
+  for (const s of (Array.isArray(spells) ? spells : [])) {
+    if (!s || s.source === 'class' || !s.uses) continue;
+    const max = Math.trunc(Number(s.uses.max) || 0);
+    if (max <= 0) continue;
+    const key = `spell:${spellSlug(s.name)}`;
+    if (out[key]) continue;
+    out[key] = {
+      label: s.name,
+      max,
+      spent: Math.max(0, Math.min(max, Math.trunc(Number(s.uses.used) || 0))),
+      recovery: recoveryFor(s.uses.reset),
+      source: s.source
+    };
+  }
+  return out;
 }
 
 /**
@@ -1141,6 +1359,8 @@ export function parseInventory(raw) {
   const list = Array.isArray(raw.inventory) ? raw.inventory : [];
   return list.filter(it => it?.definition).map(it => {
     const d = it.definition;
+    const slot = classifyItem(it);
+    const num = (v) => (v === null || v === undefined || v === '' || !Number.isFinite(Number(v)) ? null : Number(v));
     return {
       name: d.name || 'Unknown item',
       quantity: Number.isFinite(Number(it.quantity)) ? Number(it.quantity) : 1,
@@ -1152,7 +1372,17 @@ export function parseInventory(raw) {
       type: d.type || null,
       subType: d.subType || null,
       consumable: !!d.isConsumable,
-      uses: formatUsesWithUsed(it.limitedUse)
+      uses: formatUsesWithUsed(it.limitedUse),
+      // M65 R23 — enough to equip the row later and re-derive AC /
+      // attacks through pc-stats: DDB ids, the slot it would take, and the
+      // exact summary parseEquipment puts in `equipment[slot]`.
+      ddbId: d.id ?? null,
+      inventoryId: it.id ?? null,
+      slot: slot === 'mainhand-twohanded' ? 'mainhand' : slot,
+      canAttune: !!d.canAttune,
+      cost: num(d.cost),
+      weight: num(d.weight),
+      equipment: slot ? equipmentEntry(it, slot) : null
     };
   });
 }
@@ -1468,19 +1698,7 @@ function parseEquipment(raw) {
     const inferredSlot = classifyItem(item);
     if (!inferredSlot) continue;
 
-    const summary = {
-      name: item.definition?.name || 'Unknown item',
-      rarity: item.definition?.rarity || 'Common',
-      magical: !!item.definition?.magic,
-      attuned: !!item.isAttuned,
-      armorClass: item.definition?.armorClass ?? null,
-      damage: item.definition?.damage?.diceString ?? null,
-      damageType: item.definition?.damageType ?? null,
-      // R5 — DDB armor category: 1 light / 2 medium / 3 heavy / 4 shield.
-      armorTypeId: item.definition?.armorTypeId ?? null,
-      // R6 — weapon rules data (absent on non-weapons).
-      ...parseWeaponFields(item)
-    };
+    const summary = equipmentSummary(item);
 
     let assignedSlot = 'overflow';
     if (inferredSlot === 'mainhand-twohanded') {
@@ -1511,6 +1729,34 @@ function parseEquipment(raw) {
   }
 
   return { slots, carried };
+}
+
+/**
+ * The equipment summary parseEquipment stores in a slot (name, rarity,
+ * AC, damage, R5 armour category, R6 weapon fields).
+ * @param {object} item — DDB inventory row
+ * @returns {object}
+ */
+function equipmentSummary(item) {
+  return {
+    name: item.definition?.name || 'Unknown item',
+    rarity: item.definition?.rarity || 'Common',
+    magical: !!item.definition?.magic,
+    attuned: !!item.isAttuned,
+    armorClass: item.definition?.armorClass ?? null,
+    damage: item.definition?.damage?.diceString ?? null,
+    damageType: item.definition?.damageType ?? null,
+    // R5 — DDB armor category: 1 light / 2 medium / 3 heavy / 4 shield.
+    armorTypeId: item.definition?.armorTypeId ?? null,
+    // R6 — weapon rules data (absent on non-weapons).
+    ...parseWeaponFields(item)
+  };
+}
+
+/** equipmentSummary plus the two-handed flag parseEquipment sets on a two-handed mainhand. */
+function equipmentEntry(item, inferredSlot) {
+  const summary = equipmentSummary(item);
+  return inferredSlot === 'mainhand-twohanded' ? { ...summary, twoHanded: true } : summary;
 }
 
 const FEAT_VISUAL_MAP = {

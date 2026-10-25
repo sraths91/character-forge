@@ -1065,7 +1065,11 @@ test('R14: Warlock Pact Magic is kept apart from the spell slots', () => {
 test('R14: inventory lists every item with quantity and charges; equipment is unchanged', () => {
   const p = parsedDdbFixture('fighter-l5');
   const potion = p.inventory.find(i => i.name === 'Potion of Healing');
-  assert.deepStrictEqual(potion, {
+  // M65 R23 appended ddbId / inventoryId / slot / canAttune / cost / weight / equipment;
+  // the R14 fields keep their shape and order.
+  const r14Keys = ['name', 'quantity', 'equipped', 'attuned', 'magical', 'rarity', 'filterType', 'type', 'subType', 'consumable', 'uses'];
+  assert.deepStrictEqual(Object.keys(potion).slice(0, r14Keys.length), r14Keys);
+  assert.deepStrictEqual(Object.fromEntries(r14Keys.map(k => [k, potion[k]])), {
     name: 'Potion of Healing', quantity: 2, equipped: false, attuned: false, magical: true, rarity: 'Common',
     filterType: 'Potion', type: 'Potion', subType: null, consumable: true, uses: null
   });
@@ -1219,4 +1223,138 @@ test('M64 1.5: fightingStyles from options.class picks under a Fighting Style fe
   assert.deepStrictEqual(parseCharacter(raw).fightingStyles, ['Defense', 'Great Weapon Fighting']);
   assert.deepStrictEqual(parsedDdbFixture('fighter-l5').fightingStyles, []);
   assert.deepStrictEqual(parseFightingStyles({}), []);
+});
+
+// ---------------------------------------------------------------------------
+// M65 R23 — progression, currency, inventory equipment, resources.
+// ---------------------------------------------------------------------------
+
+test('R23: hit dice in the state_json v1 shape and the coin purse', () => {
+  const cleric = parsedDdbFixture('cleric-l5');
+  assert.deepStrictEqual(cleric.hitDice, { Cleric: { die: 8, spent: 3 } });
+  assert.deepStrictEqual(cleric.currency, { cp: 0, sp: 0, ep: 0, gp: 165, pp: 0 });
+  assert.deepStrictEqual(parsedDdbFixture('fighter-l5').hitDice, { Fighter: { die: 10, spent: 1 } });
+  assert.deepStrictEqual(parsedDdbFixture('fighter-l5').currency, { cp: 12, sp: 30, ep: 0, gp: 40, pp: 1 });
+  // Missing data: no hit die → no entry; no currencies → zeros; hitDiceUsed clamps to the level.
+  const bare = parseCharacter(rawFixture());
+  assert.deepStrictEqual(bare.hitDice, {});
+  assert.deepStrictEqual(bare.currency, { cp: 0, sp: 0, ep: 0, gp: 0, pp: 0 });
+  const over = parseCharacter(rawFixture({ classes: [{ level: 2, hitDiceUsed: 9, definition: { name: 'Fighter', hitDice: 10 } }], currencies: { gp: '12', sp: -4 } }));
+  assert.deepStrictEqual(over.hitDice, { Fighter: { die: 10, spent: 2 } });
+  assert.deepStrictEqual(over.currency, { cp: 0, sp: 0, ep: 0, gp: 12, pp: 0 });
+});
+
+test('R23: progression keeps the full ladder (features above the current level included)', () => {
+  const p = parsedDdbFixture('cleric-l5');
+  const pr = p.progression.Cleric;
+  assert.strictEqual(pr.className, 'Cleric');
+  assert.strictEqual(pr.level, 5);
+  assert.strictEqual(pr.subclass, 'Life Domain');
+  assert.strictEqual(pr.hitDie, 8);
+  assert.strictEqual(pr.hitDiceUsed, 3);
+  assert.strictEqual(pr.spellcastingAbility, 'WIS');
+  assert.strictEqual(pr.levelSpellSlots.length, 21, 'every slot row, 0..20');
+  assert.deepStrictEqual(pr.levelSpellSlots[5].slice(0, 3), [4, 3, 2]);
+  assert.deepStrictEqual(pr.levelSpellSlots[20], [4, 3, 3, 3, 3, 2, 2, 1, 1]);
+  assert.strictEqual(pr.cantripMaxes[4], 4);
+  assert.strictEqual(pr.knownMaxes, null, 'DDB gives clerics no known-spell table');
+  assert.strictEqual(pr.preparedMaxes[5], null, 'prepared casters compute their own maximum');
+  const ladder = pr.features.map(f => `${f.name}@${f.requiredLevel}`);
+  assert.ok(ladder.includes('Divine Intervention@10'));
+  assert.ok(ladder.includes('Ability Score Improvement@19'), 'ladder runs to L19');
+  assert.strictEqual(Math.max(...pr.features.map(f => f.requiredLevel)), 19);
+  assert.ok(!ladder.some(n => n.startsWith('Hit Points') || n.startsWith('Proficiencies')), 'bookkeeping rows dropped');
+  // Sorted by level; subclass rows attributed to the subclass.
+  const levels = pr.features.map(f => f.requiredLevel);
+  assert.deepStrictEqual(levels, [...levels].sort((a, b) => a - b));
+  const strike = pr.features.find(f => f.name === 'Divine Strike');
+  assert.strictEqual(strike.source, 'Life Domain');
+  assert.strictEqual(strike.subclass, true);
+  assert.deepStrictEqual(strike.levelScales.map(s => [s.level, s.dice]), [[8, '1d8'], [14, '2d8']]);
+  assert.ok(pr.features.find(f => f.name === 'Ability Score Improvement').asi);
+  // Unlocked limited feature: uses from the DDB action; locked: the definition's table.
+  assert.deepStrictEqual(pr.features.find(f => f.name === 'Channel Divinity').limitedUse,
+    { max: 1, reset: 'short rest', recovery: [{ period: 'sr' }], resourceKey: 'feat:channel-divinity' });
+  assert.deepStrictEqual(pr.features.find(f => f.name === 'Divine Intervention').limitedUse,
+    { byLevel: [{ level: null, uses: 1 }], max: null, reset: null, recovery: [], resourceKey: 'feat:divine-intervention' });
+  assert.deepStrictEqual(pr.levelScales['destroy-undead'].map(s => [s.level, s.value]), [[5, 1], [8, 1], [11, 2], [14, 3], [17, 4]]);
+  // The sheet-facing classFeatures list is unchanged (still capped at the current level).
+  assert.ok(p.classFeatures.every(f => f.level <= 5));
+  assert.ok(!p.classFeatures.some(f => f.name === 'Divine Intervention'));
+});
+
+test('R23: a non-caster has no slot rows; the fighter ladder carries Indomitable by level', () => {
+  const pr = parsedDdbFixture('fighter-l5').progression.Fighter;
+  assert.strictEqual(pr.levelSpellSlots, null);
+  assert.strictEqual(pr.hitDie, 10);
+  assert.strictEqual(pr.spellcastingAbility, null);
+  assert.deepStrictEqual(pr.features.find(f => f.name === 'Indomitable').limitedUse.byLevel,
+    [{ level: 9, uses: 1 }, { level: 13, uses: 2 }, { level: 17, uses: 3 }]);
+  assert.strictEqual(pr.features.filter(f => f.asi).length, 7, 'Fighter ASIs at 4/6/8/12/14/16/19');
+});
+
+test('R23: Warlock pact progression is flagged (shape unverified without a real export)', () => {
+  const PACT = [[0, 0, 0, 0, 0, 0, 0, 0, 0], [1, 0, 0, 0, 0, 0, 0, 0, 0], [2, 0, 0, 0, 0, 0, 0, 0, 0], [0, 2, 0, 0, 0, 0, 0, 0, 0]];
+  const p = parseCharacter(rawFixture({ classes: [{ level: 3, definition: { name: 'Warlock', hitDice: 8, spellRules: { levelSpellSlots: PACT } } }] }));
+  assert.strictEqual(p.progression.Warlock.pact, true);
+  assert.deepStrictEqual(p.progression.Warlock.levelSpellSlots[3].slice(0, 2), [0, 2]);
+  assert.deepStrictEqual(p.spellSlotTable.pact, { level: 2, max: 2 });
+});
+
+test('R23: every inventory row carries its DDB id and an equippable summary', () => {
+  const p = parsedDdbFixture('fighter-l5');
+  const bow = p.inventory.find(i => i.name === 'Longbow');
+  assert.strictEqual(bow.equipped, false);
+  assert.strictEqual(bow.ddbId, 7004);
+  assert.strictEqual(bow.inventoryId, 8004);
+  assert.strictEqual(bow.slot, 'mainhand');
+  assert.strictEqual(bow.cost, 50);
+  assert.strictEqual(bow.equipment.twoHanded, true);
+  assert.strictEqual(bow.equipment.attackType, 2);
+  assert.deepStrictEqual(bow.equipment.properties, ['ammunition', 'heavy', 'two-handed']);
+  // An equipped row's summary is exactly what parseEquipment slotted.
+  const mail = p.inventory.find(i => i.name === 'Chain Mail');
+  assert.deepStrictEqual(mail.equipment, p.equipment.armor);
+  assert.deepStrictEqual(p.inventory.find(i => i.name === 'Shield').equipment, p.equipment.offhand);
+  assert.deepStrictEqual(p.inventory.find(i => i.name === 'Longsword').equipment, p.equipment.mainhand);
+  // Not slottable: no equipment summary.
+  const potion = p.inventory.find(i => i.name === 'Potion of Healing');
+  assert.strictEqual(potion.slot, null);
+  assert.strictEqual(potion.equipment, null);
+});
+
+test('R23: resources map keys feat:/ddb:/spell: with recovery periods', () => {
+  const cleric = parsedDdbFixture('cleric-l5');
+  assert.deepStrictEqual(cleric.resources['feat:channel-divinity'],
+    { label: 'Channel Divinity', max: 1, spent: 0, recovery: [{ period: 'sr' }], source: 'feature' });
+  // An optional class feature with uses but no classFeatures row → ddb:<componentId>.
+  assert.deepStrictEqual(cleric.resources['ddb:5299'],
+    { label: 'Harness Divine Power', max: 1, spent: 0, recovery: [{ period: 'lr' }], source: 'class' });
+  assert.strictEqual(cleric.resources['ddb:5202'], undefined, 'Channel Divinity is keyed once, as feat:');
+  // Feat-granted Misty Step: the engine ledger key.
+  assert.deepStrictEqual(cleric.resources['spell:misty-step'],
+    { label: 'Misty Step', max: 1, spent: 0, recovery: [{ period: 'lr' }], source: 'feat' });
+  const fighter = parsedDdbFixture('fighter-l5');
+  assert.deepStrictEqual(Object.keys(fighter.resources).sort(), ['feat:action-surge', 'feat:second-wind']);
+  assert.deepStrictEqual(fighter.resources['feat:second-wind'].recovery, [{ period: 'sr' }]);
+  assert.deepStrictEqual(parsedDdbFixture('wizard-l5').resources['feat:arcane-recovery'].recovery, [{ period: 'lr' }]);
+  // Race / item actions; string and numeric reset types; spent from numberUsed.
+  const p = parseCharacter(rawFixture({
+    actions: {
+      race: [{ componentId: 77, name: 'Breath Weapon', limitedUse: { maxUses: 1, numberUsed: 1, resetType: 1 } }],
+      item: [{ componentId: 88, name: 'Wand Burst', limitedUse: { maxUses: 3, numberUsed: 0, resetType: 'Dawn' } }]
+    }
+  }));
+  assert.deepStrictEqual(p.resources['ddb:77'], { label: 'Breath Weapon', max: 1, spent: 1, recovery: [{ period: 'sr' }], source: 'race' });
+  assert.deepStrictEqual(p.resources['ddb:88'].recovery, [{ period: 'dawn' }]);
+});
+
+test('R23: recoveryFor maps DDB reset types to periods', async () => {
+  const { recoveryFor } = await import('../lib/ddb-parser.js');
+  assert.deepStrictEqual(recoveryFor(1), [{ period: 'sr' }]);
+  assert.deepStrictEqual(recoveryFor('2'), [{ period: 'lr' }]);
+  assert.deepStrictEqual(recoveryFor('Dawn'), [{ period: 'dawn' }]);
+  assert.deepStrictEqual(recoveryFor('long rest'), [{ period: 'lr' }]);
+  assert.deepStrictEqual(recoveryFor(null), []);
+  assert.deepStrictEqual(recoveryFor('whenever'), []);
 });

@@ -282,8 +282,56 @@
               1
             ]
           ],
-          "multiClassSpellSlotRounding": 1
-        }
+          "multiClassSpellSlotRounding": 1,
+          "levelCantripsKnownMaxes": [
+            0,
+            3,
+            3,
+            3,
+            4,
+            4,
+            4,
+            4,
+            4,
+            4,
+            5,
+            5,
+            5,
+            5,
+            5,
+            5,
+            5,
+            5,
+            5,
+            5,
+            5
+          ],
+          "levelSpellKnownMaxes": [],
+          "levelPreparedSpellMaxes": [
+            0,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null
+          ]
+        },
+        "hitDice": 6
       },
       "subclassDefinition": {
         "id": 102,
@@ -316,8 +364,109 @@
             "classId": 102,
             "description": "<p>Sculpt Spells (synthetic text).</p>"
           }
+        },
+        {
+          "definition": {
+            "id": 5104,
+            "name": "Ability Score Improvement",
+            "requiredLevel": 4,
+            "classId": 2,
+            "description": "<p>Ability Score Improvement (synthetic text).</p>"
+          },
+          "levelScale": null
+        },
+        {
+          "definition": {
+            "id": 5105,
+            "name": "Potent Cantrip",
+            "requiredLevel": 6,
+            "classId": 102,
+            "description": "<p>Potent Cantrip (synthetic text).</p>"
+          },
+          "levelScale": null
+        },
+        {
+          "definition": {
+            "id": 5106,
+            "name": "Ability Score Improvement",
+            "requiredLevel": 8,
+            "classId": 2,
+            "description": "<p>Ability Score Improvement (synthetic text).</p>"
+          },
+          "levelScale": null
+        },
+        {
+          "definition": {
+            "id": 5107,
+            "name": "Empowered Evocation",
+            "requiredLevel": 10,
+            "classId": 102,
+            "description": "<p>Empowered Evocation (synthetic text).</p>"
+          },
+          "levelScale": null
+        },
+        {
+          "definition": {
+            "id": 5108,
+            "name": "Ability Score Improvement",
+            "requiredLevel": 12,
+            "classId": 2,
+            "description": "<p>Ability Score Improvement (synthetic text).</p>"
+          },
+          "levelScale": null
+        },
+        {
+          "definition": {
+            "id": 5109,
+            "name": "Overchannel",
+            "requiredLevel": 14,
+            "classId": 102,
+            "description": "<p>Overchannel (synthetic text).</p>"
+          },
+          "levelScale": null
+        },
+        {
+          "definition": {
+            "id": 5110,
+            "name": "Ability Score Improvement",
+            "requiredLevel": 16,
+            "classId": 2,
+            "description": "<p>Ability Score Improvement (synthetic text).</p>"
+          },
+          "levelScale": null
+        },
+        {
+          "definition": {
+            "id": 5111,
+            "name": "Spell Mastery",
+            "requiredLevel": 18,
+            "classId": 2,
+            "description": "<p>Spell Mastery (synthetic text).</p>"
+          },
+          "levelScale": null
+        },
+        {
+          "definition": {
+            "id": 5112,
+            "name": "Ability Score Improvement",
+            "requiredLevel": 19,
+            "classId": 2,
+            "description": "<p>Ability Score Improvement (synthetic text).</p>"
+          },
+          "levelScale": null
+        },
+        {
+          "definition": {
+            "id": 5113,
+            "name": "Signature Spells",
+            "requiredLevel": 20,
+            "classId": 2,
+            "description": "<p>Signature Spells (synthetic text).</p>"
+          },
+          "levelScale": null
         }
-      ]
+      ],
+      "hitDiceUsed": 0
     }
   ],
   "stats": [
@@ -374,8 +523,12 @@
         "categoryId": 1,
         "isMonkWeapon": true,
         "range": 5,
-        "longRange": 5
-      }
+        "longRange": 5,
+        "cost": 0.2,
+        "weight": 4,
+        "canAttune": false
+      },
+      "definitionId": 7101
     },
     {
       "id": 8102,
@@ -407,8 +560,12 @@
         "range": 20,
         "longRange": 60,
         "categoryId": 1,
-        "isMonkWeapon": true
-      }
+        "isMonkWeapon": true,
+        "cost": 2,
+        "weight": 1,
+        "canAttune": false
+      },
+      "definitionId": 7102
     },
     {
       "id": 8103,
@@ -440,8 +597,12 @@
         "range": 80,
         "longRange": 320,
         "categoryId": 1,
-        "isMonkWeapon": false
-      }
+        "isMonkWeapon": false,
+        "cost": 25,
+        "weight": 5,
+        "canAttune": false
+      },
+      "definitionId": 7103
     }
   ],
   "feats": [],
@@ -786,5 +947,12 @@
       "used": 0,
       "available": 0
     }
-  ]
+  ],
+  "currencies": {
+    "cp": 0,
+    "sp": 5,
+    "gp": 72,
+    "ep": 0,
+    "pp": 0
+  }
 }

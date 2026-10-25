@@ -44,7 +44,249 @@
       "level": 5,
       "definition": {
         "id": 1,
-        "name": "Fighter"
+        "name": "Fighter",
+        "hitDice": 10,
+        "spellRules": {
+          "multiClassSpellSlotDivisor": 1,
+          "isRitualSpellCaster": false,
+          "levelCantripsKnownMaxes": [],
+          "levelSpellKnownMaxes": [],
+          "levelSpellSlots": [
+            [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0,
+              0
+            ]
+          ],
+          "multiClassSpellSlotRounding": 1,
+          "levelPreparedSpellMaxes": []
+        }
       },
       "subclassDefinition": {
         "id": 101,
@@ -95,8 +337,173 @@
             "classId": 1,
             "description": "<p>Extra Attack (synthetic text).</p>"
           }
+        },
+        {
+          "definition": {
+            "id": 5006,
+            "name": "Ability Score Improvement",
+            "requiredLevel": 4,
+            "classId": 1,
+            "description": "<p>Ability Score Improvement (synthetic text).</p>"
+          },
+          "levelScale": null
+        },
+        {
+          "definition": {
+            "id": 5007,
+            "name": "Ability Score Improvement",
+            "requiredLevel": 6,
+            "classId": 1,
+            "description": "<p>Ability Score Improvement (synthetic text).</p>"
+          },
+          "levelScale": null
+        },
+        {
+          "definition": {
+            "id": 5008,
+            "name": "Remarkable Athlete",
+            "requiredLevel": 7,
+            "classId": 101,
+            "description": "<p>Remarkable Athlete (synthetic text).</p>"
+          },
+          "levelScale": null
+        },
+        {
+          "definition": {
+            "id": 5009,
+            "name": "Ability Score Improvement",
+            "requiredLevel": 8,
+            "classId": 1,
+            "description": "<p>Ability Score Improvement (synthetic text).</p>"
+          },
+          "levelScale": null
+        },
+        {
+          "definition": {
+            "id": 5010,
+            "name": "Indomitable",
+            "requiredLevel": 9,
+            "classId": 1,
+            "description": "<p>Indomitable (synthetic text).</p>",
+            "limitedUse": [
+              {
+                "level": 9,
+                "uses": 1
+              },
+              {
+                "level": 13,
+                "uses": 2
+              },
+              {
+                "level": 17,
+                "uses": 3
+              }
+            ]
+          },
+          "levelScale": null
+        },
+        {
+          "definition": {
+            "id": 5011,
+            "name": "Additional Fighting Style",
+            "requiredLevel": 10,
+            "classId": 101,
+            "description": "<p>Additional Fighting Style (synthetic text).</p>"
+          },
+          "levelScale": null
+        },
+        {
+          "definition": {
+            "id": 5012,
+            "name": "Extra Attack (2)",
+            "requiredLevel": 11,
+            "classId": 1,
+            "description": "<p>Extra Attack (2) (synthetic text).</p>"
+          },
+          "levelScale": null
+        },
+        {
+          "definition": {
+            "id": 5013,
+            "name": "Ability Score Improvement",
+            "requiredLevel": 12,
+            "classId": 1,
+            "description": "<p>Ability Score Improvement (synthetic text).</p>"
+          },
+          "levelScale": null
+        },
+        {
+          "definition": {
+            "id": 5014,
+            "name": "Ability Score Improvement",
+            "requiredLevel": 14,
+            "classId": 1,
+            "description": "<p>Ability Score Improvement (synthetic text).</p>"
+          },
+          "levelScale": null
+        },
+        {
+          "definition": {
+            "id": 5015,
+            "name": "Superior Critical",
+            "requiredLevel": 15,
+            "classId": 101,
+            "description": "<p>Superior Critical (synthetic text).</p>"
+          },
+          "levelScale": null
+        },
+        {
+          "definition": {
+            "id": 5016,
+            "name": "Ability Score Improvement",
+            "requiredLevel": 16,
+            "classId": 1,
+            "description": "<p>Ability Score Improvement (synthetic text).</p>"
+          },
+          "levelScale": null
+        },
+        {
+          "definition": {
+            "id": 5017,
+            "name": "Action Surge (two uses)",
+            "requiredLevel": 17,
+            "classId": 1,
+            "description": "<p>Action Surge (two uses) (synthetic text).</p>"
+          },
+          "levelScale": null
+        },
+        {
+          "definition": {
+            "id": 5018,
+            "name": "Survivor",
+            "requiredLevel": 18,
+            "classId": 101,
+            "description": "<p>Survivor (synthetic text).</p>"
+          },
+          "levelScale": null
+        },
+        {
+          "definition": {
+            "id": 5019,
+            "name": "Ability Score Improvement",
+            "requiredLevel": 19,
+            "classId": 1,
+            "description": "<p>Ability Score Improvement (synthetic text).</p>"
+          },
+          "levelScale": null
+        },
+        {
+          "definition": {
+            "id": 5020,
+            "name": "Extra Attack (3)",
+            "requiredLevel": 20,
+            "classId": 1,
+            "description": "<p>Extra Attack (3) (synthetic text).</p>"
+          },
+          "levelScale": null
         }
-      ]
+      ],
+      "hitDiceUsed": 1
     }
   ],
   "stats": [
@@ -153,8 +560,12 @@
         "categoryId": 2,
         "isMonkWeapon": false,
         "range": 5,
-        "longRange": 5
-      }
+        "longRange": 5,
+        "cost": 15,
+        "weight": 3,
+        "canAttune": false
+      },
+      "definitionId": 7001
     },
     {
       "id": 8002,
@@ -168,8 +579,12 @@
         "armorClass": 16,
         "rarity": "Common",
         "magic": false,
-        "armorTypeId": 3
-      }
+        "armorTypeId": 3,
+        "cost": 75,
+        "weight": 55,
+        "canAttune": false
+      },
+      "definitionId": 7002
     },
     {
       "id": 8003,
@@ -184,8 +599,12 @@
         "rarity": "Common",
         "magic": false,
         "subType": "Shield",
-        "armorTypeId": 4
-      }
+        "armorTypeId": 4,
+        "cost": 10,
+        "weight": 6,
+        "canAttune": false
+      },
+      "definitionId": 7003
     },
     {
       "id": 8004,
@@ -217,8 +636,12 @@
         "range": 150,
         "longRange": 600,
         "categoryId": 2,
-        "isMonkWeapon": false
-      }
+        "isMonkWeapon": false,
+        "cost": 50,
+        "weight": 2,
+        "canAttune": false
+      },
+      "definitionId": 7004
     },
     {
       "id": 8005,
@@ -234,8 +657,12 @@
         "subType": null,
         "rarity": "Common",
         "magic": true,
-        "isConsumable": true
-      }
+        "isConsumable": true,
+        "cost": 50,
+        "weight": 0.5,
+        "canAttune": false
+      },
+      "definitionId": 7005
     }
   ],
   "feats": [],
@@ -395,5 +822,12 @@
       "used": 0,
       "available": 0
     }
-  ]
+  ],
+  "currencies": {
+    "cp": 12,
+    "sp": 30,
+    "gp": 40,
+    "ep": 0,
+    "pp": 1
+  }
 }
