@@ -60,6 +60,26 @@ export const RUN_STATE_SCHEMA_V = 1;
 export const RUN_SNAPSHOT_VERSION = 1;
 /** `runs.status` (CHECK). */
 export const RUN_STATUSES = Object.freeze(['lobby', 'in-node', 'between', 'paused', 'ended']);
+
+/** The party's result an encounter settles on (`settleOutcomeOf`; R28's settleAfterEncounter input). */
+export const SETTLE_OUTCOMES = Object.freeze(['victory', 'defeat', 'draw', 'abandoned']);
+
+/**
+ * Engine encounter outcome (events.js ENCOUNTER_OUTCOMES) → the run
+ * vocabulary death.js `settleAfterEncounter` takes: party-victory →
+ * 'victory', hostile-victory → 'defeat', draw → 'draw', anything else
+ * (dm-ended) → 'abandoned'. Added 2026-10-25 (E3, M65 B24; additive —
+ * moved here from E6's run driver so the run controller and the driver
+ * share one mapping).
+ * @param {string} outcome
+ * @returns {'victory'|'defeat'|'draw'|'abandoned'}
+ */
+export function settleOutcomeOf(outcome) {
+  if (outcome === 'party-victory') return 'victory';
+  if (outcome === 'hostile-victory') return 'defeat';
+  if (outcome === 'draw') return 'draw';
+  return 'abandoned';
+}
 /** `runs.outcome`. */
 export const RUN_OUTCOMES = Object.freeze(['victory', 'defeat', 'abandoned']);
 /** `party_slots.life_status` (CHECK). */

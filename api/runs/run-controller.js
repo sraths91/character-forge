@@ -34,7 +34,7 @@ import { createRng } from '../../src/js/scene/rng.js';
 import * as TM from '../../src/js/scene/turn-manager.js';
 import { runStateFromEntity, itemSpendFromEntity } from '../../src/js/scene/encounter-adapters.js';
 import { validateCampaign, startNodeId, campaignSettings } from '../../src/js/shared/campaign.js';
-import { initialRunState, validateRunState } from '../../src/js/shared/run-state.js';
+import { initialRunState, validateRunState, settleOutcomeOf } from '../../src/js/shared/run-state.js';
 import { makeRunEvent, validateRunEvent } from '../../src/js/shared/run-events.js';
 import { CampaignRuleError } from '../../src/js/campaign/errors.js';
 import { sheetLevel } from '../../src/js/campaign/util.js';
@@ -73,8 +73,6 @@ export class RunIntentError extends Error {
 
 const clone = (v) => (v === undefined ? undefined : JSON.parse(JSON.stringify(v)));
 const bySeat = (a, b) => a.seat - b.seat;
-/** Engine outcome → the life-status rules' party result. */
-const PARTY_RESULT = { 'party-victory': 'victory', 'hostile-victory': 'defeat' };
 /** DM-authored actor id: one DM per room, whichever participant holds the token. */
 const DM_ACTOR = 'dm';
 
@@ -465,7 +463,7 @@ export class RunController {
       const sv = validateRunState(written, { sheet: c.sheet });
       if (!sv.ok) throw new Error(`${slotId}: write-back state invalid: ${sv.errors[0].path} ${sv.errors[0].message}`);
       // 4. Life status (death.js: owner default 7 / deathMode).
-      const settled = settleAfterEncounter(written, { outcome: PARTY_RESULT[outcome] ?? outcome, deathMode: settings.deathMode });
+      const settled = settleAfterEncounter(written, { outcome: settleOutcomeOf(outcome), deathMode: settings.deathMode });
       const life = c.lifeStatus === 'dead' ? 'dead' : settled.lifeStatus;
       before[slotId] = { state: c.state, lifeStatus: c.lifeStatus };
       after[slotId] = { state: settled.state, lifeStatus: life };

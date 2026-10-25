@@ -60,7 +60,7 @@ import { emptyEncounterState, validateEncounterState } from '../../js/shared/enc
 import { validateEvent, validateEventLog } from '../../js/shared/events.js';
 import { validateCampaign, nextNodes, campaignSettings } from '../../js/shared/campaign.js';
 import {
-  initialRunState, validateRunState, ledgerKeyForResource, resourceKeyForLedger
+  initialRunState, validateRunState, ledgerKeyForResource, resourceKeyForLedger, settleOutcomeOf
 } from '../../js/shared/run-state.js';
 import { makeRunEvent, validateRunEvent, validateRunEventLog } from '../../js/shared/run-events.js';
 import { stateHash, canonicalJson, hash53 } from '../../js/shared/state-hash.js';
@@ -75,17 +75,8 @@ export const RUN_ADAPTER_METHODS = Object.freeze([
   'entityFromSheet', 'runStateFromEntity', 'encounterXp', 'levelForXp', 'applyRest', 'settleAfterEncounter'
 ]);
 
-/**
- * Engine encounter outcome (events.js ENCOUNTER_OUTCOMES) → the run
- * vocabulary R28's settleAfterEncounter takes (run-state RUN_OUTCOMES).
- * @param {string} outcome
- * @returns {'victory'|'defeat'|'abandoned'}
- */
-export function settleOutcomeOf(outcome) {
-  if (outcome === 'party-victory') return 'victory';
-  if (outcome === 'hostile-victory') return 'defeat';
-  return 'abandoned';
-}
+/** Engine outcome → settle outcome: shared with the run controller (run-state.js). */
+export { settleOutcomeOf };
 
 /**
  * Throw unless `adapter` implements every required method.

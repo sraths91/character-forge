@@ -11,15 +11,11 @@ import assert from 'node:assert/strict';
 import { tempRoot, tempDb } from './helpers/server.js';
 import { makeRunRoom, runLog, runHash } from './helpers/runs.js';
 import { installTripwires } from '../../src/tests/helpers/tripwires.js';
-import { loadRunScript, runScript, replayRunEvents } from '../../src/tests/helpers/run-driver.js';
-import * as adapters from '../../src/js/scene/encounter-adapters.js';
-import * as TM from '../../src/js/scene/turn-manager.js';
-import * as xpRules from '../../src/js/campaign/xp.js';
-import * as restRules from '../../src/js/campaign/rest.js';
-import * as deathRules from '../../src/js/campaign/death.js';
+import { readFileSync } from 'node:fs';
+import { loadRunScript, runScript, replayRunEvents, realRunAdapter } from '../../src/tests/helpers/run-driver.js';
 import { itemsLedgerFor } from '../../src/js/campaign/consumables.js';
 import { validateRunEventLog, isMutatingRunEvent } from '../../src/js/shared/run-events.js';
-import { validateRunState } from '../../src/js/shared/run-state.js';
+import { validateRunState, settleOutcomeOf } from '../../src/js/shared/run-state.js';
 
 installTripwires();
 const { root, cleanup } = tempRoot('cf-runs-');
@@ -28,23 +24,12 @@ after(cleanup);
 const SCRIPT = loadRunScript('fight-rest-fight');
 const XP = { 'slot-2': 13950 };   // the script's fighter starts 50 XP short of level 6
 
-/** The run-driver adapter over the real campaign modules (what the controller calls). */
-function realAdapter(ledgers = {}) {
-  const party = { 'party-victory': 'victory', 'hostile-victory': 'defeat' };
-  return {
-    entityFromSheet: (sheet, opts) => adapters.entityFromSheet(sheet, { ...opts, ...(ledgers[String(sheet.id)] ? { items: ledgers[String(sheet.id)] } : {}) }),
-    runStateFromEntity: adapters.runStateFromEntity,
-    encounterXp: ({ defeated, participants }) => {
-      const a = xpRules.encounterXp(defeated, participants.map(id => ({ id })));
-      return { total: a.total, perCharacter: a.awards };
-    },
-    levelForXp: xpRules.levelForXp,
-    applyRest: (sheet, state, type, { spend, rng, settings }) => restRules.applyRest(sheet, state, type, { spend, rng, dawnIsLongRest: settings.dawnIsLongRest }),
-    lifeStatusAfterEncounter: (e, { outcome, deathMode, previous }) => (previous === 'dead' ? 'dead'
-      : deathRules.settleAfterEncounter(adapters.runStateFromEntity(e, {}), { outcome: party[outcome] ?? outcome, deathMode }).lifeStatus),
-    endEncounterCleanup: TM.endEncounterCleanup
-  };
+/** E6's real-module run adapter, plus the potion ledgers the controller hands the engine. */
+async function realAdapter(ledgers = {}) {
+  const real = await realRunAdapter();
+  return { ...real, entityFromSheet: (sheet, opts) => real.entityFromSheet(sheet, { ...opts, ...(ledgers[String(sheet.id)] ? { items: ledgers[String(sheet.id)] } : {}) }) };
 }
+const GOLDEN = JSON.parse(readFileSync(new URL('../../src/tests/golden/fight-rest-fight.run.json', import.meta.url), 'utf8'));
 
 const ok = (reply) => { assert.equal(reply?.t, 'ack', JSON.stringify(reply?.p)); return reply.p; };
 
@@ -96,10 +81,11 @@ test('B24: the fight-rest-fight fixture through the controller equals the run dr
     const l = itemsLedgerFor(items.filter(i => i.ownerSlotId === c.slotId));
     if (Object.keys(l).length) ledgers[String(c.sheet.id)] = l;
   }
-  const driven = await runScript(SCRIPT, realAdapter(ledgers));
+  const driven = await runScript(SCRIPT, await realAdapter(ledgers));
   assert.deepEqual(log.map(e => e.type), driven.runEvents.map(e => e.type));
   assert.deepStrictEqual(log, driven.runEvents, 'every run event equals the driver\'s');
   assert.equal(hash, driven.runHash);
+  assert.equal(hash, GOLDEN.runHash, 'the controller reproduces E6\'s real-module run golden');
   // Replay contract: every character's final row is rebuilt from the log alone.
   const replayed = replayRunEvents(log);
   for (const c of r.runStore.listCharacters(SCRIPT.runId)) {
@@ -235,4 +221,67 @@ test('B24: SIGTERM mid-encounter → the turn replays, the encounter ends once, 
   await r2.settle();
   await play(r2, 1);
   assert.equal(runHash(r2.runStore, SCRIPT.runId), ref.hash);
+});
+
+test('B24: settleOutcomeOf maps the engine outcome onto the run vocabulary (shared with the driver)', () => {
+  assert.deepEqual(['party-victory', 'hostile-victory', 'draw', 'dm-ended'].map(settleOutcomeOf), ['victory', 'defeat', 'draw', 'abandoned']);
+});
+
+/**
+ * A run encounter that ended with `outcome`, built from the run states as
+ * dm.node.begin would, and journaled as ended (no turns): exercises the
+ * hook's death path deterministically.
+ */
+function endedEncounter(r, outcome) {
+  const run = r.runStore.getRun(SCRIPT.runId);
+  const node = run.campaign.nodes.find(n => n.id === 'n-ambush');
+  const chars = r.runStore.listCharacters(SCRIPT.runId).filter(c => c.lifeStatus !== 'dead');
+  const encounterId = `${SCRIPT.runId}:n-ambush`;
+  const state = r.engine.buildEncounter({
+    encounterId, seed: 7, setup: { ...node.payload.setup, placements: { ...node.payload.setup.placements, 'pc-1': { col: 2, row: 3 }, 'pc-2': { col: 3, row: 4 } } },
+    party: chars.map(c => ({ slotId: c.slotId, seat: c.seat, seed: c.sheet, runState: c.state, controller: 'ai' }))
+  });
+  for (const e of Object.values(state.entities)) if (e.side === 'hostile') { e.hp = 0; e.status = 'dead'; }
+  state.phase = 'ended';
+  r.journal.createEncounter({ roomId: r.room.id, encounterId, state, engineVersion: r.engine.version, sheets: r.engine.sheetsFor(state), runId: SCRIPT.runId, nodeId: 'n-ambush' });
+  r.journal.setStatus(encounterId, 'ended', outcome);
+  return { encounterId, state };
+}
+
+test('B24: death path — a dying PC is stabilised by a victory and stands at 1 HP on the next node; a dead PC stays out', async () => {
+  const { r } = await started();
+  const setState = (slotId, patch, lifeStatus) => {
+    const c = r.runStore.getCharacter(slotId);
+    r.runStore.updateCharacter(SCRIPT.runId, slotId, c.version, { state: { ...c.state, ...patch }, lifeStatus });
+  };
+  setState('slot-1', { hp: { current: 0, temp: 0 }, deathSaves: { successes: 1, failures: 1, stable: false } }, 'dying');
+  setState('slot-2', { hp: { current: 0, temp: 0 }, deathSaves: { successes: 0, failures: 3, stable: false } }, 'dying');
+  const { encounterId, state } = endedEncounter(r, 'party-victory');
+  assert.equal(state.entities['pc-1'].status, 'downed');
+  assert.equal(state.entities['pc-2'].status, 'dead');
+  assert.equal(r.room.run.onEncounterEnded(encounterId), true);
+  const log = runLog(r.runStore, SCRIPT.runId);
+  const res = log.find(e => e.type === 'encounter.result');
+  assert.equal(res.payload.after['slot-1'].lifeStatus, 'stable');
+  assert.equal(res.payload.after['slot-1'].state.deathSaves.stable, true);
+  assert.equal(res.payload.after['slot-2'].lifeStatus, 'dead');
+  const died = log.filter(e => e.type === 'character.died');
+  assert.deepEqual(died.map(e => e.payload.slotId), ['slot-2']);
+  assert.deepEqual(r.runStore.getRun(SCRIPT.runId).status, 'between');
+  // XP goes to the living participant only.
+  const xp = log.find(e => e.type === 'xp.awarded');
+  assert.deepEqual(Object.keys(xp.payload.perCharacter), ['slot-1']);
+
+  ok(await r.dm('dm.run.advance', { toNodeId: 'n-camp' }));
+  const entered = runLog(r.runStore, SCRIPT.runId).at(-1);
+  assert.equal(entered.type, 'node.entered');
+  assert.equal(entered.payload.after['slot-1'].lifeStatus, 'active');
+  assert.equal(entered.payload.after['slot-1'].state.hp.current, 1);
+  assert.equal(r.runStore.getCharacter('slot-1').lifeStatus, 'active');
+
+  ok(await r.dm('dm.run.advance', { toNodeId: 'n-den' }));
+  ok(await r.dm('dm.node.begin', {}));
+  const pcs = Object.values(r.room.enc.state.entities).filter(e => e.kind === 'pc').map(e => e.id);
+  assert.deepEqual(pcs, ['pc-1'], 'the dead fighter is left out of the next encounter');
+  await r.settle();
 });
