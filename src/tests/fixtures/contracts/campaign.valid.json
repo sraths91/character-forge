@@ -1,0 +1,230 @@
+{
+  "v": 1,
+  "id": "camp-fixture",
+  "name": "Fixture Crossing",
+  "ruleset": "srd-5.1",
+  "settings": {
+    "xpMode": "xp",
+    "hpOnLevel": "average",
+    "deathMode": "standard",
+    "levelUpMode": "choose",
+    "dawnIsLongRest": true,
+    "xpAward": "auto"
+  },
+  "templates": [
+    {
+      "id": "tpl-bandits",
+      "name": "Bandit ambush",
+      "setup": {
+        "map": null,
+        "grid": {
+          "cols": 12,
+          "rows": 8
+        },
+        "monsters": [
+          {
+            "slug": "bandit",
+            "id": "b-1"
+          }
+        ],
+        "placements": {
+          "b-1": {
+            "col": 9,
+            "row": 3
+          }
+        }
+      }
+    }
+  ],
+  "nodes": [
+    {
+      "id": "n-start",
+      "kind": "story",
+      "title": "The crossroads",
+      "ord": 0,
+      "start": true,
+      "payload": {
+        "text": "Two roads lead on.",
+        "choices": [
+          {
+            "id": "road",
+            "label": "Take the road"
+          },
+          {
+            "id": "woods",
+            "label": "Cut through the woods"
+          }
+        ]
+      },
+      "next": [
+        {
+          "to": "n-goblins",
+          "label": "Road",
+          "when": {
+            "choice": "road"
+          }
+        },
+        {
+          "to": "n-bandits",
+          "label": "Woods",
+          "when": {
+            "choice": "woods"
+          }
+        }
+      ]
+    },
+    {
+      "id": "n-goblins",
+      "kind": "encounter",
+      "title": "Goblin toll",
+      "ord": 1,
+      "payload": {
+        "setup": {
+          "map": null,
+          "grid": {
+            "cols": 10,
+            "rows": 8
+          },
+          "monsters": [
+            {
+              "slug": "goblin",
+              "id": "gob-1"
+            },
+            {
+              "slug": "goblin",
+              "id": "gob-2"
+            }
+          ],
+          "placements": {
+            "gob-1": {
+              "col": 7,
+              "row": 2
+            },
+            "gob-2": {
+              "col": 7,
+              "row": 5
+            }
+          }
+        },
+        "partyPlacement": {
+          "1": {
+            "col": 1,
+            "row": 3
+          },
+          "2": {
+            "col": 1,
+            "row": 4
+          }
+        },
+        "xpOverride": 120,
+        "loot": {
+          "items": [
+            {
+              "origin": "open5e",
+              "ref": "srd_potion-of-healing",
+              "qty": 1
+            }
+          ],
+          "currency": {
+            "gp": 12,
+            "sp": 5
+          }
+        }
+      },
+      "next": [
+        {
+          "to": "n-camp"
+        },
+        {
+          "to": "n-start",
+          "label": "Retreat",
+          "when": {
+            "outcome": "hostile-victory"
+          }
+        }
+      ]
+    },
+    {
+      "id": "n-bandits",
+      "kind": "encounter",
+      "title": "Bandit ambush",
+      "ord": 2,
+      "payload": {
+        "templateId": "tpl-bandits"
+      },
+      "next": [
+        {
+          "to": "n-camp"
+        }
+      ]
+    },
+    {
+      "id": "n-camp",
+      "kind": "rest",
+      "title": "Make camp",
+      "ord": 3,
+      "payload": {
+        "type": "short"
+      },
+      "next": [
+        {
+          "to": "n-cache"
+        }
+      ]
+    },
+    {
+      "id": "n-cache",
+      "kind": "loot",
+      "title": "The cache",
+      "ord": 4,
+      "payload": {
+        "items": [
+          {
+            "origin": "dm",
+            "name": "Silver locket",
+            "qty": 1,
+            "data": {
+              "value": "25 gp"
+            }
+          },
+          {
+            "origin": "open5e",
+            "ref": "srd_rope-hempen-50-feet"
+          }
+        ],
+        "currency": {
+          "gp": 30
+        },
+        "assign": "free"
+      },
+      "next": [
+        {
+          "to": "n-market"
+        }
+      ]
+    },
+    {
+      "id": "n-market",
+      "kind": "shop",
+      "title": "Trading post",
+      "ord": 5,
+      "payload": {
+        "stock": [
+          {
+            "ref": "srd_potion-of-healing",
+            "qty": 3,
+            "price": {
+              "gp": 50
+            }
+          },
+          {
+            "ref": "srd_diamond",
+            "qty": 1
+          }
+        ],
+        "buyback": 0.5
+      },
+      "next": []
+    }
+  ]
+}

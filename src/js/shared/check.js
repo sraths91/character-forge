@@ -38,7 +38,9 @@ export const VALIDATION_CODES = Object.freeze({
   DUPLICATE: 'duplicate',
   ORDER: 'order',
   VERSION: 'version',
-  NOT_JSON_SAFE: 'not_json_safe'
+  NOT_JSON_SAFE: 'not_json_safe',
+  // M65 H21 (additive): a campaign node no path from the start node reaches.
+  UNREACHABLE: 'unreachable'
 });
 
 const C = VALIDATION_CODES;

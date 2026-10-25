@@ -224,7 +224,7 @@ const PLAN = shape({
   featureId: optional(str({ maxLength: 64 }))   // v1.4 — a `feature` action (Second Wind, Rage)
 });
 
-/** Client payload specs (strict). */
+/** Client payload specs (strict). Exported frozen as INTENT_PAYLOAD_SPECS below. */
 const INTENT_PAYLOADS = {
   hello: shape({ token: str({ maxLength: 512 }), protocol: int(1), lastSeq: optional(int(0)) }),
   resync: shape({ lastSeq: optional(int(0)) }),
@@ -296,6 +296,13 @@ const INTENT_PAYLOADS = {
     slotLevel: optional(nullable(int(1, 9)))
   })
 };
+
+/**
+ * Client payload spec per intent type (strict). Exported for contracts
+ * that embed an intent payload — M65 campaign.js validates an encounter
+ * node's inline `setup` against `INTENT_PAYLOAD_SPECS['dm.encounter.setup']`.
+ */
+export const INTENT_PAYLOAD_SPECS = Object.freeze(INTENT_PAYLOADS);
 
 /** Broadcasts a `redacted {type}` may stand in for (v1.4: engine events + entity.updated). */
 export const REDACTABLE_TYPES = Object.freeze([...EVENT_TYPES, 'entity.updated']);
