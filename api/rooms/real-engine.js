@@ -208,11 +208,16 @@ export function createRealEngine({ resolveSheets = () => null, monsterLookup = (
       const sheet = sheetForSeat(s);
       if (!sheet) throw new Error(`seat ${s.seat} has no character sheet`);
       const id = `pc-${s.seat}`;
+      // M65 B24: a run seat starts from its run state (state_json v1) and
+      // carries its usable run items; `controller: 'dm'` is a solo room's
+      // DM-driven AI seat (B28).
       const e = entityFromSheet(sheet, {
         id, pos: place(id, i, 0), rev: 0,
-        controller: { type: s.controller === 'player' ? 'player' : 'ai', seatId: s.slotId }
+        controller: { type: s.controller === 'player' || s.controller === 'dm' ? s.controller : 'ai', seatId: s.slotId },
+        ...(s.runState ? { runState: s.runState } : {}),
+        ...(s.items ? { items: s.items } : {})
       });
-      if (live) seedLiveState(e, sheet);
+      if (live && !s.runState) seedLiveState(e, sheet);
       state.entities[id] = e;
       sheets[e.sheetRef.characterId] = sheet;
     });

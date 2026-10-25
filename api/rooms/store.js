@@ -78,6 +78,12 @@ export function createRoomStore(conn, { now = Date.now } = {}) {
         claimed_at = excluded.claimed_at,
         updated_at = excluded.updated_at`),
     deleteSeat: conn.prepare('DELETE FROM party_slots WHERE room_id = ? AND seat = ?'),
+    setDmTokenHash: conn.prepare('UPDATE rooms SET dm_token_hash = ?, last_active_at = ? WHERE id = ?'),
+    setSeatController: conn.prepare('UPDATE party_slots SET controller_participant_id = ?, claimed_at = ?, updated_at = ? WHERE room_id = ? AND id = ?'),
+    seatById: conn.prepare(`
+      SELECT s.*, c.ddb_id AS character_ddb_id, c.name AS character_name
+      FROM party_slots s LEFT JOIN characters c ON c.id = s.character_id
+      WHERE s.room_id = ? AND s.id = ?`),
     clearController: conn.prepare(`
       UPDATE party_slots SET controller_participant_id = NULL, updated_at = ?
       WHERE room_id = ? AND controller_participant_id = ?`)
@@ -141,7 +147,10 @@ export function createRoomStore(conn, { now = Date.now } = {}) {
     characterName: s.character_name ?? null, controllerParticipantId: s.controller_participant_id,
     aiArchetype: s.ai_archetype, claimedAt: s.claimed_at,
     seed: s.seed_parsed_json ? JSON.parse(s.seed_parsed_json) : null,
-    state: s.state_json ? JSON.parse(s.state_json) : null
+    state: s.state_json ? JSON.parse(s.state_json) : null,
+    // M65: the run columns (null / defaults outside a run).
+    runId: s.run_id ?? null, characterRowId: s.character_id ?? null,
+    sheet: s.sheet_json ? JSON.parse(s.sheet_json) : null
   });
 
   return {
@@ -170,6 +179,12 @@ export function createRoomStore(conn, { now = Date.now } = {}) {
     upsertSeat: (s) => q.upsertSeat.run(s.id, s.roomId, s.seat, s.characterRowId, JSON.stringify(s.seedParsed),
       s.controller ?? null, s.archetype ?? null, now(), now()),
     deleteSeat: (roomId, seat) => q.deleteSeat.run(roomId, seat).changes > 0,
+    /** A seat by its slot id, or null. */
+    getSeatById: (roomId, slotId) => seatRow(q.seatById.get(roomId, slotId)),
+    /** Hand a seat to another participant (seat.reclaim); null = AI. */
+    setSeatController: (roomId, slotId, pid) => q.setSeatController.run(pid ?? null, now(), now(), roomId, slotId).changes > 0,
+    /** Replace the room's DM token hash (DM recovery with the campaign key, M65 B26). */
+    setDmTokenHash: (roomId, hash) => q.setDmTokenHash.run(hash, now(), roomId).changes > 0,
     clearControllerSeats: (roomId, pid) => q.clearController.run(now(), roomId, pid).changes
   };
 }

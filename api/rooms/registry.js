@@ -28,8 +28,9 @@ export function createNullJournal() {
  * @param {() => number} [o.now]
  * @param {typeof setTimeout} [o.setTimer]
  * @param {typeof clearTimeout} [o.clearTimer]
+ * @param {{store: object, materializeSetup?: Function}|null} [o.runs]  M65 runs (api/runs/store.js)
  */
-export function createRoomRegistry({ service, engine, journal = createNullJournal(), log = () => {}, now, setTimer, clearTimer }) {
+export function createRoomRegistry({ service, engine, journal = createNullJournal(), log = () => {}, now, setTimer, clearTimer, runs = null }) {
   /** @type {Map<string, Room>} */
   const rooms = new Map();
   let closed = false;
@@ -39,7 +40,7 @@ export function createRoomRegistry({ service, engine, journal = createNullJourna
     let room = rooms.get(roomId);
     if (!room) {
       if (!service.store.getRoom(roomId)) return null;
-      room = new Room({ id: roomId, service, engine, journal, log, now, setTimer, clearTimer });
+      room = new Room({ id: roomId, service, engine, journal, log, now, setTimer, clearTimer, runs });
       rooms.set(roomId, room);
     }
     return room;
@@ -56,11 +57,16 @@ export function createRoomRegistry({ service, engine, journal = createNullJourna
     get,
     /** Rooms currently in memory. */
     get size() { return rooms.size; },
-    /** Load every room with a live (setup/active) encounter (boot recovery, B8). */
+    /**
+     * Load every room with a live (setup/active) encounter (boot recovery,
+     * B8), and every run room with an ended encounter not yet written
+     * back to its run (M65 B24: the room's run controller sweeps it).
+     */
     recover() {
-      const ids = journal.liveRoomIds();
+      const ids = new Set(journal.liveRoomIds());
+      for (const u of runs?.store?.unappliedEncounters?.() || []) ids.add(u.roomId);
       for (const id of ids) get(id);
-      return ids.length;
+      return ids.size;
     },
     /** Live socket count across rooms (for /api/health). */
     socketCount() {

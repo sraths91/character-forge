@@ -105,6 +105,11 @@
  *        `DIAGONAL_RULES` gains '5-10' (DMG alternating 5/10-ft diagonals,
  *        E5's legality module): `dm.room.settings.diagonalRule` and the
  *        `room.settings` broadcast accept it.
+ *   v1.6 (2026-10-25, E3 M65 B24, additive) — `error.code` gains
+ *        'E_ENCOUNTER_LIVE' (a between-node intent while an encounter is
+ *        live) and 'E_NO_RUN' (a run intent in a room without an open
+ *        run), and may be a campaign rule code (RULE_ERROR_CODE: a
+ *        CampaignRuleError's kebab `.code`, with `details`).
  *
  * Client payloads are strict (unknown fields rejected); server payloads
  * enforce required fields and allow additive ones.
@@ -242,8 +247,17 @@ export const SERVER_MESSAGE_TYPES = Object.freeze(Object.keys(SERVER_MESSAGE_SCO
 export const ERROR_CODES = Object.freeze([
   'E_BAD_MESSAGE', 'E_VERSION', 'E_UNKNOWN_TYPE', 'E_UNAUTHENTICATED', 'E_FORBIDDEN',
   'E_STALE', 'E_NOT_YOUR_TURN', 'E_INVALID_INTENT', 'E_ROOM_FULL', 'E_SEAT_TAKEN',
-  'E_RATE_LIMITED', 'E_INTERNAL'
+  'E_RATE_LIMITED', 'E_INTERNAL',
+  // v1.6 (E3 M65 B24): a between-node intent while an encounter is live; a run intent in a room without an open run.
+  'E_ENCOUNTER_LIVE', 'E_NO_RUN'
 ]);
+/**
+ * v1.6 (E3 M65 B24): an `error` frame may instead carry a campaign rule
+ * code — the stable `.code` of a CampaignRuleError (src/js/campaign/
+ * errors.js: 'hit-dice-overspent', 'needs-hp', 'attunement-full', …),
+ * lower-case kebab, with the rule's structured `details`.
+ */
+export const RULE_ERROR_CODE = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/;
 
 /** ws close codes used by the gateway (B7, B9). */
 export const CLOSE_CODES = Object.freeze({
@@ -414,7 +428,7 @@ const SERVER_PAYLOADS = {
     history: arrayOf(shape({}, LOOSE))
   }, LOOSE),
   ack: shape({ cid: str({ maxLength: MAX_CID_LENGTH }), ok: bool() }, LOOSE),
-  error: shape({ cid: nullable(str({ maxLength: MAX_CID_LENGTH })), code: oneOf(ERROR_CODES), message: str() }, LOOSE),
+  error: shape({ cid: nullable(str({ maxLength: MAX_CID_LENGTH })), code: str({ maxLength: 64 }), message: str() }, LOOSE),   // code: ERROR_CODES or RULE_ERROR_CODE (checked below)
   'prompt.open': shape({
     promptId: ID, kind: oneOf(PROMPT_KINDS), payload: shape({}, LOOSE),
     autoAnswer: anyJson(), deadlineAt: num(0), serverNow: num(0)
@@ -533,6 +547,9 @@ export function validateServerMessage(msg) {
   }
 
   checkSpec(c, msg.p, SERVER_PAYLOADS[msg.t], 'p');
+  if (msg.t === 'error' && typeof msg.p.code === 'string' && !ERROR_CODES.includes(msg.p.code) && !RULE_ERROR_CODE.test(msg.p.code)) {
+    c.add('p.code', VALIDATION_CODES.ENUM, `must be one of ${ERROR_CODES.join(', ')} or a campaign rule code`);
+  }
   if (msg.t === 'run.event') {
     for (const err of validateRunEvent(msg.p).errors) c.add(err.path ? `p.${err.path}` : 'p', err.code, err.message);
   }

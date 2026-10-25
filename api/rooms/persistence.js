@@ -39,6 +39,10 @@ export function createSqliteJournal({
     insertEncounter: db.prepare(`
       INSERT INTO encounters (id, room_id, status, engine_version, snapshot_json, sheets_json, snapshot_seq, head_seq, created_at, updated_at)
       VALUES (?, ?, 'setup', ?, ?, ?, 0, 0, ?, ?)`),
+    // M65 B24: a run encounter is linked to its run and node in the same insert.
+    insertRunEncounter: hasRunColumns(db) ? db.prepare(`
+      INSERT INTO encounters (id, room_id, status, engine_version, snapshot_json, sheets_json, snapshot_seq, head_seq, created_at, updated_at, run_id, node_id)
+      VALUES (?, ?, 'setup', ?, ?, ?, 0, 0, ?, ?, ?, ?)`) : null,
     sheets: db.prepare('SELECT sheets_json FROM encounters WHERE id = ?'),
     setStatus: db.prepare(`
       UPDATE encounters SET status = ?, outcome = COALESCE(?, outcome), updated_at = ?,
@@ -90,11 +94,18 @@ export function createSqliteJournal({
     /**
      * Insert a new encounter in 'setup'.
      * @param {{roomId: string, encounterId: string, state: object, engineVersion: number,
-     *   sheets?: Record<string, object>|null}} o  sheets by sheetRef.characterId
+     *   sheets?: Record<string, object>|null, runId?: string|null, nodeId?: string|null}} o
+     *   sheets by sheetRef.characterId; runId / nodeId link a run encounter (M65 B24)
      */
-    createEncounter({ roomId, encounterId, state, engineVersion, sheets = null }) {
+    createEncounter({ roomId, encounterId, state, engineVersion, sheets = null, runId = null, nodeId = null }) {
       const t = now();
-      q.insertEncounter.run(encounterId, roomId, engineVersion, JSON.stringify(state), sheets ? JSON.stringify(sheets) : null, t, t);
+      const sj = sheets ? JSON.stringify(sheets) : null;
+      if (runId) {
+        if (!q.insertRunEncounter) throw new Error('persistence: run encounters need migration 0006');
+        q.insertRunEncounter.run(encounterId, roomId, engineVersion, JSON.stringify(state), sj, t, t, runId, nodeId);
+      } else {
+        q.insertEncounter.run(encounterId, roomId, engineVersion, JSON.stringify(state), sj, t, t);
+      }
     },
 
     /**
@@ -157,6 +168,11 @@ export function createSqliteJournal({
       return { flushes, p50Ms: round(percentile(samples, 0.5)), p99Ms: round(percentile(samples, 0.99)) };
     }
   };
+}
+
+/** Does `encounters` carry the M65 run columns (migration 0006)? */
+function hasRunColumns(db) {
+  return db.prepare("SELECT 1 FROM pragma_table_info('encounters') WHERE name = 'run_id'").get() !== undefined;
 }
 
 function percentile(xs, p) {

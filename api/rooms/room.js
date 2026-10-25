@@ -31,6 +31,7 @@ import { PromptBroker } from './prompt-broker.js';
 import { viewFor, publicView, canSeeEvent, stateHash, stateHashFor, fogEventView, fogVisibility } from './view.js';
 import { newId } from './tokens.js';
 import { publicSeat, RoomError, MAX_SEATS, normalizeRoomSettings } from './service.js';
+import { RunController } from '../runs/run-controller.js';
 
 /** Events kept in memory for `room.snapshot.history`. */
 export const HISTORY_LIMIT = 50;
@@ -85,8 +86,10 @@ export class Room {
    * @param {() => number} [o.now]
    * @param {typeof setTimeout} [o.setTimer]
    * @param {typeof clearTimeout} [o.clearTimer]
+   * @param {{store: object, materializeSetup?: Function}|null} [o.runs]  M65 run store (+ asset
+   *   materializer): the room hosts a campaign run through api/runs/run-controller.js
    */
-  constructor({ id, service, engine, journal, log, now = Date.now, setTimer = setTimeout, clearTimer = clearTimeout }) {
+  constructor({ id, service, engine, journal, log, now = Date.now, setTimer = setTimeout, clearTimer = clearTimeout, runs = null }) {
     this.id = id;
     this.service = service;
     this.store = service.store;
@@ -142,6 +145,47 @@ export class Room {
 
     const live = journal.loadLive(id);
     if (live) this.#restore(live);
+
+    // M65 B24: the run this room hosts (its boot sweep applies any ended
+    // encounter not yet written back).
+    this.run = runs?.store ? new RunController({ room: this, port: this.#runPort(), store: runs.store, log, materializeSetup: runs.materializeSetup ?? null }) : null;
+    if (this.run?.active && !this.#encounterLive()) this.status = 'between';
+  }
+
+  /** A setup / active encounter is in the room. */
+  #encounterLive() {
+    return !!this.enc && (this.enc.status === 'setup' || this.enc.status === 'active');
+  }
+
+  /** The room's private lane, as the run controller sees it. */
+  #runPort() {
+    return {
+      broadcast: (t, p) => this.#broadcastRoom(t, p),
+      sendPrivate: (m, t, p) => this.#sendPrivate(m, t, p),
+      setStatus: (st) => this.#setStatus(st),
+      members: () => this.members,
+      encounterLive: () => this.#encounterLive(),
+      seats: () => this.seats,
+      controllerFor: (seat) => this.#seatController(seat),
+      setupEncounter: ({ encounterId, seed, setup, party, runId, nodeId }) => this.#setup(setup, { encounterId, seed, party, runId, nodeId }),
+      startEncounter: () => this.#start({})
+    };
+  }
+
+  /** How a seat's PC is driven: its player, else the AI (B28 extends this). */
+  #seatController(seat) {
+    return seat?.controllerParticipantId ? 'player' : 'ai';
+  }
+
+  /** The single run hook for both encounter-end paths (never throws into the turn lane). */
+  #encounterEndedForRun(enc) {
+    if (!this.run) return;
+    try {
+      this.run.onEncounterEnded(enc.id);
+    } catch (err) {
+      // The encounter row is ended and unmarked: the boot sweep retries it.
+      this.log('error', 'room: run write-back failed', { roomId: this.id, encounterId: enc.id, error: err.message });
+    }
   }
 
   // ---------------------------------------------------------------- members
@@ -184,6 +228,7 @@ export class Room {
       cfg: { protocol: PROTOCOL_VERSION, roomId: this.id, code: this.code, reactionTimeoutMs: this.settings.reactionTimeoutMs, helloCid }
     });
     this.#sendSnapshot(m);
+    this.run?.sendSnapshot(m);
     if (!old) this.#broadcastRoom('member.presence', { memberId: m.id, online: true });
     // A prompt waiting on this member is re-sent by the snapshot (openPrompt).
   }
@@ -573,6 +618,7 @@ export class Room {
       enc.outcome = outcome;
       this.broker.cancelAll();
       this.#setStatus('encounter-over');
+      this.#encounterEndedForRun(enc);
     }
   }
 
@@ -758,7 +804,7 @@ export class Room {
     if (enc.status === 'setup') {
       this.journal.setStatus(enc.id, 'abandoned', null);
       this.enc = null;
-      this.#setStatus('lobby');
+      this.#setStatus(this.run?.idleRoomStatus ?? 'lobby');
       return;
     }
     this.#emit({ type: 'encounter.ended', payload: { outcome } });
@@ -768,6 +814,7 @@ export class Room {
     this.#flush({ snapshot: enc.state, status: 'ended', outcome });
     this.broker.cancelAll();
     this.#setStatus('encounter-over');
+    this.#encounterEndedForRun(enc);
   }
 
   // ------------------------------------------------------ DM state edits
@@ -915,10 +962,13 @@ export class Room {
       const extra = await this.#dispatch(m, conn, msg);
       reply = this.#message('ack', { cid: msg.cid, ok: true, ...(extra || {}) });
     } catch (err) {
-      const known = err instanceof IntentError || err instanceof RoomError;
+      const known = err instanceof IntentError || err instanceof RoomError || err?.runIntentError === true;
       if (!known) this.log('error', 'room: intent failed', { roomId: this.id, t: msg.t, error: err.message, stack: err.stack });
       const code = err instanceof RoomError ? mapRoomErrorCode(err.code) : (known ? err.code : 'E_INTERNAL');
-      reply = this.#message('error', { cid: msg.cid, code, message: known ? err.message : 'internal error' });
+      reply = this.#message('error', {
+        cid: msg.cid, code, message: known ? err.message : 'internal error',
+        ...(err?.runIntentError && err.details ? { details: err.details } : {})
+      });
     }
     m.cids.set(msg.cid, reply);
     if (m.cids.size > CID_CACHE_SIZE) m.cids.delete(m.cids.keys().next().value);
@@ -934,10 +984,11 @@ export class Room {
     const auth = { participantId: m.id, roomId: this.id, role: m.role, displayName: m.displayName };
 
     if (STATE_COMMANDS.has(msg.t)) return this.#stateCommand(m, { type: msg.t, payload: p });
+    if (this.run?.handles(msg.t)) return this.run.handle(m, msg.t, p);
 
     switch (msg.t) {
       case 'hello': throw new IntentError('E_BAD_MESSAGE', 'already authenticated');
-      case 'resync': this.#sendSnapshot(m); return {};
+      case 'resync': this.#sendSnapshot(m); this.run?.sendSnapshot(m); return {};
       case 'cinema.done': this.#cinemaDone(m.id, p.exchangeId); return {};
 
       case 'seat.claim': {
@@ -989,8 +1040,12 @@ export class Room {
         throw new IntentError('E_INVALID_INTENT', 'bad answer for that prompt');
       }
 
-      case 'dm.encounter.setup': return this.#setup(p);
-      case 'dm.encounter.start': return this.#start(p);
+      case 'dm.encounter.setup':
+        if (this.run?.active) throw new IntentError('E_INVALID_INTENT', 'this room runs a campaign: begin the encounter node with dm.node.begin');
+        return this.#setup(p);
+      case 'dm.encounter.start':
+        if (this.run?.active) throw new IntentError('E_INVALID_INTENT', 'this room runs a campaign: begin the encounter node with dm.node.begin');
+        return this.#start(p);
       case 'dm.encounter.end': {
         if (!this.enc || (this.enc.status !== 'setup' && this.enc.status !== 'active')) throw new IntentError('E_INVALID_INTENT', 'no live encounter');
         const outcome = p.outcome || 'dm-ended';
@@ -1079,27 +1134,38 @@ export class Room {
     return { settings: { ...next } };
   }
 
-  #setup(p) {
+  /**
+   * Build an encounter in 'setup'. `run` (M65 B24, the run controller's
+   * dm.node.begin) supplies the id, seed and run-state party, and links
+   * the encounter row to its run and node.
+   * @param {object} p  dm.encounter.setup payload
+   * @param {{encounterId: string, seed: number, party: object[], runId: string, nodeId: string}|null} [run]
+   */
+  #setup(p, run = null) {
     if (this.enc && this.enc.status === 'active') throw new IntentError('E_INVALID_INTENT', 'an encounter is running; end it first');
     if (this.enc && this.enc.status === 'setup') this.journal.setStatus(this.enc.id, 'abandoned', null);
-    const encounterId = newId('e_');
-    const party = this.seats.filter(s => s.characterId).map(s => ({
+    const encounterId = run?.encounterId ?? newId('e_');
+    const party = run?.party ?? this.seats.filter(s => s.characterId).map(s => ({
       slotId: s.id, seat: s.seat, characterId: s.characterId, characterName: s.characterName,
-      controller: s.controllerParticipantId ? 'player' : 'ai', aiArchetype: s.aiArchetype, seed: s.seed
+      controller: this.#seatController(s), aiArchetype: s.aiArchetype, seed: s.seed
     }));
     let state;
     try {
-      const settings = { importLiveState: this.settings.importLiveState === true, diagonalRule: this.settings.diagonalRule };
-      state = this.engine.buildEncounter({ encounterId, seed: randomInt(0, 0x100000000), setup: clone(p), party, settings });
+      const settings = { importLiveState: !run && this.settings.importLiveState === true, diagonalRule: this.settings.diagonalRule };
+      state = this.engine.buildEncounter({ encounterId, seed: run?.seed ?? randomInt(0, 0x100000000), setup: clone(p), party, settings });
     } catch (err) {
       throw new IntentError('E_INVALID_INTENT', `setup rejected: ${err.message}`);
+    }
+    if (run) {
+      state.runId = run.runId;
+      state.nodeId = run.nodeId;
     }
     const v = validateEncounterState(state);
     if (!v.ok) throw new IntentError('E_INVALID_INTENT', `setup produced an invalid state: ${v.errors[0].path} ${v.errors[0].message}`);
     // The PC sheets ride with the encounter row (never with a broadcast) so
     // boot recovery does not depend on the seats or the character cache.
     const sheets = typeof this.engine.sheetsFor === 'function' ? this.engine.sheetsFor(state) : null;
-    this.journal.createEncounter({ roomId: this.id, encounterId, state, engineVersion: this.engine.version, sheets });
+    this.journal.createEncounter({ roomId: this.id, encounterId, state, engineVersion: this.engine.version, sheets, runId: run?.runId ?? null, nodeId: run?.nodeId ?? null });
     this.enc = { id: encounterId, state, status: 'setup', liveState: null, history: [], outcome: null };
     this.lastEventSeq = 0;
     this.store.setRoomStatus(this.id, 'active');

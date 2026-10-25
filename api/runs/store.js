@@ -132,7 +132,20 @@ export function createRunStore(conn, { now = Date.now } = {}) {
     linkEncounter: conn.prepare('UPDATE encounters SET run_id = ?, node_id = ? WHERE id = ?'),
     markApplied: conn.prepare('UPDATE encounters SET run_applied_at = ? WHERE id = ? AND run_id IS NOT NULL AND run_applied_at IS NULL'),
     unapplied: conn.prepare(`SELECT id, room_id, run_id, node_id, outcome, ended_at FROM encounters
-      WHERE run_id IS NOT NULL AND run_applied_at IS NULL AND status = 'ended' ORDER BY ended_at, id`)
+      WHERE run_id IS NOT NULL AND run_applied_at IS NULL AND status = 'ended' ORDER BY ended_at, id`),
+    encounterRow: conn.prepare('SELECT id, room_id, run_id, node_id, status, outcome, snapshot_json, sheets_json, run_applied_at FROM encounters WHERE id = ?'),
+    encounterExists: conn.prepare('SELECT 1 AS x FROM encounters WHERE id = ?'),
+
+    resetSeat: conn.prepare(`UPDATE party_slots SET run_id = ?, sheet_json = ?, state_json = ?, level = ?, xp = ?, life_status = ?,
+        seed_raw_sha = NULL, version = version + 1, updated_at = ? WHERE id = ?`),
+    deleteItems: conn.prepare('DELETE FROM run_items WHERE run_id = ?'),
+    deleteLevelUps: conn.prepare('DELETE FROM level_ups WHERE run_id = ?'),
+    insertLevelUpFull: conn.prepare(`INSERT INTO level_ups (id, run_id, slot_id, from_level, to_level, class_name, mode, status, auto_json, choices_json, granted_json, created_at, decided_at, decided_by)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`),
+    levelUpIds: conn.prepare('SELECT id FROM level_ups WHERE run_id = ?'),
+    characterParsed: conn.prepare('SELECT parsed_json FROM characters WHERE id = ?'),
+    srdItem: conn.prepare('SELECT kind, name, payload_json FROM items_cache WHERE key = ?'),
+    srdByName: conn.prepare('SELECT kind, name, payload_json FROM items_cache WHERE kind = ? AND name = ? COLLATE NOCASE ORDER BY key LIMIT 1')
   };
 
   const tx = (fn) => conn.transaction(fn);
@@ -240,8 +253,8 @@ export function createRunStore(conn, { now = Date.now } = {}) {
     updateCharacter,
 
     /** @returns {string} the item id */
-    addItem(runId, { ownerSlotId = null, origin, refKey = null, name, qty = 1, equipped = false, attuned = false, chargesSpent = 0, data = {} }) {
-      const id = newId('it_');
+    addItem(runId, { id: wanted = null, ownerSlotId = null, origin, refKey = null, name, qty = 1, equipped = false, attuned = false, chargesSpent = 0, data = {} }) {
+      const id = wanted || newId('it_');
       q.insertItem.run(id, runId, ownerSlotId, origin, refKey, name, qty, bit(equipped), bit(attuned), chargesSpent, JSON.stringify(data), now());
       return id;
     },
@@ -259,8 +272,8 @@ export function createRunStore(conn, { now = Date.now } = {}) {
     deleteItem: (runId, id) => q.deleteItem.run(runId, id).changes > 0,
 
     /** @returns {string} the level-up id */
-    addLevelUp(runId, { slotId, fromLevel, className = null, mode, status = 'pending_player', auto = null, choices = null }) {
-      const id = newId('lu_');
+    addLevelUp(runId, { id: wanted = null, slotId, fromLevel, className = null, mode, status = 'pending_player', auto = null, choices = null }) {
+      const id = wanted || newId('lu_');
       q.insertLevelUp.run(id, runId, slotId, fromLevel, fromLevel + 1, className, mode, status, json(auto), json(choices), now());
       return id;
     },
@@ -308,6 +321,64 @@ export function createRunStore(conn, { now = Date.now } = {}) {
     /** Ended run encounters not yet written back (the boot sweep). */
     unappliedEncounters: () => q.unapplied.all().map(r => ({
       encounterId: r.id, roomId: r.room_id, runId: r.run_id, nodeId: r.node_id, outcome: r.outcome, endedAt: r.ended_at
-    }))
+    })),
+    /**
+     * One encounter row as the run write-back needs it (snapshot, sheets,
+     * outcome, mark), or null.
+     * @param {string} encounterId
+     */
+    getEncounter(encounterId) {
+      const r = q.encounterRow.get(encounterId);
+      return r ? {
+        id: r.id, roomId: r.room_id, runId: r.run_id, nodeId: r.node_id, status: r.status, outcome: r.outcome,
+        state: parse(r.snapshot_json), sheets: parse(r.sheets_json), runAppliedAt: r.run_applied_at
+      } : null;
+    },
+    encounterExists: (id) => !!q.encounterExists.get(id),
+
+    /**
+     * Seat a (new) character in a run seat whatever the row held before
+     * (dm.seat.fill, after the old row was archived).
+     * @param {string} runId
+     * @param {string} slotId
+     * @param {{sheet: object, state: object, level: number, xp: number, lifeStatus?: string}} init
+     */
+    resetSeat(runId, slotId, { sheet, state, level, xp, lifeStatus = 'active' }) {
+      if (q.resetSeat.run(runId, json(sheet), json(state), level, xp, lifeStatus, now(), slotId).changes === 0) {
+        throw new RunStoreError(404, 'NOT_FOUND', `No seat ${slotId}`);
+      }
+      return characterRow(q.character.get(slotId));
+    },
+    /** Replace every item of a run (snapshot restore); ids are kept. */
+    replaceItems(runId, items) {
+      q.deleteItems.run(runId);
+      for (const it of items) {
+        q.insertItem.run(it.id, runId, it.ownerSlotId ?? null, it.origin, it.refKey ?? null, it.name, it.qty, bit(it.equipped), bit(it.attuned),
+          it.chargesSpent ?? 0, JSON.stringify(it.data ?? {}), now());
+      }
+    },
+    /** Replace every level-up of a run (snapshot restore); ids and decisions are kept. */
+    replaceLevelUps(runId, rows) {
+      q.deleteLevelUps.run(runId);
+      for (const l of rows) {
+        q.insertLevelUpFull.run(l.id, runId, l.slotId, l.fromLevel, l.toLevel, l.className ?? null, l.mode, l.status,
+          json(l.auto), json(l.choices), json(l.granted), l.createdAt ?? now(), l.decidedAt ?? null, l.decidedBy ?? null);
+      }
+    },
+    /** Every level-up id of a run (to number the next one). */
+    levelUpIds: (runId) => q.levelUpIds.all(runId).map(r => r.id),
+    /** A character row's current parse (a re-import for reconcile), or null. */
+    characterParsed: (characterRowId) => parse(q.characterParsed.get(characterRowId)?.parsed_json),
+    /**
+     * An Open5e SRD record from the items cache (B23): by key, else by
+     * kind + name (case-insensitive). Never fetches.
+     * @param {string} keyOrName
+     * @param {string} [kind]  'item' | 'magicitem' | 'spell' for the name lookup
+     * @returns {{kind: string, name: string, payload: object}|null}
+     */
+    srdRecord(keyOrName, kind = null) {
+      const r = q.srdItem.get(String(keyOrName)) || (kind ? q.srdByName.get(kind, String(keyOrName)) : null);
+      return r ? { kind: r.kind, name: r.name, payload: parse(r.payload_json, {}) } : null;
+    }
   };
 }

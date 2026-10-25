@@ -11,6 +11,10 @@ import { createRealEngine, sheetForSeat } from './rooms/real-engine.js';
 import { createSqliteJournal } from './rooms/persistence.js';
 import { attachGateway } from './ws/gateway.js';
 import { createJanitor } from './lib/janitor.js';
+import { createRunStore } from './runs/store.js';
+import { mountRunRoutes } from './runs/http.js';
+import { createCampaignStore } from './campaigns/store.js';
+import { setupForRoom } from './campaigns/setup.js';
 import { dirname, resolve } from 'node:path';
 
 /**
@@ -36,13 +40,32 @@ export async function startMultiplayerServer({
   const service = createRoomService({ db });
   engine ||= createEngine({ kind: env.CF_ENGINE, db, store: service.store, log });
   const jr = journal || createSqliteJournal({ db: db.db, log });
-  const registry = createRoomRegistry({ service, engine, journal: jr, log, ...roomOpts });
+  // M65 runs need schema 0006 (a DB opened without migrating has none).
+  const hasRuns = !!db.db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'runs'").get();
+  let app = null;
+  const runs = hasRuns ? {
+    store: createRunStore(db.db),
+    // Campaign assets a template names become this room's uploads (B22's setupForRoom).
+    materializeSetup: (setup, { campaignId, roomId }) => {
+      const assets = app?.locals?.campaigns?.assets;
+      if (!assets || !campaignId) throw new Error('campaign assets are unavailable');
+      return setupForRoom(setup, { campaignId, roomId, assets });
+    }
+  } : null;
+  const registry = createRoomRegistry({ service, engine, journal: jr, log, runs, ...roomOpts });
   // Boot recovery: every room with a setup/active encounter comes back
   // (active ones paused, resuming on the DM's dm.resume).
   const recovered = registry.recover();
   if (recovered) log('info', 'rooms recovered', { rooms: recovered });
   let gateway = null;
-  const app = createApp({ db, env, dataDir, log, rooms: service, ...appOpts });
+  const userMount = appOpts.mount;
+  app = createApp({
+    db, env, dataDir, log, rooms: service, ...appOpts,
+    mount: (a, ctx) => {
+      if (runs) mountRunRoutes(a, { registry, rooms: service, campaigns: a.locals.campaigns?.store ?? createCampaignStore(db.db), log });
+      userMount?.(a, ctx);
+    }
+  });
   // sockets: authenticated room members online; connections: every open
   // ws, including ones that have not said hello yet.
   app.locals.health = () => ({ sockets: registry.socketCount(), connections: gateway ? gateway.connections() : 0, rooms: registry.size });
