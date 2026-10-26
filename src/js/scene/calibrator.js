@@ -13,8 +13,14 @@
  *     deathToll,                       // avg # of PCs reduced to 0 hp per run
  *     mvp:        { id, name, avgDamageDealt },
  *     bestKilled: { id, name, deathRate },    // most-killed PC across runs
- *     perEntity:  [ ...simulator entity stats ]
+ *     perEntity:  [ ...simulator entity stats + itemsUsed ],
+ *     partyItemsUsed                   // avg run items the party uses per run
  *   }
+ *
+ * M65 phase 2 — `perEntity[].itemsUsed` is the average number of run
+ * items (potions) the entity used per run (0 without items), so the DM's
+ * difficulty card can show the potion spend; `partyItemsUsed` sums the
+ * PCs'.
  *
  * Pure module — composes simulateEncounter; no extra mutation. The
  * `iterations` default of 200 is the same Monte Carlo budget the
@@ -40,7 +46,20 @@ export async function calibrateEncounter({
   party = [], monsters = [], scene = {},
   iterations = 200, maxRounds = 15, seed = 1
 } = {}) {
-  const stats = await simulateEncounter({ party, monsters, scene, iterations, maxRounds, seed });
+  // M65 phase 2 — run items spent per entity, summed over the runs (a
+  // sync observer of each run's end state; reads `_items`, never writes).
+  const itemsSpent = new Map();
+  const onIterationEnd = ({ pcs, mons }) => {
+    for (const w of [...pcs, ...mons]) {
+      if (!w?._items) continue;
+      let n = 0;
+      for (const it of Object.values(w._items)) n += Math.max(0, Math.trunc(Number(it?.spent) || 0));
+      itemsSpent.set(w.id, (itemsSpent.get(w.id) || 0) + n);
+    }
+  };
+  const stats = await simulateEncounter({ party, monsters, scene, iterations, maxRounds, seed, onIterationEnd });
+  const runs = Math.max(1, stats.iterations);
+  const perEntity = stats.entities.map(e => ({ ...e, itemsUsed: (itemsSpent.get(e.id) || 0) / runs }));
 
   // Compose the DM-facing aggregates from the simulator's per-entity output.
   const partyEntities    = stats.entities.filter(e => e.kind === 'pc');
@@ -67,7 +86,8 @@ export async function calibrateEncounter({
     deathToll,                                  // 0..N, expected # PCs downed per run
     mvp,
     bestKilled,
-    perEntity: stats.entities,
+    perEntity,                                  // + itemsUsed: avg run items (potions) used per run
+    partyItemsUsed: perEntity.filter(e => e.kind === 'pc').reduce((sum, e) => sum + e.itemsUsed, 0),
     partySize: partyEntities.length,
     monsterCount: monsterEntities.length,
     difficulty                                  // 'trivial' | 'easy' | 'medium' | 'hard' | 'deadly'

@@ -90,3 +90,26 @@ test('M65 phase 2: a near-death fighter drinks the potions that save it', async 
   assert.ok(drunk > 0, 'the potions are drunk');
   assert.ok(withPotions.victoryRate >= without.victoryRate + 0.1, `${withPotions.victoryRate} vs ${without.victoryRate} without`);
 });
+
+test('M65 phase 2: calibrateEncounter reports itemsUsed per entity (avg per run) and partyItemsUsed', async () => {
+  const GREATER = { 'ri-1': { name: 'Potion of Greater Healing', effect: 'potion-of-greater-healing', max: 2 } };
+  const input = (items) => ({
+    party: [{ ...pc(items), hp: { current: 4, max: 30 } }],
+    monsters: [{ id: 'o', name: 'orc', presetSlug: 'orc', hp: { current: 30, max: 30 }, conditions: [], position: { col: 1, row: 2 } }],
+    scene: { cols: 10, rows: 8 }, iterations: 60, seed: 3
+  });
+  let spent = 0;
+  await simulateEncounter({ ...input(GREATER), maxRounds: 15, onIterationEnd: ({ pcs }) => { spent += pcs[0]._items['ri-1'].spent; } });
+  const report = await calibrateEncounter(input(GREATER));
+  const byId = Object.fromEntries(report.perEntity.map(e => [e.id, e]));
+  assert.ok(byId.f.itemsUsed > 0 && byId.f.itemsUsed <= 2);
+  assert.equal(byId.f.itemsUsed, spent / 60, 'the same runs the simulator observes (calibrator maxRounds 15)');
+  assert.equal(byId.o.itemsUsed, 0);
+  assert.equal(report.partyItemsUsed, byId.f.itemsUsed);
+  // The simulator's own stats stay unchanged: itemsUsed is a calibrator field.
+  const stats = await simulateEncounter(input(GREATER));
+  assert.equal('itemsUsed' in stats.entities[0], false);
+  const bare = await calibrateEncounter(input(null));
+  assert.deepEqual(bare.perEntity.map(e => e.itemsUsed), [0, 0]);
+  assert.equal(bare.partyItemsUsed, 0);
+});
