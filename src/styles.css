@@ -3024,3 +3024,7 @@ body.party-view-mode .combat-panel { display: block !important; }
 .play-levelup h4, .play-reconcile h4 { margin: 4px 0; }
 .play-levelup-auto { margin: 4px 0; padding-left: 1.2em; }
 .play-reconcile textarea { flex: 1 1 16em; min-height: 2.5em; }
+
+/* M65 C26 — shop and story nodes */
+.play-shop h4 { margin: 10px 0 4px; }
+.play-story-text { white-space: pre-wrap; line-height: 1.5; }

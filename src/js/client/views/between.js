@@ -41,9 +41,11 @@ import { acFor } from '../../scene/fighting-styles.js';
 import { deriveAttack } from '../../scene/pc-stats.js';
 import { mount as mountRunMap } from './run-map.js';
 import { mount as mountLevelUp } from './level-up.js';
+import { mount as mountShop } from './shop.js';
+import { mount as mountStory } from './story.js';
 
-/** Node screens mounted in the hub's "here" slot, by node kind (C26 adds shop and story). */
-const NODE_VIEWS = {};
+/** Node screens mounted in the hub's "here" slot, by node kind. */
+const NODE_VIEWS = { shop: mountShop, story: mountStory };
 
 const sign = (n) => (n >= 0 ? `+${n}` : String(n));
 

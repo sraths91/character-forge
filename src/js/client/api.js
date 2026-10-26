@@ -136,6 +136,7 @@ export function createApi({ fetch: fetchImpl = globalThis.fetch?.bind(globalThis
       call('POST', cpath(cid, '/runs'), { body: opts, bearer: key, auth: false, headers: roomHeader(roomToken) }),
     licenses: () => call('GET', '/api/licenses', { auth: false }),
     srdItems: (q, kind = null) => call('GET', `/api/srd/items${qs({ q, kind })}`, { auth: false }),
+    srdItem: (key, kind = null) => call('GET', `/api/srd/items/${enc(key)}${qs({ kind })}`, { auth: false }),   // M65 C26: shop prices
     srdSpells: (q) => call('GET', `/api/srd/spells${qs({ q })}`, { auth: false })
   };
 }
