@@ -3018,3 +3018,9 @@ body.party-view-mode .combat-panel { display: block !important; }
 .play-preview.error { color: #fca5a5; }
 .play-item-name { min-width: 10em; }
 .play-seat-card h3, .play-stash h3, .play-rest h3 { margin: 0 0 6px; }
+
+/* M65 C25 — level-ups */
+.play-levelup { border-top: 1px solid var(--border); padding: 6px 0; }
+.play-levelup h4, .play-reconcile h4 { margin: 4px 0; }
+.play-levelup-auto { margin: 4px 0; padding-left: 1.2em; }
+.play-reconcile textarea { flex: 1 1 16em; min-height: 2.5em; }

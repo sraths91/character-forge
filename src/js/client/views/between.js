@@ -40,6 +40,7 @@ import { effectiveHpMax } from '../../campaign/exhaustion.js';
 import { acFor } from '../../scene/fighting-styles.js';
 import { deriveAttack } from '../../scene/pc-stats.js';
 import { mount as mountRunMap } from './run-map.js';
+import { mount as mountLevelUp } from './level-up.js';
 
 /** Node screens mounted in the hub's "here" slot, by node kind (C26 adds shop and story). */
 const NODE_VIEWS = {};
@@ -173,7 +174,7 @@ export function mount(root, ctx) {
   const send = (t, p, okMsg) => attempt(() => ctx.send({ t, p }).then((ack) => { if (okMsg) say(typeof okMsg === 'function' ? okMsg(ack) : okMsg); return ack; }), fail);
 
   const unmountMap = mountRunMap(mapHost, sub);
-  const unmountLevel = typeof ctx.mountLevelUp === 'function' ? ctx.mountLevelUp(levelHost, sub) : () => {};
+  const unmountLevel = mountLevelUp(levelHost, sub);
   let here = { key: null, off: null };
 
   const dm = () => isDm(ctx.store.getState());
