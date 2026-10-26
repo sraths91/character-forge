@@ -524,7 +524,6 @@ export class RunController {
     }
     if (applied) {
       this.#afterChange();
-      this.#offerLevelUps();
     }
     return applied;
   }
@@ -668,7 +667,11 @@ export class RunController {
     }
   }
 
-  /** levelup.offer to each actionable level-up's seat controller (the DM for AI seats) and the DM. */
+  /**
+   * levelup.offer to each actionable level-up's seat controller (the DM
+   * for AI seats) and the DM. Called only from sendSnapshot, so a change
+   * (#afterChange → one snapshot per member) offers each level-up once.
+   */
   #offerLevelUps(only = null) {
     const members = [...this.port.members().values()].filter(m => m.conn);
     if (!members.length) return;
@@ -860,7 +863,6 @@ export class RunController {
     });
     this.pendingRest = {};
     this.#afterChange();
-    this.#offerLevelUps();
     return { currentNodeId: this.progress.currentNodeId, ...(missing.length ? { missing } : {}) };
   }
 
@@ -1145,7 +1147,6 @@ export class RunController {
       if (xp > c.xp) this.#queueLevels(c, c.xp, xp, undefined, { mode: 'xp' });
     });
     this.#afterChange();
-    this.#offerLevelUps();
     return { xp };
   }
 
@@ -1197,7 +1198,6 @@ export class RunController {
       throw new RunIntentError('E_STALE', 'that level-up moved on');
     }
     this.#afterChange();
-    this.#offerLevelUps();
     return { status: 'pending_dm' };
   }
 
@@ -1218,7 +1218,6 @@ export class RunController {
       this.#emit('level.queued', { levelUpId: local, slotId, fromLevel: level, toLevel: level, mode: 'reconcile', proposals: diff.proposals.length }, actor);
     });
     this.#afterChange();
-    this.#offerLevelUps();
     return { levelUpId: local, proposals: diff.proposals.length };
   }
 
@@ -1255,7 +1254,6 @@ export class RunController {
       }, { ...actor, override: l.status === 'pending_player' });
     });
     this.#afterChange();
-    this.#offerLevelUps();
     return { level: this.store.getCharacter(c.slotId).level };
   }
 
@@ -1389,7 +1387,6 @@ export class RunController {
     });
     this.port.seatsChanged();
     this.#afterChange();
-    this.#offerLevelUps();
     return { slotId };
   }
 
