@@ -27,7 +27,7 @@ jobs:
       - name: Install dependencies
         run: npm ci
       - name: Lint (warning ratchet — current count is 4, do not add any)
-        run: npx eslint . --max-warnings 4
+        run: npx eslint . --max-warnings 3
 
   test:
     runs-on: ubuntu-latest

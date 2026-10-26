@@ -278,3 +278,57 @@ test('S21 run smoke: DM + 2 players play fight → rest → fight with loot, a p
     if (process.env.SMOKE_TIMING) console.log(`run smoke: ${ms.toFixed(0)} ms, ${server.length} run events, acts ${JSON.stringify(t.acts)}`);
   });
 });
+
+// ------------------------------------------------- S23 licensing audit
+
+test('S23 licensing: after a full run no member route serves a player another seat\'s prose; the export carries none; SRD attribution is on /api/licenses, the export and play.js', async () => {
+  await withServer('run-licensing.db', async (srv, sockets, clients) => {
+    const { t, samSlot, patSlot } = await playRun(srv, sockets, clients);
+    const roomId = t.run.roomId;
+    const dmApi = createApi({ fetch: globalThis.fetch, base: srv.url, token: () => t.run.dmToken });
+    const sheets = {
+      sam: (await dmApi.getSeatSheet(roomId, samSlot)).sheet,
+      pat: (await dmApi.getSeatSheet(roomId, patSlot)).sheet
+    };
+    const get = async (path, token) => {
+      const res = await fetch(`${srv.url}${path}`, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+      return { path, status: res.status, body: await res.json() };
+    };
+    const ATTRIBUTION = 'This work includes material taken from the System Reference Document 5.1 ("SRD 5.1") by Wizards of the Coast LLC';
+    for (const [me, other, mySlot, otherSlot] of [['sam', 'pat', samSlot, patSlot], ['pat', 'sam', patSlot, samSlot]]) {
+      const { token } = t.players[me].join;
+      const otherChar = encodeURIComponent(t.players[other].characterId);
+      const bodies = [];
+      // Every GET route a seated player can call in a run room.
+      for (const path of [
+        `/api/rooms/${roomId}`, `/api/rooms/${roomId}/run`, `/api/rooms/${roomId}/seats/${otherSlot}/sheet`,
+        `/api/characters?room=${roomId}`, `/api/characters/${otherChar}`, `/api/rooms/${roomId}/maps`, '/api/licenses'
+      ]) {
+        const r = await get(path, token);
+        assert.equal(r.status, 200, `${me} GET ${path}`);
+        bodies.push(r);
+      }
+      const leaks = proseLeaks(bodies.map(b => b.body), foreignProse(sheets[me], sheets[other]), (_b, i) => bodies[i].path);
+      assert.deepEqual(leaks, [], `${me} received ${other}'s prose over HTTP`);
+      assert.equal(bodies[2].body.prose, 'stripped', 'another seat\'s run sheet is the public copy');
+      assert.equal(bodies[4].body.prose, 'stripped', 'another seat\'s imported character is the public copy');
+      // The own seat's run sheet is the full one (the scan is not vacuous).
+      const own = await get(`/api/rooms/${roomId}/seats/${mySlot}/sheet`, token);
+      assert.equal(own.body.prose, undefined);
+      assert.ok([...proseOf(sheets[me])].some(p => JSON.stringify(own.body).includes(p)), `${me}'s own sheet keeps its prose`);
+      // Without a token the character route is closed under CF_MULTIPLAYER=1.
+      assert.equal((await get(`/api/characters/${otherChar}`, null)).status, 401);
+    }
+
+    const lic = await get('/api/licenses', null);
+    assert.deepEqual([lic.body.srd.license, lic.body.srd.name], ['CC-BY-4.0', 'System Reference Document 5.1']);
+    assert.ok(lic.body.srd.attribution.startsWith(ATTRIBUTION));
+    assert.ok(lic.body.srd.attribution.includes('https://creativecommons.org/licenses/by/4.0/legalcode'));
+    const exp = await createApi({ fetch: globalThis.fetch, base: srv.url }).exportCampaign(t.camp.campaignId, t.camp.campaignKey);
+    assert.equal(exp.attribution, lic.body.srd.attribution, 'the export carries the SRD attribution');
+    const anyProse = [...proseOf(sheets.sam), ...proseOf(sheets.pat)];
+    assert.deepEqual(proseLeaks([exp], anyProse), [], 'no sheet prose in a campaign export');
+    const play = readFileSync(join(HERE, '..', '..', 'src', 'js', 'play.js'), 'utf8');
+    assert.ok(play.includes(ATTRIBUTION), 'play.js renders the SRD attribution (footer + About)');
+  });
+});
