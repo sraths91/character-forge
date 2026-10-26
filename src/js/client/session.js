@@ -13,6 +13,11 @@
  * equals the one the server stamps. A mismatch asks for a resync; seq
  * gaps and every (re)connect still bring a full snapshot.
  *
+ * M65 (E6's restart finding): when `room.status` flips paused →
+ * in-encounter and no `turn.started` follows within `resumeGraceMs`, the
+ * session re-requests a snapshot (store.js resume watch), so a turn that a
+ * restarted server resumed silently still reaches this client.
+ *
  * M65 C23: run messages (`run.snapshot`, `run.event`, `run.updated`,
  * `levelup.offer`) also go to the run store (client/run-store.js), which
  * orders run events by their own run seq; its resync request is a ws
@@ -34,6 +39,8 @@ const EVENT_SET = new Set(EVENT_TYPES);
  * @param {object} [opts.store] — defaults to createStore() (hash check on)
  * @param {object} [opts.runStore] — defaults to createRunStore() (DM-ness from the room store)
  * @param {object} [opts.wsOptions] — extra createWsClient options (timers, now, random, logger)
+ * @param {number} [opts.resumeGraceMs=1500] — how long a resumed room may go without a turn.started
+ *   before the session asks for a snapshot (timers: wsOptions.timers, else the global ones)
  * @returns {{
  *   store: object, runStore: object, ws: object,
  *   connect: () => Promise<object>,
@@ -44,7 +51,7 @@ const EVENT_SET = new Set(EVENT_TYPES);
  *   close: () => void
  * }}
  */
-export function createSession({ url, token, WebSocketCtor, store = createStore(), runStore = null, wsOptions = {} }) {
+export function createSession({ url, token, WebSocketCtor, store = createStore(), runStore = null, wsOptions = {}, resumeGraceMs = 1500 }) {
   const run = runStore || createRunStore({ isDm: () => store.getState().me?.role === 'dm' });
   const ws = createWsClient({
     url, token, WebSocketCtor,
@@ -69,6 +76,17 @@ export function createSession({ url, token, WebSocketCtor, store = createStore()
   });
   store.onResyncNeeded(() => { ws.resync(store.getState().seq); });
   run.onResyncNeeded(() => { ws.resync(store.getState().seq); });
+  const timers = wsOptions.timers || { setTimeout: (fn, ms) => globalThis.setTimeout(fn, ms), clearTimeout: (id) => globalThis.clearTimeout(id) };
+  const resumeTimers = new Set();
+  store.onResumeWatch?.(({ seq }) => {
+    const id = timers.setTimeout(() => {
+      resumeTimers.delete(id);
+      if (store.checkResume(seq)) {
+        globalThis.console?.info?.(JSON.stringify({ event: 'session.resume_resync', seq }));
+      }
+    }, resumeGraceMs);
+    resumeTimers.add(id);
+  });
 
   return {
     store,
@@ -94,6 +112,10 @@ export function createSession({ url, token, WebSocketCtor, store = createStore()
     },
     serverNow: () => ws.serverNow(),
     onError(fn) { errorListeners.add(fn); return () => { errorListeners.delete(fn); }; },
-    close: () => ws.close()
+    close: () => {
+      for (const id of resumeTimers) timers.clearTimeout(id);
+      resumeTimers.clear();
+      ws.close();
+    }
   };
 }

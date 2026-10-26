@@ -20,6 +20,15 @@
  * no cinema backlog. Every inbound message is validated with the shared
  * protocol contract; invalid ones are ignored and counted.
  *
+ * Resume watch (M65, E6's restart finding): after a server restart a room
+ * comes back `paused`, and its waiting turn resumes under the same turnId
+ * without a new `turn.started` — a client that reconnected while paused
+ * holds `turn: null` and would never learn the turn. So when `room.status`
+ * flips from 'paused' to 'in-encounter' the store opens a watch that a
+ * `turn.started` closes; the session gives it a grace period and then
+ * calls `checkResume(seq)`, which asks for a resync (a fresh snapshot
+ * carries `room.turn.awaitingIntent`) if the watch is still open.
+ *
  * Pure and Node-testable: no DOM, no timers, no storage. State objects
  * are replaced, never mutated, so selectors can compare by identity.
  */
@@ -204,7 +213,10 @@ function stateFromSnapshot(base, p) {
  *   apply: (serverMessage: object|string) => ('applied'|'ignored'|'invalid'|'duplicate'|'gap'|'dropped'),
  *   presentUpTo: (seq: number) => number,
  *   subscribe: (selector: (auth: ClientState, presented: ClientState) => unknown, fn: (next: unknown, prev: unknown) => void, equals?: (a: unknown, b: unknown) => boolean) => () => void,
- *   onResyncNeeded: (fn: (info: {reason: string, lastSeq: number, expected?: number, got?: number}) => void) => () => void
+ *   onResyncNeeded: (fn: (info: {reason: string, lastSeq: number, expected?: number, got?: number}) => void) => () => void,
+ *   onResumeWatch: (fn: (info: {seq: number}) => void) => () => void,
+ *   resumePending: () => boolean,
+ *   checkResume: (seq: number) => boolean
  * }}
  */
 export function createStore(opts = {}) {
@@ -216,6 +228,20 @@ export function createStore(opts = {}) {
   const stats = { applied: 0, invalid: 0, duplicate: 0, gap: 0, dropped: 0, hashMismatch: 0, resyncs: 0, fogResolved: 0 };
   const subs = new Set();
   const resyncListeners = new Set();
+  const resumeListeners = new Set();
+  /** Open while a paused → in-encounter flip has seen no turn.started: {seq} of the flip. */
+  let resumeWatch = null;
+
+  function watchResume(before, msg) {
+    if (msg.t === 'turn.started') { resumeWatch = null; return; }
+    if (msg.t !== 'room.status') return;
+    if (before.room?.status === 'paused' && msg.p.status === 'in-encounter') {
+      resumeWatch = { seq: msg.seq };
+      for (const fn of [...resumeListeners]) fn({ seq: msg.seq });
+    } else if (msg.p.status !== 'in-encounter') {
+      resumeWatch = null;
+    }
+  }
 
   function notify() {
     for (const sub of [...subs]) {
@@ -249,6 +275,7 @@ export function createStore(opts = {}) {
     auth = reduceBroadcast(auth, msg);
     pending.push(msg);
     stats.applied++;
+    watchResume(before, msg);
     if (msg.t === 'encounter.created' && !auth.encounter) {
       needResync({ reason: 'encounter-created' });
     } else if (msg.t === 'turn.ended' && hashState && auth.encounter &&
@@ -297,6 +324,7 @@ export function createStore(opts = {}) {
         presented = stateFromSnapshot(presented, msg.p);
         pending = [];
         awaitingResync = false;
+        resumeWatch = null;   // a fresh snapshot carries room.turn
         stats.applied++;
         result = 'applied';
       } else if (SERVER_MESSAGE_SCOPE[msg.t] === 'broadcast') {
@@ -332,6 +360,25 @@ export function createStore(opts = {}) {
     onResyncNeeded(fn) {
       resyncListeners.add(fn);
       return () => { resyncListeners.delete(fn); };
+    },
+
+    /** Called when a paused → in-encounter flip opens a resume watch. */
+    onResumeWatch(fn) {
+      resumeListeners.add(fn);
+      return () => { resumeListeners.delete(fn); };
+    },
+
+    resumePending: () => resumeWatch !== null,
+
+    /**
+     * The grace period after the flip `seq` ran out: still no turn.started
+     * → ask for a resync. Returns true when it asked.
+     */
+    checkResume(seq) {
+      if (!resumeWatch || resumeWatch.seq !== seq) return false;
+      resumeWatch = null;
+      needResync({ reason: 'resume-without-turn' });
+      return awaitingResync;
     }
   };
 }
