@@ -3037,3 +3037,10 @@ body.party-view-mode .combat-panel { display: block !important; }
 .play-dash-table input[type="number"] { width: 5em; }
 .play-dash-table input[type="text"] { width: 7em; }
 .play-dash-log-list { margin: 0; padding-left: 1.4em; max-height: 14em; overflow-y: auto; font-size: 0.82rem; }
+
+/* M65 V21 — the forge's pickers at the table: cinema style rows, quick stats. */
+.play-style-row { flex-wrap: wrap; gap: 6px; }
+.play-style-row .play-style-name { flex: 1 1 100%; font-weight: 600; }
+.play-style-row select { flex: 1 1 45%; min-width: 0; }
+.play-quick-stats { margin: 6px 0 0; }
+.play-auto-fight:not([hidden]) { display: block; margin-top: 6px; }

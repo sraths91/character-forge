@@ -27,6 +27,11 @@
  * sheet route (`GET /api/rooms/:id/seats/:slotId/sheet`, B27), falling
  * back to `GET /api/characters/:ddbId` only while a server lacks it. Run
  * views never call `api.getCharacter` (a test enforces it).
+ *
+ * M65 V21 — the forge's "Play at the table" lands here: it created a solo
+ * room, seated the party and left the encounter setup in sessionStorage
+ * (client/forge-handoff.js). The DM of that room opens straight on the
+ * setup screen with the draft pre-filled once.
  */
 
 import { createApi } from './client/api.js';
@@ -46,6 +51,7 @@ import { mount as mountCampaigns } from './client/views/campaigns.js';
 import { mount as mountCampaignEditor } from './client/views/campaign-editor.js';
 import { createCampaignKeys } from './client/campaign-keys.js';
 import { createRoomCreds } from './client/room-creds.js';
+import { readHandoff, clearHandoff } from './client/forge-handoff.js';
 import { h, clear } from './client/views/dom.js';
 
 /** Shown until (or if never) `GET /api/licenses` answers. */
@@ -86,6 +92,9 @@ export function createPlayApp({ root, fetch, WebSocketCtor, wsUrl, storage = nul
   let screen = null;
   let unmounts = [];
   let wantSetup = false;
+  /** M65 V21: the forge's pending setup for this room (applied once by the setup view). */
+  let handoff = creds?.role === 'dm' ? readHandoff(storage, creds.code) : null;
+  if (handoff) wantSetup = true;
   /** Local (room-less) screens: 'campaigns' or {editor: campaignId}. */
   let local = null;
   const campaignKeys = createCampaignKeys(durableStorage);
@@ -284,6 +293,7 @@ export function createPlayApp({ root, fetch, WebSocketCtor, wsUrl, storage = nul
       roomToken: () => creds?.token ?? null,
       deps,
       prefillCode,
+      handoff: handoff ? { setup: handoff.setup, warnings: handoff.warnings, consume: () => { handoff = null; clearHandoff(storage); } } : null,
       ...extra
     };
   }
@@ -418,15 +428,17 @@ export const DEMO_CHARACTERS = Object.freeze([
 ]);
 
 async function browserDeps() {
-  const [{ promptReaction }, { calibrateEncounter }, { mountCalibrator }, sprites] = await Promise.all([
+  const [{ promptReaction }, { calibrateEncounter }, { simulateEncounter }, { mountCalibrator }, sprites] = await Promise.all([
     import('./scene/reaction-prompt.js'),
     import('./scene/calibrator.js'),
+    import('./scene/simulator.js'),
     import('./map/calibrate.js'),
     import('./anim/cinema-sprites.js')
   ]);
   return {
     promptReaction,
     calibrateEncounter,
+    simulateEncounter,
     mountCalibrator,
     loadImage: (url) => new Promise((resolve, reject) => {
       const img = new Image();

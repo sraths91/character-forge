@@ -155,6 +155,9 @@ function drawTokenBadges(canvas, badges, camera) {
  * @param {(state: {playing: boolean, exchange: object|null}) => void} [opts.onCinemaState]
  * @param {number} [opts.swingLingerMs=700] — how long the cinema stays up after a
  *   swing, waiting for the next swing of the same cinemaGroup
+ * @param {(payload: object) => ({style?: string, swing?: string}|null)} [opts.cinemaOverride]
+ *   — M65 V21: this viewer's cinema style / swing for an exchange (views/cinema-style.js),
+ *     merged into a copy of the exchange's `cinema` before the Sequence is built
  * @param {{warn: Function}} [opts.logger]
  * @returns {{
  *   play: (events: object[]) => Promise<void>,
@@ -186,6 +189,7 @@ export function createRenderAdapter({
   onExchangeDone = null,
   onCinemaState = null,
   swingLingerMs = 700,
+  cinemaOverride = null,
   logger = { warn: (...a) => globalThis.console?.warn?.(...a) }
 } = {}) {
   if (!store || typeof store.presentUpTo !== 'function') throw new TypeError('createRenderAdapter: store is required');
@@ -296,7 +300,9 @@ export function createRenderAdapter({
     }
     let plan;
     try {
-      plan = buildCinemaSequence(ev, lookups);
+      const extra = typeof cinemaOverride === 'function' && ev?.payload ? cinemaOverride(ev.payload) : null;
+      const shown = extra ? { ...ev, payload: { ...ev.payload, cinema: { ...(ev.payload.cinema || {}), ...extra } } } : ev;
+      plan = buildCinemaSequence(shown, lookups);
     } catch (error) {
       logger.warn(JSON.stringify({ event: 'render_adapter.cinema_plan_failed', seq: ev.seq, error: String(error?.message || error) }));
       plan = null;

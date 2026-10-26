@@ -1,14 +1,15 @@
 /**
  * M64 C9 — rooms HTTP client for the play page (E3's B6/B10 API).
  *
- *   POST   /api/rooms                        {name?}               → {roomId, code, dmToken, participantId}
+ *   POST   /api/rooms                        {name?, mode?}        → {roomId, code, dmToken, participantId, mode}
+ *          (M65 B28: mode 'solo' — the DM drives the AI seats; the forge handoff, V21)
  *   POST   /api/rooms/join                   {code, displayName}   → {roomId, participantId, token, displayName}
  *   GET    /api/rooms/:id                                          → {room, me, members, seats}
  *   POST   /api/rooms/:id/kick               {participantId}       → {ok}
  *   POST   /api/rooms/:id/seats/:n/claim     {characterId}         → {seat}
  *   POST   /api/rooms/:id/seats/:n/ai        {characterId, archetype} → {seat}
  *   DELETE /api/rooms/:id/seats/:n                                 → {ok}
- *   POST   /api/import?room=<id>             {url | json}          → {character}  (use character.id)
+ *   POST   /api/import?room=<id>             {url | characterId | json} → {character}  (use character.id)
  *   GET    /api/characters?room=<id>                               → {characters: [{ddbId, name}]}
  *   GET    /api/characters/:ddbId (Bearer)                         → {character, prose?: 'stripped'}
  *   PUT    /api/rooms/:id/maps?filename=     raw image bytes       → {mapId, url, width, height, …}
@@ -83,14 +84,16 @@ export function createApi({ fetch: fetchImpl = globalThis.fetch?.bind(globalThis
     return parts.length ? `?${parts.join('&')}` : '';
   };
   return {
-    createRoom: (name = null) => call('POST', '/api/rooms', { body: name ? { name } : {}, auth: false }),
+    createRoom: (name = null, { mode = null } = {}) =>
+      call('POST', '/api/rooms', { body: { ...(name ? { name } : {}), ...(mode ? { mode } : {}) }, auth: false }),
     joinRoom: (code, displayName) => call('POST', '/api/rooms/join', { body: { code, displayName }, auth: false }),
     getRoom: (roomId) => call('GET', `/api/rooms/${enc(roomId)}`),
     kick: (roomId, participantId) => call('POST', `/api/rooms/${enc(roomId)}/kick`, { body: { participantId } }),
     claimSeat: (roomId, seat, characterId) => call('POST', `/api/rooms/${enc(roomId)}/seats/${enc(seat)}/claim`, { body: { characterId } }),
     aiSeat: (roomId, seat, characterId, archetype) => call('POST', `/api/rooms/${enc(roomId)}/seats/${enc(seat)}/ai`, { body: { characterId, archetype } }),
     releaseSeat: (roomId, seat) => call('DELETE', `/api/rooms/${enc(roomId)}/seats/${enc(seat)}`),
-    importCharacter: (roomId, { url, json } = {}) => call('POST', `/api/import?room=${enc(roomId)}`, { body: json ? { json } : { url } }),
+    importCharacter: (roomId, { url, json, characterId } = {}) =>
+      call('POST', `/api/import?room=${enc(roomId)}`, { body: json ? { json } : characterId ? { characterId: String(characterId) } : { url } }),
     listCharacters: (roomId) => call('GET', `/api/characters?room=${enc(roomId)}`),
     // Authenticated since E3's leak fix: a member token sees characters in
     // its room (teammates get the prose-stripped sheet); without a token

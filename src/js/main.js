@@ -89,6 +89,11 @@ import {
 } from './scene/live-bridge.js';
 import { buildWeaponPlan, buildCastPlan } from './scene/manual-plan.js';
 import { createVersusEncounter } from './scene/encounter-setup.js';
+// M65 V21 — "Play at the table": the versus panel hands the party and the
+// queued encounter to a server-hosted solo room (play.html).
+import { createApi } from './client/api.js';
+import { createRoomCreds } from './client/room-creds.js';
+import { handoffToTable, stashForgeJson } from './client/forge-handoff.js';
 
 const $ = (id) => document.getElementById(id);
 const status = $('status');
@@ -569,6 +574,52 @@ function readVersusInputs() {
   const logMode = [...document.querySelectorAll('[name="versus-log"]')]
     .find(r => r.checked)?.value || 'keep';
   return { pcIds, mode, logMode };
+}
+
+/** Storage that may be blocked (private mode, sandboxed iframes): null instead of a throw. */
+function safeStorage(name) {
+  try { return globalThis[name] || null; } catch { return null; }
+}
+
+/**
+ * M65 V21 — the versus panel's "Play at the table": a solo room with the
+ * selected party seated as DM-driven seats, the queued monsters, flanking
+ * and the current map pre-filled in play.html's encounter setup.
+ */
+async function playAtTheTable() {
+  const { pcIds } = readVersusInputs();
+  const status = document.getElementById('versus-status');
+  const say = (msg) => { if (status) status.textContent = msg; };
+  const roster = versusPreviousParty || partyComposedCharacters;
+  const party = roster.filter(p => pcIds.includes(String(p.id)));
+  const btn = document.getElementById('versus-play-table');
+  if (btn) btn.disabled = true;
+  try {
+    const session = safeStorage('sessionStorage');
+    const durable = safeStorage('localStorage');
+    const r = await handoffToTable({
+      createApi, fetch: globalThis.fetch.bind(globalThis),
+      party, encounter: versusEncounter, scene: versusPreviousScene || currentScene,
+      roomCreds: createRoomCreds({ session, durable }),
+      jsonStorage: durable, handoffStorage: session,
+      cinemaPick: (id) => {
+        const pc = roster.find(p => String(p.id) === id);
+        return pc ? { style: styleForPc(pc), swing: swingForPc(pc) } : null;
+      },
+      saveCinemaPick: (id, pick) => {
+        if (isStyle(pick.style)) saveStyle(id, pick.style);
+        if (isSwingSelection(pick.swing)) saveSwing(id, pick.swing);
+      },
+      progress: say
+    });
+    say(`Room ${r.code} is ready — opening the table…${r.warnings.length ? ` ${r.warnings.join(' ')}` : ''}`);
+    globalThis.location.assign(r.url);
+  } catch (err) {
+    say(err.message);
+    globalThis.console?.warn?.(JSON.stringify({ event: 'forge.play_at_table_failed', status: err.status ?? null, error: String(err?.message || err) }));
+  } finally {
+    if (btn) btn.disabled = false;
+  }
 }
 
 async function startVersusFight() {
@@ -1512,6 +1563,7 @@ document.addEventListener('change', (e) => {
 });
 
 document.addEventListener('click', (e) => {
+  if (e.target.id === 'versus-play-table') { playAtTheTable();    return; }
   if (e.target.id === 'versus-start')     { startVersusFight();   return; }
   if (e.target.id === 'versus-rematch')   { startVersusFight();   return; }
   if (e.target.id === 'versus-exit')      { exitVersusFight();    return; }
@@ -4171,6 +4223,9 @@ async function postImport(body) {
     // diff it against the new one and show a "what changed" banner.
     // Also preserve in-session HP / conditions on any party member
     // who's being re-imported, so a re-sync doesn't wipe live damage.
+    // M65 V21 — keep a pasted character's JSON so "Play at the table" can
+    // import it into a room later (URL imports re-fetch by id).
+    if (body.json && data.character?.id) stashForgeJson(safeStorage('localStorage'), String(data.character.id), body.json);
     const diff = data.previous ? diffCharacters(data.previous, data.character) : [];
     if (data.previous) preserveInSessionState(data.character);
 

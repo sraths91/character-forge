@@ -178,6 +178,17 @@ export function roomSettingsOf(s) {
 }
 
 /**
+ * M65 B28 / V21 — a solo room's seat settings: whether the DM drives the
+ * seats no player holds, and whether auto-fight hands them to the AI.
+ * @param {object} s — ClientState
+ * @returns {{dmDrivesAiSeats: boolean, autoFight: boolean}}
+ */
+export function soloSettingsOf(s) {
+  const st = s?.room?.settings || {};
+  return { dmDrivesAiSeats: st.dmDrivesAiSeats === true, autoFight: st.autoFight === true };
+}
+
+/**
  * The claim screen's line on how characters arrive.
  * @param {object} s — ClientState
  * @returns {string}

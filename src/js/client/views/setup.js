@@ -24,6 +24,13 @@
  * → load round-trips the exact payload. In a campaign run the draft starts
  * from the current encounter node: its inline `setup`, or its template.
  *
+ * Forge handoff (M65 V21): when the forge's "Play at the table" opened this
+ * room, `ctx.handoff.setup` (client/forge-handoff.js) pre-fills the draft
+ * once — the queued monsters, flanking and the forge's map — and
+ * `ctx.handoff.consume()` drops it. The difficulty card also offers the
+ * forge's "Quick stats (200 sims)" line (`deps.simulateEncounter`), and the
+ * rules card the forge's flanking toggle (`grid.flankingEnabled`).
+ *
  * Once the encounter exists, each non-humanoid monster's row carries E5's
  * token image picker (views/token-image.js: `PUT …/maps?kind=token`, then
  * `dm.entity.patch {imageUrl}`).
@@ -96,7 +103,7 @@ export function setupPayload(draft) {
   for (const m of draft.monsters) placements[m.id] = { col: m.pos.col, row: m.pos.row };
   return {
     map,
-    grid: { cols: draft.cols, rows: draft.rows, ...(draft.terrain ? { terrain: draft.terrain } : {}) },
+    grid: { cols: draft.cols, rows: draft.rows, ...(draft.terrain ? { terrain: draft.terrain } : {}), ...(draft.flanking ? { flankingEnabled: true } : {}) },
     monsters: draft.monsters.map(m => ({
       id: m.id, slug: m.slug, name: m.name,
       ...(m.open5eSlug ? { open5eSlug: m.open5eSlug } : {}),
@@ -140,6 +147,7 @@ export function draftFromSetup(setup, base = {}) {
     cols: setup?.grid?.cols ?? base.cols ?? 12,
     rows: setup?.grid?.rows ?? base.rows ?? 8,
     terrain: setup?.grid?.terrain ?? null,
+    flanking: setup?.grid?.flankingEnabled === true,
     monsters,
     placements,
     fog: setup?.fog ?? null,
@@ -158,6 +166,19 @@ export function draftFromSetup(setup, base = {}) {
     draft.color = map.color ?? COLOR_PRESETS[0].value;
   }
   return draft;
+}
+
+/**
+ * The forge's quick-stats sentence for a simulateEncounter result.
+ * @param {{victoryRate: number, monsterVictories: number, draws: number, iterations: number, avgRounds: number}} stats
+ * @returns {string}
+ */
+export function quickStatsLine(stats) {
+  const n = Math.max(1, stats?.iterations || 0);
+  const win = Math.round((stats?.victoryRate || 0) * 100);
+  const loss = Math.round(((stats?.monsterVictories || 0) / n) * 100);
+  const draw = Math.round(((stats?.draws || 0) / n) * 100);
+  return `Quick stats over ${stats?.iterations ?? 0} sims: party wins ${win}% / loses ${loss}% / stalemates ${draw}% — avg ${(stats?.avgRounds || 0).toFixed(1)} rounds.`;
 }
 
 /**
@@ -195,7 +216,7 @@ export function mount(root, ctx) {
 
   const draft = {
     mapKind: 'color', color: COLOR_PRESETS[0].value, biome: biomes[0] || 'grass', seed: 1, image: null,
-    cinemaBiome: null, cols: 12, rows: 8, terrain: null, monsters: [], placements: {},
+    cinemaBiome: null, cols: 12, rows: 8, terrain: null, flanking: false, monsters: [], placements: {},
     initiativeMode: 'individual', pauseMode: 'auto'
   };
   let tool = 'select';
@@ -255,6 +276,8 @@ export function mount(root, ctx) {
     { value: 'monsters', label: 'Pause each monster for review' },
     { value: 'all', label: 'Pause AI party members too' }
   ], draft.pauseMode);
+  const flankIn = h(doc, 'input', { type: 'checkbox', dataset: { action: 'flanking' }, attrs: { 'aria-label': 'Flanking (optional rule)' } });
+  const quickLine = h(doc, 'p', { class: 'hint-line play-quick-stats', attrs: { 'aria-live': 'polite' } });
   const diffCard = h(doc, 'div', { class: 'play-card play-difficulty', attrs: { 'aria-live': 'polite' } });
   const templateCard = h(doc, 'div', { class: 'play-card play-setup-templates' });
   const startRow = h(doc, 'div', { class: 'play-row play-start' });
@@ -265,8 +288,13 @@ export function mount(root, ctx) {
     h(doc, 'div', { class: 'play-setup-left' }, [mapCard, monsterCard]),
     h(doc, 'div', { class: 'play-setup-center' }, [toolBar, canvas]),
     h(doc, 'div', { class: 'play-setup-right' }, [
-      h(doc, 'div', { class: 'play-card' }, [h(doc, 'h3', { text: 'Rules' }), initSel, pauseSel]),
-      diffCard, templateCard, startRow
+      h(doc, 'div', { class: 'play-card' }, [h(doc, 'h3', { text: 'Rules' }), initSel, pauseSel, h(doc, 'label', {}, [flankIn, ' Flanking (DMG optional rule)'])]),
+      diffCard,
+      h(doc, 'div', { class: 'play-card play-quick' }, [
+        h(doc, 'button', { type: 'button', class: 'play-btn', dataset: { action: 'quick-stats' }, attrs: { title: 'Run 200 headless fights of this setup' }, text: 'Quick stats (200 sims)' }),
+        quickLine
+      ]),
+      templateCard, startRow
     ])
   ]));
   view.appendChild(modal);
@@ -337,7 +365,7 @@ export function mount(root, ctx) {
     }
     return {
       v: 1, encounterId: 'draft', round: 0, turnIndex: 0, phase: 'setup',
-      grid: { cols: draft.cols, rows: draft.rows, cellFt: 5, flankingEnabled: false, terrain: draft.terrain },
+      grid: { cols: draft.cols, rows: draft.rows, cellFt: 5, flankingEnabled: !!draft.flanking, terrain: draft.terrain },
       map: setupPayload(draft).map, initiative: [], entities, lastEventSeq: 0
     };
   }
@@ -463,6 +491,7 @@ export function mount(root, ctx) {
         await ctx.send({ t: 'dm.encounter.start', p: {} });
       }, fail);
     },
+    'quick-stats': () => attempt(() => runQuickStats(), (e) => { quickLine.textContent = `Quick stats failed: ${e?.message || e}`; }),
     'calib-close': () => closeModal(),
     'template-save': () => attempt(() => saveTemplate(), fail),
     'template-load': () => attempt(() => loadTemplate(), fail),
@@ -482,6 +511,7 @@ export function mount(root, ctx) {
     biome: (el) => { draft.biome = el.value; changed(); },
     seed: (el) => { draft.seed = Math.max(0, Number(el.value) | 0); changed(); },
     'cinema-biome': (el) => { draft.cinemaBiome = el.value || null; changed(); },
+    flanking: (el) => { draft.flanking = !!el.checked; changed(); },
     'init-mode': (el) => { draft.initiativeMode = el.value === 'grouped' ? 'grouped' : 'individual'; },
     'pause-mode': (el) => {
       draft.pauseMode = PAUSE_MODES[el.value] ? el.value : 'auto';
@@ -537,6 +567,7 @@ export function mount(root, ctx) {
     rowsIn.value = String(draft.rows);
     cinemaSel.value = draft.cinemaBiome || '';
     initSel.value = draft.initiativeMode;
+    flankIn.checked = !!draft.flanking;
     ackMonsters = {};
     renderTab();
     changed();
@@ -756,19 +787,39 @@ export function mount(root, ctx) {
     if (!seats.length || !mons.length || !deps.calibrateEncounter) { renderDifficulty(null, 'empty'); return; }
     renderDifficulty(null, 'running');
     try {
-      const party = [];
-      for (const s of seats) {
-        const sheet = await ctx.loadSheet(s.characterId);
-        const ent = Object.values(st.entities).find(e => e.kind === 'pc' && (e.sheetRef?.characterId === s.characterId || e.id === `pc-${s.seat}`));
-        party.push({ sheet: sheet || { id: s.characterId, name: s.characterName, hp: { max: 10 } }, pos: ent?.pos || { col: 0, row: 0 } });
-      }
-      const inputs = calibratorInputs(party, mons.filter(m => MONSTER_PRESETS[m.slug]));
-      const report = await deps.calibrateEncounter({ ...inputs, scene: { cols: st.grid.cols, rows: st.grid.rows }, iterations: 200, maxRounds: 15, seed: 1 });
+      const inputs = await simInputs(seats, st, mons);
+      const report = await deps.calibrateEncounter({ ...inputs, scene: { cols: st.grid.cols, rows: st.grid.rows, flankingEnabled: !!st.grid.flankingEnabled }, iterations: 200, maxRounds: 15, seed: 1 });
       if (run === calRun && !disposed) renderDifficulty(report, 'done');
     } catch (err) {
       if (run === calRun && !disposed) renderDifficulty(null, 'error');
       globalThis.console?.warn?.(JSON.stringify({ event: 'setup.calibrate_failed', error: String(err?.message || err) }));
     }
+  }
+
+  async function simInputs(seats, st, mons) {
+    const party = [];
+    for (const s of seats) {
+      const sheet = await ctx.loadSheet(s.characterId);
+      const ent = Object.values(st.entities).find(e => e.kind === 'pc' && (e.sheetRef?.characterId === s.characterId || e.id === `pc-${s.seat}`));
+      party.push({ sheet: sheet || { id: s.characterId, name: s.characterName, hp: { max: 10 } }, pos: ent?.pos || { col: 0, row: 0 } });
+    }
+    return calibratorInputs(party, mons.filter(m => MONSTER_PRESETS[m.slug]));
+  }
+
+  /** The forge's "Quick stats" mode: 200 seeded headless fights of this setup. */
+  async function runQuickStats() {
+    const seats = partySeats();
+    const st = previewState();
+    const mons = monstersNow();
+    if (!seats.length || !mons.length) { quickLine.textContent = 'Seat a character and place a monster first.'; return; }
+    if (!deps.simulateEncounter) { quickLine.textContent = 'The simulator is not loaded.'; return; }
+    quickLine.textContent = 'Running 200 sims…';
+    const inputs = await simInputs(seats, st, mons);
+    const stats = await deps.simulateEncounter({
+      ...inputs, scene: { cols: st.grid.cols, rows: st.grid.rows, flankingEnabled: !!st.grid.flankingEnabled },
+      iterations: 200, seed: Math.floor(Math.random() * 1e9)
+    });
+    if (!disposed) quickLine.textContent = quickStatsLine(stats);
   }
 
   function scheduleCalibration() {
@@ -789,6 +840,13 @@ export function mount(root, ctx) {
   changed();
   tpl.campaignId = defaultCampaign();
   renderTemplates();
+  // M65 V21 — the forge's "Play at the table": pre-fill once, before any encounter exists.
+  if (ctx.handoff?.setup && !created()) {
+    applySetup(ctx.handoff.setup);
+    ctx.handoff.consume?.();
+    const warn = (ctx.handoff.warnings || []).join(' ');
+    say(`Pre-filled from the forge: ${draft.monsters.length} monster${draft.monsters.length === 1 ? '' : 's'}${draft.flanking ? ', flanking on' : ''}. Review the map, then Start.${warn ? ` ${warn}` : ''}`, warn ? 'error' : 'info');
+  }
   const templatesReady = Promise.all([
     attempt(() => refreshTemplates(), () => {}),
     attempt(() => prefillFromRun(), fail)

@@ -36,6 +36,9 @@
  *     card (the server rolls it at the start of your turn; the result and
  *     the ✓ / ✗ tally show here), and Dying / Stable / Dead badges on the
  *     initiative strip (the render adapter badges the tokens).
+ *   - Cinema style (M65 V21, the forge's pickers): views/cinema-style.js
+ *     lists the PCs this viewer drives with their attack style and swing;
+ *     the render adapter plays DM-driven seats with the local pick.
  *   - The DM drags any token as a free move (`dm.entity.patch {position,
  *     override: true}`), and clicks select an entity for the inspector.
  *
@@ -62,6 +65,7 @@ import { buildTurnTips } from '../../scene/turn-coach.js';
 import { spellById } from '../../scene/monster-spells.js';
 import { nameToSpellId } from '../../scene/ai/pc-action.js';
 import { REACTION_KINDS } from '../../shared/events.js';
+import { mount as mountCinemaStyle, createCinemaOverride } from './cinema-style.js';
 
 const LOG_LIMIT = 80;
 /** The brush flag that marks a fog stroke (outside TERRAIN_FLAG_MASK; never sent as terrain). */
@@ -150,12 +154,13 @@ export function mount(root, ctx) {
   const mine = h(doc, 'div', { class: 'play-card play-mine' });
   const initStrip = h(doc, 'div', { class: 'play-card play-initiative initiative-tracker' });
   const actions = h(doc, 'div', { class: 'play-card play-actions' });
+  const styleHost = h(doc, 'div', { class: 'play-style-host' });
   const log = h(doc, 'ol', { class: 'play-log roll-log-list' });
   view.appendChild(header);
   view.appendChild(status);
   view.appendChild(h(doc, 'div', { class: 'play-battle-grid' }, [
     h(doc, 'div', { class: 'play-battle-map' }, [canvas, cinemaCanvas, promptHost]),
-    h(doc, 'div', { class: 'play-battle-side' }, [mine, initStrip, actions, h(doc, 'div', { class: 'play-card' }, [h(doc, 'h3', { text: 'Fight log' }), log])])
+    h(doc, 'div', { class: 'play-battle-side' }, [mine, initStrip, actions, styleHost, h(doc, 'div', { class: 'play-card' }, [h(doc, 'h3', { text: 'Fight log' }), log])])
   ]));
   root.appendChild(view);
 
@@ -170,11 +175,13 @@ export function mount(root, ctx) {
     render: deps.render,
     schedulerOpts: { raf: deps.raf, caf: deps.caf },
     timers: deps.timers,
+    cinemaOverride: createCinemaOverride({ store: ctx.store }),
     onExchangeDone: (exchangeId) => {
       if (exchangeId) attempt(() => send({ t: 'cinema.done', p: { exchangeId: String(exchangeId) } }), () => {});
     }
   });
   scope.add(() => adapter.dispose());
+  scope.add(mountCinemaStyle(styleHost, ctx));
   if (ctx.session?.setPlayback) scope.add(ctx.session.setPlayback(adapter));
   if (ctx.onSheet) scope.add(ctx.onSheet(() => { adapter.invalidate(); renderActions(); }));
   if (ctx.onTokenImages) scope.add(ctx.onTokenImages(() => adapter.invalidate()));

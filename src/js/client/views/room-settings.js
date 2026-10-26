@@ -7,6 +7,11 @@
  * names; a partial update with only the changed keys) and confirmed by
  * the `room.settings` broadcast the store folds into `room.settings`.
  *
+ * M65 V21 — a solo room (B28 `dmDrivesAiSeats`, the forge's "Play at the
+ * table") adds the forge's auto-fight switch: checked, the AI plays every
+ * DM-driven seat (`dm.room.settings {autoFight}`, applied mid-encounter
+ * too); unchecked, the DM plays them turn by turn.
+ *
  * Mounted in the DM panel (battle) and on the DM's claim screen, since
  * the import toggle applies at the next encounter build.
  *
@@ -14,7 +19,7 @@
  */
 
 import { h, replace, createScope, delegate, attempt, select } from './dom.js';
-import { isDm, roomSettingsOf } from '../selectors.js';
+import { isDm, roomSettingsOf, soloSettingsOf } from '../selectors.js';
 import { REACTION_TIMEOUT_RANGE, FUDGE_VISIBILITY, DIAGONAL_RULES } from '../../shared/protocol.js';
 
 /** The diagonal rules the room offers, with their labels. */
@@ -60,6 +65,8 @@ export function mount(root, ctx) {
   ], 'public');
   const diagonal = select(doc, { dataset: { field: 'diagonal' }, attrs: { 'aria-label': 'Diagonal movement rule' } }, DIAGONAL_RULE_OPTIONS, '5ft');
   const effect = h(doc, 'p', { class: 'hint-line' });
+  const autoFight = h(doc, 'input', { type: 'checkbox', dataset: { action: 'auto-fight' }, attrs: { 'aria-label': 'Auto-fight' } });
+  const autoRow = h(doc, 'label', { class: 'play-auto-fight', hidden: true }, [autoFight, ' Auto-fight: the AI plays the party (solo room)']);
   replace(doc, card, [
     h(doc, 'h3', { text: 'Room settings' }),
     h(doc, 'label', {}, ['Reaction timeout ', seconds, ' s']),
@@ -67,6 +74,7 @@ export function mount(root, ctx) {
     effect,
     h(doc, 'label', {}, ['Fudges ', fudge]),
     h(doc, 'label', {}, [diagonal]),
+    autoRow,
     h(doc, 'button', { type: 'button', class: 'play-btn', dataset: { action: 'settings-save' }, text: 'Save settings' }),
     note
   ]);
@@ -77,12 +85,15 @@ export function mount(root, ctx) {
     const s = ctx.store.getState();
     card.hidden = !isDm(s);
     const cur = roomSettingsOf(s);
-    const key = JSON.stringify(cur);
+    const solo = soloSettingsOf(s);
+    const key = JSON.stringify([cur, solo]);
     if (key === shown) return;
     shown = key;
     seconds.value = String(Math.round(cur.reactionTimeoutMs / 1000));
     importLive.checked = cur.importLiveState;
     fudge.value = cur.fudgeVisibility;
+    autoRow.hidden = !solo.dmDrivesAiSeats;
+    autoFight.checked = solo.autoFight;
     diagonal.value = cur.diagonalRule === '5-10' || cur.diagonalRule === '5-10-5' ? '5-10' : '5ft';
     effect.textContent = cur.importLiveState
       ? 'Characters import their current state at the next encounter build.'
@@ -94,6 +105,14 @@ export function mount(root, ctx) {
       const r = settingsPatch(roomSettingsOf(ctx.store.getState()), { seconds: seconds.value, importLiveState: importLive.checked, fudgeVisibility: fudge.value, diagonalRule: diagonal.value });
       if (!r.ok) { say(r.reason, r.reason === 'Nothing changed.' ? 'info' : 'error'); return; }
       attempt(() => ctx.send({ t: 'dm.room.settings', p: r.payload }).then(() => say('Settings saved.')), (e) => say(e?.message || String(e), 'error'));
+    }
+  });
+
+  delegate(scope, card, 'change', {
+    'auto-fight': (el) => {
+      const on = !!el.checked;
+      attempt(() => ctx.send({ t: 'dm.room.settings', p: { autoFight: on } }).then(() => say(on ? 'Auto-fight on: the AI plays the party.' : 'Auto-fight off: you play the party.')),
+        (e) => { el.checked = !on; say(e?.message || String(e), 'error'); });
     }
   });
 
