@@ -146,13 +146,15 @@
                 <span class="versus-empty">No opponents added yet.</span>
               </div>
             </div>
-            <div class="versus-row versus-modes">
+            <!-- M65 V22 — rows marked data-classic belong to the in-page combat
+                 driver, shown only with ?classic=1 (one release). -->
+            <div class="versus-row versus-modes" data-classic>
               <span>Mode</span>
               <label><input type="radio" name="versus-mode" value="roll" checked /><span>Roll each hit</span></label>
               <label><input type="radio" name="versus-mode" value="auto" /><span>Auto-fight</span></label>
               <label><input type="radio" name="versus-mode" value="quick" /><span>Quick stats (200 sims)</span></label>
             </div>
-            <div class="versus-row versus-modes">
+            <div class="versus-row versus-modes" data-classic>
               <span>Log</span>
               <label><input type="radio" name="versus-log" value="keep" checked /><span>Save to log</span></label>
               <label><input type="radio" name="versus-log" value="reset" /><span>Fresh log each fight</span></label>
@@ -160,24 +162,24 @@
             <!-- M43.2 — Cinematic 1v1 toggle. When ON, each combat
                  exchange replays in a side-on Fire-Emblem-style stage
                  (overlays the grid). Auto-fight mode only for now. -->
-            <div class="versus-row versus-modes">
+            <div class="versus-row versus-modes" data-classic>
               <span>View</span>
               <label><input type="radio" name="versus-view" value="grid" checked /><span>Grid (default)</span></label>
               <label><input type="radio" name="versus-view" value="cinema" /><span>Cinematic 1v1</span></label>
             </div>
             <!-- Cinema stage canvas — hidden until a cinema-mode fight starts -->
-            <canvas id="cinema-canvas" class="cinema-canvas" width="960" height="540" hidden></canvas>
+            <canvas id="cinema-canvas" class="cinema-canvas" width="960" height="540" hidden data-classic></canvas>
             <div class="versus-actions">
               <button id="versus-play-table" class="primary" type="button" title="Open this party and encounter in a solo room at the table (play.html)">Play at the table</button>
-              <button id="versus-start" class="secondary" type="button">Start fight</button>
+              <button id="versus-start" class="secondary" type="button" data-classic>Start fight (classic)</button>
               <button id="versus-calibrate" class="secondary" type="button" title="Run 200 sims and show difficulty report">Calibrate encounter</button>
-              <button id="versus-exit"  class="secondary" type="button" hidden>Exit versus</button>
-              <button id="versus-rematch" class="secondary" type="button" hidden>Rematch</button>
+              <button id="versus-exit"  class="secondary" type="button" hidden data-classic>Exit versus</button>
+              <button id="versus-rematch" class="secondary" type="button" hidden data-classic>Rematch</button>
             </div>
             <p id="versus-status" class="versus-status"></p>
             <div id="reaction-prompt-host" class="reaction-prompt-host"></div>
             <div id="versus-calibrator" class="versus-calibrator" hidden></div>
-            <div id="versus-replay" class="versus-replay" hidden></div>
+            <div id="versus-replay" class="versus-replay" hidden data-classic></div>
           </div>
         </fieldset>
 

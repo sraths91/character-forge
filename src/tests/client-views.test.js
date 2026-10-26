@@ -473,7 +473,10 @@ test('C9: nothing under src/js/client imports main.js or runAttackPrompt', () =>
   const files = [];
   const walk = (u) => {
     for (const ent of readdirSync(u, { withFileTypes: true })) {
-      if (ent.isDirectory()) walk(new URL(`${ent.name}/`, u));
+      // M65 V22: client/legacy/ holds the forge's retired versus driver
+      // (main.js's own code, moved behind ?classic=1 for one release; a
+      // separate guard in forge-classic-flag.test.js covers it).
+      if (ent.isDirectory()) { if (ent.name !== 'legacy') walk(new URL(`${ent.name}/`, u)); }
       else if (ent.name.endsWith('.js')) files.push(new URL(ent.name, u));
     }
   };
