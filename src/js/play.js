@@ -54,8 +54,12 @@ import { createRoomCreds } from './client/room-creds.js';
 import { readHandoff, clearHandoff } from './client/forge-handoff.js';
 import { h, clear } from './client/views/dom.js';
 
-/** Shown until (or if never) `GET /api/licenses` answers. */
-export const SRD_ATTRIBUTION_FALLBACK = 'This work includes material taken from the System Reference Document 5.1 ("SRD 5.1") by Wizards of the Coast LLC, licensed under the Creative Commons Attribution 4.0 International License.';
+/**
+ * Shown until (or if never) `GET /api/licenses` answers: the CC-BY-4.0
+ * attribution word for word, both URLs included (api/lib/licensing.js
+ * SRD_ATTRIBUTION; a test keeps the two equal — M65 acceptance gap).
+ */
+export const SRD_ATTRIBUTION_FALLBACK = 'This work includes material taken from the System Reference Document 5.1 ("SRD 5.1") by Wizards of the Coast LLC and available at https://dnd.wizards.com/resources/systems-reference-document. The SRD 5.1 is licensed under the Creative Commons Attribution 4.0 International License available at https://creativecommons.org/licenses/by/4.0/legalcode.';
 
 /**
  * Build the play app.

@@ -9,6 +9,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
 import { createPlayApp, SRD_ATTRIBUTION_FALLBACK } from '../js/play.js';
+import { SRD_ATTRIBUTION } from '../../api/lib/licensing.js';
 import { createRoomCreds, ROOM_CREDS_STORAGE, SESSION_CREDS_STORAGE, cleanCreds } from '../js/client/room-creds.js';
 import { createFakeServer, demoCharacter } from '../js/client/fake-transport.js';
 import { seatsOf } from '../js/client/selectors.js';
@@ -139,7 +140,9 @@ test('C28: SRD attribution footer and About dialog use GET /api/licenses (fallba
   };
   const withRoute = app(dom, { fetch, WebSocket: server.WebSocket, timers, storage: null, durableStorage: null });
   await withRoute.a.start();
-  await until(() => withRoute.root.textContent.includes('legalcode'), 'attribution from the route');
+  // The fallback is the same text now (word for word), so wait for the route itself.
+  await until(() => calls.includes('/api/licenses'), 'attribution from the route');
+  await flush();
   const footer = dom.findAll(withRoute.root, n => n.tagName === 'FOOTER')[0];
   assert.equal(footer.textContent, ATTR, 'word for word');
   dom.byAction(withRoute.root, 'about')[0].click();
@@ -209,4 +212,10 @@ test('lint: no run view calls api.getCharacter; no client view builds HTML strin
     assert.doesNotMatch(src, /\.(innerHTML|outerHTML)\s*=|insertAdjacentHTML|document\.write/, `${f.pathname}: CSP-safe DOM only`);
     assert.doesNotMatch(src, /setAttribute\(\s*['"]on[a-z]+['"]/, `${f.pathname}: no inline handlers`);
   }
+});
+
+test('C28: the offline attribution fallback is the licensing text word for word, both URLs included', () => {
+  assert.equal(SRD_ATTRIBUTION_FALLBACK, SRD_ATTRIBUTION);
+  assert.ok(SRD_ATTRIBUTION_FALLBACK.includes('https://dnd.wizards.com/resources/systems-reference-document'));
+  assert.ok(SRD_ATTRIBUTION_FALLBACK.includes('https://creativecommons.org/licenses/by/4.0/legalcode'));
 });
