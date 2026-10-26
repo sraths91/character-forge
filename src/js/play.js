@@ -7,8 +7,8 @@
  *   DM, setting up     → setup (S3); players see "the DM is preparing"
  *   encounter running  → battle (S5), plus the DM panel (S4) for the DM
  *   run between nodes  → the between hub (M65 C24: run map, rest, stash,
- *                        party gear; later the level-up, shop, story and
- *                        DM dashboard screens)
+ *                        party gear, level-ups, shop, story; the DM's
+ *                        run dashboard in the side panel, C27)
  *
  * This page stays independent of main.js: it shares only pure modules
  * with the forge and never installs document-level listeners — every
@@ -40,6 +40,7 @@ import { mount as mountSetup } from './client/views/setup.js';
 import { mount as mountBattle } from './client/views/battle.js';
 import { mount as mountDmPanel, createDmBridge } from './client/views/dm-panel.js';
 import { mount as mountBetween } from './client/views/between.js';
+import { mount as mountRunDashboard } from './client/views/run-dashboard.js';
 import { createRunSheets } from './client/run-model.js';
 import { mount as mountCampaigns } from './client/views/campaigns.js';
 import { mount as mountCampaignEditor } from './client/views/campaign-editor.js';
@@ -338,12 +339,15 @@ export function createPlayApp({ root, fetch, WebSocketCtor, wsUrl, storage = nul
     } else if (next === 'lobby') {
       unmounts.push(mountLobby(mainEl, c));
       if (creds && session) unmounts.push(mountClaim(sideEl, c));
+      // A run waiting in its lobby: the DM begins it from the dashboard (hidden without a run).
+      if (creds && session && isDm(session.store.getState())) unmounts.push(mountRunDashboard(sideEl, c));
     } else if (next === 'waiting-setup') {
       unmounts.push(mountLobby(mainEl, { ...c, waitingForSetup: true }));
     } else if (next === 'setup') {
       unmounts.push(mountSetup(mainEl, c));
     } else if (next === 'between') {
       unmounts.push(mountBetween(mainEl, c));
+      if (isDm(session.store.getState())) unmounts.push(mountRunDashboard(sideEl, c));
     } else if (next === 'battle') {
       unmounts.push(mountBattle(mainEl, c));
       if (isDm(session.store.getState())) unmounts.push(mountDmPanel(sideEl, c));

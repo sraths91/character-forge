@@ -3028,3 +3028,12 @@ body.party-view-mode .combat-panel { display: block !important; }
 /* M65 C26 — shop and story nodes */
 .play-shop h4 { margin: 10px 0 4px; }
 .play-story-text { white-space: pre-wrap; line-height: 1.5; }
+
+/* M65 C27 — the DM's run dashboard */
+.play-run-dashboard h3 { margin: 0 0 6px; }
+.play-dash-party { overflow-x: auto; }
+.play-dash-table { border-collapse: collapse; font-size: 0.82rem; }
+.play-dash-table th, .play-dash-table td { border-bottom: 1px solid var(--border); padding: 3px 6px; text-align: left; vertical-align: top; }
+.play-dash-table input[type="number"] { width: 5em; }
+.play-dash-table input[type="text"] { width: 7em; }
+.play-dash-log-list { margin: 0; padding-left: 1.4em; max-height: 14em; overflow-y: auto; font-size: 0.82rem; }
