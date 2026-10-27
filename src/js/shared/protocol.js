@@ -118,6 +118,12 @@
  *        run lobby any node (default the start node), later an offered
  *        edge; an encounter node is built in 'setup' for the DM to tweak
  *        (dm.encounter.setup) and start (dm.encounter.start).
+ *   v1.7 (2026-10-26, E3 M65 phase 2 Wave 4, additive) — a turn recovered
+ *        at boot re-announces itself: after `dm.resume` the replayed turn
+ *        reaches its live intent wait and broadcasts a fresh
+ *        `turn.started {actorId, resumed: true}` under the same turnId
+ *        (turn intents carry no deadline). A replay skips earlier
+ *        re-announcements like `turn.rejected`.
  *
  * Client payloads are strict (unknown fields rejected); server payloads
  * enforce required fields and allow additive ones.
@@ -140,7 +146,7 @@ import { RUN_REST_TYPES, validateRunEvent } from './run-events.js';
 /** Wire protocol version; every message's `v` must equal this. */
 export const PROTOCOL_VERSION = 1;
 /** Additive minor revision of protocol v1 (see the header). */
-export const PROTOCOL_MINOR = 6;
+export const PROTOCOL_MINOR = 7;
 /** Longest accepted client message id. */
 export const MAX_CID_LENGTH = 64;
 

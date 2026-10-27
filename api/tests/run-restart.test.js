@@ -195,21 +195,21 @@ test('S22 restart: SIGTERM mid-encounter in node 3 → identical run hash; the e
       assert.equal(post.room.encounter.phase, 'running');
 
       const mk = marks(t);
+      const acted = t.acts.sam;
       await sendOk(t.dm, 'dm.resume');
-      // The interrupted turn re-runs under the same turnId and asks again;
-      // only a snapshot says so (no fresh turn.started), so the player resyncs.
+      // The interrupted turn re-runs under the same turnId and asks again,
+      // re-announced by a fresh turn.started (resumed: true) on every
+      // client (W4): the fighter's client answers it like any turn, with
+      // no resync.
       const sam = t.players.sam.c;
-      let turn = null;
-      for (let i = 0; i < 200 && !turn?.awaitingIntent; i++) {
-        const from = sam.frames.length;
-        await sendOk(sam, 'resync');
-        turn = (await until(sam, m => m.t === 'room.snapshot', { since: from })).p.room.turn;
+      for (const c of tableClients(t)) {
+        const again = await until(c, m => m.t === 'turn.started' && m.seq !== undefined && m.p.payload.resumed === true, { since: mk.get(c) });
+        assert.deepEqual([again.p.turnId, again.p.payload.actorId], [played.turnId, t.actorOf.sam], `${c.name}: the same turn is announced again`);
       }
-      assert.deepEqual(turn, { turnId: played.turnId, actorId: t.actorOf.sam, awaitingIntent: true }, 'the same turn waits for the fighter again');
-      const enc = sam.session.store.getState().encounter;
-      const target = Object.values(enc.entities).find(e => e.side === 'hostile' && e.hp > 0);
-      await sendOk(sam, 'turn.act', { turnId: turn.turnId, plan: { kind: 'melee', targetId: target.id } });
       await untilRun(t, mk, { status: 'between', nodeId: 'n-den', completed: true });
+      assert.ok(t.acts.sam > acted, 'the fighter\'s client answered the re-announced turn with turn.act');
+      assert.equal(sam.frames.slice(mk.get(sam)).filter(m => m.t === 'room.snapshot').length, 0, 'without a resync');
+      for (const c of tableClients(t)) assert.ok(!c.frames.slice(mk.get(c)).some(f => f.t === 'turn.rejected'), `${c.name}: no turn.act was rejected`);
 
       const log = assertRunContinues(t, pre.run.run.seq);
       const types = log.map(e => e.type);

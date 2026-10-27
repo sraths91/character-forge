@@ -38,7 +38,7 @@ const DM_INTENTS = ['dm.run.advance', 'dm.run.end', 'dm.node.begin', 'dm.rest.gr
   'dm.seat.fill', 'dm.snapshot.save', 'dm.snapshot.load', 'dm.seat.reclaim.approve'];
 
 test('m65 contracts: protocol v1.6 / events v1.4 are additive minors', () => {
-  assert.equal(PROTOCOL_MINOR, 6);
+  assert.equal(PROTOCOL_MINOR, 7);   // v1.7: E3 M65 phase 2 Wave 4
   assert.equal(EVENT_CATALOGUE_MINOR, 4);
   assert.deepEqual([...ROOM_STATUSES], ['lobby', 'setup', 'in-encounter', 'paused', 'encounter-over', 'closed', 'error', 'between'],
     'between is appended; existing statuses keep their order');

@@ -64,3 +64,53 @@ test('W4-1: an encounter that queues a level-up offers it once to the DM; dm.xp.
   assert.equal(offerCounts(t.dmFrames, dmAt)[id], 1, 'and the DM once');
   assert.equal(offerCounts(t.dmFrames, dmAt)['lu-1'], 1, 'a change re-offers each open level-up once');
 });
+
+const tick = () => new Promise(res => setImmediate(res));
+/** Spin until the room's turn waits for `ownerId`'s intent. */
+async function waitingFor(room, ownerId) {
+  for (let i = 0; i < 5000 && room.turn?.awaiting?.ownerId !== ownerId; i++) await tick();
+  assert.equal(room.turn?.awaiting?.ownerId, ownerId, 'the turn waits for the player');
+  return room.turn.turnId;
+}
+
+test('W4-2: a turn recovered at boot is re-announced on dm.resume (same turnId), across two restarts and a rejected intent', async () => {
+  const { db } = await tempDb(root);
+  const ctx = makeRunRoom(db, { players: ['Pat'], seats: [{ seat: 1, fixture: 'cleric-l5', player: 0 }, { seat: 2, fixture: 'fighter-l5' }] });
+  const pat = ctx.players[0].id;
+  const r = ctx.open();
+  r.connect(ctx.dmId, 'dm');
+  r.connect(pat, 'player', 'Pat', { autoDelegate: false });
+  r.room.run.start({ campaign: SCRIPT.campaign, runId: 'run-w4', seed: SCRIPT.seed });
+  ok(await r.dm('dm.node.begin', {}));
+  ok(await r.dm('dm.encounter.start', {}));
+  const turnId = await waitingFor(r.room, pat);
+  const rejected = await r.send(pat, 'turn.act', { turnId, plan: { kind: 'melee', targetId: 'nobody' } });
+  assert.equal(rejected.t, 'error', 'a rejected intent leaves a turn.rejected in the tail');
+  r.room.shutdown();
+
+  // Restart 1: paused; the resume re-asks and re-announces the same turn.
+  const r2 = ctx.open();
+  assert.equal(r2.room.status, 'paused');
+  const dm2 = r2.connect(ctx.dmId, 'dm');
+  const pat2 = r2.connect(pat, 'player', 'Pat', { autoDelegate: false });
+  ok(await r2.dm('dm.resume', {}));
+  assert.equal(await waitingFor(r2.room, pat), turnId, 'the same turn waits again');
+  for (const frames of [dm2, pat2]) {
+    const again = frames.filter(f => f.t === 'turn.started' && f.p.payload.resumed === true);
+    assert.equal(again.length, 1, 'one re-announcement');
+    assert.equal(again[0].p.turnId, turnId);
+    assert.ok(again[0].seq > frames.find(f => f.t === 'room.snapshot').p.seq, 'a sequenced broadcast after the reconnect snapshot');
+  }
+  r2.room.shutdown();
+
+  // Restart 2: the earlier re-announcement is replay noise, not a divergence.
+  const r3 = ctx.open();
+  r3.connect(ctx.dmId, 'dm');
+  const pat3 = r3.connect(pat, 'player', 'Pat');   // hands every turn to the AI from here on
+  ok(await r3.dm('dm.resume', {}));
+  await r3.settle();
+  const again = pat3.filter(f => f.t === 'turn.started' && f.p.payload.resumed === true);
+  assert.deepEqual(again.map(f => f.p.turnId), [turnId], 'announced again after the second restart');
+  assert.equal(r3.room.status, 'between', 'the encounter ran to its end and the run is between nodes');
+  assert.equal(r3.runStore.getRun('run-w4').status, 'between');
+});

@@ -515,7 +515,7 @@ export class Room {
     const replay = this.turn?.replay;
     if (replay && replay.events.length) {
       let logged = replay.events.shift();
-      while (logged && logged.type === 'turn.rejected' && ev.type !== 'turn.rejected') logged = replay.events.shift();
+      while (logged && isReplayNoise(logged) && !isReplayNoise(ev)) logged = replay.events.shift();
       if (!logged || logged.type !== ev.type || !same(stripVolatile(logged.payload), stripVolatile(ev.payload))) {
         throw new ReplayDivergence(`replay diverged at ${logged ? `seq ${logged.seq} (${logged.type})` : 'end of log'}: engine emitted ${ev.type}`);
       }
@@ -637,7 +637,7 @@ export class Room {
     };
     const res = await this.engine.runTurn(clone(state), ctx);
     if (this.closing || this.enc !== enc) return;
-    if (this.turn.replay && this.turn.replay.events.some(e => e.type !== 'turn.rejected')) {
+    if (this.turn.replay && this.turn.replay.events.some(e => !isReplayNoise(e))) {
       throw new ReplayDivergence('replay finished with unmatched logged events');
     }
     const next = clone(res.state);
@@ -661,6 +661,24 @@ export class Room {
       this.#setStatus('encounter-over');
       this.#encounterEndedForRun(enc);
     }
+  }
+
+  /**
+   * A recovered turn (boot recovery → dm.resume) that has replayed up to
+   * a live intent wait: what is left of its logged tail can only be noise
+   * (rejections and earlier re-announcements, never re-emitted), so the
+   * replay ends here and the wait is announced again — a fresh
+   * `turn.started {actorId, resumed: true}` under the same turnId — so a
+   * client that reconnected while the room was paused needs no resync.
+   * Turn intents carry no deadline, so there is nothing else to restate.
+   */
+  #announceResumedTurn(actorId) {
+    const replay = this.turn?.replay;
+    if (!replay || replay.announced) return;
+    if (replay.events.some(e => !isReplayNoise(e))) return;   // not at the cut yet: the tail still has engine events
+    replay.events = [];
+    replay.announced = true;
+    this.#emit({ type: 'turn.started', payload: { actorId, resumed: true } });
   }
 
   /** A seat's chosen cinema style / swing (char.setStyle) for an attacker, or {}. */
@@ -719,6 +737,7 @@ export class Room {
           return { intent, state: s };
         }
         this.enc.liveState = clone(s);
+        this.#announceResumedTurn(actorId);
         const intent = await new Promise((resolve) => {
           this.turn.awaiting = { actorId, ownerId: owner.member.id, state: s, commands: [], resolve };
           this.#flush();
@@ -1299,6 +1318,14 @@ function stripVolatile(payload) {
     rest.cinema = cinema;
   }
   return rest;
+}
+
+/**
+ * Logged events a replayed turn never re-emits: rejected intents and the
+ * resumed-turn re-announcements (#announceResumedTurn).
+ */
+function isReplayNoise(ev) {
+  return ev.type === 'turn.rejected' || (ev.type === 'turn.started' && ev.payload?.resumed === true);
 }
 
 function mapRoomErrorCode(code) {
