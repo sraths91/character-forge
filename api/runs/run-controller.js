@@ -116,8 +116,6 @@ export class RunController {
     this.progress = emptyProgress();
     this.seq = 0;
     this.pending = [];
-    /** Hit dice declared for the next short rest: {slotId: {Class: n}} (in memory until granted). */
-    this.pendingRest = {};
     /** seat.reclaim requests waiting for the DM: [{slotId, memberId}]. */
     this.reclaims = [];
     this.#load();
@@ -153,6 +151,20 @@ export class RunController {
   /** Does this controller handle intent `t`? */
   handles(t) {
     return RUN_INTENT_SET.has(t);
+  }
+
+  /** Hit dice declared for the next short rest: {slotId: {Class: n}} (runs.pending_json, 0007). */
+  get pendingRest() {
+    return this.row?.pending?.rest || {};
+  }
+
+  /** Replace one key of runs.pending_json (inside #tx; the row is re-read after the commit). */
+  #setPending(key, value) {
+    const pending = { ...(this.row.pending || {}) };
+    if (value === undefined) delete pending[key];
+    else pending[key] = clone(value);
+    this.store.setPending(this.#runId(), pending);
+    this.row = { ...this.row, pending };
   }
 
   #runId() { return this.row.id; }
@@ -364,7 +376,7 @@ export class RunController {
       this.#write(c, { state: r.state, lifeStatus: r.lifeStatus });
     }
     const recovered = Object.keys(after).length ? { before, after } : {};
-    this.pendingRest = {};
+    if (Object.keys(this.pendingRest).length) this.#setPending('rest', {});
     this.#emit('node.entered', { nodeId, kind: node.kind, fromNodeId: from, ...recovered },
       { nodeId, actorKind: 'dm', actorId: DM_ACTOR, override });
     this.store.setCurrentNode(this.#runId(), nodeId);
@@ -741,7 +753,7 @@ export class RunController {
       case 'dm.run.advance': return this.#advance(p);
       case 'dm.run.end': return this.#end(p);
       case 'dm.node.begin': return this.#beginNode(p);
-      case 'rest.spend': return this.#restSpend(member, p);
+      case 'rest.spend': return this.#restSpend(member, p, actor);
       case 'dm.rest.grant': return this.#restGrant(p);
       default: return this.#more(member, t, p, actor);
     }
@@ -760,7 +772,7 @@ export class RunController {
       case 'story.choose':
       case 'dm.story.resolve': return this.#storyChoose(p, actor);
       case 'dm.xp.adjust': return this.#xpAdjust(p, actor);
-      case 'levelup.choose': return this.#levelChoose(member, p);
+      case 'levelup.choose': return this.#levelChoose(member, p, actor);
       case 'levelup.reconcile': return this.#levelReconcile(member, p, actor);
       case 'dm.levelup.confirm': return this.#levelConfirm(p, actor);
       case 'dm.levelup.revert': return this.#levelRevert(p, actor);
@@ -860,8 +872,8 @@ export class RunController {
         snapshotId, atSeq: blob.atSeq, ...(missing.length ? { missing } : {}),
         before, after: { currentNodeId: blob.run.currentNodeId, status: blob.run.status, progress }
       }, { ...actor, override: true });
+      this.#setPending('rest', {});
     });
-    this.pendingRest = {};
     this.#afterChange();
     return { currentNodeId: this.progress.currentNodeId, ...(missing.length ? { missing } : {}) };
   }
@@ -1185,8 +1197,12 @@ export class RunController {
     return planLevelUp(c.sheet, c.state, { toLevel: l.toLevel, className: picks.className, settings: { hpOnLevel: this.#settings().hpOnLevel } });
   }
 
-  /** levelup.choose: the player's picks, checked by a dry run of applyLevelUp; the row waits for the DM. */
-  #levelChoose(member, { slotId, levelUpId, choices }) {
+  /**
+   * levelup.choose: the player's picks, checked by a dry run of
+   * applyLevelUp; the row waits for the DM. One `level.chosen` run event
+   * records the row's {status, choices} before and after.
+   */
+  #levelChoose(member, { slotId, levelUpId, choices }, actor) {
     const c = this.#ownSeat(member, slotId);
     const l = this.#levelUp(levelUpId);
     if (l.slotId !== slotId) throw new RunIntentError('E_FORBIDDEN', 'that level-up is not yours');
@@ -1194,9 +1210,15 @@ export class RunController {
     this.#assertNext(l);
     const picks = this.#picks(choices);
     applyLevelUp(c.sheet, c.state, this.#plan(c, l, picks), picks, { rng: createRng({ s: 1 }) });
-    if (!this.store.decideLevelUp(this.#runId(), l.id, { fromStatus: 'pending_player', status: 'pending_dm', choices })) {
-      throw new RunIntentError('E_STALE', 'that level-up moved on');
-    }
+    this.#tx(() => {
+      if (!this.store.decideLevelUp(this.#runId(), l.id, { fromStatus: 'pending_player', status: 'pending_dm', choices })) {
+        throw new RunIntentError('E_STALE', 'that level-up moved on');
+      }
+      this.#emit('level.chosen', {
+        levelUpId, slotId, fromLevel: l.fromLevel, toLevel: l.toLevel, choices,
+        before: { status: l.status, choices: clone(l.choices ?? null) }, after: { status: 'pending_dm', choices }
+      }, actor);
+    });
     this.#afterChange();
     return { status: 'pending_dm' };
   }
@@ -1423,8 +1445,8 @@ export class RunController {
     this.#tx(() => {
       this.#emit('run.ended', { outcome }, { actorKind: 'dm', actorId: DM_ACTOR });
       this.store.setStatus(this.#runId(), 'ended', { outcome });
+      this.#setPending('rest', {});
     });
-    this.pendingRest = {};
     this.#afterChange();
     this.log('info', 'run: ended', { roomId: this.room.id, runId: this.row.id, outcome });
     return { outcome };
@@ -1432,13 +1454,20 @@ export class RunController {
 
   // -------------------------------------------------------------- rests
 
-  /** rest.spend: declare the hit dice a seat spends at the next short rest (validated, not yet rolled). */
-  #restSpend(member, { slotId, hitDice }) {
+  /**
+   * rest.spend: declare the hit dice a seat spends at the next short rest
+   * (validated, not yet rolled). The declaration is a non-mutating
+   * `rest.declared` run event and persists in runs.pending_json, so it
+   * survives a restart; dm.rest.grant's `rest.taken` is the mutation.
+   */
+  #restSpend(member, { slotId, hitDice }, actor) {
     const c = this.#ownSeat(member, slotId);
     // Dry run with a throwaway rng: the rules refuse an overspend before rolling.
     applyRest(c.sheet, c.state, 'short', { spend: hitDice, rng: createRng({ s: 1 }), lifeStatus: c.lifeStatus });
-    this.pendingRest[slotId] = clone(hitDice);
-    this.#broadcastUpdated();
+    this.#tx(() => {
+      this.#setPending('rest', { ...this.pendingRest, [slotId]: hitDice });
+      this.#emit('rest.declared', { slotId, hitDice }, actor);
+    });
     return { pending: clone(hitDice) };
   }
 
@@ -1482,7 +1511,9 @@ export class RunController {
       const extra = Object.keys(skipped).length ? { skipped } : {};
       this.#emit('rest.taken', { type, slotIds: applied, rolls, before, after, ...extra },
         nodeRest ? {} : { actorKind: 'dm', actorId: DM_ACTOR, override: true });
-      for (const s of applied) delete this.pendingRest[s];
+      const left = { ...this.pendingRest };
+      for (const s of applied) delete left[s];
+      this.#setPending('rest', left);
       if (nodeRest) this.#emit('node.completed', { nodeId: node.id, kind: node.kind });
     });
     this.#afterChange();

@@ -25,7 +25,8 @@ test('run-events: catalogue is frozen, versioned, and matches the M65 plan list'
     'run.started', 'run.ended', 'node.entered', 'node.completed', 'encounter.result', 'xp.awarded',
     'level.queued', 'level.applied', 'level.reverted', 'rest.taken', 'loot.granted', 'item.moved', 'item.used',
     'currency.changed', 'shop.bought', 'shop.sold', 'character.died', 'character.revived', 'character.retired',
-    'character.joined', 'seat.filled', 'story.chosen', 'snapshot.saved', 'snapshot.restored', 'dm.override'
+    'character.joined', 'seat.filled', 'story.chosen', 'snapshot.saved', 'snapshot.restored', 'dm.override',
+    'level.chosen', 'rest.declared'   // E3 M65 W4 (additive, appended)
   ]);
   assert.deepEqual(Object.keys(RUN_EVENT_PAYLOAD_SPECS).sort(), [...RUN_EVENT_TYPES].sort());
   for (const t of MUTATING_RUN_EVENT_TYPES) assert.ok(RUN_EVENT_TYPES.includes(t), t);

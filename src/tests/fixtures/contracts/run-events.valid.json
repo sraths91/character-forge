@@ -507,5 +507,52 @@
     "payload": {
       "outcome": "victory"
     }
+  },
+  {
+    "seq": 29,
+    "type": "level.chosen",
+    "nodeId": "n-camp",
+    "actorKind": "player",
+    "actorId": "p-sam",
+    "override": false,
+    "payload": {
+      "levelUpId": "lu-1",
+      "slotId": "slot-2",
+      "fromLevel": 5,
+      "toLevel": 6,
+      "choices": {
+        "asi": {
+          "STR": 1,
+          "CON": 1
+        }
+      },
+      "before": {
+        "status": "pending_player",
+        "choices": null
+      },
+      "after": {
+        "status": "pending_dm",
+        "choices": {
+          "asi": {
+            "STR": 1,
+            "CON": 1
+          }
+        }
+      }
+    }
+  },
+  {
+    "seq": 30,
+    "type": "rest.declared",
+    "nodeId": "n-camp",
+    "actorKind": "player",
+    "actorId": "p-sam",
+    "override": false,
+    "payload": {
+      "slotId": "slot-2",
+      "hitDice": {
+        "Fighter": 2
+      }
+    }
   }
 ]

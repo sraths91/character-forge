@@ -9,7 +9,7 @@ import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { tempRoot, tempDb } from './helpers/server.js';
-import { makeRunRoom } from './helpers/runs.js';
+import { makeRunRoom, runLog } from './helpers/runs.js';
 import { loadRunScript } from '../../src/tests/helpers/run-driver.js';
 
 const { root, cleanup } = tempRoot('cf-run-wave4-');
@@ -113,4 +113,52 @@ test('W4-2: a turn recovered at boot is re-announced on dm.resume (same turnId),
   assert.deepEqual(again.map(f => f.p.turnId), [turnId], 'announced again after the second restart');
   assert.equal(r3.room.status, 'between', 'the encounter ran to its end and the run is between nodes');
   assert.equal(r3.runStore.getRun('run-w4').status, 'between');
+});
+
+test('W4-3: levelup.choose writes one level.chosen run event ({status, choices} before / after) by the player', async () => {
+  const t = await table({ xp: {} });
+  ok(await t.r.dm('dm.xp.adjust', { slotId: 'slot-1', delta: 20000 }));
+  const lu = t.r.runStore.listLevelUps('run-w4').find(l => l.slotId === 'slot-1');
+  const levelUpId = lu.id.split('.').at(-1);
+  ok(await t.send('levelup.choose', { slotId: 'slot-1', levelUpId, choices: {} }));
+  const ev = runLog(t.r.runStore, 'run-w4').at(-1);
+  assert.deepEqual([ev.type, ev.actorKind, ev.actorId], ['level.chosen', 'player', t.pat]);
+  assert.deepEqual(ev.payload, {
+    levelUpId, slotId: 'slot-1', fromLevel: 5, toLevel: 6, choices: {},
+    before: { status: 'pending_player', choices: null }, after: { status: 'pending_dm', choices: {} }
+  });
+  assert.ok(t.patFrames.some(f => f.t === 'run.event' && f.p.type === 'level.chosen'), 'broadcast as a run.event');
+  assert.equal(t.r.runStore.getLevelUp('run-w4', lu.id).status, 'pending_dm');
+});
+
+test('W4-3: rest.spend writes rest.declared and persists in runs.pending_json; a restart keeps it, and the grant spends it', async () => {
+  const t = await table();
+  ok(await t.r.dm('dm.run.advance', { toNodeId: 'n-camp', override: true }));
+  ok(await t.send('rest.spend', { slotId: 'slot-1', hitDice: { Cleric: 2 } }));
+  ok(await t.r.dm('rest.spend', { slotId: 'slot-2', hitDice: { Fighter: 1 } }));
+  const log = runLog(t.r.runStore, 'run-w4');
+  assert.deepEqual(log.slice(-2).map(e => [e.type, e.actorKind, e.payload.slotId, e.payload.hitDice, 'before' in e.payload]), [
+    ['rest.declared', 'player', 'slot-1', { Cleric: 2 }, false],
+    ['rest.declared', 'dm', 'slot-2', { Fighter: 1 }, false]
+  ]);
+  const declared = { 'slot-1': { Cleric: 2 }, 'slot-2': { Fighter: 1 } };
+  assert.deepEqual(t.r.runStore.getRun('run-w4').pending, { rest: declared });
+  assert.deepEqual(t.patFrames.filter(f => f.t === 'run.updated').at(-1).p.pendingRest, declared);
+
+  t.r.room.shutdown();
+  const r2 = t.ctx.open();
+  assert.deepEqual(r2.room.run.snapshotFor({ role: 'dm', id: t.ctx.dmId }).pendingRest, declared, 'the declarations survive the restart');
+  ok(await r2.dm('dm.rest.grant', { type: 'short' }));
+  const rest = runLog(r2.runStore, 'run-w4').find(e => e.type === 'rest.taken');
+  assert.deepEqual([rest.payload.rolls['slot-1'].length, rest.payload.rolls['slot-2'].length], [2, 1], 'the declared dice were rolled');
+  assert.deepEqual(r2.runStore.getRun('run-w4').pending, { rest: {} }, 'spent declarations are cleared');
+});
+
+test('W4-3: migration 0007 adds runs.pending_json (default {}, JSON-checked)', async () => {
+  const { db } = await tempDb(root);
+  const col = db.db.prepare("SELECT * FROM pragma_table_info('runs') WHERE name = 'pending_json'").get();
+  assert.deepEqual([col.type, col.notnull, col.dflt_value], ['TEXT', 1, "'{}'"]);
+  makeRunRoom(db).open().room.run.start({ campaign: SCRIPT.campaign, runId: 'run-m7', seed: 1 });
+  assert.equal(db.db.prepare('SELECT pending_json FROM runs WHERE id = ?').get('run-m7').pending_json, '{}');
+  assert.throws(() => db.db.prepare('UPDATE runs SET pending_json = ? WHERE id = ?').run('{nope', 'run-m7'), /CHECK/);
 });

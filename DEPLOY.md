@@ -78,7 +78,11 @@ boot on a populated DB writes `<db>.pre-0005.bak`) and `0006_campaign_loop`
 campaign_assets, runs, run_events, run_snapshots, run_items, level_ups,
 run_roster_archive, items_cache; new nullable/defaulted columns on
 `party_slots` and `encounters`; the `run_characters` view. No table is
-rebuilt; the first boot on a populated DB writes `<db>.pre-0006.bak`).
+rebuilt; the first boot on a populated DB writes `<db>.pre-0006.bak`) and
+`0007_run_pending` (M65 phase 2, additive: `runs.pending_json TEXT NOT NULL
+DEFAULT '{}'`, JSON-checked, which holds the declared short-rest hit dice and
+an XP award waiting for the DM, so both survive a restart; the first boot on a
+populated DB writes `<db>.pre-0007.bak`).
 
 ### 4. Health check
 Railway uses `GET /api/health` (configured in `railway.json`). It runs

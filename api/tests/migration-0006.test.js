@@ -122,7 +122,7 @@ test('a phase-1.5 DB with a live room, seats and an active encounter migrates to
   assert.equal(before.encounters[0].status, 'active');
 
   const migrated = await openDb(copy, { log: quiet });
-  assert.equal(migrated.migrationVersion(), 6);
+  assert.ok(migrated.migrationVersion() >= 6, 'migrated through 0006 (and any later additive files)');
   const conn = migrated.db;
   const seat = conn.prepare('SELECT * FROM party_slots').get();
   for (const [k, v] of Object.entries(before.seats[0])) assert.deepEqual(seat[k], v, `party_slots.${k} unchanged`);

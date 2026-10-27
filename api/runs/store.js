@@ -38,7 +38,7 @@ const bit = (b) => (b ? 1 : 0);
 const runRow = (r) => r && ({
   id: r.id, campaignId: r.campaign_id, roomId: r.room_id, status: r.status, outcome: r.outcome,
   currentNodeId: r.current_node_id, campaign: parse(r.campaign_json, {}), settings: parse(r.settings_json, {}),
-  stash: parse(r.stash_json, {}), rng: parse(r.rng_json), seq: r.seq,
+  stash: parse(r.stash_json, {}), rng: parse(r.rng_json), seq: r.seq, pending: parse(r.pending_json, {}),
   createdAt: r.created_at, updatedAt: r.updated_at, endedAt: r.ended_at
 });
 const eventRow = (r) => ({
@@ -81,6 +81,7 @@ export function createRunStore(conn, { now = Date.now } = {}) {
     setNode: conn.prepare('UPDATE runs SET current_node_id = ?, updated_at = ? WHERE id = ?'),
     setStash: conn.prepare('UPDATE runs SET stash_json = ?, updated_at = ? WHERE id = ?'),
     setRng: conn.prepare('UPDATE runs SET rng_json = ?, updated_at = ? WHERE id = ?'),
+    setPending: conn.prepare('UPDATE runs SET pending_json = ?, updated_at = ? WHERE id = ?'),   // 0007
     setSettings: conn.prepare('UPDATE runs SET settings_json = ?, updated_at = ? WHERE id = ?'),
     setCampaign: conn.prepare('UPDATE runs SET campaign_json = ?, updated_at = ? WHERE id = ?'),
     bumpSeq: conn.prepare('UPDATE runs SET seq = seq + 1, updated_at = ? WHERE id = ? RETURNING seq'),
@@ -228,6 +229,8 @@ export function createRunStore(conn, { now = Date.now } = {}) {
     setCurrentNode: (id, nodeId) => { mustRun(id); q.setNode.run(nodeId ?? null, now(), id); },
     setStash: (id, stash) => { mustRun(id); q.setStash.run(JSON.stringify(stash), now(), id); },
     setRng: (id, rng) => { mustRun(id); q.setRng.run(json(rng), now(), id); },
+    /** Replace runs.pending_json (0007): {rest: {slotId: {Class: n}}, xp?}. */
+    setPending: (id, pending) => { mustRun(id); q.setPending.run(JSON.stringify(pending || {}), now(), id); },
     setSettings: (id, settings) => { mustRun(id); q.setSettings.run(JSON.stringify(settings), now(), id); },
     /** Replace the frozen campaign graph ("pull latest", decision 4). */
     setCampaign: (id, campaign) => { mustRun(id); q.setCampaign.run(JSON.stringify(campaign), now(), id); },

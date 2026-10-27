@@ -23,6 +23,14 @@
  * (protocol.js v1.6), never under their own type: `item.used` and
  * `dm.override` also name engine events.
  *
+ * Additive types (no catalogue version bump; appended so older readers
+ * keep their order):
+ *   E3 M65 phase 2 Wave 4 — `level.chosen` (a player's level-up picks:
+ *   the level_ups row goes pending_player → pending_dm, {before, after}
+ *   with status and choices) and `rest.declared` (non-mutating: the hit
+ *   dice a seat will spend at the next short rest; `rest.taken` is the
+ *   mutation when the DM grants it).
+ *
  * Imported by both Vite and Node: no DOM, no Node built-ins. Pure.
  */
 
@@ -63,7 +71,8 @@ export const RUN_EVENT_TYPES = Object.freeze([
   'seat.filled',
   'story.chosen',
   'snapshot.saved', 'snapshot.restored',
-  'dm.override'
+  'dm.override',
+  'level.chosen', 'rest.declared'   // E3 M65 W4 (additive)
 ]);
 
 /** Types that mutate run state and so require `{before, after}`. */
@@ -71,7 +80,8 @@ export const MUTATING_RUN_EVENT_TYPES = Object.freeze([
   'encounter.result', 'xp.awarded', 'level.applied', 'level.reverted', 'rest.taken',
   'loot.granted', 'item.moved', 'item.used', 'currency.changed', 'shop.bought', 'shop.sold',
   'character.died', 'character.revived', 'character.retired', 'character.joined',
-  'seat.filled', 'snapshot.restored', 'dm.override'
+  'seat.filled', 'snapshot.restored', 'dm.override',
+  'level.chosen'   // E3 M65 W4: the level_ups row (status, choices)
 ]);
 
 /**
@@ -123,7 +133,10 @@ export const RUN_EVENT_PAYLOAD_SPECS = Object.freeze({
   'story.chosen': shape({ nodeId: ID, choiceId: ID }, LOOSE),
   'snapshot.saved': shape({ snapshotId: ID, label: nullable(str({ maxLength: 128 })), atSeq: int(0) }, LOOSE),
   'snapshot.restored': mut({ snapshotId: ID, atSeq: int(0) }),
-  'dm.override': mut({ kind: str({ maxLength: 64 }), slotId: nullable(ID) })
+  'dm.override': mut({ kind: str({ maxLength: 64 }), slotId: nullable(ID) }),
+  // E3 M65 W4 — before / after: { status, choices } of the level_ups row.
+  'level.chosen': mut({ levelUpId: ID, slotId: ID, fromLevel: LEVEL, toLevel: LEVEL }),
+  'rest.declared': shape({ slotId: ID, hitDice: mapOf(int(0, 20)) }, LOOSE)
 });
 
 const ENVELOPE = shape({

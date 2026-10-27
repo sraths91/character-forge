@@ -10,7 +10,7 @@
 //   between   — after the ambush: the room reopens 'between'; the rest node
 //               is entered and the fighter's hit die rolls
 //   level-up  — after the den, the fighter's level 6 chosen (pending_dm, a
-//               level_ups row and no run event) and the cleric's pending:
+//               level_ups row and a level.chosen run event) and the cleric's pending:
 //               both offers come back, the DM confirms the chosen one
 //   mid-fight — node 3 with the fighter's turn waiting for its intent: the
 //               encounter comes back paused at the last turn end, resumes
@@ -128,8 +128,8 @@ test('S22 restart: SIGTERM between nodes → identical run hash; the run continu
       await sendOk(t.dm, 'dm.rest.grant', { type: 'short' });
       await untilRun(t, mk, { status: 'between', nodeId: 'n-camp', completed: true });
       const log = assertRunContinues(t, pre.run.run.seq);
-      assert.deepEqual(log.map(e => e.type), ['node.entered', 'rest.taken', 'node.completed']);
-      assert.equal(log[1].payload.rolls[slotOf(t, 'sam')].length, 1, 'the fighter rolled his hit die after the restart');
+      assert.deepEqual(log.map(e => e.type), ['node.entered', 'rest.declared', 'rest.taken', 'node.completed']);
+      assert.equal(log[2].payload.rolls[slotOf(t, 'sam')].length, 1, 'the fighter rolled his hit die after the restart');
     }
   );
 });
@@ -142,7 +142,7 @@ test('S22 restart: SIGTERM with level-ups pending (one chosen, one offered) → 
       const sam = t.players.sam.c;
       const offer = await until(sam, m => m.t === 'levelup.offer' && m.p.slotId === slotOf(t, 'sam'));
       await until(t.players.pat.c, m => m.t === 'levelup.offer');
-      // levelup.choose writes a level_ups row, not a run event: it must survive the restart too.
+      // levelup.choose writes the level_ups row and a level.chosen run event: both survive the restart.
       await sendOk(sam, 'levelup.choose', { slotId: slotOf(t, 'sam'), levelUpId: offer.p.levelUpId, choices: { asi: { STR: 1, CON: 1 } } });
       return { levelUpId: offer.p.levelUpId };
     },

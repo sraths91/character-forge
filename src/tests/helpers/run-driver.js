@@ -446,6 +446,11 @@ export async function runScript(script, adapter, opts = {}) {
       if (current?.kind !== 'rest') throw new Error(where(`${at}: the current node is not a rest`));
       const type = current.payload.type === 'choice' ? step.type : current.payload.type;
       if (type !== 'short' && type !== 'long') throw new Error(where(`${at}: a choice rest needs step.type`));
+      // The script's hit-dice declarations, as the server logs them (rest.spend →
+      // rest.declared, E3 M65 W4); the script's seats are AI seats the DM declares for.
+      for (const [slotId, hitDice] of Object.entries(step.spend ?? {})) {
+        emitRun('rest.declared', { slotId, hitDice }, { actorKind: 'dm', actorId: 'dm' });
+      }
       const before = {};
       const after = {};
       const rolls = {};

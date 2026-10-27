@@ -524,6 +524,34 @@
     },
     {
       "seq": 10,
+      "type": "rest.declared",
+      "nodeId": "n-camp",
+      "actorKind": "dm",
+      "actorId": "dm",
+      "override": false,
+      "payload": {
+        "slotId": "slot-1",
+        "hitDice": {
+          "Cleric": 1
+        }
+      }
+    },
+    {
+      "seq": 11,
+      "type": "rest.declared",
+      "nodeId": "n-camp",
+      "actorKind": "dm",
+      "actorId": "dm",
+      "override": false,
+      "payload": {
+        "slotId": "slot-2",
+        "hitDice": {
+          "Fighter": 2
+        }
+      }
+    },
+    {
+      "seq": 12,
       "type": "rest.taken",
       "nodeId": "n-camp",
       "actorKind": "system",
@@ -805,7 +833,7 @@
       }
     },
     {
-      "seq": 11,
+      "seq": 13,
       "type": "node.completed",
       "nodeId": "n-camp",
       "actorKind": "system",
@@ -817,7 +845,7 @@
       }
     },
     {
-      "seq": 12,
+      "seq": 14,
       "type": "node.entered",
       "nodeId": "n-den",
       "actorKind": "dm",
@@ -830,7 +858,7 @@
       }
     },
     {
-      "seq": 13,
+      "seq": 15,
       "type": "encounter.result",
       "nodeId": "n-den",
       "actorKind": "system",
@@ -1095,7 +1123,7 @@
       }
     },
     {
-      "seq": 14,
+      "seq": 16,
       "type": "xp.awarded",
       "nodeId": "n-den",
       "actorKind": "system",
@@ -1118,7 +1146,7 @@
       }
     },
     {
-      "seq": 15,
+      "seq": 17,
       "type": "node.completed",
       "nodeId": "n-den",
       "actorKind": "system",
@@ -1130,7 +1158,7 @@
       }
     },
     {
-      "seq": 16,
+      "seq": 18,
       "type": "run.ended",
       "nodeId": "n-den",
       "actorKind": "dm",
@@ -1338,5 +1366,5 @@
       ]
     }
   },
-  "runHash": "137b3ae902bc3c"
+  "runHash": "1a039bde46de38"
 }
