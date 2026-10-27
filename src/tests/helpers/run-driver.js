@@ -60,7 +60,7 @@ import { emptyEncounterState, validateEncounterState } from '../../js/shared/enc
 import { validateEvent, validateEventLog } from '../../js/shared/events.js';
 import { validateCampaign, nextNodes, campaignSettings } from '../../js/shared/campaign.js';
 import {
-  initialRunState, validateRunState, ledgerKeyForResource, resourceKeyForLedger, settleOutcomeOf
+  initialRunState, validateRunState, ledgerKeyForResource, resourceKeyForLedger, settleOutcomeOf, runHash
 } from '../../js/shared/run-state.js';
 import { makeRunEvent, validateRunEvent, validateRunEventLog } from '../../js/shared/run-events.js';
 import { stateHash, canonicalJson, hash53 } from '../../js/shared/state-hash.js';
@@ -504,7 +504,7 @@ export async function runScript(script, adapter, opts = {}) {
     encounters,
     encounterLogs,
     final,
-    runHash: hash53(canonicalJson(runEvents)),
+    runHash: runHash(runEvents),
     sheets: Object.fromEntries([...chars.values()].map(c => [c.slotId, c.sheet]))
   };
 }

@@ -35,7 +35,7 @@ import * as TM from '../../src/js/scene/turn-manager.js';
 import { runStateFromEntity, itemSpendFromEntity } from '../../src/js/scene/encounter-adapters.js';
 import { validateCampaign, startNodeId, campaignSettings } from '../../src/js/shared/campaign.js';
 import {
-  initialRunState, validateRunState, settleOutcomeOf, validateRunSnapshot, RUN_SNAPSHOT_VERSION, SNAPSHOT_RUN_STATUSES
+  initialRunState, validateRunState, settleOutcomeOf, validateRunSnapshot, RUN_SNAPSHOT_VERSION, SNAPSHOT_RUN_STATUSES, runHash
 } from '../../src/js/shared/run-state.js';
 import { makeRunEvent, validateRunEvent } from '../../src/js/shared/run-events.js';
 import { CampaignRuleError } from '../../src/js/campaign/errors.js';
@@ -118,6 +118,8 @@ export class RunController {
     this.pending = [];
     /** seat.reclaim requests waiting for the DM: [{slotId, memberId}]. */
     this.reclaims = [];
+    /** The run hashes as of a run seq: {runId, seq, runHash, wireHash} (computed once per seq). */
+    this.hashCache = null;
     this.#load();
   }
 
@@ -226,8 +228,42 @@ export class RunController {
   #broadcastUpdated() {
     this.port.broadcast('run.updated', {
       runId: this.row.id, status: this.row.status, currentNodeId: this.progress.currentNodeId, runSeq: this.row.seq,
-      completed: this.progress.completed, pendingRest: clone(this.pendingRest)
+      completed: this.progress.completed, pendingRest: clone(this.pendingRest), ...this.hashes()
     });
+  }
+
+  /**
+   * The run log's hashes at the current run seq (run-state.js runHash):
+   * `runHash` over the stored log (run-driver's definition, the one the
+   * smokes pin) and `wireHash` over the log as clients receive it
+   * (stripProse) — what a client rebuilding its log from `run.event`s or
+   * `GET /api/runs/:runId/events` can recompute. Cached per seq.
+   * @returns {{runHash: string, wireHash: string}|{}}
+   */
+  hashes() {
+    if (!this.row) return {};
+    const c = this.hashCache;
+    if (!c || c.runId !== this.row.id || c.seq !== this.row.seq) {
+      const log = this.allEvents();
+      this.hashCache = { runId: this.row.id, seq: this.row.seq, runHash: runHash(log), wireHash: runHash(log.map(stripProse)) };
+    }
+    return { runHash: this.hashCache.runHash, wireHash: this.hashCache.wireHash };
+  }
+
+  /**
+   * The run log, oldest first (store rows: the envelope plus runId / ts).
+   * @param {number} [afterSeq]
+   * @returns {object[]}
+   */
+  allEvents(afterSeq = 0) {
+    const out = [];
+    let after = afterSeq;
+    for (;;) {
+      const page = this.store.listEvents(this.row.id, { afterSeq: after, limit: 1000 });
+      out.push(...page);
+      if (page.length < 1000) return out;
+      after = page.at(-1).seq;
+    }
   }
 
   /**
@@ -711,10 +747,13 @@ export class RunController {
    */
   snapshotFor(member) {
     if (!this.row) return null;
-    return viewForRun({
-      run: this.row, progress: this.progress, characters: this.#characters(), items: this.store.listItems(this.#runId()),
-      levelUps: this.#levelUps(), seats: this.port.seats(), pendingRest: this.pendingRest, reclaims: this.reclaims
-    }, member);
+    return {
+      ...viewForRun({
+        run: this.row, progress: this.progress, characters: this.#characters(), items: this.store.listItems(this.#runId()),
+        levelUps: this.#levelUps(), seats: this.port.seats(), pendingRest: this.pendingRest, reclaims: this.reclaims
+      }, member),
+      ...this.hashes()
+    };
   }
 
   /** Send a member its run.snapshot (no-op without a run). */

@@ -124,6 +124,12 @@
  *        `turn.started {actorId, resumed: true}` under the same turnId
  *        (turn intents carry no deadline). A replay skips earlier
  *        re-announcements like `turn.rejected`.
+ *        `run.snapshot` and `run.updated` carry `runHash` (run-state.js
+ *        runHash over the stored run log, run-driver's definition) and
+ *        `wireHash` (the same over the prose-stripped log clients get);
+ *        HTTP `GET /api/runs/:runId/events?since=` and
+ *        `GET /api/runs/:runId/snapshots` (api/runs/http.js) let a
+ *        reconnected client rebuild its log and snapshot list.
  *
  * Client payloads are strict (unknown fields rejected); server payloads
  * enforce required fields and allow additive ones.
@@ -436,6 +442,9 @@ export const INTENT_PAYLOAD_SPECS = Object.freeze(INTENT_PAYLOADS);
 /** Broadcasts a `redacted {type}` may stand in for (v1.4: engine events + entity.updated). */
 export const REDACTABLE_TYPES = Object.freeze([...EVENT_TYPES, 'entity.updated']);
 
+/** A run hash (run-state.js runHash: hash53 hex). v1.7. */
+const RUN_HASH = str({ pattern: /^[0-9a-f]{1,16}$/ });
+
 /** Server room-message payload specs (required fields; extras allowed). */
 const SERVER_PAYLOADS = {
   'hello.ok': shape({ memberId: ID, role: oneOf(['dm', 'player']), seats: arrayOf(shape({}, LOOSE)), serverNow: num(0), cfg: shape({}, LOOSE) }, LOOSE),
@@ -478,9 +487,13 @@ const SERVER_PAYLOADS = {
       state: optional(anyJson())   // validated as state_json v1 when present
     }, LOOSE), { max: 6 }),
     items: arrayOf(shape({ id: ID, ownerSlotId: nullable(ID), name: str(), qty: int(0) }, LOOSE)),
-    levelUps: arrayOf(shape({ id: ID, slotId: ID, status: oneOf(LEVEL_UP_STATUSES) }, LOOSE))
+    levelUps: arrayOf(shape({ id: ID, slotId: ID, status: oneOf(LEVEL_UP_STATUSES) }, LOOSE)),
+    runHash: optional(RUN_HASH), wireHash: optional(RUN_HASH)   // v1.7
   }, LOOSE),
-  'run.updated': shape({ runId: ID, status: oneOf(RUN_STATUSES), currentNodeId: nullable(ID), runSeq: int(0) }, LOOSE),
+  'run.updated': shape({
+    runId: ID, status: oneOf(RUN_STATUSES), currentNodeId: nullable(ID), runSeq: int(0),
+    runHash: optional(RUN_HASH), wireHash: optional(RUN_HASH)   // v1.7
+  }, LOOSE),
   'run.event': shape({}, LOOSE),   // a run event, validated with validateRunEvent
   'levelup.offer': shape({
     levelUpId: ID, slotId: ID, fromLevel: int(1, 20), toLevel: int(1, 20),

@@ -51,6 +51,7 @@ import {
 } from './check.js';
 import { ABILITIES, RNG_ALGOS } from './encounter-state.js';
 import { CURRENCY_KEYS, ITEM_ORIGINS, LEVEL_UP_MODES, validateCampaign, validateCampaignSettings } from './campaign.js';
+import { canonicalJson, hash53 } from './state-hash.js';
 
 const C = VALIDATION_CODES;
 
@@ -530,4 +531,21 @@ export function validateRunSnapshot(blob) {
     });
   }
   return c.result();
+}
+
+/**
+ * THE run hash (E3 M65 W4; moved here from run-driver, which defined it
+ * inline): hash53 of the canonical run event log, each event reduced to
+ * its catalogue v1 envelope `{seq, type, nodeId, actorKind, actorId,
+ * override, payload}` (store rows' `runId` / `ts` are not hashed). The
+ * server puts it on `run.snapshot` / `run.updated` as `runHash`; over the
+ * prose-stripped wire log it is the `wireHash` a client can recompute.
+ * @param {object[]} events  run events, oldest first
+ * @returns {string} 14 hex chars
+ */
+export function runHash(events) {
+  return hash53(canonicalJson((events || []).map(e => ({
+    seq: e.seq, type: e.type, nodeId: e.nodeId ?? null, actorKind: e.actorKind, actorId: e.actorId ?? null,
+    override: e.override === true, payload: e.payload
+  }))));
 }

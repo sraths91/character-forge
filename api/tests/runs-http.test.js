@@ -7,6 +7,7 @@ import assert from 'node:assert/strict';
 
 import { startMultiplayerServer } from '../multiplayer.js';
 import { tempRoot, tempDb, quiet, api, ddbFixture } from './helpers/server.js';
+import { runHash as hashOf } from '../../src/js/shared/run-state.js';
 
 const { root, cleanup } = tempRoot('cf-runs-http-');
 after(cleanup);
@@ -129,5 +130,48 @@ test('B27 HTTP: GET /api/rooms/:id/seats/:slotId/sheet serves the run sheet — 
     // /api/characters/:ddbId stays gated (stripped for another member).
     const ch = await api(url, `/api/characters/${cleric}`, { token: sam.token });
     assert.equal(ch.body.prose, 'stripped');
+  } finally { await srv.close(); }
+});
+
+test('W4 HTTP: GET /api/runs/:runId/events and /snapshots — members of the run\'s room only; the log rebuilds the wire hash', async () => {
+  const { srv, url } = await boot();
+  try {
+    const { cid, key } = await campaign(url);
+    const room = (await api(url, '/api/rooms', { method: 'POST', body: {} })).body;
+    const pat = (await api(url, '/api/rooms/join', { method: 'POST', body: { code: room.code, displayName: 'Pat' } })).body;
+    const imp = await api(url, `/api/import?room=${room.roomId}`, { method: 'POST', token: pat.token, body: { json: ddbFixture('cleric-l5') } });
+    await api(url, `/api/rooms/${room.roomId}/seats/1/claim`, { method: 'POST', token: pat.token, body: { characterId: String(imp.body.character.id) } });
+    const started = await api(url, `/api/campaigns/${cid}/runs`, { method: 'POST', token: key, body: {}, headers: { 'x-room-token': room.dmToken } });
+    const { runId } = started.body;
+    const ctl = srv.registry.get(room.roomId).run;
+    await ctl.handle({ id: 'dm', role: 'dm' }, 'dm.run.advance', { toNodeId: 'n-camp', override: true });
+    const saved = await ctl.handle({ id: 'dm', role: 'dm' }, 'dm.snapshot.save', { label: 'camp' });
+
+    const path = `/api/runs/${runId}/events`;
+    assert.equal((await api(url, path)).status, 401);
+    const other = (await api(url, '/api/rooms', { method: 'POST', body: {} })).body;
+    assert.equal((await api(url, path, { token: other.dmToken })).status, 404, 'a token for another room');
+    assert.equal((await api(url, '/api/runs/run-nope/events', { token: pat.token })).status, 404);
+    assert.equal((await api(url, `${path}?since=-1`, { token: pat.token })).status, 400);
+
+    const all = await api(url, path, { token: pat.token });
+    assert.equal(all.status, 200);
+    assert.equal(all.body.events[0].type, 'run.started', 'from seq 1: run.started is in the log');
+    assert.deepEqual(all.body.events.map(e => e.seq), Array.from({ length: all.body.seq }, (_, i) => i + 1));
+    assert.equal(all.body.more, false);
+    assert.equal(hashOf(all.body.events), all.body.wireHash, 'the client recomputes the wire hash from the route');
+    assert.deepEqual({ runHash: all.body.runHash, wireHash: all.body.wireHash }, ctl.hashes());
+    const snap = await api(url, `/api/rooms/${room.roomId}/run`, { token: room.dmToken });
+    assert.equal(snap.body.runHash, all.body.runHash, 'run.snapshot carries the same run hash');
+
+    const tail = await api(url, `${path}?since=2&limit=2`, { token: room.dmToken });
+    assert.deepEqual(tail.body.events.map(e => e.seq), [3, 4]);
+    assert.equal(tail.body.more, all.body.seq > 4);
+
+    const snaps = await api(url, `/api/runs/${runId}/snapshots`, { token: pat.token });
+    assert.equal(snaps.status, 200);
+    assert.deepEqual(snaps.body.snapshots.map(s => [s.snapshotId, s.label, s.atSeq]), [[saved.snapshotId, 'camp', saved.atSeq]]);
+    assert.equal(JSON.stringify(snaps.body).includes('"sheet"'), false, 'metadata only');
+    assert.equal((await api(url, `/api/runs/${runId}/snapshots`, { token: other.dmToken })).status, 404);
   } finally { await srv.close(); }
 });

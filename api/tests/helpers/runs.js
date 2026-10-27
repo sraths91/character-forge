@@ -11,7 +11,7 @@ import { createEngine } from '../../multiplayer.js';
 import { createRunStore } from '../../runs/store.js';
 import { validateClientMessage, validateServerMessage, PROTOCOL_VERSION } from '../../../src/js/shared/protocol.js';
 import { makeRunEvent } from '../../../src/js/shared/run-events.js';
-import { canonicalJson, hash53 } from '../../../src/js/shared/state-hash.js';
+import { runHash as sharedRunHash } from '../../../src/js/shared/run-state.js';
 import { parsedDdbFixture } from '../../../src/tests/helpers/entities.js';
 import { seedRoom, seedPlayer, quiet } from './server.js';
 
@@ -112,9 +112,9 @@ export function runLog(runStore, runId) {
   }));
 }
 
-/** The run hash (run-driver's definition: hash53 of the canonical event log). */
+/** The run hash (run-state.js runHash, run-driver's definition) of a stored run. */
 export function runHash(runStore, runId) {
-  return hash53(canonicalJson(runLog(runStore, runId)));
+  return sharedRunHash(runStore.listEvents(runId, { limit: 100000 }));
 }
 
 export { quiet };

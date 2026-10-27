@@ -34,6 +34,7 @@ import { fileURLToPath } from 'node:url';
 import { startMultiplayerServer } from '../multiplayer.js';
 import { createApi } from '../../src/js/client/api.js';
 import { canonicalJson, hash53 } from '../../src/js/shared/state-hash.js';
+import { runHash as sharedRunHash } from '../../src/js/shared/run-state.js';
 import { validateRunState } from '../../src/js/shared/run-state.js';
 import { validateRunEventLog, isMutatingRunEvent } from '../../src/js/shared/run-events.js';
 import { runScript, replayRunEvents, realRunAdapter } from '../../src/tests/helpers/run-driver.js';
@@ -193,6 +194,10 @@ test('S21 run smoke: DM + 2 players play fight → rest → fight with loot, a p
     const hash = hash53(canonicalJson(server));
     assert.equal(hash, runHash(room.run.store, t.run.runId));
     assert.equal(hash53(canonicalJson([wire[0], ...dmLog])), hash53(canonicalJson(wire)), 'the DM\'s wire log hashes as the server\'s wire log');
+    // W4: the hashes travel on run.snapshot / run.updated, so a client can check its log.
+    assert.equal(final.p.runHash, hash, 'run.snapshot.runHash is the server\'s run hash');
+    assert.equal(final.p.wireHash, sharedRunHash(wire), 'run.snapshot.wireHash is the hash of the wire log');
+    for (const c of all) assert.equal(c.frames.filter(f => f.t === 'run.updated').at(-1).p.runHash, hash, `${c.name}: the last run.updated carries it`);
 
     // ---- the final run.snapshot equals run-driver's replay of the log
     const snap = final.p;
@@ -302,7 +307,8 @@ test('S23 licensing: after a full run no member route serves a player another se
       // Every GET route a seated player can call in a run room.
       for (const path of [
         `/api/rooms/${roomId}`, `/api/rooms/${roomId}/run`, `/api/rooms/${roomId}/seats/${otherSlot}/sheet`,
-        `/api/characters?room=${roomId}`, `/api/characters/${otherChar}`, `/api/rooms/${roomId}/maps`, '/api/licenses'
+        `/api/characters?room=${roomId}`, `/api/characters/${otherChar}`, `/api/rooms/${roomId}/maps`, '/api/licenses',
+        `/api/runs/${t.run.runId}/events`, `/api/runs/${t.run.runId}/snapshots`   // W4
       ]) {
         const r = await get(path, token);
         assert.equal(r.status, 200, `${me} GET ${path}`);

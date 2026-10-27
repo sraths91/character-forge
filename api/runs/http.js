@@ -16,6 +16,15 @@
 //        for the seat's controller and the DM, publicSheet (prose
 //        stripped, `prose: 'stripped'`) for everyone else (B27).
 //   GET  /api/rooms/:id/run   (member)  → run.snapshot payload for the caller (B27)
+//   GET  /api/runs/:runId/events?since=<seq>&limit=<n>   (member of the run's room; E3 M65 W4)
+//        → {runId, seq, runHash, wireHash, events: [run event, prose-stripped as on the wire], more}
+//        The run log after `since` (default 0, run.started included), at most
+//        `limit` (default and cap 1000) per page; `more` says to ask again from
+//        the last seq. A reconnected client rebuilds its log and recomputes
+//        `wireHash` (run-state.js runHash over the wire log).
+//   GET  /api/runs/:runId/snapshots   (member of the run's room; E3 M65 W4)
+//        → {runId, snapshots: [{snapshotId, label, atSeq, createdBy, createdAt}]}
+//        Metadata only (a blob holds whole run sheets); dm.snapshot.load takes the id.
 //   POST /api/campaigns/:cid/runs/:runId/dm-token   (campaign key)
 //        → 201 {dmToken, roomId, code}   DM recovery (B26): a fresh DM token for the
 //        run's room; the old one stops working and its socket is closed.
@@ -23,7 +32,7 @@
 import { bearerToken, generateToken, hashToken } from '../rooms/tokens.js';
 import { RoomError as ApiError } from '../rooms/service.js';
 import { validateCampaign } from '../../src/js/shared/campaign.js';
-import { publicSheet } from './views.js';
+import { publicSheet, stripProse } from './views.js';
 
 const isObj = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
 
@@ -134,6 +143,40 @@ export function mountRunRoutes(app, { registry, rooms, campaigns, runs, log = ()
     const snap = registry.get(req.params.id)?.run?.snapshotFor({ role: a.role, id: a.participantId });
     if (!snap) throw new ApiError(404, 'NOT_FOUND', 'This room has no run');
     res.json(snap);
+  }));
+
+  /** The run :runId and the member of its room the bearer token names. */
+  function runMember(req) {
+    const run = runs.getRun(req.params.runId);
+    const a = rooms.authenticate(bearerToken(req));
+    if (!a) throw new ApiError(401, 'UNAUTHENTICATED', 'A token for this run\'s room is required');
+    if (!run || run.roomId !== a.roomId) throw new ApiError(404, 'NOT_FOUND', 'No such run in this room');
+    return { run, a };
+  }
+  const intParam = (v, dflt, max) => {
+    if (v === undefined) return dflt;
+    const n = Number(v);
+    if (!Number.isInteger(n) || n < 0) throw new ApiError(400, 'BAD_REQUEST', 'since / limit must be non-negative integers');
+    return Math.min(n, max);
+  };
+
+  app.get('/api/runs/:runId/events', wrap((req, res) => {
+    const { run } = runMember(req);
+    const since = intParam(req.query.since, 0, Number.MAX_SAFE_INTEGER);
+    const limit = Math.max(1, intParam(req.query.limit, 1000, 1000));
+    const page = runs.listEvents(run.id, { afterSeq: since, limit });
+    const events = page.map(e => stripProse({
+      seq: e.seq, type: e.type, nodeId: e.nodeId, actorKind: e.actorKind, actorId: e.actorId, override: e.override, payload: e.payload
+    }));
+    const live = registry.get(run.roomId)?.run;
+    const hashes = live?.row?.id === run.id ? live.hashes() : {};
+    res.json({ runId: run.id, seq: run.seq, ...hashes, events, more: page.length === limit && page.at(-1).seq < run.seq });
+  }));
+
+  app.get('/api/runs/:runId/snapshots', wrap((req, res) => {
+    const { run } = runMember(req);
+    const snapshots = runs.listSnapshots(run.id).map(s => ({ snapshotId: s.id, label: s.label, atSeq: s.atSeq, createdBy: s.createdBy, createdAt: s.createdAt }));
+    res.json({ runId: run.id, snapshots });
   }));
 
   app.post('/api/campaigns/:cid/runs/:runId/dm-token', wrap((req, res) => {
