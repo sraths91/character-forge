@@ -554,5 +554,82 @@
         "Fighter": 2
       }
     }
+  },
+  {
+    "seq": 31,
+    "type": "heal.cast",
+    "nodeId": "n-camp",
+    "actorKind": "player",
+    "actorId": "p-pat",
+    "override": false,
+    "payload": {
+      "casterSlotId": "slot-1",
+      "spellId": "cure-wounds",
+      "slotLevel": 1,
+      "slotKind": "spell",
+      "targetSlotIds": [
+        "slot-2"
+      ],
+      "roll": {
+        "dice": "1d8",
+        "rolls": [
+          6
+        ],
+        "total": 6,
+        "mod": 3,
+        "bonus": 3
+      },
+      "healed": {
+        "slot-2": 12
+      },
+      "before": {
+        "slot-1": {
+          "state": {
+            "slots": {
+              "spell": {
+                "1": {
+                  "spent": 0
+                }
+              }
+            }
+          },
+          "lifeStatus": "active"
+        },
+        "slot-2": {
+          "state": {
+            "schema_v": 1,
+            "hp": {
+              "current": 10,
+              "temp": 0
+            }
+          },
+          "lifeStatus": "active"
+        }
+      },
+      "after": {
+        "slot-1": {
+          "state": {
+            "slots": {
+              "spell": {
+                "1": {
+                  "spent": 1
+                }
+              }
+            }
+          },
+          "lifeStatus": "active"
+        },
+        "slot-2": {
+          "state": {
+            "schema_v": 1,
+            "hp": {
+              "current": 22,
+              "temp": 0
+            }
+          },
+          "lifeStatus": "active"
+        }
+      }
+    }
   }
 ]

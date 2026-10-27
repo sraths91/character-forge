@@ -29,7 +29,9 @@
  *   the level_ups row goes pending_player → pending_dm, {before, after}
  *   with status and choices) and `rest.declared` (non-mutating: the hit
  *   dice a seat will spend at the next short rest; `rest.taken` is the
- *   mutation when the DM grants it).
+ *   mutation when the DM grants it); `heal.cast` (a between-node healing
+ *   spell, campaign/downtime-spells.js: before / after `{[slotId]: {state,
+ *   lifeStatus}}` for the caster and every target).
  *
  * Imported by both Vite and Node: no DOM, no Node built-ins. Pure.
  */
@@ -72,7 +74,7 @@ export const RUN_EVENT_TYPES = Object.freeze([
   'story.chosen',
   'snapshot.saved', 'snapshot.restored',
   'dm.override',
-  'level.chosen', 'rest.declared'   // E3 M65 W4 (additive)
+  'level.chosen', 'rest.declared', 'heal.cast'   // E3 M65 W4 (additive)
 ]);
 
 /** Types that mutate run state and so require `{before, after}`. */
@@ -81,7 +83,8 @@ export const MUTATING_RUN_EVENT_TYPES = Object.freeze([
   'loot.granted', 'item.moved', 'item.used', 'currency.changed', 'shop.bought', 'shop.sold',
   'character.died', 'character.revived', 'character.retired', 'character.joined',
   'seat.filled', 'snapshot.restored', 'dm.override',
-  'level.chosen'   // E3 M65 W4: the level_ups row (status, choices)
+  'level.chosen',   // E3 M65 W4: the level_ups row (status, choices)
+  'heal.cast'       // E3 M65 W4: caster + targets {state, lifeStatus}
 ]);
 
 /**
@@ -136,7 +139,8 @@ export const RUN_EVENT_PAYLOAD_SPECS = Object.freeze({
   'dm.override': mut({ kind: str({ maxLength: 64 }), slotId: nullable(ID) }),
   // E3 M65 W4 — before / after: { status, choices } of the level_ups row.
   'level.chosen': mut({ levelUpId: ID, slotId: ID, fromLevel: LEVEL, toLevel: LEVEL }),
-  'rest.declared': shape({ slotId: ID, hitDice: mapOf(int(0, 20)) }, LOOSE)
+  'rest.declared': shape({ slotId: ID, hitDice: mapOf(int(0, 20)) }, LOOSE),
+  'heal.cast': mut({ casterSlotId: ID, spellId: str({ maxLength: 64 }), slotLevel: int(1, 9), targetSlotIds: arrayOf(ID, { min: 1, max: 6, unique: true }) })
 });
 
 const ENVELOPE = shape({

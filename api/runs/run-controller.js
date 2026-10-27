@@ -48,6 +48,7 @@ import {
   priceOf, purseToCp, addCurrency, payFromPurse
 } from '../../src/js/campaign/items.js';
 import { itemsLedgerFor, drinkPotion } from '../../src/js/campaign/consumables.js';
+import { castDowntimeHeal } from '../../src/js/campaign/downtime-spells.js';
 import { revive } from '../../src/js/campaign/death.js';
 import { planLevelUp, applyLevelUp, revertLevelUp, reconcileDiff, applyReconcile } from '../../src/js/campaign/level-up.js';
 import { newId } from '../rooms/tokens.js';
@@ -61,7 +62,7 @@ export const RUN_INTENTS = Object.freeze([
   'dm.run.advance', 'dm.run.end', 'dm.node.begin', 'dm.rest.grant', 'dm.loot.assign', 'dm.story.resolve',
   'dm.xp.adjust', 'dm.levelup.confirm', 'dm.levelup.revert', 'dm.character.revive', 'dm.character.retire',
   'dm.seat.fill', 'dm.snapshot.save', 'dm.snapshot.load', 'dm.seat.reclaim.approve',
-  'dm.stash.split', 'stash.take'   // v1.7 (E3 M65 W4)
+  'dm.stash.split', 'stash.take', 'cast.downtime'   // v1.7 (E3 M65 W4)
 ]);
 const RUN_INTENT_SET = new Set(RUN_INTENTS);
 
@@ -906,6 +907,7 @@ export class RunController {
       case 'seat.reclaim': return this.#reclaim(member, p);
       case 'dm.stash.split': return this.#stashSplit(p, actor);
       case 'stash.take': return this.#stashTake(member, p, actor);
+      case 'cast.downtime': return this.#castDowntime(member, p, actor);
       case 'dm.seat.reclaim.approve': return this.#reclaimApprove(p, actor);
       default: throw new RunIntentError('E_UNKNOWN_TYPE', `unhandled ${t}`);
     }
@@ -1228,6 +1230,53 @@ export class RunController {
     this.#tx(() => this.#coinsToSeat(c, coins, 'stash.take', actor));
     this.#afterChange();
     return { currency: clone(this.store.getCharacter(slotId).state.currency) };
+  }
+
+  // ------------------------------------------------- downtime healing
+
+  /**
+   * cast.downtime: a healing spell between nodes (downtime-spells.js
+   * castDowntimeHeal: Cure Wounds / Healing Word / Prayer of Healing, a
+   * real slot, the run RNG). The caster seat's controller casts; the DM
+   * may cast for any seat (an override for a player's seat). One
+   * heal.cast with before / after {[slotId]: {state, lifeStatus}}.
+   */
+  #castDowntime(member, { casterSlotId, spellId, targetSlotId, targetSlotIds, slotLevel, slotKind = 'spell' }, actor) {
+    if (this.row.status !== 'between') throw new RunIntentError('E_INVALID_INTENT', `downtime spells are cast between nodes (the run is ${this.row.status})`);
+    const seat = this.port.seats().find(s => s.id === casterSlotId);
+    const playerSeat = !!seat?.controllerParticipantId;
+    if (member.role !== 'dm') this.#ownSeat(member, casterSlotId);
+    const caster = this.#character(casterSlotId);
+    const ids = targetSlotIds ?? (targetSlotId ? [targetSlotId] : []);
+    if (!ids.length) throw new RunIntentError('E_INVALID_INTENT', 'name the target seat (targetSlotId or targetSlotIds)');
+    const targets = [...new Set(ids)].map(id => this.#character(id));
+    const who = (c) => ({ id: c.slotId, sheet: c.sheet, state: c.state, lifeStatus: c.lifeStatus });
+    let out;
+    this.#tx(() => {
+      const rng = this.#rng();
+      const r = castDowntimeHeal({ caster: who(caster), spell: spellId, slotLevel, slotKind, targets: targets.map(who), rng });
+      this.#saveRng(rng);
+      const next = new Map([[caster.slotId, r.casterState]]);
+      for (const t of r.targets) if (t.id !== caster.slotId) next.set(t.id, t.state);
+      const rows = new Map([caster, ...targets].map(c => [c.slotId, c]));
+      const before = {};
+      const after = {};
+      for (const [slotId, state] of next) {
+        const c = rows.get(slotId);
+        const life = c.lifeStatus === 'dead' ? 'dead' : lifeStatusOf(state);
+        before[slotId] = { state: c.state, lifeStatus: c.lifeStatus };
+        after[slotId] = { state, lifeStatus: life };
+        this.#write(this.store.getCharacter(slotId), life !== c.lifeStatus ? { state, lifeStatus: life } : { state });
+      }
+      const healed = Object.fromEntries(r.targets.map(t => [t.id, t.healed]));
+      this.#emit('heal.cast', {
+        casterSlotId, spellId, slotLevel: r.slot.level, slotKind: r.slot.kind, targetSlotIds: r.targets.map(t => t.id),
+        roll: r.roll, healed, before, after
+      }, { ...actor, override: member.role === 'dm' && playerSeat });
+      out = { healed, slot: r.slot };
+    });
+    this.#afterChange();
+    return out;
   }
 
   // --------------------------------------------------------------- shop

@@ -318,3 +318,36 @@ test('W4-7: keepGameGrants — tagged entries and game ASIs are kept; other DDB 
   assert.deepEqual(dropped.map(d => d.id), ['p0', 'p2']);
   assert.deepEqual(kept.proposals.map(d => d.id), ['p1', 'p3', 'p4'], 'a reverted level-up grants nothing; ids are kept for applyReconcile');
 });
+
+/** Set a seat's HP directly (a wound from an earlier fight). */
+function wound(r, slotId, hp) {
+  const c = r.runStore.getCharacter(slotId);
+  r.runStore.updateCharacter('run-w4', slotId, c.version, { state: { ...c.state, hp: { current: hp, temp: 0 } } });
+}
+
+test('W4-8: cast.downtime — the cleric heals the fighter between nodes with a real slot; one heal.cast with before / after', async () => {
+  const t = await table();
+  refused(await t.send('cast.downtime', { casterSlotId: 'slot-1', spellId: 'cure-wounds', targetSlotId: 'slot-2', slotLevel: 1 }), 'E_INVALID_INTENT');   // in-node: the ambush is not fought
+  ok(await t.r.dm('dm.run.advance', { toNodeId: 'n-camp', override: true }));
+  wound(t.r, 'slot-2', 5);
+  const spent = t.r.runStore.getCharacter('slot-1').state.slots.spell['1']?.spent ?? 0;
+  refused(await t.send('cast.downtime', { casterSlotId: 'slot-2', spellId: 'cure-wounds', targetSlotId: 'slot-1' }), 'E_FORBIDDEN');
+  refused(await t.send('cast.downtime', { casterSlotId: 'slot-1', spellId: 'prayer-of-healing', targetSlotId: 'slot-2' }), 'no-spell');
+  refused(await t.send('cast.downtime', { casterSlotId: 'slot-1', spellId: 'fireball', targetSlotId: 'slot-2' }), 'not-downtime-spell');
+  const reply = ok(await t.send('cast.downtime', { casterSlotId: 'slot-1', spellId: 'cure-wounds', targetSlotId: 'slot-2', slotLevel: 1 }));
+  const healed = reply.healed['slot-2'];
+  assert.ok(healed >= 1, `healed ${healed}`);
+  assert.equal(t.r.runStore.getCharacter('slot-2').state.hp.current, 5 + healed);
+  assert.equal(t.r.runStore.getCharacter('slot-1').state.slots.spell['1'].spent, spent + 1, 'a level-1 slot is spent');
+  const ev = runLog(t.r.runStore, 'run-w4').at(-1);
+  assert.deepEqual([ev.type, ev.actorKind, ev.actorId, ev.override, ev.payload.spellId, ev.payload.slotLevel, ev.payload.targetSlotIds], ['heal.cast', 'player', t.pat, false, 'cure-wounds', 1, ['slot-2']]);
+  assert.equal(ev.payload.before['slot-2'].state.hp.current, 5);
+  assert.equal(ev.payload.after['slot-2'].state.hp.current, 5 + healed);
+  assert.equal(ev.payload.after['slot-1'].state.slots.spell['1'].spent, spent + 1, 'the caster\'s slot is in before / after');
+  assert.ok(ev.payload.roll.bonus > 0, 'Disciple of Life adds 2 + the slot level');
+  // The DM casts for the player's seat: an override.
+  wound(t.r, 'slot-2', 3);
+  ok(await t.r.dm('cast.downtime', { casterSlotId: 'slot-1', spellId: 'healing-word', targetSlotIds: ['slot-2'], slotLevel: 2 }));
+  const dmEv = runLog(t.r.runStore, 'run-w4').at(-1);
+  assert.deepEqual([dmEv.actorKind, dmEv.override, dmEv.payload.slotLevel], ['dm', true, 2]);
+});

@@ -143,6 +143,12 @@
  *        it into `xp.awarded {confirmed: true}`. Under `levelUpMode:
  *        'auto'` a queued level whose plan has no choices applies at
  *        once (a system `level.applied`).
+ *        Seat intent `cast.downtime {casterSlotId, spellId, targetSlotId?,
+ *        targetSlotIds?, slotLevel?, slotKind?}` (the caster seat's
+ *        controller, or the DM for any seat; between nodes only): Cure
+ *        Wounds / Healing Word / Prayer of Healing with a real slot
+ *        (campaign/downtime-spells.js castDowntimeHeal, run RNG), one
+ *        `heal.cast` run event.
  *
  * Client payloads are strict (unknown fields rejected); server payloads
  * enforce required fields and allow additive ones.
@@ -230,7 +236,8 @@ export const INTENT_ROLES = Object.freeze({
   'dm.seat.reclaim.approve': 'dm',
   // v1.7 (E3 M65 W4) — the party stash's coin.
   'dm.stash.split': 'dm',
-  'stash.take': 'seat'
+  'stash.take': 'seat',
+  'cast.downtime': 'seat'   // the caster's seat (casterSlotId)
 });
 
 /** v1.4 room settings: who sees DM fudges (dm.override), and the grid's diagonal rule. */
@@ -441,6 +448,12 @@ const INTENT_PAYLOADS = {
   // v1.7 (E3 M65 W4) — the party stash's coin (the server requires some coin in each allocation / amount).
   'dm.stash.split': shape({ allocations: arrayOf(shape({ slotId: SLOT_ID, ...COINS_SPEC }), { min: 1, max: 6 }) }),
   'stash.take': shape({ slotId: SLOT_ID, amount: shape(COINS_SPEC) }),
+  // v1.7 (E3 M65 W4) — a between-node healing spell; one of targetSlotId / targetSlotIds.
+  'cast.downtime': shape({
+    casterSlotId: SLOT_ID, spellId: str({ maxLength: 64 }),
+    targetSlotId: optional(SLOT_ID), targetSlotIds: optional(arrayOf(SLOT_ID, { min: 1, max: 6, unique: true })),
+    slotLevel: optional(int(1, 9)), slotKind: optional(oneOf(['spell', 'pact']))
+  }),
   // v1.3 — the DM resolves a spell outside the engine's registry.
   'dm.spell.adjudicate': shape({
     casterId: ID,
