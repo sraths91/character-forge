@@ -82,6 +82,67 @@ export class RunIntentError extends Error {
 
 const clone = (v) => (v === undefined ? undefined : JSON.parse(JSON.stringify(v)));
 const bySeat = (a, b) => a.seat - b.seat;
+
+const spellKey = (x) => `${String(x?.name || '').toLowerCase()}|${x?.level}`;
+const featureKey = (x) => `${String(x?.name || '').toLowerCase()}|${x?.source}`;
+const isGameTagged = (x) => x?.source === 'game' || x?.grantedBy === 'game';
+
+/**
+ * What the game granted a seat: the spells, class features, feats and
+ * raised ability scores its applied (not reverted) level-ups added,
+ * read from each row's `granted` sheet patches (after minus before).
+ * @param {object[]} levelUps  the seat's level_ups rows
+ */
+export function gameGrants(levelUps) {
+  const out = { spells: new Set(), features: new Set(), feats: new Set(), stats: new Set() };
+  for (const l of levelUps) {
+    if (l.status !== 'applied' || l.mode === 'reconcile' || l.granted?.kind === 'reconcile') continue;
+    for (const p of l.granted?.sheet || []) {
+      const field = p.path?.[0];
+      const before = p.before;
+      const after = p.after;
+      if (field === 'spells' || field === 'classFeatures') {
+        const key = field === 'spells' ? spellKey : featureKey;
+        const had = new Set((Array.isArray(before) ? before : []).map(key));
+        for (const x of Array.isArray(after) ? after : []) if (!had.has(key(x))) out[field === 'spells' ? 'spells' : 'features'].add(key(x));
+      } else if (field === 'feats') {
+        const had = new Set(Array.isArray(before) ? before : []);
+        for (const f of Array.isArray(after) ? after : []) if (!had.has(f)) out.feats.add(f);
+      } else if (field === 'abilityScores') {
+        for (const [stat, v] of Object.entries(after || {})) if (Number(v) > Number(before?.[stat] ?? v)) out.stats.add(stat);
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * Reconcile safety (E2's finding: a fresh DDB paste removed Command): drop
+ * the reconcileDiff proposals that would take back a game grant — a
+ * removal of a spell / class feature / feat a level-up added (or one
+ * tagged `source: 'game'` / `grantedBy: 'game'` on the run sheet), or an
+ * ability score lowered below a game ASI. reconcileDiff never proposes
+ * removing a level (only a brand-new class's levels).
+ * @param {{proposals: object[]}} diff  reconcileDiff output (ok)
+ * @param {object} runSheet
+ * @param {object[]} levelUps  the seat's level_ups rows
+ * @returns {{diff: object, dropped: object[]}}
+ */
+export function keepGameGrants(diff, runSheet, levelUps) {
+  const g = gameGrants(levelUps);
+  const tagged = (list, key, x) => (list || []).some(e => isGameTagged(e) && key(e) === key(x));
+  const keeps = (d) => {
+    switch (d.kind) {
+      case 'spell-removed': return g.spells.has(spellKey(d)) || tagged(runSheet?.spells, spellKey, d);
+      case 'feature-removed': return g.features.has(featureKey(d)) || tagged(runSheet?.classFeatures, featureKey, d);
+      case 'feat-removed': return g.feats.has(d.name);
+      case 'ability': return Number(d.to) < Number(d.from) && g.stats.has(d.stat);
+      default: return false;
+    }
+  };
+  const dropped = diff.proposals.filter(keeps);
+  return { diff: { ...diff, proposals: diff.proposals.filter(d => !keeps(d)) }, dropped };
+}
 /** DM-authored actor id: one DM per room, whichever participant holds the token. */
 const DM_ACTOR = 'dm';
 
@@ -1394,17 +1455,23 @@ export class RunController {
     if (!fresh) throw new RunIntentError('E_INVALID_INTENT', 're-import the character first');
     const level = c.level ?? sheetLevel(c.sheet);
     if (level >= 20) throw new RunIntentError('E_INVALID_INTENT', 'a level-20 sheet cannot queue a reconcile');
-    const diff = reconcileDiff(c.sheet, fresh, level);
-    if (!diff.ok) throw new RunIntentError(diff.code || 'reconcile-refused', diff.reason, { ddbLevel: diff.ddbLevel, grantedLevel: diff.grantedLevel });
-    if (!diff.proposals.length) throw new RunIntentError('nothing-to-reconcile', 'D&D Beyond has no structural change to bring in');
+    const raw = reconcileDiff(c.sheet, fresh, level);
+    if (!raw.ok) throw new RunIntentError(raw.code || 'reconcile-refused', raw.reason, { ddbLevel: raw.ddbLevel, grantedLevel: raw.grantedLevel });
+    // Never let a D&D Beyond paste take back what the game granted.
+    const { diff, dropped } = keepGameGrants(raw, c.sheet, this.store.listLevelUps(this.#runId()).filter(l => l.slotId === slotId));
+    if (dropped.length) this.log('info', 'run: reconcile kept game-granted entries', { roomId: this.room.id, runId: this.row.id, slotId, dropped: dropped.map(d => `${d.kind}:${d.name ?? d.stat}`) });
+    if (!diff.proposals.length) throw new RunIntentError('nothing-to-reconcile', 'D&D Beyond has no structural change to bring in', dropped.length ? { kept: dropped.length } : undefined);
     let local;
     this.#tx(() => {
       local = this.#nextLevelUpId();
       this.store.addLevelUp(this.#runId(), { id: this.#luDb(local), slotId, fromLevel: level, mode: 'reconcile', status: 'pending_dm', auto: { diff, fresh } });
-      this.#emit('level.queued', { levelUpId: local, slotId, fromLevel: level, toLevel: level, mode: 'reconcile', proposals: diff.proposals.length }, actor);
+      this.#emit('level.queued', {
+        levelUpId: local, slotId, fromLevel: level, toLevel: level, mode: 'reconcile', proposals: diff.proposals.length,
+        ...(dropped.length ? { kept: dropped.length } : {})
+      }, actor);
     });
     this.#afterChange();
-    return { levelUpId: local, proposals: diff.proposals.length };
+    return { levelUpId: local, proposals: diff.proposals.length, ...(dropped.length ? { kept: dropped.length } : {}) };
   }
 
   /** dm.levelup.confirm: apply (level-up.js applyLevelUp / applyReconcile), recording `granted` for revert. */

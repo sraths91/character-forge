@@ -11,6 +11,7 @@ import assert from 'node:assert/strict';
 import { tempRoot, tempDb } from './helpers/server.js';
 import { makeRunRoom, runLog } from './helpers/runs.js';
 import { loadRunScript } from '../../src/tests/helpers/run-driver.js';
+import { keepGameGrants } from '../runs/run-controller.js';
 
 const { root, cleanup } = tempRoot('cf-run-wave4-');
 after(cleanup);
@@ -274,4 +275,46 @@ test('W4-6: xpAward confirm — dm.xp.adjust confirms the held award first (delt
   assert.deepEqual(runLog(t.r.runStore, 'run-w4').slice(at).map(e => e.type), ['xp.awarded', 'level.queued'], 'no dm.override for a pure confirm');
   ok(await t.r.dm('dm.xp.adjust', { slotId: 'slot-1', delta: 5 }));
   assert.equal(runLog(t.r.runStore, 'run-w4').at(-1).type, 'dm.override', 'with nothing held, an adjust is the usual override');
+});
+
+test('W4-7: levelup.reconcile never takes back a game grant — a fresh DDB paste keeps the level-up\'s Command and level-6 features', async () => {
+  const t = await table({ xp: {} });
+  t.db.db.prepare(`INSERT INTO items_cache (key, document_key, kind, name, payload_json, fetched_at) VALUES ('srd_command', 'srd-2014', 'spell', 'Command', ?, 1)`)
+    .run(JSON.stringify({ key: 'srd_command', name: 'Command', level: 1, school: { name: 'Enchantment' } }));
+  ok(await t.r.dm('dm.xp.adjust', { slotId: 'slot-1', delta: 20000 }));
+  ok(await t.send('levelup.choose', { slotId: 'slot-1', levelUpId: 'lu-1', choices: { spells: ['Command'] } }));
+  ok(await t.r.dm('dm.levelup.confirm', { levelUpId: 'lu-1' }));
+  const leveled = t.r.runStore.getCharacter('slot-1');
+  assert.ok(leveled.sheet.spells.some(s => s.name === 'Command'), 'the game granted Command');
+  // The player pastes a fresh D&D Beyond export: still level 5, no Command, plus a new feat.
+  const fresh = t.r.runStore.characterParsed(leveled.characterRowId);
+  t.db.db.prepare('UPDATE characters SET parsed_json = ? WHERE id = ?').run(JSON.stringify({ ...fresh, feats: [...(fresh.feats || []), 'Alert'] }), leveled.characterRowId);
+  const reply = ok(await t.send('levelup.reconcile', { slotId: 'slot-1' }));
+  assert.ok(reply.kept >= 1, `game grants kept (${JSON.stringify(reply)})`);
+  const row = t.r.runStore.getLevelUp('run-w4', `run-w4.${reply.levelUpId}`);
+  const kinds = row.auto.diff.proposals.map(p => `${p.kind}:${p.name ?? p.stat}`);
+  assert.ok(kinds.includes('feat-added:Alert'), kinds.join(', '));
+  assert.ok(!kinds.includes('spell-removed:Command'), 'no proposal removes Command');
+  assert.ok(!row.auto.diff.proposals.some(p => p.kind === 'feature-removed' && p.level === 6), 'nor a level-6 feature');
+  ok(await t.r.dm('dm.levelup.confirm', { levelUpId: reply.levelUpId }));
+  const after = t.r.runStore.getCharacter('slot-1');
+  assert.ok(after.sheet.spells.some(s => s.name === 'Command'), 'Command survives the reconcile');
+  assert.ok(after.sheet.feats.includes('Alert'));
+  assert.equal(after.level, 6, 'the game level stands');
+});
+
+test('W4-7: keepGameGrants — tagged entries and game ASIs are kept; other DDB changes pass', () => {
+  const sheet = { spells: [{ name: 'Bless', level: 1, source: 'game' }, { name: 'Guidance', level: 0, source: 'class' }] };
+  const levelUps = [{ status: 'applied', mode: 'choose', granted: { sheet: [{ path: ['abilityScores'], before: { STR: 16, WIS: 16 }, after: { STR: 16, WIS: 18 } }] } },
+    { status: 'reverted', mode: 'choose', granted: { sheet: [{ path: ['feats'], before: [], after: ['Lucky'] }] } }];
+  const diff = { ok: true, proposals: [
+    { id: 'p0', kind: 'spell-removed', name: 'Bless', level: 1 },
+    { id: 'p1', kind: 'spell-removed', name: 'Guidance', level: 0 },
+    { id: 'p2', kind: 'ability', stat: 'WIS', from: 18, to: 16 },
+    { id: 'p3', kind: 'ability', stat: 'STR', from: 16, to: 17 },
+    { id: 'p4', kind: 'feat-removed', name: 'Lucky' }
+  ] };
+  const { diff: kept, dropped } = keepGameGrants(diff, sheet, levelUps);
+  assert.deepEqual(dropped.map(d => d.id), ['p0', 'p2']);
+  assert.deepEqual(kept.proposals.map(d => d.id), ['p1', 'p3', 'p4'], 'a reverted level-up grants nothing; ids are kept for applyReconcile');
 });
