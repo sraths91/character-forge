@@ -136,6 +136,13 @@
  *        amount: {cp?, sp?, ep?, gp?, pp?}}` (only on a loot node whose
  *        `assign` is 'free'); each seat's move is one `currency.changed`
  *        run event with before / after `{currency, stash}`.
+ *        `run.snapshot` / `run.updated` carry `pendingXp` (null, or
+ *        `{total, perCharacter, nodeId, encounterIds}`): under campaign
+ *        setting `xpAward: 'confirm'` an encounter's award is held until
+ *        `dm.run.advance` or `dm.xp.adjust` (delta 0 only confirms) turns
+ *        it into `xp.awarded {confirmed: true}`. Under `levelUpMode:
+ *        'auto'` a queued level whose plan has no choices applies at
+ *        once (a system `level.applied`).
  *
  * Client payloads are strict (unknown fields rejected); server payloads
  * enforce required fields and allow additive ones.

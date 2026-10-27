@@ -170,6 +170,11 @@ export class RunController {
     this.row = { ...this.row, pending };
   }
 
+  /** An XP award held for the DM (xpAward 'confirm'): {total, perCharacter, nodeId, encounterIds}, or null. */
+  #pendingXp() {
+    return clone(this.row?.pending?.xp ?? null);
+  }
+
   #runId() { return this.row.id; }
   #campaign() { return this.row.campaign; }
   #settings() { return campaignSettings(this.row.settings); }
@@ -229,7 +234,7 @@ export class RunController {
   #broadcastUpdated() {
     this.port.broadcast('run.updated', {
       runId: this.row.id, status: this.row.status, currentNodeId: this.progress.currentNodeId, runSeq: this.row.seq,
-      completed: this.progress.completed, pendingRest: clone(this.pendingRest), ...this.hashes()
+      completed: this.progress.completed, pendingRest: clone(this.pendingRest), pendingXp: this.#pendingXp(), ...this.hashes()
     });
   }
 
@@ -644,6 +649,11 @@ export class RunController {
       const participants = [...next.keys()].filter(s => next.get(s).lifeStatus !== 'dead').map(id => ({ id }));
       const override = node.kind === 'encounter' && Number.isInteger(node.payload?.xpOverride);
       const award = encounterXp(override ? [{ xp: node.payload.xpOverride }] : defeated, participants, { mode: 'xp' });
+      if (settings.xpAward === 'confirm') {
+        // Held for the DM (runs.pending_json.xp): dm.xp.adjust or dm.run.advance confirms it.
+        this.#holdXp({ encounterId: enc.id, nodeId: node.id, total: award.total, perCharacter: award.awards });
+        award.awards = {};
+      }
       const xb = {};
       const xa = {};
       for (const [slotId, n] of Object.entries(award.awards)) {
@@ -651,12 +661,15 @@ export class RunController {
         next.get(slotId).xp += n;
         xa[slotId] = next.get(slotId).xp;
       }
-      this.#emit('xp.awarded', { total: award.total, perCharacter: award.awards, before: xb, after: xa }, { nodeId: node.id });
-      // 6. One level_ups row per crossed threshold.
-      for (const slotId of Object.keys(award.awards)) this.#queueLevels(chars.get(slotId), xb[slotId], xa[slotId], node.id);
+      if (settings.xpAward !== 'confirm') {
+        this.#emit('xp.awarded', { total: award.total, perCharacter: award.awards, before: xb, after: xa }, { nodeId: node.id });
+        // 6. One level_ups row per crossed threshold.
+        for (const slotId of Object.keys(award.awards)) this.#queueLevels(chars.get(slotId), xb[slotId], xa[slotId], node.id);
+      }
     }
     // 1. Write back (version + 1 each).
     for (const [slotId, n] of next) this.#write(chars.get(slotId), { state: n.state, lifeStatus: n.lifeStatus, xp: n.xp });
+    this.#autoLevels();
     this.#onEncounterResult(node, outcome);
     // 7. Close the node; the run is between nodes.
     this.#emit('node.completed', { nodeId: node.id, kind: node.kind }, { nodeId: node.id });
@@ -753,6 +766,7 @@ export class RunController {
         run: this.row, progress: this.progress, characters: this.#characters(), items: this.store.listItems(this.#runId()),
         levelUps: this.#levelUps(), seats: this.port.seats(), pendingRest: this.pendingRest, reclaims: this.reclaims
       }, member),
+      pendingXp: this.#pendingXp(),
       ...this.hashes()
     };
   }
@@ -915,6 +929,7 @@ export class RunController {
         before, after: { currentNodeId: blob.run.currentNodeId, status: blob.run.status, progress }
       }, { ...actor, override: true });
       this.#setPending('rest', {});
+      this.#setPending('xp', undefined);
     });
     this.#afterChange();
     return { currentNodeId: this.progress.currentNodeId, ...(missing.length ? { missing } : {}) };
@@ -1252,15 +1267,63 @@ export class RunController {
 
   /** dm.xp.adjust: a logged override; crossing a threshold queues level-ups (also the milestone-mode grant). */
   #xpAdjust({ slotId, delta, reason = null }, actor) {
-    const c = this.#character(slotId);
-    const xp = Math.max(0, c.xp + delta);
+    this.#character(slotId);
+    let xp;
     this.#tx(() => {
+      // A held award (xpAward 'confirm') is confirmed first; a delta of 0 only confirms.
+      const confirmed = this.#confirmXp(actor);
+      if (delta === 0 && confirmed) { xp = this.store.getCharacter(slotId).xp; return; }
+      const c = this.store.getCharacter(slotId);
+      xp = Math.max(0, c.xp + delta);
       this.#emit('dm.override', { kind: 'xp', slotId, reason, before: { xp: c.xp }, after: { xp } }, { ...actor, override: true });
       this.#write(c, { xp });
       if (xp > c.xp) this.#queueLevels(c, c.xp, xp, undefined, { mode: 'xp' });
+      this.#autoLevels();
     });
     this.#afterChange();
     return { xp };
+  }
+
+  /**
+   * xpAward 'confirm': hold an encounter's award in runs.pending_json.xp
+   * (inside #tx). A second award before the DM confirms adds to it.
+   */
+  #holdXp({ encounterId, nodeId, total, perCharacter }) {
+    const held = this.row.pending?.xp;
+    const per = { ...(held?.perCharacter || {}) };
+    for (const [slotId, n] of Object.entries(perCharacter)) per[slotId] = (per[slotId] || 0) + n;
+    this.#setPending('xp', {
+      total: (held?.total || 0) + total, perCharacter: per, nodeId, encounterIds: [...(held?.encounterIds || []), encounterId]
+    });
+  }
+
+  /**
+   * Confirm a held XP award (inside #tx): xp.awarded by the DM (with
+   * `confirmed: true`), the level_ups it crosses, then auto level-ups.
+   * @returns {boolean} whether an award was held
+   */
+  #confirmXp(actor) {
+    const held = this.row.pending?.xp;
+    if (!held) return false;
+    const before = {};
+    const after = {};
+    const awarded = {};
+    const rows = [];
+    for (const [slotId, n] of Object.entries(held.perCharacter)) {
+      const c = this.store.getCharacter(slotId);
+      if (!c || c.runId !== this.#runId()) continue;   // retired since
+      before[slotId] = c.xp;
+      after[slotId] = c.xp + n;
+      awarded[slotId] = n;
+      rows.push(this.#write(c, { xp: after[slotId] }));
+    }
+    this.#setPending('xp', undefined);
+    this.#emit('xp.awarded', {
+      total: held.total, perCharacter: awarded, before, after, confirmed: true, encounterIds: held.encounterIds
+    }, { actorKind: actor.actorKind, actorId: actor.actorId, nodeId: held.nodeId });
+    for (const c of rows) this.#queueLevels(c, before[c.slotId], after[c.slotId], held.nodeId);
+    this.#autoLevels();
+    return true;
   }
 
   // ---------------------------------------------------------- level-ups
@@ -1352,32 +1415,80 @@ export class RunController {
     const c = this.#character(l.slotId);
     const picked = choices ?? l.choices ?? {};
     this.#tx(() => {
-      let sheet;
-      let state = c.state;
-      let granted;
-      let level;
-      if (l.mode === 'reconcile') {
-        const ids = (l.auto?.diff?.proposals || []).map(x => x.id);
-        ({ sheet, granted } = applyReconcile(c.sheet, l.auto.fresh, l.auto.diff, ids));
-        level = sheetLevel(sheet);
-      } else {
-        const picks = this.#picks(picked);
-        const rng = this.#rng();
-        ({ sheet, state, granted } = applyLevelUp(c.sheet, c.state, this.#plan(c, l, picks), picks, { rng }));
-        this.store.setRng(this.#runId(), rng.state());
-        level = l.toLevel;
-      }
-      if (!this.store.decideLevelUp(this.#runId(), l.id, { fromStatus: l.status, status: 'applied', choices: picked, granted, decidedBy: actor.actorId })) {
-        throw new RunIntentError('E_STALE', 'that level-up moved on');
-      }
-      this.#write(c, { sheet, state, level });
-      this.#emit('level.applied', {
-        levelUpId, slotId: c.slotId, fromLevel: l.mode === 'reconcile' ? c.level : l.fromLevel, toLevel: level, mode: l.mode, granted,
-        before: { state: c.state, level: c.level }, after: { state, level }
-      }, { ...actor, override: l.status === 'pending_player' });
+      this.#applyLevelRow(l, picked, { ...actor, override: l.status === 'pending_player' });
+      this.#autoLevels();
     });
     this.#afterChange();
     return { level: this.store.getCharacter(c.slotId).level };
+  }
+
+  /**
+   * Apply one level_ups row (inside #tx; level-up.js applyLevelUp /
+   * applyReconcile), recording `granted` for revert, with one level.applied.
+   */
+  #applyLevelRow(l, picked, actor) {
+    const levelUpId = this.#luLocal(l.id);
+    const c = this.store.getCharacter(l.slotId);
+    let sheet;
+    let state = c.state;
+    let granted;
+    let level;
+    if (l.mode === 'reconcile') {
+      const ids = (l.auto?.diff?.proposals || []).map(x => x.id);
+      ({ sheet, granted } = applyReconcile(c.sheet, l.auto.fresh, l.auto.diff, ids));
+      level = sheetLevel(sheet);
+    } else {
+      const picks = this.#picks(picked);
+      const rng = this.#rng();
+      ({ sheet, state, granted } = applyLevelUp(c.sheet, c.state, this.#plan(c, l, picks), picks, { rng }));
+      this.#saveRng(rng);
+      level = l.toLevel;
+    }
+    if (!this.store.decideLevelUp(this.#runId(), l.id, { fromStatus: l.status, status: 'applied', choices: picked, granted, decidedBy: actor.actorId ?? null })) {
+      throw new RunIntentError('E_STALE', 'that level-up moved on');
+    }
+    this.#write(c, { sheet, state, level });
+    this.#emit('level.applied', {
+      levelUpId, slotId: c.slotId, fromLevel: l.mode === 'reconcile' ? c.level : l.fromLevel, toLevel: level, mode: l.mode, granted,
+      before: { state: c.state, level: c.level }, after: { state, level }
+    }, actor);
+  }
+
+  /**
+   * levelUpMode 'auto' (inside #tx): every seat's next queued level whose
+   * plan has no choices (planLevelUp: no class / ASI / spell pick, nothing
+   * missing) applies now without the DM, as a system level.applied. A
+   * level with choices waits for dm.levelup.confirm; the levels after it
+   * apply once it does.
+   */
+  #autoLevels() {
+    if (this.#settings().levelUpMode !== 'auto') return;
+    const system = { actorKind: 'system', actorId: null };
+    for (let guard = 0; guard < 40; guard++) {
+      let applied = false;
+      for (const l of this.#actionableLevelUps()) {
+        if (l.mode !== 'auto' || l.status !== 'pending_dm') continue;
+        const c = this.store.getCharacter(l.slotId);
+        let plan;
+        try {
+          plan = planLevelUp(c.sheet, c.state, { toLevel: l.toLevel, settings: { hpOnLevel: this.#settings().hpOnLevel } });
+        } catch (err) {
+          if (err instanceof CampaignRuleError) continue;
+          throw err;
+        }
+        if (plan.requiresDm) continue;
+        this.#applyLevelRow(l, {}, system);
+        applied = true;
+      }
+      if (!applied) return;
+    }
+  }
+
+  /** Persist a run RNG draw (inside #tx) and keep the in-memory row in step for the next draw. */
+  #saveRng(rng) {
+    const state = rng.state();
+    this.store.setRng(this.#runId(), state);
+    this.row = { ...this.row, rng: state };
   }
 
   /** dm.levelup.revert: the latest applied level-up, back byte for byte (level-up.js revertLevelUp). */
@@ -1507,6 +1618,7 @@ export class RunController {
       }, actor);
       this.#seedItems(slotId, sheet, ev.seq);
       if (target > imported) this.#queueLevels(row, xp, xpForLevel(target), undefined, { mode: 'xp' });
+      this.#autoLevels();
     });
     this.port.seatsChanged();
     this.#afterChange();
@@ -1535,6 +1647,7 @@ export class RunController {
       throw new RunIntentError('E_INVALID_INTENT', 'fight this encounter first (dm.node.begin), or override');
     }
     this.#tx(() => {
+      this.#confirmXp({ actorKind: 'dm', actorId: DM_ACTOR });
       if (node && !this.progress.completed) this.#emit('node.completed', { nodeId: node.id, kind: node.kind });
       this.#enterNode(toNodeId, { override: !isOffered });
     });

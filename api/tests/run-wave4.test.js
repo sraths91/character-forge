@@ -213,3 +213,65 @@ test('W4-5: stash.take — the seat\'s controller takes coin on a free loot node
   ok(await t.r.dm('stash.take', { slotId: 'slot-2', amount: { gp: 20 } }), 'the DM takes for an AI seat');
   assert.equal(stashCoin(t.r).gp, 0);
 });
+
+const withSettings = (settings) => ({ ...SCRIPT.campaign, settings: { ...SCRIPT.campaign.settings, ...settings } });
+const levelRows = (r) => Object.fromEntries(r.runStore.listLevelUps('run-w4').map(l => [l.id.split('.').at(-1), [l.toLevel, l.status]]));
+
+test('W4-6: levelUpMode auto — a level whose plan has no choices applies without the DM (system level.applied); one with choices waits', async () => {
+  const t = await table({ campaign: withSettings({ levelUpMode: 'auto' }) });
+  ok(await t.r.dm('dm.xp.adjust', { slotId: 'slot-2', delta: 9150 }));   // 13950 → 23100: levels 6 and 7
+  assert.deepEqual(levelRows(t.r), { 'lu-1': [6, 'pending_dm'], 'lu-2': [7, 'pending_dm'] }, 'level 6 has an ASI to pick: it waits, and 7 waits behind it');
+  assert.ok(!runLog(t.r.runStore, 'run-w4').some(e => e.type === 'level.applied'));
+  const at = runLog(t.r.runStore, 'run-w4').length;
+  const reply = ok(await t.r.dm('dm.levelup.confirm', { levelUpId: 'lu-1', choices: { asi: { STR: 1, CON: 1 } } }));
+  assert.equal(reply.level, 7, 'level 7 (no choices) applied right after the DM confirmed 6');
+  const applied = runLog(t.r.runStore, 'run-w4').slice(at).filter(e => e.type === 'level.applied');
+  assert.deepEqual(applied.map(e => [e.payload.levelUpId, e.payload.toLevel, e.actorKind, e.payload.mode]), [['lu-1', 6, 'dm', 'auto'], ['lu-2', 7, 'system', 'auto']]);
+  assert.ok('before' in applied[1].payload && applied[1].payload.after.level === 7);
+  assert.deepEqual(levelRows(t.r), { 'lu-1': [6, 'applied'], 'lu-2': [7, 'applied'] });
+  assert.equal(t.r.runStore.getCharacter('slot-2').level, 7);
+});
+
+test('W4-6: levelUpMode choose — the same level 7 waits for its player / the DM', async () => {
+  const t = await table({ campaign: withSettings({ levelUpMode: 'choose' }) });
+  ok(await t.r.dm('dm.xp.adjust', { slotId: 'slot-2', delta: 9150 }));
+  ok(await t.r.dm('dm.levelup.confirm', { levelUpId: 'lu-1', choices: { asi: { STR: 1, CON: 1 } } }));
+  assert.deepEqual(levelRows(t.r), { 'lu-1': [6, 'applied'], 'lu-2': [7, 'pending_player'] });
+});
+
+test('W4-6: xpAward confirm — the encounter\'s award is held (persisted) until dm.run.advance confirms it', async () => {
+  const t = await table({ campaign: withSettings({ xpAward: 'confirm' }) });
+  const xp0 = { 'slot-1': t.r.runStore.getCharacter('slot-1').xp, 'slot-2': t.r.runStore.getCharacter('slot-2').xp };
+  await fightAmbush(t.r);
+  const log = runLog(t.r.runStore, 'run-w4');
+  assert.ok(!log.some(e => e.type === 'xp.awarded' || e.type === 'level.queued'), 'nothing awarded yet');
+  assert.equal(t.r.runStore.getCharacter('slot-2').xp, xp0['slot-2']);
+  const held = t.r.room.run.snapshotFor({ role: 'dm', id: t.ctx.dmId }).pendingXp;
+  assert.ok(held.total > 0 && held.perCharacter['slot-2'] > 0, JSON.stringify(held));
+  assert.deepEqual(t.patFrames.filter(f => f.t === 'run.updated').at(-1).p.pendingXp, held, 'run.updated carries the held award');
+
+  t.r.room.shutdown();
+  const r2 = t.ctx.open();
+  assert.deepEqual(r2.room.run.snapshotFor({ role: 'dm', id: t.ctx.dmId }).pendingXp, held, 'the held award survives a restart');
+  const at = runLog(r2.runStore, 'run-w4').length;
+  ok(await r2.dm('dm.run.advance', { toNodeId: 'n-camp' }));
+  const after = runLog(r2.runStore, 'run-w4').slice(at);
+  assert.deepEqual(after.map(e => e.type), ['xp.awarded', 'level.queued', 'node.entered']);
+  const award = after[0];
+  assert.deepEqual([award.actorKind, award.payload.confirmed, award.payload.perCharacter, award.payload.before], ['dm', true, held.perCharacter, xp0]);
+  assert.equal(r2.runStore.getCharacter('slot-2').xp, xp0['slot-2'] + held.perCharacter['slot-2']);
+  assert.equal(r2.room.run.snapshotFor({ role: 'dm', id: t.ctx.dmId }).pendingXp, null);
+});
+
+test('W4-6: xpAward confirm — dm.xp.adjust confirms the held award first (delta 0 only confirms)', async () => {
+  const t = await table({ campaign: withSettings({ xpAward: 'confirm' }) });
+  await fightAmbush(t.r);
+  const held = t.r.room.run.snapshotFor({ role: 'dm', id: t.ctx.dmId }).pendingXp;
+  const xp1 = t.r.runStore.getCharacter('slot-1').xp;
+  const at = runLog(t.r.runStore, 'run-w4').length;
+  const reply = ok(await t.r.dm('dm.xp.adjust', { slotId: 'slot-1', delta: 0 }));
+  assert.equal(reply.xp, xp1 + held.perCharacter['slot-1']);
+  assert.deepEqual(runLog(t.r.runStore, 'run-w4').slice(at).map(e => e.type), ['xp.awarded', 'level.queued'], 'no dm.override for a pure confirm');
+  ok(await t.r.dm('dm.xp.adjust', { slotId: 'slot-1', delta: 5 }));
+  assert.equal(runLog(t.r.runStore, 'run-w4').at(-1).type, 'dm.override', 'with nothing held, an adjust is the usual override');
+});
