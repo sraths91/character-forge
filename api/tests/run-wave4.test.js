@@ -162,3 +162,54 @@ test('W4-3: migration 0007 adds runs.pending_json (default {}, JSON-checked)', a
   assert.equal(db.db.prepare('SELECT pending_json FROM runs WHERE id = ?').get('run-m7').pending_json, '{}');
   assert.throws(() => db.db.prepare('UPDATE runs SET pending_json = ? WHERE id = ?').run('{nope', 'run-m7'), /CHECK/);
 });
+
+/** The script's campaign plus a free loot node and a DM-assigned one. */
+const LOOT_CAMPAIGN = {
+  ...SCRIPT.campaign,
+  nodes: [
+    ...SCRIPT.campaign.nodes.map(n => (n.id === 'n-den' ? { ...n, next: [{ to: 'n-free' }] } : n)),
+    { id: 'n-free', kind: 'loot', title: 'Goblin purse', ord: 10, payload: { items: [], currency: { gp: 30, sp: 5 }, assign: 'free' }, next: [{ to: 'n-dm' }] },
+    { id: 'n-dm', kind: 'loot', title: 'The chief\'s chest', ord: 11, payload: { items: [], currency: { gp: 20 }, assign: 'dm' }, next: [] }
+  ]
+};
+const purse = (r, slotId) => r.runStore.getCharacter(slotId).state.currency;
+const stashCoin = (r) => r.runStore.getRun('run-w4').stash.currency;
+const refused = (reply, code) => { assert.equal(reply?.t, 'error', JSON.stringify(reply?.p)); assert.equal(reply.p.code, code, reply.p.message); };
+
+test('W4-5: dm.stash.split hands the stash\'s coin to seats, one currency.changed each with {currency, stash} before / after', async () => {
+  const t = await table({ campaign: LOOT_CAMPAIGN });
+  ok(await t.r.dm('dm.run.advance', { toNodeId: 'n-dm', override: true }));
+  assert.equal(stashCoin(t.r).gp, 20);
+  const gp1 = purse(t.r, 'slot-1').gp;
+  const gp2 = purse(t.r, 'slot-2').gp;
+  refused(await t.send('dm.stash.split', { allocations: [{ slotId: 'slot-1', gp: 20 }] }), 'E_FORBIDDEN');
+  refused(await t.r.dm('dm.stash.split', { allocations: [{ slotId: 'slot-1', gp: 15 }, { slotId: 'slot-2', gp: 15 }] }), 'insufficient-funds');
+  refused(await t.r.dm('dm.stash.split', { allocations: [{ slotId: 'slot-1' }] }), 'E_INVALID_INTENT');
+  const at = runLog(t.r.runStore, 'run-w4').length;
+  ok(await t.r.dm('dm.stash.split', { allocations: [{ slotId: 'slot-1', gp: 12 }, { slotId: 'slot-2', gp: 8 }] }));
+  assert.deepEqual([purse(t.r, 'slot-1').gp, purse(t.r, 'slot-2').gp, stashCoin(t.r).gp], [gp1 + 12, gp2 + 8, 0]);
+  const evs = runLog(t.r.runStore, 'run-w4').slice(at);
+  assert.deepEqual(evs.map(e => [e.type, e.actorKind, e.payload.slotId, e.payload.delta, e.payload.reason]), [
+    ['currency.changed', 'dm', 'slot-1', { gp: 12 }, 'stash.split'],
+    ['currency.changed', 'dm', 'slot-2', { gp: 8 }, 'stash.split']
+  ]);
+  assert.deepEqual([evs[0].payload.before.stash.gp, evs[0].payload.after.stash.gp, evs[1].payload.before.stash.gp, evs[1].payload.after.stash.gp], [20, 8, 8, 0]);
+  assert.deepEqual([evs[0].payload.before.currency.gp, evs[0].payload.after.currency.gp], [gp1, gp1 + 12]);
+  refused(await t.send('stash.take', { slotId: 'slot-1', amount: { gp: 1 } }), 'E_FORBIDDEN');
+});
+
+test('W4-5: stash.take — the seat\'s controller takes coin on a free loot node; never another seat, never more than is there', async () => {
+  const t = await table({ campaign: LOOT_CAMPAIGN });
+  ok(await t.r.dm('dm.run.advance', { toNodeId: 'n-free', override: true }));
+  const sp = purse(t.r, 'slot-1').sp;
+  refused(await t.send('stash.take', { slotId: 'slot-2', amount: { gp: 5 } }), 'E_FORBIDDEN');
+  refused(await t.send('stash.take', { slotId: 'slot-1', amount: { pp: 1 } }), 'insufficient-funds');
+  const taken = ok(await t.send('stash.take', { slotId: 'slot-1', amount: { gp: 10, sp: 5 } }));
+  assert.equal(taken.currency.sp, sp + 5);
+  assert.deepEqual([stashCoin(t.r).gp, stashCoin(t.r).sp], [20, 0]);
+  const ev = runLog(t.r.runStore, 'run-w4').at(-1);
+  assert.deepEqual([ev.type, ev.actorKind, ev.actorId, ev.payload.delta, ev.payload.reason], ['currency.changed', 'player', t.pat, { gp: 10, sp: 5 }, 'stash.take']);
+  assert.ok(t.patFrames.some(f => f.t === 'run.event' && f.p.type === 'currency.changed'));
+  ok(await t.r.dm('stash.take', { slotId: 'slot-2', amount: { gp: 20 } }), 'the DM takes for an AI seat');
+  assert.equal(stashCoin(t.r).gp, 0);
+});

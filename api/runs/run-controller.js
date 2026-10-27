@@ -60,7 +60,8 @@ export const RUN_INTENTS = Object.freeze([
   'story.choose', 'levelup.choose', 'levelup.reconcile', 'seat.reclaim',
   'dm.run.advance', 'dm.run.end', 'dm.node.begin', 'dm.rest.grant', 'dm.loot.assign', 'dm.story.resolve',
   'dm.xp.adjust', 'dm.levelup.confirm', 'dm.levelup.revert', 'dm.character.revive', 'dm.character.retire',
-  'dm.seat.fill', 'dm.snapshot.save', 'dm.snapshot.load', 'dm.seat.reclaim.approve'
+  'dm.seat.fill', 'dm.snapshot.save', 'dm.snapshot.load', 'dm.seat.reclaim.approve',
+  'dm.stash.split', 'stash.take'   // v1.7 (E3 M65 W4)
 ]);
 const RUN_INTENT_SET = new Set(RUN_INTENTS);
 
@@ -828,6 +829,8 @@ export class RunController {
       case 'dm.snapshot.save': return this.#snapshotSave(p, actor);
       case 'dm.snapshot.load': return this.#snapshotLoad(p, actor);
       case 'seat.reclaim': return this.#reclaim(member, p);
+      case 'dm.stash.split': return this.#stashSplit(p, actor);
+      case 'stash.take': return this.#stashTake(member, p, actor);
       case 'dm.seat.reclaim.approve': return this.#reclaimApprove(p, actor);
       default: throw new RunIntentError('E_UNKNOWN_TYPE', `unhandled ${t}`);
     }
@@ -1090,6 +1093,65 @@ export class RunController {
     });
     this.#afterChange();
     return out;
+  }
+
+  // ---------------------------------------------------------- stash coin
+
+  /**
+   * Move coins (exact denominations) from the party stash to a seat's
+   * purse inside #tx: one `currency.changed` with before / after
+   * {currency, stash}. items.js addCurrency refuses a coin the stash
+   * lacks (insufficient-funds).
+   */
+  #coinsToSeat(c, coins, reason, actor) {
+    const stashBefore = this.#stash();
+    const stashAfter = { ...stashBefore, currency: addCurrency(stashBefore.currency, RunController.#negate(coins)) };
+    const fresh = this.store.getCharacter(c.slotId);
+    const before = clone(fresh.state.currency || {});
+    const after = addCurrency(before, coins);
+    this.store.setStash(this.#runId(), stashAfter);
+    this.#write(fresh, { state: { ...fresh.state, currency: after } });
+    this.#emit('currency.changed', {
+      slotId: c.slotId, delta: RunController.#delta(before, after), reason,
+      before: { currency: before, stash: clone(stashBefore.currency) }, after: { currency: after, stash: clone(stashAfter.currency) }
+    }, actor);
+  }
+
+  static #negate(coins) {
+    const out = {};
+    for (const k of ['cp', 'sp', 'ep', 'gp', 'pp']) if (coins[k]) out[k] = -coins[k];
+    return out;
+  }
+
+  static #coinsOnly(o) {
+    const out = {};
+    for (const k of ['cp', 'sp', 'ep', 'gp', 'pp']) if (Number.isInteger(o?.[k]) && o[k] > 0) out[k] = o[k];
+    if (!Object.keys(out).length) throw new RunIntentError('E_INVALID_INTENT', 'name some coin to move');
+    return out;
+  }
+
+  /** dm.stash.split: hand the stash's coin out to seats (one currency.changed per seat). */
+  #stashSplit({ allocations }, actor) {
+    const seen = new Set();
+    const plan = allocations.map(a => {
+      if (seen.has(a.slotId)) throw new RunIntentError('E_INVALID_INTENT', `seat ${a.slotId} is listed twice`);
+      seen.add(a.slotId);
+      return { c: this.#character(a.slotId), coins: RunController.#coinsOnly(a) };
+    });
+    this.#tx(() => { for (const { c, coins } of plan) this.#coinsToSeat(c, coins, 'stash.split', actor); });
+    this.#afterChange();
+    return { stash: clone(this.#stash().currency) };
+  }
+
+  /** stash.take: a seat takes coin from the stash — only on a loot node the party shares freely. */
+  #stashTake(member, { slotId, amount }, actor) {
+    const c = this.#ownSeat(member, slotId);
+    const node = this.#current();
+    if (node?.kind !== 'loot' || node.payload?.assign !== 'free') throw new RunIntentError('E_FORBIDDEN', 'the DM splits the stash here (dm.stash.split)');
+    const coins = RunController.#coinsOnly(amount);
+    this.#tx(() => this.#coinsToSeat(c, coins, 'stash.take', actor));
+    this.#afterChange();
+    return { currency: clone(this.store.getCharacter(slotId).state.currency) };
   }
 
   // --------------------------------------------------------------- shop

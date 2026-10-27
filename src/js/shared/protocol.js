@@ -130,6 +130,12 @@
  *        HTTP `GET /api/runs/:runId/events?since=` and
  *        `GET /api/runs/:runId/snapshots` (api/runs/http.js) let a
  *        reconnected client rebuild its log and snapshot list.
+ *        The party stash's coin: DM intent `dm.stash.split {allocations:
+ *        [{slotId, cp?, sp?, ep?, gp?, pp?}]}` (coins move from the
+ *        stash to each seat's purse) and seat intent `stash.take {slotId,
+ *        amount: {cp?, sp?, ep?, gp?, pp?}}` (only on a loot node whose
+ *        `assign` is 'free'); each seat's move is one `currency.changed`
+ *        run event with before / after `{currency, stash}`.
  *
  * Client payloads are strict (unknown fields rejected); server payloads
  * enforce required fields and allow additive ones.
@@ -214,7 +220,10 @@ export const INTENT_ROLES = Object.freeze({
   'dm.seat.fill': 'dm',
   'dm.snapshot.save': 'dm',
   'dm.snapshot.load': 'dm',
-  'dm.seat.reclaim.approve': 'dm'
+  'dm.seat.reclaim.approve': 'dm',
+  // v1.7 (E3 M65 W4) — the party stash's coin.
+  'dm.stash.split': 'dm',
+  'stash.take': 'seat'
 });
 
 /** v1.4 room settings: who sees DM fudges (dm.override), and the grid's diagonal rule. */
@@ -328,6 +337,7 @@ const PLAN = shape({
 
 const SLOT_ID = ID;
 const QTY = int(1, 999);
+const COINS_SPEC = { cp: optional(int(0, 1e9)), sp: optional(int(0, 1e9)), ep: optional(int(0, 1e9)), gp: optional(int(0, 1e9)), pp: optional(int(0, 1e9)) };
 const ABILITY_KEY = /^(STR|DEX|CON|INT|WIS|CHA)$/;
 const LEVELUP_CHOICES = shape({
   asi: optional(mapOf(int(1, 2), { keyPattern: ABILITY_KEY })),   // +2 one, or +1/+1
@@ -421,6 +431,9 @@ const INTENT_PAYLOADS = {
   'dm.snapshot.save': shape({ label: optional(str({ maxLength: 128 })) }),
   'dm.snapshot.load': shape({ snapshotId: ID }),
   'dm.seat.reclaim.approve': shape({ slotId: SLOT_ID, memberId: ID, approve: bool() }),
+  // v1.7 (E3 M65 W4) — the party stash's coin (the server requires some coin in each allocation / amount).
+  'dm.stash.split': shape({ allocations: arrayOf(shape({ slotId: SLOT_ID, ...COINS_SPEC }), { min: 1, max: 6 }) }),
+  'stash.take': shape({ slotId: SLOT_ID, amount: shape(COINS_SPEC) }),
   // v1.3 — the DM resolves a spell outside the engine's registry.
   'dm.spell.adjudicate': shape({
     casterId: ID,

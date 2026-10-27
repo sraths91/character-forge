@@ -30,6 +30,8 @@
   { "v": 1, "t": "dm.fog.paint", "cid": "c29", "p": { "cells": [{ "col": 1, "row": 2 }, { "col": 2, "row": 2 }], "op": "reveal" } },
   {"v": 1, "t": "rest.spend", "cid": "c30", "p": {"slotId": "slot-1", "hitDice": {"Cleric": 2}}},
   {"v": 1, "t": "loot.claim", "cid": "c31", "p": {"slotId": "slot-1", "itemId": "item-2", "qty": 1}},
+  {"v": 1, "t": "dm.stash.split", "cid": "c31a", "p": {"allocations": [{"slotId": "slot-1", "gp": 15}, {"slotId": "slot-2", "gp": 15, "sp": 5}]}},
+  {"v": 1, "t": "stash.take", "cid": "c31b", "p": {"slotId": "slot-1", "amount": {"gp": 10}}},
   {"v": 1, "t": "item.equip", "cid": "c32", "p": {"slotId": "slot-2", "itemId": "item-4", "equipped": true, "attuned": false}},
   {"v": 1, "t": "item.give", "cid": "c33", "p": {"slotId": "slot-2", "itemId": "item-1", "toSlotId": "slot-1", "qty": 1}},
   {"v": 1, "t": "item.use", "cid": "c34", "p": {"slotId": "slot-2", "itemId": "item-1", "targetSlotId": "slot-1"}},
