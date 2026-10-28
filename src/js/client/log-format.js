@@ -37,7 +37,7 @@ export function formatEvent(ev, nameOf = (id) => String(id ?? '—'), ctx = {}) 
   const p = ev?.payload || {};
   const n = (id) => nameOf(id ?? null);
   switch (ev?.type) {
-    case 'turn.started': return { text: `— ${n(p.actorId)}'s turn (round ${ev.round}) —`, cls: 'roll-turn', dm: false };
+    case 'turn.started': return { text: `— ${n(p.actorId)}'s turn${p.resumed === true ? ' resumes' : ''} (round ${ev.round}) —`, cls: 'roll-turn', dm: false };
     case 'turn.skipped': return { text: `${n(p.actorId)} skips the turn (${p.reason}).`, cls: 'roll-turn', dm: false };
     case 'turn.rejected': return { text: `${n(p.actorId)}: not allowed — ${p.reason}.`, cls: 'roll-miss', dm: false };
     case 'plan.chosen': {

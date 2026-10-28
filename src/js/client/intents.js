@@ -52,16 +52,17 @@ function boundsOf(state) {
 
 /**
  * The turn the room is on: the last `turn.started` in the client's history
- * (its envelope `turnId`), or the snapshot's `room.turn`.
+ * (its envelope `turnId`), or the snapshot's `room.turn`. `resumed: true`
+ * when that turn.started is a v1.7 re-announcement after a restart.
  * @param {object} clientState — client/store.js state (authoritative or presented)
- * @returns {{turnId: string|null, actorId: string|null}}
+ * @returns {{turnId: string|null, actorId: string|null, resumed?: true}}
  */
 export function currentTurn(clientState) {
   const hist = clientState?.history || [];
   for (let i = hist.length - 1; i >= 0; i--) {
     const ev = hist[i];
     if (ev?.type === 'turn.ended' || ev?.type === 'turn.skipped' || ev?.type === 'encounter.ended') break;
-    if (ev?.type === 'turn.started') return { turnId: ev.turnId ?? null, actorId: ev.payload?.actorId ?? null };
+    if (ev?.type === 'turn.started') return { turnId: ev.turnId ?? null, actorId: ev.payload?.actorId ?? null, ...(ev.payload?.resumed === true ? { resumed: true } : {}) };
   }
   const t = clientState?.room?.turn;
   if (t && t.turnId) return { turnId: t.turnId, actorId: t.actorId ?? null };

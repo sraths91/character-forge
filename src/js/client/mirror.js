@@ -7,7 +7,13 @@
  * It replays the engine's own bookkeeping from the event stream:
  *   - turn.started / turn.skipped('incapacitated') — the start-of-turn
  *     resets of turn-manager `beginTurnResets` (reaction, Shield, Dodge,
- *     Disengage, the PC per-turn flags, a legendary monster's budget);
+ *     Disengage, the PC per-turn flags, a legendary monster's budget).
+ *     A v1.7 `turn.started {resumed: true}` (a recovered turn announced
+ *     again after dm.resume, same turnId) applies them too: a client that
+ *     reconnected while the room was paused holds the snapshot's
+ *     turn-end state — the journal tail with the original turn.started is
+ *     in its history, not in that state — and the resets are idempotent
+ *     on a state that already had them;
  *   - turn.ended — the turn manager's victory check, else `advance`
  *     (turnIndex + 1, wrapping into the next round): the server hashes
  *     the state AFTER the index moved;

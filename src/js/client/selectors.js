@@ -98,9 +98,10 @@ export function myEntityIds(s) {
 }
 
 /**
- * The creature whose turn it is and who acts for it.
+ * The creature whose turn it is and who acts for it (`resumed`: the turn
+ * was re-announced after a server restart, v1.7).
  * @param {object} s — ClientState
- * @returns {{turnId: string|null, actorId: string|null, actor: object|null, mine: boolean, dmControlled: boolean}}
+ * @returns {{turnId: string|null, actorId: string|null, actor: object|null, mine: boolean, dmControlled: boolean, resumed: boolean}}
  */
 export function turnInfo(s) {
   const t = currentTurn(s);
@@ -108,7 +109,7 @@ export function turnInfo(s) {
   const actorId = t.actorId ?? (enc && enc.phase === 'running' ? enc.initiative?.[enc.turnIndex]?.entityId ?? null : null);
   const actor = actorId ? enc?.entities?.[actorId] || null : null;
   const mine = !!actor && (myEntityIds(s).includes(actor.id) || (isDm(s) && actor.controller?.type === 'dm'));
-  return { turnId: t.turnId, actorId, actor, mine, dmControlled: actor?.controller?.type === 'dm' };
+  return { turnId: t.turnId, actorId, actor, mine, dmControlled: actor?.controller?.type === 'dm', resumed: t.resumed === true };
 }
 
 /**

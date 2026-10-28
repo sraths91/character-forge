@@ -32,6 +32,9 @@
  *     `dm.fog.paint {cells, op}` (protocol v1.4); the server answers every
  *     seat with `encounter.fog {fog}` (v1.5), which redraws the mask.
  *   - Waiting states: "Goblin is acting…", "DM is reviewing…", "Paused".
+ *     A turn re-announced after a restart (v1.7 `turn.started {resumed:
+ *     true}`) reads "Your turn … (resumed after a restart)"; turn intents
+ *     have no deadline, so none is shown.
  *   - Dying (E1 wave 5): a death-save banner on your downed creature's
  *     card (the server rolls it at the start of your turn; the result and
  *     the ✓ / ✗ tally show here), and Dying / Stable / Dead badges on the
@@ -382,7 +385,7 @@ export function mount(root, ctx) {
     if (st === 'paused') text = isDm(auth) ? 'Paused — resume from the DM panel.' : 'The DM paused the game.';
     else if (st === 'encounter-over' || enc?.phase === 'ended') text = 'The encounter is over.';
     else if (st === 'setup') text = 'The DM is preparing the encounter…';
-    else if (t.actor && t.mine) text = `Your turn: ${t.actor.name}.`;
+    else if (t.actor && t.mine) text = `Your turn: ${t.actor.name}${t.resumed ? ' (resumed after a restart — take your time)' : ''}.`;
     else if (t.actor && t.dmControlled) text = 'DM is reviewing…';
     else if (t.actor) text = `${t.actor.name} is acting…`;
     waiting.textContent = text;
