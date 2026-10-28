@@ -49,6 +49,8 @@ test('C27 pure: dashboardModel, rowCells, runEventText', () => {
   ]);
   assert.equal(dashboardModel(run)[0].hp.max, null, 'no sheet yet');
   assert.equal(runEventText({ type: 'dm.override', payload: { kind: 'xp', slotId: 's1', before: { xp: 1 }, after: { xp: 9 }, reason: 'milestone' } }, run), 'XP override: Saris 1 → 9 (milestone).');
+  assert.equal(runEventText({ type: 'currency.changed', payload: { slotId: 's1', delta: { gp: 12, sp: 5 }, reason: 'stash.split' } }, run), 'Saris +12 gp 5 sp (stash split).');
+  assert.equal(runEventText({ type: 'currency.changed', payload: { slotId: 's1', delta: { gp: -2 }, reason: 'stash.take' } }, run), 'Saris −2 gp (taken from the stash).');
   assert.equal(runEventText({ type: 'node.entered', override: true, payload: { nodeId: 'n' } }, { nodes: [{ id: 'n', title: 'Den' }] }), 'Entered Den (override).');
 });
 

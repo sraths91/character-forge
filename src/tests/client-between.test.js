@@ -13,6 +13,10 @@
  *     declare hit dice and take the DM's short rest inside the preview's
  *     range, drink a potion, then begin the encounter node — the GATE: the
  *     equip preview's AC is the AC entityFromSheet gives the next encounter.
+ *   - v1.7 stash coin: the even split (coin by coin, remainder stays),
+ *     `currency.changed` folding purses and the stash live, and on the
+ *     real server a player's `stash.take` on a free loot node and the DM's
+ *     `dm.stash.split` (pre-filled even split, edited) on a DM loot node.
  */
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -20,7 +24,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { mount as mountBetween, restPreview, equipPreview, stashSplit, isPotion, isEquippable, combatLine } from '../js/client/views/between.js';
+import { mount as mountBetween, restPreview, equipPreview, stashSplit, evenAllocations, checkAllocations, isPotion, isEquippable, combatLine } from '../js/client/views/between.js';
 import { createRunStore } from '../js/client/run-store.js';
 import { refusalText, cpText, coinsText } from '../js/client/run-model.js';
 import { itemsFromInventory } from '../js/campaign/items.js';
@@ -112,6 +116,33 @@ test('C24 run store: encounter.result patches {state, lifeStatus}; rest.taken pa
   assert.deepEqual(rs.getState().result, { outcome: 'party-victory' });
   rs.apply(ev(3, 'rest.taken', { type: 'short', slotIds: ['s1'], rolls: {}, before: {}, after: { s1: st(9) } }));
   assert.deepEqual(rs.getState().characters[0].state, st(9));
+});
+
+test('C24 v1.7 stash coin: evenAllocations divides coin by coin; checkAllocations mirrors the server', () => {
+  const chars = [{ slotId: 's2', seat: 2, lifeStatus: 'active' }, { slotId: 's1', seat: 1, lifeStatus: 'active' }, { slotId: 's3', seat: 3, lifeStatus: 'dead' }];
+  assert.deepEqual(evenAllocations({ currency: { gp: 31, sp: 5, cp: 0 } }, chars), {
+    allocations: [{ slotId: 's1', gp: 15, sp: 2 }, { slotId: 's2', gp: 15, sp: 2 }], left: { gp: 1, sp: 1 }
+  });
+  assert.deepEqual(evenAllocations({ currency: {} }, chars).allocations, [{ slotId: 's1' }, { slotId: 's2' }]);
+  const stash = { currency: { gp: 20 } };
+  assert.deepEqual(checkAllocations(stash, [{ slotId: 's1', gp: '12' }, { slotId: 's2', gp: 8, sp: 0 }]), { ok: true, allocations: [{ slotId: 's1', gp: 12 }, { slotId: 's2', gp: 8 }], left: {} });
+  assert.equal(checkAllocations(stash, [{ slotId: 's1', gp: 15 }, { slotId: 's2', gp: 15 }]).error, 'The stash has only 20 gp.');
+  assert.equal(checkAllocations(stash, [{ slotId: 's1', sp: 1 }]).error, 'The stash has only 0 sp.');
+  assert.equal(checkAllocations(stash, [{ slotId: 's1' }]).error, 'Hand out some coin first.');
+  assert.deepEqual(checkAllocations(stash, [{ slotId: 's1', gp: 5 }]).left, { gp: 15 });
+});
+
+test('C24 v1.7 run store: currency.changed sets the purse and the stash coin; loot.granted the stash', () => {
+  const rs = createRunStore();
+  rs.apply(snap({ run: { id: 'r1', status: 'between', currentNodeId: 'n1', seq: 1, stash: { currency: { gp: 20 } } }, nodes: [], edges: [], characters: [{ slotId: 's1', seat: 1, level: 3, xp: 0, lifeStatus: 'active' }], items: [], levelUps: [] }));
+  assert.equal(rs.getState().synced, true);
+  assert.equal(rs.apply(ev(2, 'currency.changed', { slotId: 's1', delta: { gp: 12 }, reason: 'stash.split', before: { currency: { gp: 3 }, stash: { gp: 20 } }, after: { currency: { gp: 15 }, stash: { gp: 8 } } })), 'applied');
+  assert.deepEqual(rs.getState().characters[0].state, { currency: { gp: 15 } }, 'the purse');
+  assert.deepEqual(rs.getState().stash, { currency: { gp: 8 } });
+  rs.apply(ev(3, 'loot.granted', { items: [], currency: { sp: 5 }, before: { stash: { currency: { gp: 8 } } }, after: { stash: { currency: { gp: 8, sp: 5 } } } }));
+  assert.deepEqual(rs.getState().stash, { currency: { gp: 8, sp: 5 } });
+  rs.apply(ev(4, 'currency.changed', { slotId: 'nobody', delta: { gp: 1 }, reason: 'x', before: {}, after: { currency: { gp: 1 } } }));
+  assert.deepEqual(rs.getState().characters[0].state.currency, { gp: 15 }, 'an unknown seat changes nothing');
 });
 
 // ------------------------------------------------------------ real server
@@ -221,6 +252,73 @@ test('C24 hub on the real server: stash, equip preview = next encounter AC, shor
     assert.equal(pc.ac, acAfter, 'equip preview AC === entityFromSheet AC in the next encounter');
     await until(() => t.sessions.player.store.getState().room?.status === 'setup', 'the room in setup');
 
+    P.un();
+    D.un();
+    assert.equal(P.dom.activeListeners(), 0);
+    assert.equal(D.dom.activeListeners(), 0);
+  } finally {
+    await t.close();
+  }
+});
+
+const COIN_NODES = [
+  { id: 'n-purse', kind: 'loot', title: 'Goblin purse', start: true, payload: { items: [], currency: { gp: 30, sp: 5 }, assign: 'free' }, next: [{ to: 'n-chest' }] },
+  { id: 'n-chest', kind: 'loot', title: 'The chief\'s chest', payload: { items: [], currency: { gp: 20 }, assign: 'dm' }, next: [] }
+];
+
+test('C24 v1.7 hub on the real server: a player takes coin on a free loot node; the DM splits the stash', async () => {
+  const t = await bootRunTable(ROOT, { nodes: COIN_NODES });
+  try {
+    const pr = () => t.sessions.player.runStore.getState();
+    const dr = () => t.sessions.dm.runStore.getState();
+    const cleric = pr().characters.find(c => c.seat === 1);
+    const fighter = pr().characters.find(c => c.seat === 2);
+    const gp = (r, slotId) => r.characters.find(c => c.slotId === slotId).state.currency?.gp ?? 0;
+    const sp = (r, slotId) => r.characters.find(c => c.slotId === slotId).state.currency?.sp ?? 0;
+    const [gp1, sp1, gp2] = [gp(pr(), cleric.slotId), sp(pr(), cleric.slotId), gp(pr(), fighter.slotId)];
+    const P = hub(t, 'player');
+    const D = hub(t, 'dm');
+    const field = (H, name, key) => H.dom.findAll(H.root, n => n.dataset?.field === name && n.dataset.key === key)[0];
+    const setField = (H, name, key, v) => { const el = field(H, name, key); assert.ok(el, `${name} ${key}`); el.value = String(v); H.dom.fire(el, 'change'); };
+
+    // Free loot node: the player takes 10 gp 5 sp for the cleric; no split control for players.
+    await until(() => field(P, 'take', `${cleric.slotId}:gp`), 'the take inputs');
+    assert.equal(P.dom.byAction(P.root, 'stash-split').length, 0);
+    assert.equal(P.dom.findAll(P.root, n => n.dataset?.takeSlot === fighter.slotId).length, 0, 'only the seats the player controls');
+    setField(P, 'take', `${cleric.slotId}:gp`, 10);
+    setField(P, 'take', `${cleric.slotId}:sp`, 5);
+    const frames = [];
+    const off = t.sessions.player.ws.on('message', (m) => { if (m.t === 'run.event' && m.p.type === 'currency.changed') frames.push(m.p); });
+    P.act('stash-take', el => el.dataset.slot === cleric.slotId);
+    await until(() => gp(pr(), cleric.slotId) === gp1 + 10 && /takes 10 gp 5 sp/.test(P.status()), 'the taken coin');
+    assert.equal(sp(pr(), cleric.slotId), sp1 + 5);
+    assert.deepEqual(pr().stash.currency.gp, 20);
+    assert.deepEqual(frames.map(f => [f.payload.slotId, f.payload.reason, f.payload.delta]), [[cleric.slotId, 'stash.take', { gp: 10, sp: 5 }]]);
+    off?.();
+
+    // The DM's split: pre-filled with the even split of what is left (20 gp → 10 / 10).
+    await until(() => field(D, 'split', `${fighter.slotId}:gp`)?.value === '10', 'the even split pre-filled');
+    assert.equal(field(D, 'split', `${cleric.slotId}:gp`).value, '10');
+    assert.match(D.dom.findAll(D.root, n => n.dataset?.preview === 'stash-split')[0].textContent, /the stash is emptied/);
+    // Over-allocating is caught before sending.
+    setField(D, 'split', `${cleric.slotId}:gp`, 15);
+    assert.match(D.dom.findAll(D.root, n => n.dataset?.preview === 'stash-split')[0].textContent, /The stash has only 20 gp/);
+    assert.equal(D.dom.byAction(D.root, 'stash-split')[0].disabled, true);
+    setField(D, 'split', `${cleric.slotId}:gp`, 12);
+    setField(D, 'split', `${fighter.slotId}:gp`, 6);
+    assert.match(D.dom.findAll(D.root, n => n.dataset?.preview === 'stash-split')[0].textContent, /2 gp stays in the stash/);
+    D.act('stash-split');
+    await until(() => gp(dr(), fighter.slotId) === gp2 + 6 && gp(pr(), cleric.slotId) === gp1 + 22, 'the split purses (both clients)');
+    assert.deepEqual(dr().stash.currency.gp, 2);
+    assert.ok(dr().log.some(e => e.type === 'currency.changed' && e.payload.reason === 'stash.split' && e.payload.slotId === fighter.slotId), 'the split in the DM\'s run log');
+    // After the split the inputs reset to the new even split (2 gp → 1 / 1).
+    await until(() => field(D, 'split', `${fighter.slotId}:gp`)?.value === '1', 'the new even split');
+
+    // A DM loot node: players see no take control.
+    D.act('run-advance', el => el.dataset.to === 'n-chest');
+    await until(() => pr().currentNodeId === 'n-chest' && pr().stash.currency.gp === 22, 'the chest');
+    assert.equal(P.dom.byAction(P.root, 'stash-take').length, 0);
+    assert.match(P.text(), /The DM splits the coin/);
     P.un();
     D.un();
     assert.equal(P.dom.activeListeners(), 0);

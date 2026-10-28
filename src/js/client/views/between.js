@@ -9,7 +9,11 @@
  *              shop (views/shop.js), a story (views/story.js)
  *   level-ups  views/level-up.js (offers for my seats; the DM's confirms)
  *   stash      the party stash: claim (`loot.claim`), the DM's assign
- *              (`dm.loot.assign`), the stash coin and an even split
+ *              (`dm.loot.assign`), and its coin — the DM splits it into
+ *              purses (`dm.stash.split`, an even split pre-filled and
+ *              editable), and on a loot node shared freely (`assign:
+ *              'free'`) each seat's controller takes coin (`stash.take`);
+ *              every move is a `currency.changed` the run store folds in
  *   party      per seat I act for: HP, hit dice, purse, the equipped AC
  *              and attack, and its items — equip / unequip / attune
  *              (`item.equip`), drink or feed a potion (`item.use`), give
@@ -129,18 +133,79 @@ export function restPreview(sheet, state, type, { spend = {}, lifeStatus, dawnIs
   }
 }
 
+/** Coin denominations, largest first (the purse order). */
+export const COINS = Object.freeze(['pp', 'gp', 'ep', 'sp', 'cp']);
+
+const living = (characters) => (characters || []).filter(c => c.lifeStatus !== 'dead').slice().sort((a, b) => a.seat - b.seat);
+const coinOf = (purse, k) => Math.max(0, Math.trunc(Number(purse?.[k]) || 0));
+
+/** The denominations the stash holds now. */
+export function stashCoins(stash) {
+  return COINS.filter(k => coinOf(stash?.currency, k) > 0);
+}
+
 /**
- * The stash coin split evenly across the living seats (a preview only:
- * no intent moves stash coin into purses; the stash pays at a shop when a
- * buyer's purse runs short).
+ * The stash coin's total and what an even share is worth across the
+ * living seats (the headline of the stash card).
  * @param {object} stash
  * @param {object[]} characters
  * @returns {{totalCp: number, ways: number, eachCp: number}}
  */
 export function stashSplit(stash, characters) {
   const totalCp = purseCp(stash?.currency);
-  const ways = (characters || []).filter(c => c.lifeStatus !== 'dead').length;
+  const ways = living(characters).length;
   return { totalCp, ways, eachCp: ways ? Math.floor(totalCp / ways) : 0 };
+}
+
+/**
+ * The default `dm.stash.split`: each denomination divided evenly among
+ * the living seats (by seat order); a remainder that does not divide
+ * stays in the stash — coins are never changed into smaller ones.
+ * @param {object} stash
+ * @param {object[]} characters
+ * @returns {{allocations: {slotId: string, cp?: number, sp?: number, ep?: number, gp?: number, pp?: number}[], left: object}}
+ */
+export function evenAllocations(stash, characters) {
+  const seats = living(characters);
+  const allocations = seats.map(c => ({ slotId: c.slotId }));
+  const left = {};
+  for (const k of COINS) {
+    const n = coinOf(stash?.currency, k);
+    if (!n) continue;
+    const each = seats.length ? Math.floor(n / seats.length) : 0;
+    if (each) for (const a of allocations) a[k] = each;
+    if (n - each * seats.length) left[k] = n - each * seats.length;
+  }
+  return { allocations, left };
+}
+
+/**
+ * Check allocations against the stash, coin by coin, as the server does
+ * (items.js addCurrency: no change is made). Seats with no coin are dropped.
+ * @param {object} stash
+ * @param {{slotId: string}[]} allocations — coin fields may be strings (form drafts)
+ * @returns {{ok: boolean, allocations: object[], left: object, error?: string}}
+ */
+export function checkAllocations(stash, allocations) {
+  const clean = [];
+  const used = {};
+  for (const a of allocations || []) {
+    const o = { slotId: a.slotId };
+    for (const k of COINS) {
+      const n = Math.trunc(Number(a[k]) || 0);
+      if (n < 0) return { ok: false, allocations: [], left: {}, error: 'Coin amounts cannot be negative.' };
+      if (n > 0) { o[k] = n; used[k] = (used[k] || 0) + n; }
+    }
+    if (Object.keys(o).length > 1) clean.push(o);
+  }
+  const left = {};
+  for (const k of COINS) {
+    const rest = coinOf(stash?.currency, k) - (used[k] || 0);
+    if (rest < 0) return { ok: false, allocations: clean, left: {}, error: `The stash has only ${coinOf(stash?.currency, k)} ${k}.` };
+    if (rest) left[k] = rest;
+  }
+  if (!clean.length) return { ok: false, allocations: clean, left, error: 'Hand out some coin first.' };
+  return { ok: true, allocations: clean, left };
 }
 
 /**
@@ -183,6 +248,13 @@ export function mount(root, ctx) {
   const run = () => ctx.runStore.getState();
   const dv = (field, key, fallback) => (draft.has(`${field}|${key}`) ? draft.get(`${field}|${key}`) : fallback);
   const num = (v, d = 0) => (Number.isFinite(Number(v)) ? Math.trunc(Number(v)) : d);
+  const dropDrafts = (prefix) => { for (const k of [...draft.keys()]) if (k.startsWith(prefix)) draft.delete(k); };
+  /** The DM's split as drafted (the even split where untouched). */
+  const splitDraft = (r) => evenAllocations(r.stash, r.characters).allocations.map((a) => {
+    const o = { slotId: a.slotId };
+    for (const k of stashCoins(r.stash)) o[k] = num(dv('split', `${a.slotId}:${k}`, a[k] ?? 0));
+    return o;
+  });
 
   // Inputs keep their value in `draft` (re-renders read it back).
   const keep = (el) => { if (el.dataset.field) draft.set(`${el.dataset.field}|${el.dataset.key || ''}`, el.type === 'checkbox' ? el.checked : el.value); };
@@ -219,6 +291,25 @@ export function mount(root, ctx) {
       const to = String(dv('assign-to', itemId, el.dataset.default || ''));
       const qty = Math.max(1, num(dv('assign-qty', itemId, 1), 1));
       send('dm.loot.assign', { itemId, toSlotId: to || null, qty }, 'Assigned.');
+    },
+    'stash-split': () => {
+      if (!dm()) return;
+      const chk = checkAllocations(run().stash, splitDraft(run()));
+      if (!chk.ok) { say(chk.error, 'error'); return; }
+      send('dm.stash.split', { allocations: chk.allocations },
+        `Split: ${chk.allocations.map(a => `${nameOfSlot(run(), a.slotId)} +${coinsText(a)}`).join(', ')}.`)
+        .then((ack) => { if (ack) { dropDrafts('split|'); render(); } });
+    },
+    'stash-take': (el) => {
+      const slotId = el.dataset.slot;
+      const amount = {};
+      for (const k of stashCoins(run().stash)) {
+        const n = num(dv('take', `${slotId}:${k}`, 0));
+        if (n > 0) amount[k] = n;
+      }
+      if (!Object.keys(amount).length) { say('Choose some coin to take.', 'error'); return; }
+      send('stash.take', { slotId, amount }, `${nameOfSlot(run(), slotId)} takes ${coinsText(amount)}.`)
+        .then((ack) => { if (ack) { dropDrafts(`take|${slotId}:`); render(); } });
     },
     'item-equip': (el) => {
       const p = { slotId: el.dataset.slot, itemId: el.dataset.item, equipped: el.dataset.equip === '1' };
@@ -315,14 +406,49 @@ export function mount(root, ctx) {
 
   // ------------------------------------------------------------ stash
 
+  /** Number inputs for each coin the stash holds (`field|slotId:coin`). */
+  function coinInputs(r, field, slotId, defaults = {}) {
+    return stashCoins(r.stash).map(k => h(doc, 'label', { class: 'play-field' }, [
+      `${k} `,
+      h(doc, 'input', { type: 'number', min: 0, max: coinOf(r.stash.currency, k), value: String(dv(field, `${slotId}:${k}`, defaults[k] ?? 0)),
+        dataset: { field, key: `${slotId}:${k}` }, attrs: { 'aria-label': `${nameOfSlot(r, slotId)}: ${k}` } })
+    ]));
+  }
+
   function renderStash(r, mine) {
     const stash = itemsOf(r, null);
     const split = stashSplit(r.stash, r.characters);
     const node = currentNode(r);
     const dmOnly = node?.kind === 'loot' && node.payload?.assign === 'dm';
+    const free = node?.kind === 'loot' && node.payload?.assign === 'free' && r.status === 'between';
     const kids = [h(doc, 'h3', { text: 'Party stash' })];
     kids.push(h(doc, 'p', { dataset: { field: 'stash-coin' }, text: `Coin: ${coinsText(r.stash?.currency)}${split.totalCp && split.ways > 1 ? ` — an even split is ${cpText(split.eachCp)} each for ${split.ways}` : ''}` }));
-    if (split.totalCp) kids.push(h(doc, 'p', { class: 'hint-line', text: 'The stash pays at a shop when the buyer\'s purse runs short.' }));
+    if (split.totalCp) {
+      kids.push(h(doc, 'p', { class: 'hint-line', text: 'The stash pays at a shop when the buyer\'s purse runs short.' }));
+      if (dm()) {
+        const even = new Map(evenAllocations(r.stash, r.characters).allocations.map(a => [a.slotId, a]));
+        kids.push(h(doc, 'h4', { text: 'Split the coin' }));
+        for (const c of living(r.characters)) {
+          kids.push(h(doc, 'div', { class: 'play-row', dataset: { between: '1', splitSlot: c.slotId } }, [
+            h(doc, 'span', { class: 'play-item-name', text: `${c.name || `Seat ${c.seat}`} ` }), ...coinInputs(r, 'split', c.slotId, even.get(c.slotId))
+          ]));
+        }
+        const chk = checkAllocations(r.stash, splitDraft(r));
+        kids.push(h(doc, 'p', { class: `play-preview${chk.ok ? '' : ' error'}`, dataset: { preview: 'stash-split' }, text: chk.ok
+          ? `${chk.allocations.map(a => `${nameOfSlot(r, a.slotId)} +${coinsText(a)}`).join(', ')}; ${Object.keys(chk.left).length ? `${coinsText(chk.left)} stays in the stash` : 'the stash is emptied'}.`
+          : chk.error }));
+        kids.push(h(doc, 'button', { type: 'button', class: 'play-btn small', dataset: { action: 'stash-split' }, disabled: !chk.ok, text: 'Split the coin' }));
+      } else if (free && mine.length) {
+        for (const c of mine) {
+          kids.push(h(doc, 'div', { class: 'play-row', dataset: { between: '1', takeSlot: c.slotId } }, [
+            h(doc, 'span', { class: 'play-item-name', text: `${c.name || `Seat ${c.seat}`} takes ` }), ...coinInputs(r, 'take', c.slotId),
+            h(doc, 'button', { type: 'button', class: 'play-btn small', dataset: { action: 'stash-take', slot: c.slotId }, text: 'Take coin' })
+          ]));
+        }
+      } else if (!dm()) {
+        kids.push(h(doc, 'p', { class: 'hint-line', text: 'The DM splits the coin.' }));
+      }
+    }
     if (!stash.length) kids.push(h(doc, 'p', { class: 'hint-line', text: 'No items in the stash.' }));
     const seatOpts = r.characters.map(c => ({ value: c.slotId, label: c.name || `Seat ${c.seat}` }));
     for (const it of stash) {

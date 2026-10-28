@@ -23,6 +23,11 @@
  * from `node.entered` (an encounter node is 'in-node', any other kind
  * 'between'), `node.completed` ('between') and `run.updated`.
  *
+ * Coin (v1.7): `currency.changed` (a `dm.stash.split` / `stash.take` move,
+ * one per seat) sets the seat's purse and the stash coin from its `after`
+ * at once, and `loot.granted` sets the stash coin — the purses move live,
+ * before the snapshot that follows.
+ *
  * `run.updated` also carries `completed` and `pendingRest` (the hit dice
  * declared with `rest.spend`, which changes nothing else and sends no
  * snapshot); the snapshot carries settings, stash, the node result, shop
@@ -156,6 +161,18 @@ function patchEach(chars, map, fn) {
   return out;
 }
 
+/** Replace one character's state through `fn(state) → state` (no-op for an unknown seat). */
+function patchState(chars, slotId, fn) {
+  const c = chars.find(x => x.slotId === slotId);
+  return c ? patchCharacter(chars, slotId, { state: fn(isObj(c.state) ? c.state : {}) }) : chars;
+}
+
+/** The slice's stash with its coin from a payload's `{stash}` (a coin map, or a stash object with `currency`). */
+function stashWith(stash, coin) {
+  const currency = isObj(coin?.currency) ? coin.currency : coin;
+  return isObj(currency) ? { ...(isObj(stash) ? stash : {}), currency } : stash;
+}
+
 /**
  * Apply one run event to the slice. Pure; unknown effects only log.
  * @param {RunState} s
@@ -206,6 +223,15 @@ export function reduceRunEvent(s, ev) {
       delete offers[p.levelUpId];
       return { ...next, levelUps, offers };
     }
+    case 'currency.changed':
+      // v1.7: after {currency, stash} — the seat's purse and (stash moves) the stash coin.
+      return {
+        ...next,
+        characters: isObj(p.after?.currency) ? patchState(next.characters, p.slotId, (st) => ({ ...st, currency: p.after.currency })) : next.characters,
+        stash: p.after && 'stash' in p.after ? stashWith(next.stash, p.after.stash) : next.stash
+      };
+    case 'loot.granted':
+      return p.after && 'stash' in p.after ? { ...next, stash: stashWith(next.stash, p.after.stash) } : next;
     case 'character.died':
       return { ...next, characters: patchCharacter(next.characters, p.slotId, { lifeStatus: 'dead' }) };
     case 'character.revived':

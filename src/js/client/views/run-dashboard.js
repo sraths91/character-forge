@@ -113,6 +113,14 @@ export function runEventText(ev, run) {
     case 'loot.granted': return `Loot: ${(p.items || []).map(i => `${i.name} ×${i.qty}`).join(', ')}${p.currency ? ` + ${coinsText(p.currency)}` : ''}.`;
     case 'item.moved': return p.equip ? `${who(p.toSlotId)} changed gear (${p.name}).` : `${p.name} ×${p.qty}: ${p.fromSlotId ? who(p.fromSlotId) : 'stash'} → ${p.toSlotId ? who(p.toSlotId) : 'stash'}.`;
     case 'item.used': return `${who(p.slotId)} used an item${p.healed ? ` (+${p.healed} HP)` : ''}.`;
+    case 'currency.changed': {
+      const d = Object.entries(p.delta || {});
+      const gained = Object.fromEntries(d.filter(([, n]) => n > 0));
+      const lost = Object.fromEntries(d.filter(([, n]) => n < 0).map(([k, n]) => [k, -n]));
+      const how = p.reason === 'stash.split' ? 'stash split' : p.reason === 'stash.take' ? 'taken from the stash' : (p.reason || 'coin');
+      const amounts = [Object.keys(gained).length ? `+${coinsText(gained)}` : null, Object.keys(lost).length ? `−${coinsText(lost)}` : null].filter(Boolean);
+      return `${who(p.slotId)} ${amounts.join(' ') || '±0'} (${how}).`;
+    }
     case 'shop.bought': return `${who(p.slotId)} bought ${p.name} ×${p.qty}.`;
     case 'shop.sold': return `${who(p.slotId)} sold ${p.name} ×${p.qty}.`;
     case 'story.chosen': return `Story choice: ${p.choiceId}.`;
