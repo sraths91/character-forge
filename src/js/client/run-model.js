@@ -168,6 +168,9 @@ export function refusalText(err) {
   if (code === 'ddb-level-ahead') {
     return `D&D Beyond is at level ${d.ddbLevel ?? '?'}, ahead of the level the game has granted (${d.grantedLevel ?? '?'}). Level up in the game first.`;
   }
+  if (code === 'nothing-to-reconcile' && Number(d.kept) > 0) {
+    return `${REFUSALS[code].replace(/\.$/, '')} (${d.kept} game-granted ${Number(d.kept) === 1 ? 'entry' : 'entries'} kept).`;
+  }
   if (code === 'E_INVALID_INTENT' && err.message) return err.message;
   return REFUSALS[code] || err.message || String(code || 'refused');
 }

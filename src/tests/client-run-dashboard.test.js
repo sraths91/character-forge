@@ -290,6 +290,53 @@ test('C27 v1.7: a fresh DM page rebuilds the run log and the snapshot list from 
   }
 });
 
+const FIGHT_NODES = [
+  { id: 'n-fight', kind: 'encounter', title: 'Ambush', start: true, payload: { setup: GOBLIN_SETUP }, next: [{ to: 'n-camp' }] },
+  { id: 'n-camp', kind: 'rest', title: 'Camp', payload: { type: 'short' }, next: [] }
+];
+
+test('C27 v1.7: xpAward confirm — the held award shows on the dashboard; "Confirm XP" is dm.xp.adjust delta 0', async () => {
+  const t = await bootRunTable(ROOT, { nodes: FIGHT_NODES, settings: { xpMode: 'xp', levelUpMode: 'choose', xpAward: 'confirm' } });
+  const offs = [];
+  try {
+    // Both clients finish every cinema; the player hands her turns to the AI.
+    for (const who of ['dm', 'player']) {
+      const s = t.sessions[who];
+      offs.push(s.ws.on('message', (m) => {
+        if (m.t === 'exchange') s.send({ t: 'cinema.done', p: { exchangeId: m.p.payload.exchangeId } }).catch(() => {});
+        if (who === 'player' && m.t === 'turn.started') s.send({ t: 'turn.delegate', p: { turnId: m.p.turnId } }).catch(() => {});
+      }));
+    }
+    const dom = createFakeDom();
+    const root = dom.root();
+    const sent = [];
+    const base = t.ctx('dm');
+    const un = mountDashboard(root, { ...base, send: (i) => { sent.push(i); return base.send(i); } });
+    const dr = () => t.sessions.dm.runStore.getState();
+    const xp0 = Object.fromEntries(dr().characters.map(c => [c.slotId, c.xp]));
+    await t.sessions.dm.send({ t: 'dm.node.begin', p: {} });
+    await t.sessions.dm.send({ t: 'dm.encounter.start', p: {} });
+    await until(() => dr().pendingXp, 'the held award', 20000);
+    const held = dr().pendingXp;
+    assert.ok(held.total > 0);
+    assert.deepEqual((await t.serverSnapshot('dm')).pendingXp, held, 'the client holds what the server holds');
+    assert.deepEqual(Object.fromEntries(dr().characters.map(c => [c.slotId, c.xp])), xp0, 'no XP awarded yet');
+    await until(() => dom.findAll(root, n => n.dataset?.field === 'dash-pending-xp').length === 1, 'the held-XP row');
+    assert.match(root.textContent, new RegExp(`XP held for your confirmation: ${held.total}`));
+    dom.byAction(root, 'dash-xp-confirm')[0].click();
+    await until(() => dr().pendingXp === null && dom.findAll(root, n => n.dataset?.field === 'dash-pending-xp').length === 0, 'confirmed');
+    assert.deepEqual(sent.map(i => [i.t, i.p.delta]), [['dm.xp.adjust', 0]]);
+    assert.deepEqual(validateClientMessage({ v: PROTOCOL_VERSION, cid: '01J00000000000000000000000', ...sent[0] }).errors, []);
+    for (const c of dr().characters) assert.equal(c.xp, xp0[c.slotId] + (held.perCharacter[c.slotId] || 0), `${c.slotId} got the held XP`);
+    await until(() => /XP \(confirmed by the DM\)/.test(root.textContent), 'the confirmed award in the log');
+    un();
+    assert.equal(dom.activeListeners(), 0);
+  } finally {
+    for (const off of offs) off();
+    await t.close();
+  }
+});
+
 test('C27: hidden for players and outside a run', async () => {
   const dom = createFakeDom();
   const root = dom.root();

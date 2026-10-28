@@ -8,8 +8,12 @@
  *              conditions and purse. State from the run snapshot, maxima
  *              from the seat's run sheet (B27 route, DM gets it whole).
  *   XP         `dm.xp.adjust {slotId, delta, reason}` (crossing a threshold
- *              queues a level-up)
- *   level-ups  the pending rows → `dm.levelup.confirm`
+ *              queues a level-up); v1.7: under `xpAward: 'confirm'` an
+ *              encounter's award is held (`pendingXp` on the snapshot /
+ *              run.updated) and "Confirm XP" sends `dm.xp.adjust` with
+ *              delta 0, which only confirms it
+ *   level-ups  the pending rows → `dm.levelup.confirm` (an auto-mode level
+ *              queued behind another applies on its own: no button)
  *   seats      `dm.character.revive` (DM / Revivify / Raise Dead with a
  *              caster), `dm.character.retire`, `dm.seat.fill` (a room
  *              character into a seat, AI or a player, optional level),
@@ -112,9 +116,9 @@ export function runEventText(ev, run) {
     case 'node.entered': return `Entered ${node(p.nodeId)}${ev.override ? ' (override)' : ''}.`;
     case 'node.completed': return `${node(p.nodeId)} done.`;
     case 'encounter.result': return `Encounter: ${p.outcome} in ${p.rounds} rounds.`;
-    case 'xp.awarded': return `XP: ${p.total} (${Object.entries(p.perCharacter || {}).map(([s, n]) => `${who(s)} +${n}`).join(', ')}).`;
+    case 'xp.awarded': return `XP${p.confirmed ? ' (confirmed by the DM)' : ''}: ${p.total} (${Object.entries(p.perCharacter || {}).map(([s, n]) => `${who(s)} +${n}`).join(', ')}).`;
     case 'level.queued': return p.mode === 'reconcile' ? `${who(p.slotId)}: D&D Beyond changes queued.` : `${who(p.slotId)} can reach level ${p.toLevel}.`;
-    case 'level.applied': return `${who(p.slotId)} is level ${p.toLevel}.`;
+    case 'level.applied': return `${who(p.slotId)} is level ${p.toLevel}${ev.actorKind === 'system' ? ' (applied automatically: no choices)' : ''}.`;
     case 'level.reverted': return `${who(p.slotId)} reverted to level ${p.toLevel}.`;
     case 'rest.taken': return `${p.type === 'long' ? 'Long' : 'Short'} rest: ${(p.slotIds || []).map(who).join(', ') || 'nobody'}.`;
     case 'loot.granted': return `Loot: ${(p.items || []).map(i => `${i.name} ×${i.qty}`).join(', ')}${p.currency ? ` + ${coinsText(p.currency)}` : ''}.`;
@@ -219,6 +223,12 @@ export function mount(root, ctx) {
       const reason = String(dv(`xp-reason|${slotId}`, '')).trim();
       send('dm.xp.adjust', { slotId, delta, ...(reason ? { reason: reason.slice(0, 200) } : {}) }, (ack) => `${nameOfSlot(run(), slotId)} has ${ack?.xp} XP.`)
         .then((ack) => { if (ack) { draft.delete(`xp|${slotId}`); draft.delete(`xp-reason|${slotId}`); render(); } });
+    },
+    'dash-xp-confirm': () => {
+      const held = run().pendingXp;
+      const slotId = Object.keys(held?.perCharacter || {})[0] || run().characters[0]?.slotId;
+      if (!held || !slotId) return;
+      send('dm.xp.adjust', { slotId, delta: 0 }, `XP confirmed: ${held.total} (${Object.entries(held.perCharacter || {}).map(([s, n]) => `${nameOfSlot(run(), s)} +${n}`).join(', ')}).`);
     },
     'dash-lu-confirm': (el) => send('dm.levelup.confirm', { levelUpId: el.dataset.id }, (ack) => `${nameOfSlot(run(), el.dataset.slot)} is level ${ack?.level}.`),
     'dash-revive': (el) => {
@@ -360,11 +370,22 @@ export function mount(root, ctx) {
 
   function renderLevelUps(r) {
     const pending = (r.levelUps || []).filter(l => l.status === 'pending_player' || l.status === 'pending_dm');
-    replace(doc, levelEl, [h(doc, 'h3', { text: `Pending level-ups (${pending.length})` }),
-      ...pending.map(l => h(doc, 'div', { class: 'play-row', dataset: { levelUp: l.id } }, [
-        h(doc, 'span', { text: `${nameOfSlot(r, l.slotId)}: ${l.mode === 'reconcile' ? 'D&D Beyond changes' : `level ${l.toLevel}`} — ${l.status === 'pending_player' ? 'player choosing' : 'ready'}` }),
-        h(doc, 'button', { type: 'button', class: 'play-btn small', dataset: { action: 'dash-lu-confirm', id: l.id, slot: l.slotId }, text: l.status === 'pending_player' ? 'Confirm (override)' : 'Confirm' })
-      ]))]);
+    const kids = [h(doc, 'h3', { text: `Pending level-ups (${pending.length})` })];
+    const held = r.pendingXp;
+    if (held) {
+      kids.push(h(doc, 'div', { class: 'play-row', dataset: { field: 'dash-pending-xp' } }, [
+        h(doc, 'span', { text: `XP held for your confirmation: ${held.total} (${Object.entries(held.perCharacter || {}).map(([s, n]) => `${nameOfSlot(r, s)} +${n}`).join(', ')})` }),
+        h(doc, 'button', { type: 'button', class: 'play-btn small primary', dataset: { action: 'dash-xp-confirm' }, text: 'Confirm XP' })
+      ]));
+    }
+    for (const l of pending) {
+      const behind = l.mode === 'auto' && pending.some(x => x.slotId === l.slotId && x.id !== l.id && x.mode !== 'reconcile' && x.fromLevel < l.fromLevel);
+      kids.push(h(doc, 'div', { class: 'play-row', dataset: { levelUp: l.id } }, [
+        h(doc, 'span', { text: `${nameOfSlot(r, l.slotId)}: ${l.mode === 'reconcile' ? 'D&D Beyond changes' : `level ${l.toLevel}`} — ${behind ? 'applies on its own after the level before it' : l.status === 'pending_player' ? 'player choosing' : 'ready'}` }),
+        behind ? null : h(doc, 'button', { type: 'button', class: 'play-btn small', dataset: { action: 'dash-lu-confirm', id: l.id, slot: l.slotId }, text: l.status === 'pending_player' ? 'Confirm (override)' : 'Confirm' })
+      ]));
+    }
+    replace(doc, levelEl, kids);
   }
 
   function renderSeats(r) {

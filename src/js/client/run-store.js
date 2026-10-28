@@ -83,6 +83,7 @@ const RUN_TYPES = new Set(['run.snapshot', 'run.event', 'run.updated', 'levelup.
  * @property {Record<string, number>} bought — shop purchases this visit (refKey → qty)
  * @property {Record<string, Record<string, number>>} pendingRest — declared hit dice per slotId
  * @property {object[]} reclaims       — pending seat.reclaim requests (DM only)
+ * @property {object|null} pendingXp   — v1.7: an encounter's XP held for the DM (xpAward 'confirm'): {total, perCharacter, nodeId, encounterIds}
  * @property {string|null} runHash     — v1.7: the server's hash of the stored run log at `hashSeq`
  * @property {string|null} wireHash    — v1.7: the same over the wire (prose-stripped) log
  * @property {number} hashSeq          — the run seq the hashes describe
@@ -94,7 +95,7 @@ export function initialRunState() {
     synced: false, runId: null, campaignId: null, status: null, outcome: null, currentNodeId: null, seq: 0,
     nodes: [], visitedIds: [], edges: [], characters: [], items: [], levelUps: [], offers: {}, log: [],
     settings: {}, stash: { currency: {} }, completed: false, result: {}, bought: {}, pendingRest: {}, reclaims: [],
-    runHash: null, wireHash: null, hashSeq: 0
+    pendingXp: null, runHash: null, wireHash: null, hashSeq: 0
   };
 }
 
@@ -172,6 +173,7 @@ function fromSnapshot(base, p, dm) {
     bought: isObj(p.run.bought) ? p.run.bought : {},
     pendingRest: isObj(p.pendingRest) ? p.pendingRest : {},
     reclaims: Array.isArray(p.reclaims) ? p.reclaims : [],
+    pendingXp: isObj(p.pendingXp) ? p.pendingXp : null,
     ...(sameRun ? {} : { runHash: null, wireHash: null, hashSeq: 0 }),
     ...hashesOf(p, p.run.seq)
   };
@@ -246,11 +248,15 @@ export function reduceRunEvent(s, ev) {
     case 'story.chosen':
       return { ...next, result: { ...next.result, choice: p.choiceId } };
     case 'xp.awarded':
-      return { ...next, characters: patchEach(next.characters, p.after, (xp) => (Number.isInteger(xp) ? { xp } : null)) };
+      // A confirmed award (xpAward 'confirm') is no longer held.
+      return {
+        ...next, ...(p.confirmed === true ? { pendingXp: null } : {}),
+        characters: patchEach(next.characters, p.after, (xp) => (Number.isInteger(xp) ? { xp } : null))
+      };
     case 'level.queued':
       return next.levelUps.some(l => l.id === p.levelUpId)
         ? next
-        : { ...next, levelUps: [...next.levelUps, { id: p.levelUpId, slotId: p.slotId, fromLevel: p.fromLevel, toLevel: p.toLevel, status: 'pending_player' }] };
+        : { ...next, levelUps: [...next.levelUps, { id: p.levelUpId, slotId: p.slotId, fromLevel: p.fromLevel, toLevel: p.toLevel, ...(p.mode ? { mode: p.mode } : {}), status: p.mode === 'auto' ? 'pending_dm' : 'pending_player' }] };
     case 'level.applied':
     case 'level.reverted': {
       const applied = ev.type === 'level.applied';
@@ -359,6 +365,7 @@ export function createRunStore({ isDm = () => false } = {}) {
       ...(p.currentNodeId !== state.currentNodeId ? { edges: [] } : {}),
       ...(typeof p.completed === 'boolean' ? { completed: p.completed } : {}),
       ...(isObj(p.pendingRest) ? { pendingRest: p.pendingRest } : {}),
+      ...('pendingXp' in p ? { pendingXp: isObj(p.pendingXp) ? p.pendingXp : null } : {}),
       ...hashesOf(p, p.runSeq)
     };
     stats.applied++;

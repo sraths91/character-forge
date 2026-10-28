@@ -9,7 +9,12 @@
  *     player's choice (choose mode: the level waits for the DM, players get
  *     no confirm), the DM's confirm (slots {1:4, 2:3, 3:2}, HP +7), a
  *     D&D Beyond reconcile shown with describeDiff and confirmed, and both
- *     reverts back to level 4.
+ *     reverts back to level 4; the reconcile's ack shows how many game
+ *     grants were kept (v1.7 `kept`);
+ *   - v1.7 levelUpMode 'auto': the fighter's level 6 (an ASI) waits for
+ *     the DM, who picks it on the card; level 7 (no choices) shows no
+ *     confirm and, once 6 is confirmed, applies on its own — the hub shows
+ *     its applied summary instead.
  */
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -17,7 +22,8 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { mount as mountLevelUp, autoSummary, checkAsi, parseSpellList, spellAllowanceText, revertable } from '../js/client/views/level-up.js';
+import { mount as mountLevelUp, autoSummary, checkAsi, parseSpellList, spellAllowanceText, revertable, appliedSummary, offerHasChoices, keptText } from '../js/client/views/level-up.js';
+import { refusalText } from '../js/client/run-model.js';
 import { planLevelUp } from '../js/campaign/level-up.js';
 import { initialRunState } from '../js/shared/run-state.js';
 import { parseCharacter } from '../../api/lib/ddb-parser.js';
@@ -56,6 +62,18 @@ test('C25 pure: checkAsi, parseSpellList, revertable', () => {
   const r = revertable([{ id: 'lu-1', slotId: 's', status: 'applied' }, { id: 'lu-2', slotId: 's', status: 'applied' }, { id: 'lu-3', slotId: 's', status: 'reverted' }, { id: 'lu-4', slotId: 't', status: 'pending_dm' }]);
   assert.deepEqual([...r.keys()], ['s']);
   assert.equal(r.get('s').id, 'lu-2');
+});
+
+test('C25 v1.7 pure: appliedSummary, offerHasChoices, keptText, the kept refusal', () => {
+  assert.deepEqual(appliedSummary({ v: 1, fromLevel: 6, toLevel: 7, className: 'Fighter', classLevelTo: 7, hp: { mode: 'fixed', die: 10, con: 3, gain: 9 }, asi: null, spells: [], features: ['Martial Archetype Feature'] }),
+    ['HP +9 (d10 average +3 CON)', 'Fighter 7', 'New feature: Martial Archetype Feature']);
+  assert.deepEqual(appliedSummary({ hp: { mode: 'roll', die: 8, roll: 5, con: 1, gain: 6 }, asi: { WIS: 2 }, spells: ['Command'] }), ['HP +6 (rolled 5 on d8 +1 CON)', 'Ability scores: WIS +2', 'New spells: Command']);
+  assert.deepEqual(appliedSummary(null), []);
+  assert.equal(offerHasChoices({ choices: { className: null, asi: { points: 2 }, spells: null } }), true);
+  assert.equal(offerHasChoices({ choices: { className: null, asi: null, spells: null } }), false);
+  assert.equal(offerHasChoices({}), false);
+  assert.deepEqual([keptText(1), keptText(3), keptText(0)], ['1 game-granted entry kept', '3 game-granted entries kept', '']);
+  assert.equal(refusalText({ code: 'nothing-to-reconcile', frame: { details: { kept: 2 } } }), 'D&D Beyond has no structural change to bring in (2 game-granted entries kept).');
 });
 
 function view(t, who) {
@@ -138,6 +156,7 @@ test('C25 GATE: a cleric 4 → 5 through the UI against the real controller (cho
     P.dom.fire(paste2, 'input');
     P.act('lu-reconcile');
     await until(() => pr().levelUps.some(l => l.mode === 'reconcile' && l.status === 'pending_dm'), 'the reconcile queued');
+    await until(() => /wait for the DM \(1 game-granted entry kept\)/.test(P.status()), 'the kept game grant (Command) in the ack');
     await until(() => /\+ Feat: Alert/.test(P.text()) && /\+ Feat: Alert/.test(D.text()), 'describeDiff proposals on both screens');
     await flush();
     D.act('lu-confirm');
@@ -157,6 +176,51 @@ test('C25 GATE: a cleric 4 → 5 through the UI against the real controller (cho
     P.un();
     D.un();
     assert.equal(P.dom.activeListeners() + D.dom.activeListeners(), 0);
+  } finally {
+    await t.close();
+  }
+});
+
+test('C25 v1.7 GATE: levelUpMode auto — the DM picks level 6\'s ASI on the card; level 7 has no confirm and applies on its own', async () => {
+  const t = await bootRunTable(ROOT, { nodes: NODES, settings: { xpMode: 'xp', levelUpMode: 'auto', hpOnLevel: 'average' } });
+  try {
+    const dr = () => t.sessions.dm.runStore.getState();
+    const fighter = dr().characters.find(c => c.seat === 2);
+    assert.equal(fighter.level, 5);
+    const D = view(t, 'dm');
+    const sent = [];
+    const send0 = t.sessions.dm.send;
+    t.sessions.dm.send = (i) => { sent.push(i); return send0(i); };
+    await t.sessions.dm.send({ t: 'dm.xp.adjust', p: { slotId: fighter.slotId, delta: 23000 - fighter.xp } });
+    await until(() => dr().levelUps.filter(l => l.slotId === fighter.slotId).length === 2, 'levels 6 and 7 queued');
+    const [lu6, lu7] = dr().levelUps.filter(l => l.slotId === fighter.slotId).sort((a, b) => a.fromLevel - b.fromLevel);
+    assert.deepEqual([lu6.status, lu7.status, lu6.mode], ['pending_dm', 'pending_dm', 'auto']);
+    // Level 7 waits behind 6 with no confirm button; level 6 asks the DM for the ASI.
+    await until(() => D.field('lu-auto', lu7.id) && D.field('asi', `${lu6.id}:STR`), 'both cards');
+    assert.match(D.field('lu-auto', lu7.id).textContent, /Waits for level 6/);
+    assert.deepEqual(D.dom.byAction(D.root, 'lu-confirm').map(el => el.dataset.id), [lu6.id], 'only level 6 has a confirm');
+    for (const stat of ['STR', 'CON']) {
+      const sel = D.field('asi', `${lu6.id}:${stat}`);
+      sel.value = '1';
+      D.dom.fire(sel, 'change');
+    }
+    sent.length = 0;
+    D.act('lu-confirm', el => el.dataset.id === lu6.id);
+    await until(() => dr().characters.find(c => c.slotId === fighter.slotId).level === 7, 'level 7 (6 confirmed, 7 on its own)');
+    t.sessions.dm.send = send0;
+    assert.deepEqual(sent, [{ t: 'dm.levelup.confirm', p: { levelUpId: lu6.id, choices: { asi: { STR: 1, CON: 1 } } } }]);
+    const applied = dr().log.filter(e => e.type === 'level.applied').map(e => [e.payload.levelUpId, e.actorKind]);
+    assert.deepEqual(applied, [[lu6.id, 'dm'], [lu7.id, 'system']]);
+    // The hub shows level 7's applied summary, not a confirm.
+    await until(() => D.dom.findAll(D.root, n => n.dataset?.levelApplied === lu7.id).length === 1, 'the applied summary');
+    const card = D.dom.findAll(D.root, n => n.dataset?.levelApplied === lu7.id)[0].textContent;
+    assert.match(card, /level 6 → 7/);
+    assert.match(card, /applied automatically/);
+    assert.match(card, /HP \+\d+ \(d10 average/);
+    assert.match(card, /Fighter 7/);
+    assert.equal(D.has('lu-confirm'), false);
+    D.un();
+    assert.equal(D.dom.activeListeners(), 0);
   } finally {
     await t.close();
   }

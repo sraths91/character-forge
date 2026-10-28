@@ -22,6 +22,14 @@
  *             room (same character row) → `levelup.reconcile`; the offer's
  *             proposals render with `describeDiff`; the DM confirms
  *
+ * Modes (v1.7): under `levelUpMode: 'auto'` a level whose plan has no
+ * choices applies at once (a system `level.applied`): the hub shows that
+ * level's applied summary (from the event's `granted`) instead of a
+ * confirm button, and a queued level that will apply on its own once the
+ * one before it is confirmed says so. A level with choices waits for the
+ * DM, who picks them on the card. A reconcile ack's `kept: n` (game
+ * grants D&D Beyond does not list, kept on the sheet) is shown.
+ *
  * A multiclass choice is re-planned on the client (`planLevelUp` with the
  * run sheet) so the summary shows the picked class's gains before sending.
  *
@@ -112,6 +120,36 @@ export function spellAllowanceText(sp) {
   return parts.length ? `New spells (SRD): up to ${parts.join(' and ')}.` : '';
 }
 
+/** Does a level-up offer ask for any choice (class, ASI, spells)? */
+export function offerHasChoices(offer) {
+  const c = offer?.choices;
+  return !!(c && (c.className || c.asi || c.spells));
+}
+
+/**
+ * The summary lines of an applied level (level.applied's `granted`,
+ * level-up.js applyLevelUp): HP, the class level, ASI, spells, features.
+ * @param {object} granted
+ * @returns {string[]}
+ */
+export function appliedSummary(granted) {
+  if (!granted || typeof granted !== 'object') return [];
+  const out = [];
+  const hp = granted.hp;
+  if (hp && Number.isFinite(hp.gain)) out.push(`HP ${sign(hp.gain)} (${hp.mode === 'roll' ? `rolled ${hp.roll ?? '?'} on d${hp.die ?? '?'}` : `d${hp.die ?? '?'} average`} ${sign(hp.con ?? 0)} CON)`);
+  if (granted.className) out.push(`${granted.className} ${granted.classLevelTo ?? granted.toLevel}`);
+  if (granted.asi && Object.keys(granted.asi).length) out.push(`Ability scores: ${Object.entries(granted.asi).map(([k, n]) => `${k} +${n}`).join(', ')}`);
+  if (granted.spells?.length) out.push(`New spells: ${granted.spells.join(', ')}`);
+  for (const f of granted.features || []) out.push(`New feature: ${f}`);
+  return out;
+}
+
+/** "1 game-granted entry kept" / "n game-granted entries kept" ('' for none). */
+export function keptText(n) {
+  const k = Math.trunc(Number(n) || 0);
+  return k > 0 ? `${k} game-granted ${k === 1 ? 'entry' : 'entries'} kept` : '';
+}
+
 /** The latest applied level-up id per slot (what dm.levelup.revert may take back). */
 export function revertable(levelUps) {
   const best = new Map();
@@ -181,7 +219,7 @@ export function mount(root, ctx) {
       if (!dm()) return;
       const id = el.dataset.id;
       const offer = run().offers[id];
-      const own = offer && offer.status === 'pending_player' ? choicesFor(offer) : null;
+      const own = offer && (offer.status === 'pending_player' || (offer.status === 'pending_dm' && !offer.picked && offerHasChoices(offer))) ? choicesFor(offer) : null;
       const p = { levelUpId: id, ...(own && Object.keys(own).length ? { choices: own } : {}) };
       attempt(() => ctx.send({ t: 'dm.levelup.confirm', p }).then((ack) => say(`${nameOfSlot(run(), el.dataset.slot)} is now level ${ack?.level ?? '?'}.`)), fail);
     },
@@ -211,7 +249,8 @@ export function mount(root, ctx) {
         await ctx.api.importCharacter(roomId, { json });
         const ack = await ctx.send({ t: 'levelup.reconcile', p: { slotId } });
         draft.delete(`paste|${slotId}`);
-        say(`${ack?.proposals ?? 0} change${ack?.proposals === 1 ? '' : 's'} from D&D Beyond wait for the DM.`);
+        const kept = keptText(ack?.kept);
+        say(`${ack?.proposals ?? 0} change${ack?.proposals === 1 ? '' : 's'} from D&D Beyond wait for the DM${kept ? ` (${kept})` : ''}.`);
       }, fail);
     }
   });
@@ -276,17 +315,55 @@ export function mount(root, ctx) {
       const bits = [p.className ? `class ${p.className}` : null, p.asi ? `ASI ${Object.entries(p.asi).map(([k, n]) => `${k} +${n}`).join(', ')}` : null, p.spells?.length ? `spells ${p.spells.join(', ')}` : null].filter(Boolean);
       kids.push(h(doc, 'p', { dataset: { field: 'lu-picked', key: id }, text: `Picked: ${bits.join('; ') || 'nothing to pick'}` }));
     }
+    const mode = offer?.mode ?? row?.mode;
+    const ahead = !reconcile && mode === 'auto' ? queuedBehind(r, row ?? { id, slotId, fromLevel: offer?.fromLevel }) : null;
+    const autoApplies = !reconcile && mode === 'auto' && (ahead || (offer && !offerHasChoices(offer) && !offer.blocked && !offer.missing?.length));
     if (!reconcile && canChoose && statusNow === 'pending_player' && offer) {
       kids.push(...choiceControls(offer, sheet));
       kids.push(h(doc, 'button', { type: 'button', class: 'play-btn primary', dataset: { action: 'lu-choose', id }, text: 'Send choices' }));
-    } else if (!dm() && statusNow === 'pending_dm') {
+    } else if (!dm() && statusNow === 'pending_dm' && !autoApplies) {
       kids.push(h(doc, 'p', { class: 'hint-line', text: 'The DM confirms this level-up.' }));
     }
-    if (dm() && (statusNow === 'pending_dm' || statusNow === 'pending_player')) {
-      if (statusNow === 'pending_player' && offer && !canChoose) kids.push(...choiceControls(offer, sheet));
+    if (autoApplies) {
+      kids.push(h(doc, 'p', { class: 'hint-line', dataset: { field: 'lu-auto', key: id }, text: ahead
+        ? `Waits for level ${ahead.toLevel}; with no choices to make it then applies on its own.`
+        : 'Applies on its own: this level has no choices to make.' }));
+    } else if (dm() && (statusNow === 'pending_dm' || statusNow === 'pending_player')) {
+      const dmPicks = offer && !offer.picked && offerHasChoices(offer) && (statusNow === 'pending_dm' || !canChoose);
+      if (dmPicks) kids.push(...choiceControls(offer, sheet));
       kids.push(h(doc, 'button', { type: 'button', class: 'play-btn primary', dataset: { action: 'lu-confirm', id, slot: slotId }, text: statusNow === 'pending_player' ? 'Confirm now (override)' : 'Confirm' }));
     }
     return h(doc, 'div', { class: 'play-levelup', dataset: { levelUp: id, slot: slotId } }, kids);
+  }
+
+  /** An earlier pending level of the same seat this one waits behind, or null. */
+  function queuedBehind(r, l) {
+    return (r.levelUps || []).filter(x => x.slotId === l.slotId && x.id !== l.id && x.mode !== 'reconcile'
+      && (x.status === 'pending_player' || x.status === 'pending_dm') && (x.fromLevel ?? 0) < (l.fromLevel ?? 0))
+      .sort((a, b) => a.fromLevel - b.fromLevel)[0] || null;
+  }
+
+  /** Levels the rules applied on their own (auto mode, a system level.applied) that still stand: the latest per seat. */
+  function autoApplied(r, visible) {
+    const standing = new Set((r.levelUps || []).filter(l => l.status === 'applied').map(l => l.id));
+    const out = new Map();
+    for (const ev of r.log || []) {
+      const p = ev.payload || {};
+      if (ev.type !== 'level.applied' || ev.actorKind !== 'system' || p.mode !== 'auto' || !standing.has(p.levelUpId) || !visible(p.slotId)) continue;
+      out.set(p.slotId, ev);
+    }
+    return [...out.values()];
+  }
+
+  function appliedCard(r, ev) {
+    const p = ev.payload;
+    const lines = appliedSummary(p.granted);
+    return h(doc, 'div', { class: 'play-levelup applied', dataset: { levelApplied: p.levelUpId, slot: p.slotId } }, [
+      h(doc, 'h4', { text: `${nameOfSlot(r, p.slotId)}: level ${p.fromLevel} → ${p.toLevel}` }),
+      h(doc, 'span', { class: 'play-chip', text: 'applied automatically' }),
+      lines.length ? h(doc, 'ul', { class: 'play-levelup-auto' }, lines.map(t => h(doc, 'li', { text: t }))) : null,
+      h(doc, 'p', { class: 'hint-line', text: 'No choices at this level, so it needed no confirm.' })
+    ]);
   }
 
   function render() {
@@ -299,6 +376,7 @@ export function mount(root, ctx) {
     for (const c of r.characters) if (visible(c.slotId)) sheets.load(c.slotId, c.version);
     const pending = (r.levelUps || []).filter(l => (l.status === 'pending_player' || l.status === 'pending_dm') && visible(l.slotId));
     const cards = pending.map(l => card(r, r.offers?.[l.id] || null, l, mineIds.has(l.slotId)));
+    for (const ev of autoApplied(r, visible)) cards.push(appliedCard(r, ev));
     const reverts = dm() ? [...revertable(r.levelUps).values()] : [];
     if (reverts.length) {
       cards.push(h(doc, 'div', { class: 'play-row play-levelup-reverts' }, reverts.map(l => h(doc, 'button', {
