@@ -290,7 +290,10 @@ test('W4-7: levelup.reconcile never takes back a game grant — a fresh DDB past
   const fresh = t.r.runStore.characterParsed(leveled.characterRowId);
   t.db.db.prepare('UPDATE characters SET parsed_json = ? WHERE id = ?').run(JSON.stringify({ ...fresh, feats: [...(fresh.feats || []), 'Alert'] }), leveled.characterRowId);
   const reply = ok(await t.send('levelup.reconcile', { slotId: 'slot-1' }));
-  assert.ok(reply.kept >= 1, `game grants kept (${JSON.stringify(reply)})`);
+  // M65 T24: the rule layer (campaign/level-up.js reconcileDiff) already drops the
+  // removal proposals for grantedBy: 'game' entries, so the server's keepGameGrants
+  // backstop has nothing left to drop — the ack carries `kept` only when it dropped some.
+  assert.ok(!('kept' in reply), `reconcileDiff dropped the game grants itself (${JSON.stringify(reply)})`);
   const row = t.r.runStore.getLevelUp('run-w4', `run-w4.${reply.levelUpId}`);
   const kinds = row.auto.diff.proposals.map(p => `${p.kind}:${p.name ?? p.stat}`);
   assert.ok(kinds.includes('feat-added:Alert'), kinds.join(', '));

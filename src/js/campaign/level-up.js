@@ -334,7 +334,8 @@ function validateSpells(sheet, allowance, picks, prog) {
       source: s.source || 'class',
       spellCastingAbility: s.spellCastingAbility ?? prog?.spellcastingAbility ?? null,
       usesSpellSlot: s.usesSpellSlot ?? s.level > 0,
-      castAtLevel: s.castAtLevel ?? s.level
+      castAtLevel: s.castAtLevel ?? s.level,
+      grantedBy: 'game'   // M65 T24: a re-import never proposes taking it back
     });
   }
   ruleAssert(cantrips <= allowance.cantrips, 'spells-over-max', `Only ${allowance.cantrips} new cantrip(s) at this level.`);
@@ -439,7 +440,8 @@ export function applyLevelUp(sheet, state, plan, picks = {}, { rng } = {}) {
       name: f.name, source: f.source, level: f.requiredLevel,
       description: full.description || '',
       dice: scale?.dice ?? null,
-      uses: f.uses && f.reset ? { max: f.uses, used: 0, reset: f.reset } : null
+      uses: f.uses && f.reset ? { max: f.uses, used: 0, reset: f.reset } : null,
+      grantedBy: 'game'   // M65 T24: a re-import never proposes taking it back
     });
     if (f.uses && f.reset) {
       const slug = featureSlug(f.name);
@@ -582,11 +584,34 @@ export function revertLevelUp(sheet, state, granted) {
 const RECONCILE_KINDS = new Set(['subclass', 'ability', 'feature-added', 'feature-removed', 'spell-added', 'spell-removed', 'feat-added', 'feat-removed']);
 
 /**
+ * M65 T24 — a removal proposal that would take back a game grant: a
+ * spell (name + level) or class feature (name + source) the run sheet
+ * carries tagged `grantedBy: 'game'` (applyLevelUp tags what it adds).
+ * A fresh DDB paste that never saw the game's level-up lacks those, so
+ * the diff would otherwise propose removing them. The server's
+ * keepGameGrants applies the same rule from the level_ups history.
+ * @param {object} runSheet
+ * @param {{kind: string, name?: string, level?: number, source?: string}} d — a diffCharacters entry
+ * @returns {boolean}
+ */
+function takesBackGameGrant(runSheet, d) {
+  const same = (a, b) => String(a ?? '').toLowerCase() === String(b ?? '').toLowerCase();
+  if (d.kind === 'spell-removed') {
+    return (runSheet?.spells || []).some(s => s?.grantedBy === 'game' && same(s.name, d.name) && s.level === d.level);
+  }
+  if (d.kind === 'feature-removed') {
+    return (runSheet?.classFeatures || []).some(f => f?.grantedBy === 'game' && same(f.name, d.name) && f.source === d.source);
+  }
+  return false;
+}
+
+/**
  * What a fresh DDB import would change structurally. Refused when the DDB
  * sheet's level is above the level the game granted. XP, HP, resources,
  * inventory and currency are never proposed; existing classes' levels are
  * game-owned (only a class the run sheet lacks — a new multiclass — is
- * proposed).
+ * proposed); spells and class features tagged `grantedBy: 'game'` are
+ * never proposed for removal (M65 T24).
  * @param {object} runSheet — the run's sheet_json
  * @param {object} freshParse — parseCharacter of the new DDB export
  * @param {number} grantedLevel — the level the game has granted
@@ -602,7 +627,8 @@ export function reconcileDiff(runSheet, freshParse, grantedLevel) {
   }
   const runClasses = new Set((runSheet?.classes || []).map(c => c.name));
   const proposals = diffCharacters(runSheet, freshParse).filter(d =>
-    RECONCILE_KINDS.has(d.kind) || (d.kind === 'class-level' && d.from === 0 && !runClasses.has(d.class)));
+    (RECONCILE_KINDS.has(d.kind) && !takesBackGameGrant(runSheet, d)) ||
+    (d.kind === 'class-level' && d.from === 0 && !runClasses.has(d.class)));
   return { ok: true, ddbLevel, grantedLevel: granted, proposals: proposals.map((d, i) => ({ id: `p${i}`, ...d })) };
 }
 

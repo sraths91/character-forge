@@ -287,3 +287,32 @@ test('reconcile: a new multiclass is proposed and adds the class, its ladder and
   assert.ok(applied.sheet.progression.Wizard);
   assert.deepEqual(applied.sheet.spellSlotTable.spell, { 1: 4, 2: 3, 3: 2 }, 'caster level 5');
 });
+
+test('T24: reconcileDiff never proposes removing a game-granted Command or class feature', () => {
+  // The game levels the cleric 4 → 5 and grants Command (prepared) plus Destroy Undead.
+  const sheet = cleric4();
+  const state = restedState(sheet);
+  const plan = planLevelUp(sheet, state, { toLevel: 5 });
+  const { sheet: s5 } = applyLevelUp(sheet, state, plan, { spells: [{ name: 'Command', level: 1 }] });
+  const command = s5.spells.find(s => s.name === 'Command');
+  assert.equal(command.grantedBy, 'game', 'applyLevelUp tags the spells it adds');
+  assert.equal(s5.classFeatures.find(f => f.name === 'Destroy Undead').grantedBy, 'game', '…and the features');
+  assert.equal(s5.spells.find(s => s.name === 'Bless').grantedBy, undefined, 'DDB spells stay untagged');
+
+  // A fresh DDB paste at level 5 that never saw the game's Command (and drops Destroy Undead and Bless).
+  const raw = loadDdbFixture('cleric-l5');
+  const fresh = parseCharacter(raw);
+  fresh.classFeatures = fresh.classFeatures.filter(f => f.name !== 'Destroy Undead');
+  fresh.spells = fresh.spells.filter(s => s.name !== 'Bless');
+  assert.ok(!fresh.spells.some(s => s.name === 'Command'));
+  const d = reconcileDiff(s5, fresh, 5);
+  assert.equal(d.ok, true);
+  assert.ok(!d.proposals.some(p => p.kind === 'spell-removed' && p.name === 'Command'), 'Command is not proposed for removal');
+  assert.ok(!d.proposals.some(p => p.kind === 'feature-removed' && p.name === 'Destroy Undead'), 'nor the game feature');
+  assert.ok(d.proposals.some(p => p.kind === 'spell-removed' && p.name === 'Bless'), 'an untagged DDB spell still is');
+  // Accepting everything leaves the game grants on the sheet.
+  const applied = applyReconcile(s5, fresh, d, d.proposals.map(p => p.id));
+  assert.ok(applied.sheet.spells.some(s => s.name === 'Command'));
+  assert.ok(applied.sheet.classFeatures.some(f => f.name === 'Destroy Undead'));
+  assert.ok(!applied.sheet.spells.some(s => s.name === 'Bless'));
+});
