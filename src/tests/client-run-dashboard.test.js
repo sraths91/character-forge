@@ -8,7 +8,12 @@
  *     and after each one the dashboard's model AND its rendered rows equal
  *     what the server's own `run.snapshot` (GET /api/rooms/:id/run) gives:
  *     XP adjust, snapshot save, a level-up confirm, revive, snapshot load,
- *     retire, fill a seat, the override advance and the end of the run.
+ *     retire, fill a seat, the override advance and the end of the run —
+ *     and (v1.7) the run log fetched with `GET /api/runs/:runId/events?since=`
+ *     (incrementally) re-hashes to the server's `wireHash`, which the
+ *     client's run store and the dashboard's verified line both carry;
+ *   - v1.7 reconnect: a fresh DM page rebuilds the run log and the
+ *     snapshot list from `GET …/events` and `GET …/snapshots`.
  */
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -16,8 +21,11 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { mount as mountDashboard, dashboardModel, rowCells, runEventText } from '../js/client/views/run-dashboard.js';
+import WebSocket from 'ws';
+import { mount as mountDashboard, dashboardModel, rowCells, runEventText, verifyWireLog } from '../js/client/views/run-dashboard.js';
 import { createRunStore } from '../js/client/run-store.js';
+import { createSession } from '../js/client/session.js';
+import { runHash } from '../js/shared/run-state.js';
 import { validateClientMessage, PROTOCOL_VERSION } from '../js/shared/protocol.js';
 import { createFakeDom } from './helpers/fake-dom.js';
 import { flush } from './helpers/client-fixtures.js';
@@ -56,6 +64,28 @@ test('C27 pure: dashboardModel, rowCells, runEventText', () => {
   assert.equal(runEventText({ type: 'node.entered', override: true, payload: { nodeId: 'n' } }, { nodes: [{ id: 'n', title: 'Den' }] }), 'Entered Den (override).');
 });
 
+test('C27 v1.7 pure: verifyWireLog; the run store keeps the hashes and merges fetched history', () => {
+  const evs = [1, 2, 3].map(seq => ({ seq, type: 'story.chosen', nodeId: 'n', actorKind: 'dm', actorId: null, override: false, payload: { nodeId: 'n', choiceId: `c${seq}` } }));
+  const hash = runHash(evs);
+  assert.deepEqual(verifyWireLog(evs, { seq: 3, wireHash: hash }), { status: 'ok', hash });
+  assert.equal(verifyWireLog(evs, { seq: 3, wireHash: 'abc' }).status, 'mismatch');
+  assert.deepEqual(verifyWireLog([evs[0], evs[2]], { seq: 3, wireHash: hash }), { status: 'incomplete', missing: 2 });
+  assert.equal(verifyWireLog(evs, { seq: 3, wireHash: null }).status, 'unknown');
+  assert.equal(verifyWireLog(new Map(evs.map(e => [e.seq, e])), { seq: 2, wireHash: runHash(evs.slice(0, 2)) }).status, 'ok');
+
+  const rs = createRunStore({ isDm: () => true });
+  rs.apply({ v: 1, t: 'run.snapshot', ts: 1, p: { run: { id: 'r1', status: 'between', currentNodeId: 'n', seq: 2 }, nodes: [], edges: [], characters: [], items: [], levelUps: [], runHash: 'aa', wireHash: 'bb' } });
+  assert.deepEqual([rs.getState().runHash, rs.getState().wireHash, rs.getState().hashSeq], ['aa', 'bb', 2]);
+  assert.equal(rs.mergeHistory('other', evs), 0, 'another run');
+  assert.equal(rs.mergeHistory('r1', [...evs, { seq: 2, type: 'nope' }]), 2, 'seq 1 and 2; seq 3 is past the snapshot');
+  assert.deepEqual(rs.getState().log.map(e => e.seq), [1, 2]);
+  assert.equal(rs.mergeHistory('r1', evs), 0, 'nothing new');
+  rs.apply({ v: 1, t: 'run.event', seq: 9, ts: 1, p: evs[2] });
+  rs.apply({ v: 1, t: 'run.updated', seq: 10, ts: 1, p: { runId: 'r1', status: 'between', currentNodeId: 'n', runSeq: 3, runHash: 'cc', wireHash: hash } });
+  assert.deepEqual([rs.getState().wireHash, rs.getState().hashSeq], [hash, 3]);
+  assert.equal(verifyWireLog(rs.getState().log, { seq: rs.getState().hashSeq, wireHash: rs.getState().wireHash }).status, 'ok');
+});
+
 const NODES = [
   { id: 'n-camp', kind: 'rest', title: 'Camp', start: true, payload: { type: 'short' }, next: [{ to: 'n-fight' }] },
   { id: 'n-fight', kind: 'encounter', title: 'Ambush', payload: { setup: GOBLIN_SETUP }, next: [{ to: 'n-town' }] },
@@ -77,10 +107,31 @@ test('C27 GATE: every dashboard action is one intent; the dashboard matches the 
     const loadAll = async (r) => { for (const c of r.characters) sheets.push([c.slotId, c.version, (await t.apis.dm.getSeatSheet(t.room.roomId, c.slotId)).sheet]); };
     const sheetFor = (s, v) => sheets.slice().reverse().find(([a, b]) => a === s && b === v)?.[2] ?? null;
 
+    /** The wire log, fetched incrementally (GET /api/runs/:runId/events?since=). */
+    const wire = [];
+    const fetchWire = async () => {
+      for (;;) {
+        const since = wire.at(-1)?.seq ?? 0;
+        const page = await fetch(`${t.srv.url}/api/runs/${t.run.runId}/events?since=${since}`, { headers: { authorization: `Bearer ${t.room.dmToken}` } }).then(r => r.json());
+        wire.push(...page.events);
+        if (!page.more) return page;
+      }
+    };
     /** The dashboard (model and DOM) equals the server's run.snapshot. */
     const check = async (label) => {
       const snap = await t.serverSnapshot('dm');
-      await until(() => dr().seq === snap.run.seq, `${label}: the client caught up to run seq ${snap.run.seq}`);
+      await until(() => dr().seq === snap.run.seq && dr().hashSeq === snap.run.seq, `${label}: the client caught up to run seq ${snap.run.seq}`);
+      // v1.7: the wire log re-hashes to the server's wireHash; the client holds the same hashes.
+      const page = await fetchWire();
+      assert.equal(page.seq, snap.run.seq, `${label}: the events route is at the snapshot's seq`);
+      assert.deepEqual(wire.map(e => e.seq), Array.from({ length: snap.run.seq }, (_, i) => i + 1), `${label}: a whole log`);
+      assert.equal(runHash(wire), snap.wireHash, `${label}: wireHash recomputed from GET …/events`);
+      assert.deepEqual([page.wireHash, page.runHash], [snap.wireHash, snap.runHash], `${label}: the route's hashes`);
+      assert.deepEqual([dr().wireHash, dr().runHash], [snap.wireHash, snap.runHash], `${label}: the run store's hashes`);
+      await until(() => {
+        const el = dom.findAll(root, n => n.dataset?.field === 'dash-hash')[0];
+        return el?.dataset.status === 'ok' && el.textContent.includes(snap.wireHash);
+      }, `${label}: the dashboard verified the log`);
       const fresh = createRunStore({ isDm: () => true });
       fresh.apply({ v: 1, t: 'run.snapshot', ts: 1, p: snap });
       await loadAll(fresh.getState());
@@ -190,6 +241,50 @@ test('C27 GATE: every dashboard action is one intent; the dashboard matches the 
     ]);
     un();
     assert.equal(dom.activeListeners(), 0);
+  } finally {
+    await t.close();
+  }
+});
+
+test('C27 v1.7: a fresh DM page rebuilds the run log and the snapshot list from GET …/events and …/snapshots', async () => {
+  const t = await bootRunTable(ROOT, { nodes: NODES });
+  try {
+    const fighter = t.sessions.dm.runStore.getState().characters.find(c => c.seat === 2);
+    await t.sessions.dm.send({ t: 'dm.xp.adjust', p: { slotId: fighter.slotId, delta: 50, reason: 'scouting' } });
+    const saved = await t.sessions.dm.send({ t: 'dm.snapshot.save', p: { label: 'at camp' } });
+    await t.sessions.dm.send({ t: 'dm.run.advance', p: { toNodeId: 'n-fight' } });
+    const seq = (await t.serverSnapshot('dm')).run.seq;
+    // The page reloads: a new session (its run store starts empty) and a new dashboard.
+    t.sessions.dm.close();
+    const sockets = [];
+    const WS = class extends WebSocket { constructor(url) { super(url); sockets.push(this); } };
+    const fresh = createSession({ url: `${t.srv.url.replace(/^http/, 'ws')}/ws`, token: t.room.dmToken, WebSocketCtor: WS, wsOptions: { logger: { warn: () => {} } } });
+    t.sessions.dm = fresh;
+    await fresh.connect();
+    await until(() => fresh.runStore.getState().synced && fresh.runStore.getState().seq === seq, 'the fresh snapshot');
+    assert.deepEqual(fresh.runStore.getState().log, [], 'a snapshot carries no log');
+    const calls = [];
+    const api = { ...t.apis.dm, runEvents: (...a) => { calls.push(['events', a[1]?.since]); return t.apis.dm.runEvents(...a); }, runSnapshots: (...a) => { calls.push(['snapshots']); return t.apis.dm.runSnapshots(...a); } };
+    const dom = createFakeDom();
+    const root = dom.root();
+    const un = mountDashboard(root, { ...t.ctx('dm'), store: fresh.store, runStore: fresh.runStore, send: (i) => fresh.send(i), api });
+    await until(() => fresh.runStore.getState().log.length === seq, 'the log rebuilt');
+    assert.deepEqual(fresh.runStore.getState().log.map(e => e.seq), Array.from({ length: seq }, (_, i) => i + 1));
+    assert.deepEqual(calls, [['events', 0], ['snapshots']], 'one history fetch from the start, and the snapshot list');
+    await until(() => /XP override: Fixture Fighter 6500 → 6550 \(scouting\)/.test(root.textContent), 'an event from before the reload in the log');
+    assert.equal(dom.byAction(root, 'dash-snap-load').filter(el => el.dataset.id === saved.snapshotId).length, 1, 'the snapshot from before the reload');
+    assert.match(dom.findAll(root, n => n.dataset?.snapshot === saved.snapshotId)[0].textContent, /at camp/);
+    await until(() => dom.findAll(root, n => n.dataset?.field === 'dash-hash')[0]?.dataset.status === 'ok', 'the rebuilt log verified against wireHash');
+    // Live events after the rebuild extend the same log; no second fetch.
+    await fresh.send({ t: 'dm.run.advance', p: { toNodeId: 'n-town', override: true } });
+    const seq2 = (await t.serverSnapshot('dm')).run.seq;
+    assert.ok(seq2 > seq);
+    await until(() => fresh.runStore.getState().hashSeq === seq2 && dom.findAll(root, n => n.dataset?.field === 'dash-hash')[0]?.textContent.includes(`#${seq2}`), 'verified at the next seq');
+    assert.equal(dom.findAll(root, n => n.dataset?.field === 'dash-hash')[0].dataset.status, 'ok');
+    assert.equal(calls.length, 2, 'live events need no fetch');
+    un();
+    assert.equal(dom.activeListeners(), 0);
+    for (const ws of sockets) ws.terminate();
   } finally {
     await t.close();
   }

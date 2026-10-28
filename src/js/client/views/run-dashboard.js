@@ -17,7 +17,13 @@
  *   rests      `dm.rest.grant` anywhere (an override off a rest node)
  *   snapshots  `dm.snapshot.save {label}` / `dm.snapshot.load` — the ones
  *              saved this session and every `snapshot.saved` in the log
- *   log        the run events this client has seen (run-store log)
+ *   log        the run events this client has seen (run-store log); after a
+ *              reconnect (or a fresh page) the missing part is fetched
+ *              from `GET /api/runs/:runId/events?since=` and merged in,
+ *              and the snapshot list from `GET /api/runs/:runId/snapshots`
+ *   hash       v1.7: the wire log (fetched + live) re-hashed with
+ *              run-state.js runHash must equal the server's `wireHash`
+ *              from `run.snapshot` / `run.updated` (verifyWireLog)
  *   travel     `dm.node.begin`, offered edges and "any node" with override
  *              (`dm.run.advance`), `dm.run.end {outcome}`
  *
@@ -33,7 +39,7 @@ import { isDm, membersOf } from '../selectors.js';
 import { nameOfSlot, coinsText, refusalText, createRunSheets } from '../run-model.js';
 import { xpForLevel, MAX_LEVEL } from '../../campaign/xp.js';
 import { effectiveHpMax } from '../../campaign/exhaustion.js';
-import { RUN_OUTCOMES } from '../../shared/run-state.js';
+import { RUN_OUTCOMES, runHash } from '../../shared/run-state.js';
 import { KIND_GLYPHS } from '../campaign-graph.js';
 import { DOWNTIME_HEALS } from '../../campaign/downtime-spells.js';
 
@@ -140,6 +146,27 @@ export function runEventText(ev, run) {
 }
 
 /**
+ * Check a wire log against the server's `wireHash` (v1.7): run-state.js
+ * runHash over events 1..seq must equal it; 'incomplete' while a seq is
+ * missing, 'unknown' when the server sent no hash.
+ * @param {Map<number, object>|object[]} events — run events as received (run.event / GET …/events)
+ * @param {{seq: number, wireHash: string|null}} at
+ * @returns {{status: 'ok'|'mismatch'|'incomplete'|'unknown', hash?: string, missing?: number}}
+ */
+export function verifyWireLog(events, { seq, wireHash }) {
+  if (!wireHash) return { status: 'unknown' };
+  const bySeq = events instanceof Map ? events : new Map((events || []).map(e => [e.seq, e]));
+  const list = [];
+  for (let i = 1; i <= seq; i++) {
+    const e = bySeq.get(i);
+    if (!e) return { status: 'incomplete', missing: i };
+    list.push(e);
+  }
+  const hash = runHash(list);
+  return { status: hash === wireHash ? 'ok' : 'mismatch', hash };
+}
+
+/**
  * @param {HTMLElement} root
  * @param {object} ctx
  * @returns {() => void} unmount
@@ -153,6 +180,8 @@ export function mount(root, ctx) {
   const saved = [];
   let roomChars = null;
   let disposed = false;
+  /** The run's wire log (seq → event: fetched history + live events), the route's snapshot list, the last verification. */
+  const history = { runId: null, wire: new Map(), loading: false, triedSeq: -1, snapshots: [], verified: null };
   const view = h(doc, 'section', { class: 'play-view play-run-dashboard', hidden: true, attrs: { 'aria-label': 'Run dashboard' } });
   const status = h(doc, 'p', { class: 'play-status', attrs: { role: 'status', 'aria-live': 'polite' } });
   const travelEl = h(doc, 'div', { class: 'play-card play-dash-travel' });
@@ -229,9 +258,59 @@ export function mount(root, ctx) {
     attempt(() => ctx.api.listCharacters(rid).then((res) => { roomChars = res?.characters || []; if (!disposed) render(); }), fail);
   }
 
-  /** Snapshots known to this client: saved here + `snapshot.saved` in the log. */
+  /** The highest seq n such that events 1..n are all in the wire log. */
+  function contiguous() {
+    let n = 0;
+    while (history.wire.has(n + 1)) n++;
+    return n;
+  }
+
+  /**
+   * Keep the wire log whole: live events from the run store, and the part
+   * a reconnect (or a fresh page) missed from GET /api/runs/:runId/events,
+   * paged with `since`; the snapshot list comes along. One fetch per run
+   * seq; the fetched events also fill the run store's log.
+   */
+  function syncHistory(r) {
+    if (!r.runId) return;
+    if (history.runId !== r.runId) Object.assign(history, { runId: r.runId, wire: new Map(), triedSeq: -1, snapshots: [], verified: null });
+    for (const ev of r.log || []) if (!history.wire.has(ev.seq)) history.wire.set(ev.seq, ev);
+    const have = contiguous();
+    if (have >= r.seq || history.loading || history.triedSeq === r.seq || typeof ctx.api?.runEvents !== 'function') return;
+    history.loading = true;
+    history.triedSeq = r.seq;
+    const runId = r.runId;
+    attempt(async () => {
+      const got = [];
+      let since = have;
+      for (let guard = 0; guard < 1000; guard++) {
+        const page = await ctx.api.runEvents(runId, { since });
+        const evs = Array.isArray(page?.events) ? page.events : [];
+        got.push(...evs);
+        if (!page?.more || !evs.length) break;
+        since = evs.at(-1).seq;
+      }
+      const snaps = typeof ctx.api.runSnapshots === 'function' ? await ctx.api.runSnapshots(runId) : null;
+      if (disposed || history.runId !== runId) return;
+      for (const e of got) if (!history.wire.has(e.seq)) history.wire.set(e.seq, e);
+      if (Array.isArray(snaps?.snapshots)) history.snapshots = snaps.snapshots;
+      ctx.runStore.mergeHistory?.(runId, got);
+    }, fail).finally(() => { history.loading = false; if (!disposed) render(); });
+  }
+
+  /** verifyWireLog at the run store's hashes, cached per (seq, wireHash). */
+  function verification(r) {
+    if (!r.wireHash) return { status: 'unknown' };
+    const key = `${r.hashSeq}:${r.wireHash}`;
+    if (history.verified?.key === key && history.verified.status !== 'incomplete') return history.verified;
+    history.verified = { key, ...verifyWireLog(history.wire, { seq: r.hashSeq, wireHash: r.wireHash }) };
+    return history.verified;
+  }
+
+  /** Snapshots known to this client: the run's list (GET …/snapshots), `snapshot.saved` in the log, and saved here. */
   function snapshots(r) {
     const out = new Map();
+    for (const s of history.snapshots) out.set(s.snapshotId, { snapshotId: s.snapshotId, label: s.label ?? null, atSeq: s.atSeq });
     for (const ev of r.log || []) if (ev.type === 'snapshot.saved') out.set(ev.payload.snapshotId, { snapshotId: ev.payload.snapshotId, label: ev.payload.label ?? null, atSeq: ev.payload.atSeq });
     for (const s of saved) if (!out.has(s.snapshotId)) out.set(s.snapshotId, s);
     return [...out.values()];
@@ -346,7 +425,14 @@ export function mount(root, ctx) {
 
   function renderLog(r) {
     const last = (r.log || []).slice(-30).reverse();
-    replace(doc, logEl, [h(doc, 'h3', { text: 'Run log' }),
+    const v = verification(r);
+    const hashLine = v.status === 'unknown' ? null : h(doc, 'p', {
+      class: `play-preview${v.status === 'mismatch' ? ' error' : ''}`, dataset: { field: 'dash-hash', status: v.status },
+      text: v.status === 'ok' ? `Log verified at #${r.hashSeq}: wire ${r.wireHash} · run ${r.runHash}`
+        : v.status === 'mismatch' ? `This log differs from the server's at #${r.hashSeq} (here ${v.hash}, server ${r.wireHash}) — reload the page.`
+          : `Fetching the run log up to #${r.hashSeq}…`
+    });
+    replace(doc, logEl, [h(doc, 'h3', { text: 'Run log' }), hashLine,
       last.length ? h(doc, 'ol', { class: 'play-dash-log-list' }, last.map(ev => h(doc, 'li', { dataset: { seq: String(ev.seq) }, text: `#${ev.seq} ${runEventText(ev, r)}` })))
         : h(doc, 'p', { class: 'hint-line', text: 'Nothing has happened since you joined.' })]);
   }
@@ -356,6 +442,7 @@ export function mount(root, ctx) {
     const show = r.synced && isDm(ctx.store.getState());
     view.hidden = !show;
     if (!show) return;
+    syncHistory(r);
     for (const c of r.characters) sheets.load(c.slotId, c.version);
     renderTravel(r);
     renderParty(r, dashboardModel(r, (s, v) => sheets.get(s, v)));

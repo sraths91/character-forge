@@ -19,6 +19,11 @@
  * Status comes from the run store (node.entered / run.updated), never from
  * run.started.
  *
+ * v1.7: the head carries the run log's position and `wireHash` (from
+ * `run.snapshot` / `run.updated`) — the same short hash on every screen at
+ * the table, so a player and the DM can tell at a glance they see one run
+ * log (the DM's dashboard re-hashes the log itself, run-dashboard.js).
+ *
  * mount(root, ctx) → unmount. ctx: {store (room), runStore, send}
  */
 
@@ -119,7 +124,8 @@ export function mount(root, ctx) {
     replace(doc, head, [
       h(doc, 'span', { class: `play-run-status status-${run.status}`, text: RUN_STATUS_COPY[run.status] || run.status }),
       m.current ? h(doc, 'span', { class: 'play-run-current', text: ` · ${KIND_GLYPHS[m.current.kind] || ''} ${m.current.title}` }) : null,
-      run.outcome ? h(doc, 'span', { class: 'play-run-outcome', text: ` · ${run.outcome}` }) : null
+      run.outcome ? h(doc, 'span', { class: 'play-run-outcome', text: ` · ${run.outcome}` }) : null,
+      run.wireHash ? h(doc, 'span', { class: 'play-chip play-run-hash', dataset: { field: 'run-hash' }, attrs: { title: `run log hash ${run.runHash ?? '?'} (stored) · ${run.wireHash} (wire)` }, text: `log #${run.hashSeq} · ${run.wireHash}` }) : null
     ]);
     replace(doc, graphHost, [renderChainGraph(doc, m.graph, {
       currentId: run.currentNodeId, visitedIds: run.visitedIds, label: dm ? 'Campaign graph (DM view)' : 'The party\'s path'

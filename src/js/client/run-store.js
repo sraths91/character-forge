@@ -35,6 +35,14 @@
  * snapshot); the snapshot carries settings, stash, the node result, shop
  * purchases this visit and (DM) pending seat reclaims.
  *
+ * Hashes (v1.7): `run.snapshot` and `run.updated` carry `runHash` (over
+ * the stored run log) and `wireHash` (over the prose-stripped log clients
+ * receive); the slice keeps both with the run seq they describe
+ * (`hashSeq`), so a view can recompute `wireHash` from the wire log and
+ * compare. `mergeHistory(events)` folds run events fetched over HTTP
+ * (`GET /api/runs/:runId/events`) into the log after a reconnect: already
+ * reflected in the snapshot, they only fill the log — never re-reduced.
+ *
  * Visibility: `visitedIds` is what a player's run map may name. It comes
  * from `run.visitedNodeIds` when the snapshot carries it, else per-node
  * `visited` flags, else (players) every node the server sent; `node.entered`
@@ -46,6 +54,7 @@
  */
 
 import { validateServerMessage } from '../shared/protocol.js';
+import { validateRunEvent } from '../shared/run-events.js';
 
 const LOG_LIMIT = 200;
 const RUN_TYPES = new Set(['run.snapshot', 'run.event', 'run.updated', 'levelup.offer']);
@@ -74,6 +83,9 @@ const RUN_TYPES = new Set(['run.snapshot', 'run.event', 'run.updated', 'levelup.
  * @property {Record<string, number>} bought — shop purchases this visit (refKey → qty)
  * @property {Record<string, Record<string, number>>} pendingRest — declared hit dice per slotId
  * @property {object[]} reclaims       — pending seat.reclaim requests (DM only)
+ * @property {string|null} runHash     — v1.7: the server's hash of the stored run log at `hashSeq`
+ * @property {string|null} wireHash    — v1.7: the same over the wire (prose-stripped) log
+ * @property {number} hashSeq          — the run seq the hashes describe
  */
 
 /** @returns {RunState} */
@@ -81,8 +93,29 @@ export function initialRunState() {
   return {
     synced: false, runId: null, campaignId: null, status: null, outcome: null, currentNodeId: null, seq: 0,
     nodes: [], visitedIds: [], edges: [], characters: [], items: [], levelUps: [], offers: {}, log: [],
-    settings: {}, stash: { currency: {} }, completed: false, result: {}, bought: {}, pendingRest: {}, reclaims: []
+    settings: {}, stash: { currency: {} }, completed: false, result: {}, bought: {}, pendingRest: {}, reclaims: [],
+    runHash: null, wireHash: null, hashSeq: 0
   };
+}
+
+/** The hash fields a snapshot / run.updated carries (v1.7), or {} for an older server. */
+function hashesOf(p, seq) {
+  if (typeof p?.wireHash !== 'string' && typeof p?.runHash !== 'string') return {};
+  return { runHash: p.runHash ?? null, wireHash: p.wireHash ?? null, hashSeq: seq };
+}
+
+/**
+ * Merge fetched run events into a log: deduplicated by seq, oldest first,
+ * capped at the log limit (the newest kept).
+ * @param {object[]} log
+ * @param {object[]} events
+ * @returns {object[]}
+ */
+export function mergeLog(log, events) {
+  const bySeq = new Map((log || []).map(e => [e.seq, e]));
+  for (const e of events || []) if (!bySeq.has(e.seq)) bySeq.set(e.seq, e);
+  const out = [...bySeq.values()].sort((a, b) => a.seq - b.seq);
+  return out.length > LOG_LIMIT ? out.slice(out.length - LOG_LIMIT) : out;
 }
 
 const clone = (v) => (v === undefined ? undefined : JSON.parse(JSON.stringify(v)));
@@ -138,7 +171,9 @@ function fromSnapshot(base, p, dm) {
     result: isObj(p.run.result) ? p.run.result : {},
     bought: isObj(p.run.bought) ? p.run.bought : {},
     pendingRest: isObj(p.pendingRest) ? p.pendingRest : {},
-    reclaims: Array.isArray(p.reclaims) ? p.reclaims : []
+    reclaims: Array.isArray(p.reclaims) ? p.reclaims : [],
+    ...(sameRun ? {} : { runHash: null, wireHash: null, hashSeq: 0 }),
+    ...hashesOf(p, p.run.seq)
   };
 }
 
@@ -260,7 +295,8 @@ export function reduceRunEvent(s, ev) {
  *   apply: (serverMessage: object|string) => ('applied'|'ignored'|'invalid'|'duplicate'|'gap'|'dropped'),
  *   handles: (type: string) => boolean,
  *   subscribe: (selector: (s: RunState) => unknown, fn: (next: unknown, prev: unknown) => void, equals?: (a: unknown, b: unknown) => boolean) => () => void,
- *   onResyncNeeded: (fn: (info: {reason: string, lastSeq: number, expected?: number, got?: number}) => void) => () => void
+ *   onResyncNeeded: (fn: (info: {reason: string, lastSeq: number, expected?: number, got?: number}) => void) => () => void,
+ *   mergeHistory: (runId: string, events: object[]) => number
  * }}
  */
 export function createRunStore({ isDm = () => false } = {}) {
@@ -322,7 +358,8 @@ export function createRunStore({ isDm = () => false } = {}) {
       visitedIds: addVisited(state.visitedIds, p.currentNodeId),
       ...(p.currentNodeId !== state.currentNodeId ? { edges: [] } : {}),
       ...(typeof p.completed === 'boolean' ? { completed: p.completed } : {}),
-      ...(isObj(p.pendingRest) ? { pendingRest: p.pendingRest } : {})
+      ...(isObj(p.pendingRest) ? { pendingRest: p.pendingRest } : {}),
+      ...hashesOf(p, p.runSeq)
     };
     stats.applied++;
     return 'applied';
@@ -373,6 +410,21 @@ export function createRunStore({ isDm = () => false } = {}) {
     onResyncNeeded(fn) {
       resyncListeners.add(fn);
       return () => { resyncListeners.delete(fn); };
+    },
+
+    /**
+     * Fold run events fetched over HTTP into the log (see the module
+     * note): only this run's valid events at or below the applied seq.
+     * @returns {number} how many were new to the log
+     */
+    mergeHistory(runId, events) {
+      if (!state.synced || runId !== state.runId || !Array.isArray(events)) return 0;
+      const have = new Set(state.log.map(e => e.seq));
+      const fresh = events.filter(e => isObj(e) && Number.isInteger(e.seq) && e.seq <= state.seq && !have.has(e.seq) && validateRunEvent(e).ok).map(clone);
+      if (!fresh.length) return 0;
+      state = { ...state, log: mergeLog(state.log, fresh) };
+      notify();
+      return fresh.length;
     }
   };
 }

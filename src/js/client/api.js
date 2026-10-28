@@ -17,6 +17,8 @@
  *   GET    /api/rooms/:id/maps                                     → {maps: [{mapId, kind, url, sha256, …}]}
  *   GET    /api/monsters/search?q=                                 → {results: [{slug, name, type, cr, hp}]}
  *   GET    /api/rooms/:id/seats/:slotId/sheet (Bearer)             → {sheet, prose?}  (M65 B27: the run sheet)
+ *   GET    /api/runs/:runId/events?since=&limit= (Bearer)          → {runId, seq, runHash, wireHash, events, more}  (v1.7)
+ *   GET    /api/runs/:runId/snapshots (Bearer)                     → {runId, snapshots: [{snapshotId, label, atSeq, createdBy, createdAt}]}  (v1.7)
  *
  * M65 campaign authoring (E3's B22, `api/campaigns/http.js`). The campaign
  * key goes in `Authorization: Bearer` per call (it is not the room token);
@@ -108,6 +110,9 @@ export function createApi({ fetch: fetchImpl = globalThis.fetch?.bind(globalThis
     searchMonsters: (q) => call('GET', `/api/monsters/search?q=${enc(q)}`, { auth: false }),
     // M65 B27: a seat's run sheet (full for its controller and the DM, public otherwise).
     getSeatSheet: (roomId, slotId) => call('GET', `/api/rooms/${enc(roomId)}/seats/${enc(slotId)}/sheet`),
+    // v1.7 (E3 M65 W4): the run log (prose-stripped, as on the wire) after `since`, and the run's snapshots.
+    runEvents: (runId, { since = 0, limit } = {}) => call('GET', `/api/runs/${enc(runId)}/events${qs({ since, limit })}`),
+    runSnapshots: (runId) => call('GET', `/api/runs/${enc(runId)}/snapshots`),
 
     // ---- M65 campaign authoring (campaign key per call) ----
     createCampaign: (name, settings = undefined) => call('POST', '/api/campaigns', { body: settings ? { name, settings } : { name }, auth: false }),

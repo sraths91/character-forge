@@ -181,6 +181,29 @@ test('run map (DM): every node, offered edges advance, and "go to any node" is a
   assert.equal(dom.activeListeners(), 0);
 });
 
+test('run map (v1.7): the head shows the run log position and wireHash, updated by run.updated', async () => {
+  const dom = createFakeDom();
+  const root = dom.root();
+  const rs = createRunStore({ isDm: () => false });
+  const snap = runSnapshot();
+  rs.apply({ ...snap, p: { ...snap.p, runHash: '1a2b', wireHash: '3c4d' } });
+  const un = mountRunMap(root, { store: roomStore('player'), runStore: rs, send: async () => ({}) });
+  const chip = () => root.querySelector('[data-field="run-hash"]');
+  assert.equal(chip().textContent, 'log #4 · 3c4d');
+  rs.apply(runEvent(5, 'node.entered', { nodeId: 'n3', kind: 'loot', fromNodeId: 'n2' }));
+  rs.apply({ v: 1, t: 'run.updated', seq: ++roomSeq, ts: 1, p: { runId: 'run1', status: 'between', currentNodeId: 'n3', runSeq: 5, runHash: '5e', wireHash: '6f' } });
+  await flush();
+  assert.equal(chip().textContent, 'log #5 · 6f');
+  un();
+  // An older server (no hashes): no chip.
+  const rs2 = createRunStore();
+  rs2.apply(runSnapshot());
+  const un2 = mountRunMap(root, { store: roomStore('player'), runStore: rs2, send: async () => ({}) });
+  assert.equal(root.querySelector('[data-field="run-hash"]'), null);
+  un2();
+  assert.equal(dom.activeListeners(), 0);
+});
+
 test('runMapModel: a player offer to an unvisited node names no title', () => {
   const rs = createRunStore();
   rs.apply(runSnapshot());
