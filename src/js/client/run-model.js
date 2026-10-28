@@ -132,6 +132,12 @@ const REFUSALS = Object.freeze({
   'no-spell': 'The caster does not know that spell.',
   'no-caster': 'Pick the caster.',
   'no-slot': 'The caster has no slot left for it.',
+  'not-downtime-spell': 'Only Cure Wounds, Healing Word and Prayer of Healing are cast between nodes.',
+  'caster-down': 'The caster must be up to cast.',
+  'slot-too-low': 'That slot is too low for the spell.',
+  'too-many-targets': 'That spell cannot heal that many.',
+  'no-targets': 'Choose who to heal.',
+  'target-dead': 'A dead character cannot be healed.',
   'no-diamond': 'The party has no diamond worth enough.'
 });
 

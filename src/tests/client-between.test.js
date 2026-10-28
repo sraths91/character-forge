@@ -17,6 +17,11 @@
  *     `currency.changed` folding purses and the stash live, and on the
  *     real server a player's `stash.take` on a free loot node and the DM's
  *     `dm.stash.split` (pre-filled even split, edited) on a DM loot node.
+ *   - v1.7 downtime healing: downtimeOptions / healPreview
+ *     (castDowntimeHeal at the lowest / highest roll), `heal.cast` folded
+ *     into HP and slots, and on the real server the cleric's Cure Wounds
+ *     on the fighter landing inside the preview, then the DM's Healing
+ *     Word for the player's seat labelled and logged as an override.
  */
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -24,7 +29,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { mount as mountBetween, restPreview, equipPreview, stashSplit, evenAllocations, checkAllocations, isPotion, isEquippable, combatLine } from '../js/client/views/between.js';
+import { mount as mountBetween, restPreview, equipPreview, stashSplit, evenAllocations, checkAllocations, downtimeOptions, healPreview, isPotion, isEquippable, combatLine } from '../js/client/views/between.js';
 import { createRunStore } from '../js/client/run-store.js';
 import { refusalText, cpText, coinsText } from '../js/client/run-model.js';
 import { itemsFromInventory } from '../js/campaign/items.js';
@@ -319,6 +324,113 @@ test('C24 v1.7 hub on the real server: a player takes coin on a free loot node; 
     await until(() => pr().currentNodeId === 'n-chest' && pr().stash.currency.gp === 22, 'the chest');
     assert.equal(P.dom.byAction(P.root, 'stash-take').length, 0);
     assert.match(P.text(), /The DM splits the coin/);
+    P.un();
+    D.un();
+    assert.equal(P.dom.activeListeners(), 0);
+    assert.equal(D.dom.activeListeners(), 0);
+  } finally {
+    await t.close();
+  }
+});
+
+test('C24 v1.7 pure: downtimeOptions lists known healing spells with their slots; healPreview spans the roll', () => {
+  const sheet = parseCharacter(cleric4Raw());
+  const state = { schema_v: 1, hp: { current: 10, temp: 0 }, slots: { spell: { 1: { spent: 4 }, 2: { spent: 1 } }, pact: { spent: 0 } } };
+  const opts = downtimeOptions(sheet, state);
+  assert.deepEqual(opts.map(o => [o.id, o.slots.map(x => `${x.kind}:${x.level}:${x.left}`)]), [
+    ['cure-wounds', ['spell:2:2']], ['healing-word', ['spell:2:2']]
+  ], 'level-1 slots spent: only level 2 is offered; Prayer of Healing is not on the sheet');
+  assert.deepEqual(downtimeOptions(null, state), []);
+  const target = { id: 'f', sheet: { ...sheet, hp: { max: 40 } }, state: { schema_v: 1, hp: { current: 3, temp: 0 } } };
+  const pv = healPreview({ caster: { id: 'c', sheet, state, lifeStatus: 'active' }, spellId: 'cure-wounds', slotLevel: 2, targets: [target] });
+  assert.equal(pv.ok, true, pv.error);
+  assert.equal(pv.dice, '2d8');
+  assert.equal(pv.bonus, 4, 'Disciple of Life: 2 + the slot level');
+  assert.deepEqual([pv.low, pv.high], [2 + pv.mod + 4, 16 + pv.mod + 4]);
+  assert.deepEqual([pv.targets[0].before, pv.targets[0].low, pv.targets[0].high], [3, 3 + pv.low, 3 + pv.high]);
+  assert.equal(healPreview({ caster: { id: 'c', sheet, state }, spellId: 'cure-wounds', slotLevel: 1, targets: [target] }).error, 'The caster has no slot left for it.');
+  assert.equal(healPreview({ caster: { id: 'c', sheet, state }, spellId: 'cure-wounds', slotLevel: 2, targets: [{ ...target, sheet: null }] }).ok, false, 'waits for the sheets');
+});
+
+test('C24 v1.7 run store: heal.cast sets the caster and the targets from its after', () => {
+  const rs = createRunStore();
+  rs.apply(snap({ run: { id: 'r1', status: 'between', currentNodeId: 'n1', seq: 1 }, nodes: [], edges: [], items: [], levelUps: [],
+    characters: [{ slotId: 's1', seat: 1, level: 3, xp: 0, lifeStatus: 'active' }, { slotId: 's2', seat: 2, level: 3, xp: 0, lifeStatus: 'dying' }] }));
+  const st = (hp, spent) => ({ hp: { current: hp, temp: 0 }, ...(spent ? { slots: { spell: { 1: { spent } } } } : {}) });
+  assert.equal(rs.apply(ev(2, 'heal.cast', { casterSlotId: 's1', spellId: 'healing-word', slotLevel: 1, targetSlotIds: ['s2'], healed: { s2: 7 },
+    before: { s1: { state: st(9, 0), lifeStatus: 'active' }, s2: { state: st(0), lifeStatus: 'dying' } },
+    after: { s1: { state: st(9, 1), lifeStatus: 'active' }, s2: { state: st(7), lifeStatus: 'active' } } })), 'applied');
+  assert.deepEqual(rs.getState().characters.map(c => [c.state.hp.current, c.lifeStatus]), [[9, 'active'], [7, 'active']]);
+  assert.equal(rs.getState().characters[0].state.slots.spell[1].spent, 1);
+});
+
+const HEAL_NODES = [
+  { id: 'n-camp', kind: 'rest', title: 'Camp', start: true, payload: { type: 'short' }, next: [] }
+];
+
+test('C24 v1.7 hub on the real server: Cure Wounds between nodes lands in the preview; the DM casting for a player\'s seat is an override', async () => {
+  const t = await bootRunTable(ROOT, { nodes: HEAL_NODES });
+  try {
+    const pr = () => t.sessions.player.runStore.getState();
+    const dr = () => t.sessions.dm.runStore.getState();
+    const cleric = pr().characters.find(c => c.seat === 1);
+    const fighter = pr().characters.find(c => c.seat === 2);
+    const hp = (r, slotId) => r.characters.find(c => c.slotId === slotId).state.hp.current;
+    // Wound both seats server-side, then resync both clients.
+    const store = t.liveRoom().run.store;
+    for (const [slotId, cur] of [[fighter.slotId, 5], [cleric.slotId, 4]]) {
+      const c = store.getCharacter(slotId);
+      store.updateCharacter(c.runId, slotId, c.version, { state: { ...c.state, hp: { current: cur, temp: 0 } } });
+    }
+    for (const who of ['dm', 'player']) await t.sessions[who].send({ t: 'resync', p: {} });
+    await until(() => hp(pr(), fighter.slotId) === 5 && hp(dr(), cleric.slotId) === 4, 'the wounds');
+    const spent0 = pr().characters.find(c => c.slotId === cleric.slotId).state.slots?.spell?.[1]?.spent ?? 0;
+    const P = hub(t, 'player');
+    const D = hub(t, 'dm');
+    const row = (H, slotId) => H.rowOf('healSlot', slotId);
+    const preview = (H, slotId) => H.dom.findAll(H.root, n => n.dataset?.preview === 'heal' && n.dataset.slot === slotId)[0]?.textContent || '';
+
+    // The player: only the cleric casts; Cure Wounds on the fighter with a level-1 slot.
+    await until(() => /HP 5 → \d+–\d+/.test(preview(P, cleric.slotId)), 'the player\'s heal preview');
+    assert.equal(row(P, fighter.slotId), undefined, 'the fighter knows no healing spell and is not the player\'s');
+    assert.equal(P.dom.findAll(P.root, n => n.dataset?.field === 'heal-override').length, 0);
+    const [, lo, hi] = /HP 5 → (\d+)–(\d+)/.exec(preview(P, cleric.slotId)).map(Number);
+    const sent = [];
+    const send0 = t.sessions.player.send;
+    t.sessions.player.send = (intent) => { sent.push(intent); return send0(intent); };
+    P.act('heal-cast', el => el.dataset.slot === cleric.slotId);
+    await until(() => hp(pr(), fighter.slotId) > 5 && /casts Cure Wounds: Fixture Fighter \+\d+ HP/.test(P.status()), 'the healed fighter');
+    t.sessions.player.send = send0;
+    assert.deepEqual(sent.map(i => i.t), ['cast.downtime']);
+    assert.deepEqual(sent[0].p, { casterSlotId: cleric.slotId, spellId: 'cure-wounds', targetSlotId: fighter.slotId, slotLevel: 1, slotKind: 'spell' });
+    const healed = hp(pr(), fighter.slotId);
+    assert.ok(healed >= lo && healed <= hi, `healed to ${healed}, inside the preview ${lo}–${hi}`);
+    assert.equal(pr().characters.find(c => c.slotId === cleric.slotId).state.slots.spell[1].spent, spent0 + 1, 'a level-1 slot spent');
+    const ev1 = pr().log.at(-1);
+    assert.deepEqual([ev1.type, ev1.actorKind, ev1.override], ['heal.cast', 'player', false]);
+
+    // The DM casts Healing Word for the player's cleric (on herself): an override, labelled as such.
+    await until(() => D.dom.findAll(D.root, n => n.dataset?.field === 'heal-override' && n.dataset.slot === cleric.slotId).length === 1, 'the override label');
+    const spellSel = D.dom.findAll(D.root, n => n.dataset?.field === 'heal-spell' && n.dataset.key === cleric.slotId)[0];
+    spellSel.value = 'healing-word';
+    D.dom.fire(spellSel, 'change');
+    const tgtSel = D.dom.findAll(D.root, n => n.dataset?.field === 'heal-target' && n.dataset.key === cleric.slotId)[0];
+    tgtSel.value = cleric.slotId;
+    D.dom.fire(tgtSel, 'change');
+    const slotSel = D.dom.findAll(D.root, n => n.dataset?.field === 'heal-slot' && n.dataset.key === cleric.slotId)[0];
+    slotSel.value = 'spell:2';
+    D.dom.fire(slotSel, 'change');
+    await until(() => /Fixture Cleric HP 4 → \d+–\d+/.test(preview(D, cleric.slotId)), 'the DM\'s preview for the cleric herself');
+    const btn = D.dom.byAction(D.root, 'heal-cast').find(el => el.dataset.slot === cleric.slotId);
+    assert.match(btn.textContent, /Cast Healing Word \(DM override\)/);
+    btn.click();
+    await until(() => hp(dr(), cleric.slotId) > 4 && hp(pr(), cleric.slotId) > 4, 'the healed cleric on both clients');
+    const ev2 = dr().log.at(-1);
+    assert.deepEqual([ev2.type, ev2.actorKind, ev2.override, ev2.payload.slotLevel, ev2.payload.spellId], ['heal.cast', 'dm', true, 2, 'healing-word']);
+    assert.match(D.status(), /\(DM override\)/);
+    // A refusal reads as text (Prayer of Healing is not on this cleric's sheet).
+    const err = await t.sessions.player.send({ t: 'cast.downtime', p: { casterSlotId: cleric.slotId, spellId: 'prayer-of-healing', targetSlotIds: [fighter.slotId] } }).catch(e => e);
+    assert.equal(refusalText(err), 'The caster does not know that spell.');
     P.un();
     D.un();
     assert.equal(P.dom.activeListeners(), 0);

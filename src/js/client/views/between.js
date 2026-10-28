@@ -14,6 +14,12 @@
  *              editable), and on a loot node shared freely (`assign:
  *              'free'`) each seat's controller takes coin (`stash.take`);
  *              every move is a `currency.changed` the run store folds in
+ *   healing    v1.7 `cast.downtime`: each caster seat I act for (the DM:
+ *              every seat — a player's seat is labelled a DM override)
+ *              lists the Cure Wounds / Healing Word / Prayer of Healing
+ *              its run sheet knows, a slot picker (levelled slots at or
+ *              above the spell's level with one left, the pact slot when
+ *              it fits) and its targets; `heal.cast` updates HP live
  *   party      per seat I act for: HP, hit dice, purse, the equipped AC
  *              and attack, and its items — equip / unequip / attune
  *              (`item.equip`), drink or feed a potion (`item.use`), give
@@ -25,6 +31,7 @@
  *          (rng 0 / 0.5 / ~1), a long rest exactly
  *   equip  `equipItem` / `unequipItem` → `acFor` (the AC entityFromSheet
  *          gives the next encounter) and `deriveAttack`
+ *   heal   `castDowntimeHeal` at the lowest and highest roll
  *
  * Every action is an intent; the server answers with run events and a
  * fresh `run.snapshot` (client/run-store.js). A refusal shows its code's
@@ -42,6 +49,8 @@ import { applyRest, hitDicePool, REST_TYPES } from '../../campaign/rest.js';
 import { equipItem, unequipItem } from '../../campaign/items.js';
 import { effectiveHpMax } from '../../campaign/exhaustion.js';
 import { acFor } from '../../scene/fighting-styles.js';
+import { DOWNTIME_HEALS, castDowntimeHeal } from '../../campaign/downtime-spells.js';
+import { slotsLeft, sheetSpell } from '../../campaign/util.js';
 import { deriveAttack } from '../../scene/pc-stats.js';
 import { mount as mountRunMap } from './run-map.js';
 import { mount as mountLevelUp } from './level-up.js';
@@ -127,6 +136,60 @@ export function restPreview(sheet, state, type, { spend = {}, lifeStatus, dawnIs
       hp: { before: state.hp?.current ?? 0, max: effectiveHpMax(sheet, state), low: low.state.hp.current, mid: mid.state.hp.current, high: high.state.hp.current },
       recovered,
       hitDice: hitDicePool(sheet, type === 'short' ? low.state : state)
+    };
+  } catch (err) {
+    return { ok: false, error: refusalText(err) };
+  }
+}
+
+/**
+ * The between-node healing spells a caster's run sheet knows, each with
+ * the slots it may spend now: levelled slots at or above the spell's
+ * level with one left, then the pact slot when its level fits.
+ * @param {object|null} sheet — run sheet
+ * @param {object} state — state_json
+ * @returns {{id: string, name: string, level: number, maxTargets: number, slots: {kind: 'spell'|'pact', level: number, left: number}[]}[]}
+ */
+export function downtimeOptions(sheet, state) {
+  if (!sheet) return [];
+  return Object.values(DOWNTIME_HEALS).filter(d => sheetSpell(sheet, d.name)).map((d) => {
+    const slots = [];
+    for (let level = d.level; level <= 9; level++) {
+      const left = slotsLeft(sheet, state, level, 'spell');
+      if (left > 0) slots.push({ kind: 'spell', level, left });
+    }
+    const pact = sheet.spellSlotTable?.pact;
+    const pl = Number(pact?.level);
+    if (pl >= d.level) {
+      const left = slotsLeft(sheet, state, pl, 'pact');
+      if (left > 0) slots.push({ kind: 'pact', level: pl, left });
+    }
+    return { id: d.id, name: d.name, level: d.level, maxTargets: d.maxTargets, slots };
+  });
+}
+
+/**
+ * What a `cast.downtime` would heal: downtime-spells.js castDowntimeHeal
+ * on the client at the lowest and the highest roll (the server rolls the
+ * run RNG). A rule refusal comes back as `error`.
+ * @param {{caster: {id: string, sheet: object, state: object, lifeStatus?: string}, spellId: string, slotLevel?: number,
+ *   slotKind?: 'spell'|'pact', targets: {id: string, sheet: object, state: object, lifeStatus?: string}[]}} o
+ * @returns {{ok: boolean, error?: string, dice?: string, mod?: number, bonus?: number, low?: number, high?: number,
+ *   targets?: {id: string, before: number, max: number, low: number, high: number}[]}}
+ */
+export function healPreview({ caster, spellId, slotLevel, slotKind = 'spell', targets }) {
+  if (!caster?.sheet || !caster.state || (targets || []).some(t => !t.sheet || !t.state)) return { ok: false, error: 'loading the sheets…' };
+  try {
+    const at = (v) => castDowntimeHeal({ caster, spell: spellId, slotLevel, slotKind, targets, rng: fixedRng(v) });
+    const lo = at(0);
+    const hi = at(0.999999);
+    return {
+      ok: true, dice: lo.roll.dice, mod: lo.roll.mod, bonus: lo.roll.bonus,
+      low: lo.roll.total + lo.roll.mod + lo.roll.bonus, high: hi.roll.total + hi.roll.mod + hi.roll.bonus,
+      targets: lo.targets.map((t, i) => {
+        const src = targets.find(x => String(x.id) === String(t.id));
+        return { id: t.id, before: src.state.hp?.current ?? 0, max: effectiveHpMax(src.sheet, src.state), low: t.state.hp.current, high: hi.targets[i].state.hp.current };
+      })
     };
   } catch (err) {
     return { ok: false, error: refusalText(err) };
@@ -226,6 +289,7 @@ export function mount(root, ctx) {
   const hereHost = h(doc, 'div', { class: 'play-between-here' });
   const restHost = h(doc, 'div', { class: 'play-card play-rest', hidden: true });
   const levelHost = h(doc, 'div', { class: 'play-between-levelups' });
+  const healHost = h(doc, 'div', { class: 'play-card play-heal', hidden: true });
   const stashHost = h(doc, 'div', { class: 'play-card play-stash' });
   const partyHost = h(doc, 'div', { class: 'play-between-party' });
   view.appendChild(status);
@@ -233,6 +297,7 @@ export function mount(root, ctx) {
   view.appendChild(hereHost);
   view.appendChild(restHost);
   view.appendChild(levelHost);
+  view.appendChild(healHost);
   view.appendChild(stashHost);
   view.appendChild(partyHost);
   root.appendChild(view);
@@ -249,6 +314,26 @@ export function mount(root, ctx) {
   const dv = (field, key, fallback) => (draft.has(`${field}|${key}`) ? draft.get(`${field}|${key}`) : fallback);
   const num = (v, d = 0) => (Number.isFinite(Number(v)) ? Math.trunc(Number(v)) : d);
   const dropDrafts = (prefix) => { for (const k of [...draft.keys()]) if (k.startsWith(prefix)) draft.delete(k); };
+  /** Seats this viewer may cast a downtime heal for: mine, or every seat for the DM. */
+  const casterSeats = (r) => (dm() ? r.characters.slice().sort((a, b) => a.seat - b.seat) : mySlots(r, ctx.store.getState()));
+  const who = (c) => ({ id: c.slotId, sheet: sheets.get(c.slotId, c.version), state: c.state, lifeStatus: c.lifeStatus });
+  /**
+   * The drafted downtime cast for one caster seat: spell, slot, targets,
+   * and whether it is a DM override (the DM casting for a player's seat).
+   */
+  function healPlan(r, casterSlotId) {
+    const c = characterOf(r, casterSlotId);
+    const opts = c ? downtimeOptions(sheets.get(c.slotId, c.version), c.state) : [];
+    if (!opts.length) return null;
+    const spell = opts.find(o => o.id === dv('heal-spell', casterSlotId, opts[0].id)) || opts[0];
+    const slotKey = String(dv('heal-slot', casterSlotId, spell.slots[0] ? `${spell.slots[0].kind}:${spell.slots[0].level}` : ''));
+    const slot = spell.slots.find(x => `${x.kind}:${x.level}` === slotKey) || spell.slots[0] || null;
+    const alive = r.characters.filter(x => x.lifeStatus !== 'dead');
+    const targetIds = spell.maxTargets > 1
+      ? alive.filter(x => dv('heal-tgt', `${casterSlotId}:${x.slotId}`, true) === true).map(x => x.slotId).slice(0, spell.maxTargets)
+      : [String(dv('heal-target', casterSlotId, alive.find(x => x.slotId !== casterSlotId)?.slotId ?? casterSlotId))].filter(id => alive.some(x => x.slotId === id));
+    return { caster: c, spell, slot, targetIds, opts, override: dm() && !!c.memberId };
+  }
   /** The DM's split as drafted (the even split where untouched). */
   const splitDraft = (r) => evenAllocations(r.stash, r.characters).allocations.map((a) => {
     const o = { slotId: a.slotId };
@@ -310,6 +395,18 @@ export function mount(root, ctx) {
       if (!Object.keys(amount).length) { say('Choose some coin to take.', 'error'); return; }
       send('stash.take', { slotId, amount }, `${nameOfSlot(run(), slotId)} takes ${coinsText(amount)}.`)
         .then((ack) => { if (ack) { dropDrafts(`take|${slotId}:`); render(); } });
+    },
+    'heal-cast': (el) => {
+      const casterSlotId = el.dataset.slot;
+      const plan = healPlan(run(), casterSlotId);
+      if (!plan) return;
+      if (!plan.targetIds.length) { say('Choose who to heal.', 'error'); return; }
+      const p = {
+        casterSlotId, spellId: plan.spell.id,
+        ...(plan.spell.maxTargets > 1 ? { targetSlotIds: plan.targetIds } : { targetSlotId: plan.targetIds[0] }),
+        ...(plan.slot ? { slotLevel: plan.slot.level, slotKind: plan.slot.kind } : {})
+      };
+      send('cast.downtime', p, (ack) => `${nameOfSlot(run(), casterSlotId)} casts ${plan.spell.name}${plan.override ? ' (DM override)' : ''}: ${Object.entries(ack?.healed || {}).map(([s, n]) => `${nameOfSlot(run(), s)} +${n} HP`).join(', ')}.`);
     },
     'item-equip': (el) => {
       const p = { slotId: el.dataset.slot, itemId: el.dataset.item, equipped: el.dataset.equip === '1' };
@@ -469,6 +566,51 @@ export function mount(root, ctx) {
     replace(doc, stashHost, kids);
   }
 
+  // ------------------------------------------------------------ healing
+
+  function renderHeal(r) {
+    const show = r.status === 'between';
+    const rows = [];
+    if (show) {
+      for (const c of casterSeats(r)) {
+        const plan = healPlan(r, c.slotId);
+        if (!plan) continue;
+        const { spell, slot, targetIds, override } = plan;
+        const alive = r.characters.filter(x => x.lifeStatus !== 'dead');
+        const row = [h(doc, 'strong', { text: `${c.name || `Seat ${c.seat}`} ` })];
+        if (override) row.push(h(doc, 'span', { class: 'play-chip override', dataset: { field: 'heal-override', slot: c.slotId }, text: 'DM override — a player\'s seat' }));
+        row.push(select(doc, { dataset: { field: 'heal-spell', key: c.slotId }, attrs: { 'aria-label': 'Healing spell' } }, plan.opts.map(o => ({ value: o.id, label: o.name })), spell.id));
+        row.push(spell.slots.length
+          ? select(doc, { dataset: { field: 'heal-slot', key: c.slotId }, attrs: { 'aria-label': 'Slot' } },
+            spell.slots.map(x => ({ value: `${x.kind}:${x.level}`, label: `${x.kind === 'pact' ? 'pact ' : ''}level ${x.level} (${x.left} left)` })), slot ? `${slot.kind}:${slot.level}` : null)
+          : h(doc, 'span', { class: 'play-preview error', text: ` no level ${spell.level}+ slot left` }));
+        if (spell.maxTargets > 1) {
+          for (const x of alive) {
+            row.push(h(doc, 'label', { class: 'play-field' }, [
+              h(doc, 'input', { type: 'checkbox', checked: targetIds.includes(x.slotId), dataset: { field: 'heal-tgt', key: `${c.slotId}:${x.slotId}` }, attrs: { 'aria-label': `Heal ${x.name || `Seat ${x.seat}`}` } }),
+              ` ${x.slotId === c.slotId ? 'self' : (x.name || `Seat ${x.seat}`)}`
+            ]));
+          }
+        } else {
+          row.push(select(doc, { dataset: { field: 'heal-target', key: c.slotId }, attrs: { 'aria-label': 'Heal whom' } },
+            alive.map(x => ({ value: x.slotId, label: x.slotId === c.slotId ? 'self' : (x.name || `Seat ${x.seat}`) })), targetIds[0] ?? null));
+        }
+        for (const x of alive) sheets.load(x.slotId, x.version);
+        const targets = targetIds.map(id => who(characterOf(r, id)));
+        const pv = slot ? healPreview({ caster: who(c), spellId: spell.id, slotLevel: slot.level, slotKind: slot.kind, targets }) : { ok: false, error: 'No slot left for it.' };
+        row.push(h(doc, 'span', { class: `play-preview${pv.ok ? '' : ' error'}`, dataset: { preview: 'heal', slot: c.slotId }, text: pv.ok
+          ? ` ${pv.dice} ${sign(pv.mod)}${pv.bonus ? ` +${pv.bonus} Disciple of Life` : ''}: ${pv.targets.map(t => `${nameOfSlot(r, t.id)} HP ${t.before} → ${t.low === t.high ? t.low : `${t.low}–${t.high}`} / ${t.max}`).join(', ')}`
+          : ` ${pv.error}` }));
+        row.push(h(doc, 'button', { type: 'button', class: 'play-btn small', dataset: { action: 'heal-cast', slot: c.slotId }, disabled: !slot || !targetIds.length,
+          text: override ? `Cast ${spell.name} (DM override)` : `Cast ${spell.name}` }));
+        rows.push(h(doc, 'div', { class: 'play-row', dataset: { between: '1', healSlot: c.slotId } }, row));
+      }
+    }
+    healHost.hidden = !rows.length;
+    replace(doc, healHost, rows.length ? [h(doc, 'h3', { text: 'Healing between nodes' }),
+      h(doc, 'p', { class: 'hint-line', text: 'A healing spell spends a real slot; the dice are rolled when it is cast.' }), ...rows] : []);
+  }
+
   // ------------------------------------------------------------ party
 
   function seatCard(r, c) {
@@ -526,6 +668,8 @@ export function mount(root, ctx) {
     for (const c of mine) sheets.load(c.slotId, c.version);
     renderHere(r);
     renderRest(r, mine);
+    for (const c of casterSeats(r)) sheets.load(c.slotId, c.version);
+    renderHeal(r);
     renderStash(r, mine);
     renderParty(r, mine);
   }

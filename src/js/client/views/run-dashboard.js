@@ -35,6 +35,7 @@ import { xpForLevel, MAX_LEVEL } from '../../campaign/xp.js';
 import { effectiveHpMax } from '../../campaign/exhaustion.js';
 import { RUN_OUTCOMES } from '../../shared/run-state.js';
 import { KIND_GLYPHS } from '../campaign-graph.js';
+import { DOWNTIME_HEALS } from '../../campaign/downtime-spells.js';
 
 /**
  * The party table's rows (pure; the view and the tests share it).
@@ -121,6 +122,8 @@ export function runEventText(ev, run) {
       const amounts = [Object.keys(gained).length ? `+${coinsText(gained)}` : null, Object.keys(lost).length ? `−${coinsText(lost)}` : null].filter(Boolean);
       return `${who(p.slotId)} ${amounts.join(' ') || '±0'} (${how}).`;
     }
+    case 'heal.cast':
+      return `${who(p.casterSlotId)} casts ${DOWNTIME_HEALS[p.spellId]?.name || p.spellId} (level ${p.slotLevel}${p.slotKind === 'pact' ? ' pact' : ''})${ev.override ? ' — DM override' : ''}: ${(p.targetSlotIds || []).map(s => `${who(s)} +${p.healed?.[s] ?? 0} HP`).join(', ')}.`;
     case 'shop.bought': return `${who(p.slotId)} bought ${p.name} ×${p.qty}.`;
     case 'shop.sold': return `${who(p.slotId)} sold ${p.name} ×${p.qty}.`;
     case 'story.chosen': return `Story choice: ${p.choiceId}.`;

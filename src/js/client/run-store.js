@@ -26,7 +26,9 @@
  * Coin (v1.7): `currency.changed` (a `dm.stash.split` / `stash.take` move,
  * one per seat) sets the seat's purse and the stash coin from its `after`
  * at once, and `loot.granted` sets the stash coin — the purses move live,
- * before the snapshot that follows.
+ * before the snapshot that follows. `heal.cast` (a `cast.downtime` healing
+ * spell) sets the caster's and each target's `{state, lifeStatus}` from
+ * its `after` the same way.
  *
  * `run.updated` also carries `completed` and `pendingRest` (the hit dice
  * declared with `rest.spend`, which changes nothing else and sends no
@@ -229,6 +231,12 @@ export function reduceRunEvent(s, ev) {
         ...next,
         characters: isObj(p.after?.currency) ? patchState(next.characters, p.slotId, (st) => ({ ...st, currency: p.after.currency })) : next.characters,
         stash: p.after && 'stash' in p.after ? stashWith(next.stash, p.after.stash) : next.stash
+      };
+    case 'heal.cast':
+      // v1.7: after {slotId: {state, lifeStatus}} — the caster (slot spent) and every target.
+      return {
+        ...next,
+        characters: patchEach(next.characters, p.after, (a) => (isObj(a) && isObj(a.state) ? { state: a.state, ...(a.lifeStatus ? { lifeStatus: a.lifeStatus } : {}) } : null))
       };
     case 'loot.granted':
       return p.after && 'stash' in p.after ? { ...next, stash: stashWith(next.stash, p.after.stash) } : next;
