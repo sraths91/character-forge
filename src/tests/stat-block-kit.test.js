@@ -375,7 +375,7 @@ test('turn manager: the Adult Red Dragon spends legendary actions after the PC\'
 // ---------------------------------------------------------------------
 
 test('live-bridge: a live record with the Adult block keeps its breath / Legendary Resistance spends across turns', async () => {
-  const { wrapMonsterForEngine, writeBackMonster } = await import('../js/scene/live-bridge.js');
+  const { wrapMonsterForEngine, writeBackMonster } = await import('../js/client/legacy/live-bridge.js');
   const m = {
     id: 'live-adult', presetSlug: 'young-dragon', name: 'Adult Red Dragon',
     hp: { current: 256, max: 256 }, position: { col: 4, row: 2 }, conditions: [],

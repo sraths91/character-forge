@@ -176,13 +176,13 @@ const HP_WRITE = /(\.hp\s*=(?!=)|\bhp\s*[-+]=)/;
  * Projections that COPY an already-applied HP between representations
  * (they never change a creature's HP): EncounterState ← wrapper, and the
  * live browser record ← EncounterState. M65 T21: the run-state seam
- * (state_json → a new entity, and entity → state_json).
+ * (state_json → a new entity, and entity → state_json). M65 T24: the
+ * live-browser-record projection left with live-bridge.js (client/legacy/).
  */
 const PROJECTIONS = [
   ['encounter-adapters.js', 'e.hp = Math.max(0, Math.min(e.hpMax, Math.trunc(w.hp)))'],
   ['encounter-adapters.js', 'entity.hp = startHp;   // run state → entity'],
-  ['encounter-adapters.js', 'out.hp = { ...(prev.hp || {}), current:'],
-  ['live-bridge.js', 'live.hp = { ...live.hp, current: entity.hp']
+  ['encounter-adapters.js', 'out.hp = { ...(prev.hp || {}), current:']
 ];
 
 function jsFiles(dir) {

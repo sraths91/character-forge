@@ -14,6 +14,7 @@ import { Worker } from 'node:worker_threads';
 import { simulateEncounter } from '../js/scene/simulator.js';
 
 const SCENE_DIR = new URL('../js/scene/', import.meta.url).href;
+const LEGACY_DIR = new URL('../js/client/legacy/', import.meta.url).href;
 
 const WORKER_SRC = `
 const { parentPort, workerData } = require('node:worker_threads');
@@ -32,9 +33,10 @@ globalThis.localStorage = tripwire('localStorage');
     const sim = await import(dir + 'simulator.js');
     const cal = await import(dir + 'calibrator.js');
     const rng = await import(dir + 'rng.js');
-    // M64 T5 — the one bridge (adapters + live-bridge + pure scene model) is Node-safe too.
+    // M64 T5 — the one bridge (adapters + pure scene model) is Node-safe too;
+    // M65 T24 — so is the legacy classic bridge, now outside the engine closure.
     await import(dir + 'encounter-adapters.js');
-    await import(dir + 'live-bridge.js');
+    await import(workerData.legacyDir + 'live-bridge.js');
     await import(dir + 'scene-model.js');
     await import(dir + 'turn-manager.js');
     await import(dir + 'prompt-adapter.js');
@@ -82,7 +84,7 @@ function runInWorker(workerData) {
 }
 
 test('M64 T10: combat engine imports and runs in a worker with throwing document/window/localStorage', async () => {
-  const msg = await runInWorker({ sceneDir: SCENE_DIR, encounter: encounter() });
+  const msg = await runInWorker({ sceneDir: SCENE_DIR, legacyDir: LEGACY_DIR, encounter: encounter() });
   assert.ok(msg.ok, msg.error);
   for (const name of ['runOneAttack', 'runMonsterSpell', 'runReactionAttack', 'applyDamageToEntity']) {
     assert.ok(msg.exports.includes(name), `missing export ${name}`);
@@ -93,8 +95,35 @@ test('M64 T10: combat engine imports and runs in a worker with throwing document
 });
 
 test('M64 T10: the worker run matches the main-thread run for the same seed', async () => {
-  const msg = await runInWorker({ sceneDir: SCENE_DIR, encounter: encounter() });
+  const msg = await runInWorker({ sceneDir: SCENE_DIR, legacyDir: LEGACY_DIR, encounter: encounter() });
   assert.ok(msg.ok, msg.error);
   const local = await simulateEncounter(encounter());
   assert.deepStrictEqual(msg.stats, local);
+});
+
+// M65 T24 — the import allowlist the T10 lint block enforces, checked from
+// the file system too: every src/js/scene/** import resolves inside scene/,
+// shared/, campaign/ or map/ (static and dynamic, relative paths only).
+test('T24: src/js/scene/** imports only from scene/, shared/, campaign/ and map/', async () => {
+  const { readdirSync, readFileSync, statSync } = await import('node:fs');
+  const { join, resolve, relative, dirname } = await import('node:path');
+  const { fileURLToPath } = await import('node:url');
+  const jsRoot = fileURLToPath(new URL('../js/', import.meta.url));
+  const walk = (d) => readdirSync(d).flatMap(f => {
+    const p = join(d, f);
+    return statSync(p).isDirectory() ? walk(p) : (f.endsWith('.js') ? [p] : []);
+  });
+  const offenders = [];
+  let seen = 0;
+  for (const file of walk(join(jsRoot, 'scene'))) {
+    const src = readFileSync(file, 'utf8');
+    for (const m of src.matchAll(/(?:\bfrom\s+|\bimport\s*\(\s*)['"]([^'"]+)['"]/g)) {
+      seen++;
+      const spec = m[1];
+      const top = spec.startsWith('.') ? relative(jsRoot, resolve(dirname(file), spec)).split(/[\\/]/)[0] : null;
+      if (!['scene', 'shared', 'campaign', 'map'].includes(top)) offenders.push(`${relative(jsRoot, file)} → ${spec}`);
+    }
+  }
+  assert.ok(seen > 50, `the walk found the scene imports (${seen})`);
+  assert.deepEqual(offenders, []);
 });

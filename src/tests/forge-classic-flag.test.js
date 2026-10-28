@@ -1,7 +1,7 @@
 /**
  * M65 V22 — the forge's combat driver sits behind `?classic=1` for one
  * release. Gates:
- *   - without the flag nothing reaches scene/live-bridge.js: neither
+ *   - without the flag nothing reaches client/legacy/live-bridge.js: neither
  *     main.js nor play.js statically imports it (transitively), and the
  *     only path to the driver is main.js's flag-guarded dynamic import;
  *   - the driver functions moved out of main.js intact (one copy, in
@@ -45,7 +45,7 @@ test('V22: without ?classic=1 no code path imports live-bridge.js', () => {
   for (const entry of ['main.js', 'play.js']) {
     const graph = [...staticGraph(resolve(JS, entry))];
     assert.ok(graph.length > 20, `${entry}: the walk found its imports`);
-    assert.deepEqual(graph.filter(f => f.endsWith('/scene/live-bridge.js')), [], `${entry} statically reaches live-bridge.js`);
+    assert.deepEqual(graph.filter(f => f.endsWith('/live-bridge.js')), [], `${entry} statically reaches live-bridge.js`);
     assert.deepEqual(graph.filter(f => f.endsWith('/classic-versus.js')), [], `${entry} statically reaches the classic driver`);
   }
   // The only way in: a dynamic import that returns early without the flag.
@@ -66,7 +66,7 @@ test('V22: the driver lives once, in client/legacy/classic-versus.js; main.js sh
     assert.match(legacy, new RegExp(`^(async )?function ${fn}\\(`, 'm'), `${fn} is in the classic module`);
     assert.doesNotMatch(MAIN, new RegExp(`^(async )?function ${fn}\\(`, 'm'), `${fn} is gone from main.js`);
   }
-  assert.match(legacy, /from '\.\.\/\.\.\/scene\/live-bridge\.js'/);
+  assert.match(legacy, /from '\.\/live-bridge\.js'/);
   const lines = MAIN.split('\n').length - 1;
   assert.ok(lines <= MAIN_LINES_BEFORE - 300, `main.js is ${lines} lines (was ${MAIN_LINES_BEFORE})`);
 });
@@ -104,5 +104,20 @@ test('V22: the classic module still loads and binds (the ?classic=1 path)', asyn
     assert.deepEqual([...new Set(listeners)].sort(), ['change', 'click'], 'the replay panel listeners install only when the module loads');
   } finally {
     if (prevDoc === undefined) delete globalThis.document; else globalThis.document = prevDoc;
+  }
+});
+
+test('T24: the classic-only bridge files live in client/legacy/, carry the deletion note, and left the engine closure', () => {
+  for (const f of ['live-bridge.js', 'manual-plan.js']) {
+    assert.ok(!existsSync(resolve(JS, 'scene', f)), `scene/${f} is gone from the engine closure`);
+    const src = read(resolve(JS, 'client/legacy', f));
+    assert.match(src.slice(0, 800), /remove with \?classic=1 after one release/, `${f} header carries the deletion note`);
+  }
+  const legacy = read(LEGACY);
+  assert.match(legacy, /from '\.\/manual-plan\.js'/);
+  // No production module outside client/legacy/ reaches either file.
+  for (const entry of ['main.js', 'play.js']) {
+    const graph = [...staticGraph(resolve(JS, entry))];
+    assert.deepEqual(graph.filter(f => /\/client\/legacy\//.test(f)), [], `${entry} statically reaches client/legacy/`);
   }
 });

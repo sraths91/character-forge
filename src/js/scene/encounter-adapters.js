@@ -3,7 +3,7 @@
  *
  * The engine resolves turns on flat per-entity "wrappers" (`hp`,
  * `_position`, `_slots`, per-turn flags, …). The server, the golden
- * harness and the browser bridge (live-bridge.js) all hold the canonical
+ * harness and the legacy browser bridge (client/legacy/live-bridge.js) hold the canonical
  * state as an EncounterState (src/js/shared/encounter-state.js) and reach
  * the engine only through this module:
  *

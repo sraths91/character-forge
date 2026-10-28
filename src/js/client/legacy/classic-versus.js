@@ -13,7 +13,7 @@
  * thin shims below.
  *
  * main.js imports this module only with `?classic=1` (a dynamic import), so
- * without the flag neither this driver nor `scene/live-bridge.js` loads;
+ * without the flag neither this driver nor `client/legacy/live-bridge.js` loads;
  * the versus panel offers "Play at the table" (client/forge-handoff.js,
  * V21) instead. Delete this file once the release with the flag ships.
  */
@@ -63,8 +63,8 @@ import {
   resolvePlanTarget as bridgeResolvePlanTarget,
   runTurn as bridgeRunTurn,
   liveEncounterState, liveTurnState, syncLiveFromTurnState, refreshTurnStateFromLive
-} from '../../scene/live-bridge.js';
-import { buildWeaponPlan, buildCastPlan } from '../../scene/manual-plan.js';
+} from './live-bridge.js';
+import { buildWeaponPlan, buildCastPlan } from './manual-plan.js';
 import { createVersusEncounter } from '../../scene/encounter-setup.js';
 
 /**
@@ -512,7 +512,7 @@ async function runVersusPartyAuto() {
 }
 
 // M64 C1 — the live-runner ↔ engine bridge lives in
-// scene/live-bridge.js (pure, Node-safe). These thin wrappers bind it
+// client/legacy/live-bridge.js (pure, Node-safe). These thin wrappers bind it
 // to main.js's module state so existing call sites don't change.
 function bridgeCtx() {
   return { party: host.party, scene: host.scene };
@@ -566,7 +566,7 @@ function resolvePlanTarget(plan) {
 
 /* M45 Phase 4b.2 — the wrap / write-back bridge (wrapPcForEngine,
  * wrapMonsterForEngine, writeBackPc, writeBackMonster, buildEngineSides,
- * runTurn) moved to scene/live-bridge.js in M64 C1. runEngineTurn below
+ * runTurn) moved to live-bridge.js (M64 C1; client/legacy/ since T24). runEngineTurn below
  * keeps only the UI prompt wiring (cinema, cast log, Shield dialog). */
 
 /**
@@ -690,7 +690,7 @@ async function runManualWeaponAttack(attackerHit, targetHit, weaponOverride = nu
   // warhammer instead of the equipped shortsword.
   const weapon = weaponOverride || getAttackerWeapon(attackerHit);
   // M64 C3 — plan construction (incl. the ranged heuristic) lives in
-  // scene/manual-plan.js so the server can build the same forcePlan.
+  // manual-plan.js (client/legacy/ since M65 T24).
   const plan = buildWeaponPlan({ weapon, targetId: targetHit.entity.id });
   const isRanged = plan.kind === 'ranged';
   // Snapshot defender HP before so we can compute dmg for the return
@@ -755,7 +755,7 @@ async function runManualWeaponAttack(attackerHit, targetHit, weaponOverride = nu
 async function runManualCast(attackerHit, targetHit, spell) {
   if (!attackerHit?.entity || !targetHit?.entity || !spell) return false;
   // M64 C3 — resolve the spell to a registry entry (by id or name slug)
-  // and build the cast plan in scene/manual-plan.js; null = no entry.
+  // and build the cast plan in manual-plan.js; null = no entry.
   const plan = buildCastPlan({ spell, targetId: targetHit.entity.id });
   if (!plan) return false;
   await runEngineTurn(attackerHit.entity, attackerHit.kind, {

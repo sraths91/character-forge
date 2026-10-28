@@ -1,6 +1,13 @@
 /**
  * M64 C1 — Live runner ↔ combat-engine bridge (pure, Node-safe).
  *
+ * LEGACY (M65 T24): remove with ?classic=1 after one release. Its only
+ * importer is client/legacy/classic-versus.js (the forge's classic versus
+ * driver, loaded behind `?classic=1`); it moved out of src/js/scene/ so the
+ * engine closure no longer carries a browser-record adapter. The server and
+ * the forge's "Play at the table" room drive the engine through
+ * turn-manager (api/rooms/real-engine.js), not through this file.
+ *
  * Extracted from main.js (M45 Phase 2 / 4b.2). Live records have the
  * browser's shape: PCs carry `hp: { current, max }` and keep their grid
  * cell in `scene.positions`; monsters carry `hp: { current, max }` and
@@ -11,36 +18,31 @@
  *     ──toEngineSides──▶ wrappers ──runOneAttack──▶ wrappers
  *     ──applyEngineSides──▶ EncounterState ──copy──▶ live records
  *
- * (encounter-adapters.js). Wrappers are fresh copies; nothing is shared
- * by reference with the live records, and everything the engine changes
- * (HP, position, conditions, the one slot ledger, concentration, flags)
- * is written back after the turn.
+ * (scene/encounter-adapters.js). Wrappers are fresh copies; nothing is
+ * shared by reference with the live records, and everything the engine
+ * changes (HP, position, conditions, the one slot ledger, concentration,
+ * flags) is written back after the turn.
  *
  * Everything that used to close over main.js's `currentScene` and
- * `partyComposedCharacters` now takes them as explicit `scene` and
- * `party` parameters. No DOM, no localStorage, no timers: the browser
- * (main.js) and the Node server both import this file. UI prompt
- * wiring (cinema, logs, the Shield dialog) stays with the caller and
- * arrives here as the `prompts` object.
- *
- * OWNERSHIP: E1 (engine) takes this file over in M64 Wave 2 — T5
- * replaces the internals with EncounterState adapters while keeping
- * every exported name and signature below.
+ * `partyComposedCharacters` takes them as explicit `scene` and `party`
+ * parameters. No DOM, no localStorage, no timers. UI prompt wiring
+ * (cinema, logs, the Shield dialog) stays with the caller and arrives
+ * here as the `prompts` object.
  */
 
-import { positionOf } from './scene-model.js';
-import { MONSTER_PRESETS } from './monster-presets.js';
-import { acFor } from './fighting-styles.js';
-import { slotsForPc, pactForPc } from './reactions.js';
-import { freshSlots } from './monster-spells.js';
-import { choosePcAction } from './ai/pc-action.js';
-import { resetPerTurnFlags } from './ai/pc-features.js';
-import { runOneAttack } from './combat-engine.js';
-import { createTurnState } from './turn-manager.js';
+import { positionOf } from '../../scene/scene-model.js';
+import { MONSTER_PRESETS } from '../../scene/monster-presets.js';
+import { acFor } from '../../scene/fighting-styles.js';
+import { slotsForPc, pactForPc } from '../../scene/reactions.js';
+import { freshSlots } from '../../scene/monster-spells.js';
+import { choosePcAction } from '../../scene/ai/pc-action.js';
+import { resetPerTurnFlags } from '../../scene/ai/pc-features.js';
+import { runOneAttack } from '../../scene/combat-engine.js';
+import { createTurnState } from '../../scene/turn-manager.js';
 import {
   toEngineSides, applyEngineSides, wrapperFromEntity, applyWrapperToEntity, ledgerFromPool
-} from './encounter-adapters.js';
-import { ENCOUNTER_STATE_VERSION } from '../shared/encounter-state.js';
+} from '../../scene/encounter-adapters.js';
+import { ENCOUNTER_STATE_VERSION } from '../../shared/encounter-state.js';
 
 /**
  * Find a live entity by id on the given side.

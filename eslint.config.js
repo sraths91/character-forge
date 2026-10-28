@@ -29,6 +29,15 @@ const nodeGlobals = {
   require: 'readonly', exports: 'readonly', globalThis: 'readonly'
 };
 
+/** M64 T10 — modules the engine closure (src/js/scene/**) must never import. */
+const T10_BANS = [
+  { regex: '(^|/)anim/', message: 'M64 T10: the engine closure (src/js/scene/**) must not import the animation layer (src/js/anim/).' },
+  { regex: '(^|/)main\\.js$', message: 'M64 T10: the engine closure must not import main.js (browser UI).' },
+  { regex: '(^|/)scene-state\\.js$', message: 'M64 T10: the engine closure must not import scene-state.js (localStorage persistence).' },
+  { regex: '(^|/)reaction-prompt\\.js$', message: 'M64 T10: the engine closure must not import reaction-prompt.js (DOM dialog).' }
+];
+const T10_ALLOW = 'M65 T24: src/js/scene/** may import only from src/js/scene/, shared/, campaign/ and map/ (relative paths).';
+
 export default [
   { ignores: ['dist/**', 'node_modules/**', '.plans/**', 'public/**', 'scripts/**', '.github/**', 'scratchpad/**', '.claude/**'] },
   js.configs.recommended,
@@ -51,15 +60,30 @@ export default [
   // M64 T10 — portability guard. The combat engine closure must stay
   // importable by the Node server (and a worker) unchanged: no DOM-bound
   // modules, no animation layer, no main.js, no browser storage.
+  // M65 T24 — tightened to an allowlist: src/js/scene/** imports only from
+  // itself, shared/, campaign/ and map/. The classic-only bridge
+  // (live-bridge.js, manual-plan.js) moved to client/legacy/, so no
+  // per-file override remains.
   {
-    files: ['src/js/scene/**/*.js', 'src/js/scene/ai/**/*.js'],
+    files: ['src/js/scene/*.js'],
     rules: {
       'no-restricted-imports': ['error', {
         patterns: [
-          { regex: '(^|/)anim/', message: 'M64 T10: the engine closure (src/js/scene/**) must not import the animation layer (src/js/anim/).' },
-          { regex: '(^|/)main\\.js$', message: 'M64 T10: the engine closure must not import main.js (browser UI).' },
-          { regex: '(^|/)scene-state\\.js$', message: 'M64 T10: the engine closure must not import scene-state.js (localStorage persistence).' },
-          { regex: '(^|/)reaction-prompt\\.js$', message: 'M64 T10: the engine closure must not import reaction-prompt.js (DOM dialog).' }
+          ...T10_BANS,
+          { regex: '^\\.\\./(?!(shared|campaign|map)/)', message: T10_ALLOW },
+          { regex: '^(?!\\.)', message: T10_ALLOW }
+        ]
+      }]
+    }
+  },
+  {
+    files: ['src/js/scene/ai/**/*.js'],
+    rules: {
+      'no-restricted-imports': ['error', {
+        patterns: [
+          ...T10_BANS,
+          { regex: '^\\.\\./\\.\\./(?!(shared|campaign|map)/)', message: T10_ALLOW },
+          { regex: '^(?!\\.)', message: T10_ALLOW }
         ]
       }]
     }

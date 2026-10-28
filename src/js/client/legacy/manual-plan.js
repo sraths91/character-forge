@@ -1,17 +1,20 @@
 /**
  * M64 C3 — Manual-play plan builders (pure, Node-safe).
  *
+ * LEGACY (M65 T24): remove with ?classic=1 after one release. Its only
+ * importer is client/legacy/classic-versus.js; the server builds a player's
+ * forcePlan with `planFromIntent` (scene/intent-validation.js) instead.
+ *
  * Extracted from main.js (M45 Phase 4b.3 / 4b.4 runManualWeaponAttack /
  * runManualCast). A manual pick — "this attacker swings this weapon at
  * that target" or "cast this spell on that target" — becomes a
  * synthetic engine plan that live-bridge.runTurn passes as
  * `prompts.forcePlan`, so the engine skips AI planning and resolves the
- * player's choice. The browser and the Node server both build plans
- * here, so a player intent turns into a forcePlan without main.js.
+ * player's choice.
  */
 
-import { nameToSpellId } from './ai/pc-action.js';
-import { spellById } from './monster-spells.js';
+import { nameToSpellId } from '../../scene/ai/pc-action.js';
+import { spellById } from '../../scene/monster-spells.js';
 
 const RANGED_WEAPON_RE = /bow|sling|crossbow|dart|javelin|throwing/;
 

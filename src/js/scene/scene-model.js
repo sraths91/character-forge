@@ -4,7 +4,7 @@
  * The storage-free half of the old scene-state.js: scene presets and
  * defaults, position math, hit-testing, and the monster-instance and
  * condition setters. No localStorage, no DOM — the combat engine
- * closure (live-bridge.js, the server) imports this module directly.
+ * closure (the server; client/legacy/live-bridge.js) imports this module directly.
  * `scene-state.js` keeps the localStorage persistence and re-exports
  * everything here so existing callers are unchanged.
  *

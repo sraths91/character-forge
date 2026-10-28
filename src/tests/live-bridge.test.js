@@ -4,7 +4,7 @@ import {
   resolveEntityById, prepareLivePcForPlanning, planForLivePc, resolvePlanTarget,
   wrapPcForEngine, wrapMonsterForEngine, writeBackPc, writeBackMonster,
   buildEngineSides, runTurn
-} from '../js/scene/live-bridge.js';
+} from '../js/client/legacy/live-bridge.js';
 const runTurn_ = runTurn;
 import { seedRng } from '../js/scene/simulator.js';
 
@@ -125,7 +125,7 @@ test('live-bridge: wrapMonsterForEngine reads preset AC/attack and copies condit
 
 test('live-bridge: liveEncounterState is a valid EncounterState v1', async () => {
   const { validateEncounterState } = await import('../js/shared/encounter-state.js');
-  const { liveEncounterState } = await import('../js/scene/live-bridge.js');
+  const { liveEncounterState } = await import('../js/client/legacy/live-bridge.js');
   const pc = livePc({ id: 7, classes: [{ name: 'Wizard', level: 5 }] });
   pc._slots = { 1: 1, 2: 3, 3: 2, 4: 0, 5: 0 };
   const m = liveMonster();
@@ -240,7 +240,7 @@ test('live-bridge: runTurn requires an rng and returns null for an entity not in
 });
 
 test('live-bridge: the browser loop on the turn manager fires legendary actions in live play (T7)', async () => {
-  const { liveTurnState, syncLiveFromTurnState, refreshTurnStateFromLive } = await import('../js/scene/live-bridge.js');
+  const { liveTurnState, syncLiveFromTurnState, refreshTurnStateFromLive } = await import('../js/client/legacy/live-bridge.js');
   const { startEncounter, runTurn } = await import('../js/scene/turn-manager.js');
   const pc = livePc({ hp: 60, max: 60 });
   const dragon = { id: 'd1', name: 'Dragon', presetSlug: 'young-dragon', hp: { current: 120, max: 120 }, conditions: [], position: { col: 3, row: 2 }, _legendaryBudget: 3 };
