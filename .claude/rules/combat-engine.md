@@ -8,10 +8,17 @@ paths:
 `src/js/scene/combat-engine.js` is the single spine for D&D combat, and
 `turn-manager.js` is the one round loop around it (`runTurn` →
 `runOneAttack(…, prompts, ctx)`). Callers: the simulator (`prompts: {}`), the
-browser auto-fight (`main.js` via `live-bridge.js`; manual canvas clicks call
-`runOneAttack` with a `forcePlan` through the same bridge) and the server
-(EncounterState via `encounter-adapters.js`, intents via
-`intent-validation.js`, reactions via `prompt-adapter.js`).
+server room (`api/rooms/real-engine.js` via turn-manager — EncounterState via
+`encounter-adapters.js`, intents via `intent-validation.js`, reactions via
+`prompt-adapter.js`; the forge's "Play at the table" handoff opens a solo
+room here) and the legacy classic versus module behind `?classic=1`
+(`client/legacy/classic-versus.js` + `client/legacy/live-bridge.js`, to be
+deleted after one release).
+
+- **`src/js/scene/**` imports only from `scene/`, `shared/`, `campaign/` and
+  `map/`** (M64 T10 / M65 T24 lint allowlist) — never `client/`, `anim/`,
+  `main.js`, `scene-state.js` or `reaction-prompt.js`, so the server can
+  import the engine unchanged.
 
 - **HP changes only through `applyDamage` / `applyHealing`** and conditions
   through `applyCondition` / `removeCondition` (lifecycle in `conditions.js`);

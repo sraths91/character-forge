@@ -61,17 +61,25 @@ Callers:
 1. **Simulator** (`simulator.js`) — `prompts: {}`, no emit; every
    reaction auto-resolves via the engine heuristic. Hot loop:
    ~200 iterations × 12 rounds × N entities.
-2. **Browser auto-fight** (`runVersusPartyAuto` in `main.js`) —
-   `runTurn` with `runActorTurn` routing each turn through
-   `scene/live-bridge.js` (live records ⇄ EncounterState ⇄ wrappers)
-   and its UI prompts (cinema, logs, Shield dialog). Manual canvas
-   clicks build a `forcePlan` (`manual-plan.js`) and call
-   `runOneAttack` through the same bridge (`live-bridge.runTurn`).
-3. **Server** (M64 online table) — `turnStateFromEncounter` →
-   `runTurn` → `encounterFromTurnState`; player intents pass
-   `validateIntent` / `planFromIntent` (`intent-validation.js`) and
-   reactions go through `createPromptAdapter` (`prompt-adapter.js`:
-   timeout → autoAnswer, answers logged for replay).
+2. **The server room** (M64 online table; `api/rooms/real-engine.js`
+   via `turn-manager.js`) — `turnStateFromEncounter` → `runTurn` →
+   `encounterFromTurnState`; player intents pass `validateIntent` /
+   `planFromIntent` (`intent-validation.js`) and reactions go through
+   `createPromptAdapter` (`prompt-adapter.js`: timeout → autoAnswer,
+   answers logged for replay). The forge's versus panel plays here too:
+   **"Play at the table"** (`client/forge-handoff.js`, M65 V21) opens a
+   server-hosted **solo room** (`POST /api/rooms {mode: 'solo'}`, the
+   DM drives every seat no player holds), seats the forge party and
+   hands `play.html` the queued encounter.
+3. **The legacy classic versus module** behind `?classic=1`
+   (`client/legacy/classic-versus.js`, M65 V22) — the old in-page
+   driver, loaded only by a flag-guarded dynamic import in `main.js`.
+   It reaches the engine through `client/legacy/live-bridge.js` (live
+   records ⇄ EncounterState ⇄ wrappers) and `client/legacy/manual-plan.js`
+   (manual clicks → `forcePlan`). **To be deleted** with the flag after
+   one release; nothing in `src/js/scene/**` imports it (the T10 lint
+   allowlist keeps scene imports to `scene/`, `shared/`, `campaign/`
+   and `map/`).
 
 State crosses the engine boundary only as EncounterState v1
 (`src/js/shared/encounter-state.js`) via `encounter-adapters.js`
