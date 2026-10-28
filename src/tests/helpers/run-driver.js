@@ -513,8 +513,9 @@ export async function runScript(script, adapter, opts = {}) {
  * Rebuild every character's final state from the run events alone (the
  * replay contract B24 / B26 rely on): character.joined seeds, the
  * `after` of encounter.result / rest.taken / xp.awarded / character.died /
- * level.applied / between-node item.used / dm.override (xp) overwrite,
- * level.queued queues, level.applied dequeues.
+ * level.applied / between-node item.used / dm.override (xp) / heal.cast
+ * overwrite, currency.changed sets the seat's purse, level.queued queues,
+ * level.applied dequeues.
  * @param {object[]} runEvents
  * @returns {Record<string, {state: object, xp: number, level: number, lifeStatus: string, pendingLevels: number[]}>}
  */
@@ -546,6 +547,19 @@ export function replayRunEvents(runEvents) {
         break;
       case 'dm.override':
         if (p.kind === 'xp' && out[p.slotId]) out[p.slotId].xp = p.after.xp;
+        break;
+      // M65 W4 (E3): stash coin to a seat's purse — after {currency, stash}.
+      case 'currency.changed':
+        if (p.slotId && out[p.slotId] && p.after?.currency) out[p.slotId].state = { ...out[p.slotId].state, currency: clone(p.after.currency) };
+        break;
+      // M65 W4 (E3): a between-node healing spell — after {[slotId]: {state, lifeStatus}}
+      // for the caster (its slot) and every target.
+      case 'heal.cast':
+        for (const [slotId, a] of Object.entries(p.after || {})) {
+          if (!out[slotId]) continue;
+          out[slotId].state = clone(a.state);
+          out[slotId].lifeStatus = a.lifeStatus;
+        }
         break;
       default: break;
     }
